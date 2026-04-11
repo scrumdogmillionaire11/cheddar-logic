@@ -57,6 +57,7 @@ const {
   withDb,
   getDatabase,
   getLatestOdds,
+  getLatestNhlModelOutput,
   insertCardPayload,
   upsertGame,
   createJob,
@@ -293,6 +294,11 @@ async function gatherBestCandidate({
           ? {
               ...game,
               oddsSnapshot: getLatestOdds(game.gameId) || null,
+            }
+          : sport === 'NHL' && game?.gameId
+          ? {
+              ...game,
+              nhlSnapshot: getLatestNhlModelOutput(game.gameId) || null,
             }
           : game;
       const candidates = buildCandidatesFn(candidateGame);

@@ -1211,6 +1211,32 @@ function insertDecisionEvent(event) {
  * @returns {array} Games [{game_id, sport, game_time_utc}, ...]
  */
 
+/**
+ * Retrieve the latest NHL goalie model inputs from card_payloads for a given game.
+ * Returns { homeGoalie: { savePct, gsax }, awayGoalie: { savePct, gsax } } or null.
+ * Supports both primary flat keys (goalie_home_save_pct) and legacy nested keys (goalie.home.save_pct).
+ */
+function getLatestNhlModelOutput(gameId) {
+  const db = getDatabase();
+  const row = db.prepare(`
+    SELECT raw_data FROM card_payloads
+    WHERE game_id = ? AND sport = 'icehockey_nhl'
+    ORDER BY created_at DESC LIMIT 1
+  `).get(gameId);
+  if (!row) return null;
+  const rd = JSON.parse(row.raw_data);
+  return {
+    homeGoalie: {
+      savePct: rd.goalie_home_save_pct ?? rd.goalie?.home?.save_pct ?? null,
+      gsax:    rd.goalie_home_gsax    ?? rd.goalie?.home?.gsax    ?? null,
+    },
+    awayGoalie: {
+      savePct: rd.goalie_away_save_pct ?? rd.goalie?.away?.save_pct ?? null,
+      gsax:    rd.goalie_away_gsax    ?? rd.goalie?.away?.gsax    ?? null,
+    },
+  };
+}
+
 module.exports = {
   deleteCardPayloadsByGameAndType,
   deleteCardPayloadsForGame,
@@ -1229,4 +1255,5 @@ module.exports = {
   insertDecisionEvent,
   setProjectionActualResult,
   getUnsettledProjectionCards,
+  getLatestNhlModelOutput,
 };
