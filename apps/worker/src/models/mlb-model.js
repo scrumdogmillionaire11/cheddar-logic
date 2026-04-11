@@ -674,27 +674,107 @@ function projectF5TotalCard(homePitcher, awayPitcher, f5Line, context = {}) {
  * Project F5 Moneyline side pick from pitcher matchup vs. published F5 ML prices.
  *
  * Algorithm:
- *   1. Derive per-team expected F5 runs from ERA (same as projectF5Total base).
- *   2. Convert run differential to home win probability via logistic function.
- *   3. Compare projected win probability to implied probability from ML prices.
- *   4. Emit HOME / AWAY / PASS based on edge vs. lean_edge_min (0.04) and confidence.
+ *   1. Prefer the shared per-team F5 run projection path when offense/context inputs exist.
+ *   2. Fall back to legacy ERA arithmetic when aligned inputs are unavailable.
+ *   3. Convert run differential to home win probability via logistic function.
+ *   4. Compare projected win probability to implied probability from ML prices.
+ *   5. Emit HOME / AWAY / PASS based on edge vs. lean_edge_min (0.04) and confidence.
  *
  * @param {object} homePitcher - { era, whip, k_per_9 }
  * @param {object} awayPitcher - { era, whip, k_per_9 }
  * @param {number} mlF5Home - American odds for home side (e.g. -120)
  * @param {number} mlF5Away - American odds for away side (e.g. +105)
+ * @param {object|null} [homeOffenseProfile=null]
+ * @param {object|null} [awayOffenseProfile=null]
+ * @param {object|null} [context=null]
  * @returns {object|null}
  */
-function projectF5ML(homePitcher, awayPitcher, mlF5Home, mlF5Away) {
+function projectF5ML(
+  homePitcher,
+  awayPitcher,
+  mlF5Home,
+  mlF5Away,
+  homeOffenseProfile = null,
+  awayOffenseProfile = null,
+  context = null,
+) {
   if (!homePitcher || !awayPitcher) return null;
   if (mlF5Home == null || mlF5Away == null) return null;
-  if (homePitcher.era == null || awayPitcher.era == null) return null;
 
-  const LEAGUE_AVG_RPG = 4.5;
-  // Home team expected F5 runs = function of away pitcher ERA
-  const homeExpected = (awayPitcher.era + LEAGUE_AVG_RPG) / 2 * (5 / 9);
-  // Away team expected F5 runs = function of home pitcher ERA
-  const awayExpected = (homePitcher.era + LEAGUE_AVG_RPG) / 2 * (5 / 9);
+  function buildEraFallbackProjection() {
+    if (homePitcher.era == null || awayPitcher.era == null) return null;
+
+    const LEAGUE_AVG_RPG = 4.5;
+    // Home team expected F5 runs = function of away pitcher ERA
+    const homeExpected = (awayPitcher.era + LEAGUE_AVG_RPG) / 2 * (5 / 9);
+    // Away team expected F5 runs = function of home pitcher ERA
+    const awayExpected = (homePitcher.era + LEAGUE_AVG_RPG) / 2 * (5 / 9);
+    const avgEra = (homePitcher.era + awayPitcher.era) / 2;
+    const avgWhip = ((homePitcher.whip ?? 1.3) + (awayPitcher.whip ?? 1.3)) / 2;
+    const avgK9 = ((homePitcher.k_per_9 ?? 8.0) + (awayPitcher.k_per_9 ?? 8.0)) / 2;
+    let confidence = 6;
+    if (avgEra <= 3.5) confidence += 1;
+    if (avgWhip <= 1.2) confidence += 1;
+    if (avgK9 >= 8.5) confidence += 1;
+
+    return {
+      homeExpected,
+      awayExpected,
+      confidence: Math.min(confidence, 10),
+      projectionSource: 'F5_ML_FALLBACK_ERA',
+      reasonCodes: ['F5_ML_FALLBACK_ERA'],
+      degradedInputs: [],
+    };
+  }
+
+  let projection = null;
+  if (homeOffenseProfile && awayOffenseProfile) {
+    const projectionContext = context ?? {};
+    const homeRunsResult = projectTeamF5RunsAgainstStarter(
+      awayPitcher,
+      homeOffenseProfile,
+      projectionContext,
+    );
+    const awayRunsResult = projectTeamF5RunsAgainstStarter(
+      homePitcher,
+      awayOffenseProfile,
+      projectionContext,
+    );
+    if (
+      Number.isFinite(homeRunsResult?.f5_runs) &&
+      Number.isFinite(awayRunsResult?.f5_runs)
+    ) {
+      const homeDegradedInputs = Array.isArray(homeRunsResult.degraded_inputs)
+        ? homeRunsResult.degraded_inputs
+        : [];
+      const awayDegradedInputs = Array.isArray(awayRunsResult.degraded_inputs)
+        ? awayRunsResult.degraded_inputs
+        : [];
+      projection = {
+        homeExpected: homeRunsResult.f5_runs,
+        awayExpected: awayRunsResult.f5_runs,
+        confidence: Math.max(
+          5,
+          7 -
+            (homeDegradedInputs.length > 0 ? 1 : 0) -
+            (awayDegradedInputs.length > 0 ? 1 : 0),
+        ),
+        projectionSource: 'FULL_MODEL',
+        reasonCodes: [],
+        degradedInputs: Array.from(new Set([
+          ...homeDegradedInputs.map((name) => `home_${name}`),
+          ...awayDegradedInputs.map((name) => `away_${name}`),
+        ])),
+      };
+    }
+  }
+
+  projection = projection ?? buildEraFallbackProjection();
+  if (!projection) return null;
+
+  const homeExpected = projection.homeExpected;
+  const awayExpected = projection.awayExpected;
+  const confidence = projection.confidence;
   const runDiff = homeExpected - awayExpected; // positive = home advantage
 
   // Logistic win probability from run differential (coefficient 0.8 empirical for F5)
@@ -715,23 +795,6 @@ function projectF5ML(homePitcher, awayPitcher, mlF5Home, mlF5Away) {
   const homeEdge = winProbHome - impliedHome;
   const awayEdge = (1 - winProbHome) - impliedAway;
 
-  // Prefer full-model confidence, but preserve the legacy ERA/WHIP fallback for
-  // F5 ML because this market still uses the simpler side-projection path.
-  const proj = projectF5Total(homePitcher, awayPitcher);
-  const fallbackConfidence = (() => {
-    const avgEra = (homePitcher.era + awayPitcher.era) / 2;
-    const avgWhip = ((homePitcher.whip ?? 1.3) + (awayPitcher.whip ?? 1.3)) / 2;
-    const avgK9 = ((homePitcher.k_per_9 ?? 8.0) + (awayPitcher.k_per_9 ?? 8.0)) / 2;
-    let score = 6;
-    if (avgEra <= 3.5) score += 1;
-    if (avgWhip <= 1.2) score += 1;
-    if (avgK9 >= 8.5) score += 1;
-    return Math.min(score, 10);
-  })();
-  const confidence = proj && proj.projection_source === 'FULL_MODEL'
-    ? proj.confidence
-    : fallbackConfidence;
-
   const LEAN_EDGE_MIN = 0.04; // F5 ML edge threshold (slightly wider than totals)
   const CONFIDENCE_MIN = 6;
 
@@ -750,7 +813,12 @@ function projectF5ML(homePitcher, awayPitcher, mlF5Home, mlF5Away) {
     prediction: side,
     edge,
     projected_win_prob_home: winProbHome,
+    projected_home_f5_runs: homeExpected,
+    projected_away_f5_runs: awayExpected,
     confidence,
+    projection_source: projection.projectionSource,
+    reason_codes: projection.reasonCodes,
+    degraded_inputs: projection.degradedInputs,
     ev_threshold_passed: side !== 'PASS',
     reasoning: `F5 ML: homeExp=${homeExpected.toFixed(2)} awayExp=${awayExpected.toFixed(2)} runDiff=${runDiff >= 0 ? '+' : ''}${runDiff.toFixed(2)} pWin(H)=${(winProbHome * 100).toFixed(1)}% implH=${(impliedHome * 100).toFixed(1)}% implA=${(impliedAway * 100).toFixed(1)}% edgeH=${homeEdge >= 0 ? '+' : ''}${(homeEdge * 100).toFixed(1)}pp edgeA=${awayEdge >= 0 ? '+' : ''}${(awayEdge * 100).toFixed(1)}pp conf=${confidence}/10`,
   };

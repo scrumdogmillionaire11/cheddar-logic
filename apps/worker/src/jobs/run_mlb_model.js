@@ -1953,6 +1953,15 @@ async function runMLBModel({
               mlb.away_pitcher ?? null,
               f5MlContext.home,
               f5MlContext.away,
+              mlb.home_offense_profile ?? null,
+              mlb.away_offense_profile ?? null,
+              {
+                park_run_factor: mlb.park_run_factor ?? null,
+                temp_f: mlb.temp_f ?? null,
+                wind_mph: mlb.wind_mph ?? null,
+                wind_dir: mlb.wind_dir ?? null,
+                roof: mlb.roof ?? null,
+              },
             );
             if (f5MlResult) {
               f5MlDriverCard = {
