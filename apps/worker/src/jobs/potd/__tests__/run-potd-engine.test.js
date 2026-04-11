@@ -62,6 +62,7 @@ function buildSelectedCandidate(overrides = {}) {
       lineValue: 0.81,
       marketConsensus: 0.59,
     },
+    reasoning: 'Model likes OVER 5.5 at +115: edge +2.5pp, win prob 49.0%, line value strong, market consensus solid.',
     ...overrides,
   };
 }
@@ -450,5 +451,45 @@ describe('runPotdEngine', () => {
     expect(playRow.market_type).toBe('MONEYLINE');
     expect(playRow.selection).toBe('HOME');
     expect(playRow.sport).toBe('MLB');
+  });
+
+  test('reasoning persists to potd_plays row and potd-call payload data', async () => {
+    const { runPotdEngine } = require('../run_potd_engine');
+    const expectedReasoning =
+      'Model likes OVER 5.5 at +115: edge +2.5pp, win prob 49.0%, line value strong, market consensus solid.';
+    const candidate = buildSelectedCandidate({ reasoning: expectedReasoning });
+
+    const result = await runPotdEngine({
+      jobKey: 'potd|reasoning-test',
+      force: true,
+      fetchOddsFn: async () => ({ games: [{ gameId: candidate.gameId }], errors: [] }),
+      buildCandidatesFn: () => [candidate],
+      scoreCandidateFn: (value) => value,
+      selectBestPlayFn: (values) => values[0],
+      kellySizeFn: () => 2,
+      sendDiscordMessagesFn: async () => 1,
+    });
+
+    expect(result.success).toBe(true);
+
+    // potd_plays row stores the reasoning
+    const playRow = readRows(
+      `SELECT reasoning FROM potd_plays WHERE game_id = ?`,
+      [candidate.gameId],
+    )[0];
+    expect(playRow).not.toBeNull();
+    expect(playRow.reasoning).toBe(expectedReasoning);
+
+    // potd-call card payload also carries the same reasoning
+    const cardRow = readRows(
+      `SELECT payload_data FROM card_payloads WHERE id = ?`,
+      [result.cardId],
+    )[0];
+    expect(cardRow).not.toBeNull();
+    const payloadData = JSON.parse(cardRow.payload_data);
+    expect(payloadData.reasoning).toBe(expectedReasoning);
+
+    dataModule.closeDatabase();
+    resetTables();
   });
 });
