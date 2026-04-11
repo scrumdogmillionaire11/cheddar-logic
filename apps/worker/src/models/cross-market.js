@@ -14,6 +14,7 @@ const { DEGRADED_CONSTRAINTS, buildNoBetResult } = require('./input-gate');
 const { analyzePaceSynergy } = require('./nba-pace-synergy');
 const { resolveGoalieComposite } = require('./nhl-pace-model');
 const { compareProjection } = require('../../../../packages/odds/src/market_evaluator.js');
+const { computeResidual } = require('./residual-projection');
 
 const ENABLE_WELCOME_HOME = process.env.ENABLE_WELCOME_HOME === 'true';
 
@@ -720,6 +721,12 @@ function computeNHLMarketDecisions(oddsSnapshot) {
       ? toNumber(oddsSnapshot?.total_price_over)
       : toNumber(oddsSnapshot?.total_price_under),
   });
+  // WI-0829: attach residual signal (model vs market line delta)
+  totalDecision.projection_comparison.residual = computeResidual(
+    projectedTotal,
+    nhlTotalConsensusLine,
+    nhlTotalSide,
+  );
 
   const nhlSpreadSide = spreadDecision.best_candidate.side;
   const nhlRawConsensusLine = toNumber(oddsSnapshot?.spread_consensus_line);
@@ -1164,6 +1171,12 @@ function computeNBAMarketDecisions(oddsSnapshot) {
       ? toNumber(oddsSnapshot?.total_price_over)
       : toNumber(oddsSnapshot?.total_price_under),
   });
+  // WI-0829: attach residual signal (model vs market line delta)
+  totalDecision.projection_comparison.residual = computeResidual(
+    projectedTotal,
+    nbaTotalConsensusLine,
+    nbaTotalSide,
+  );
 
   const nbaSpreadSide = spreadDecision.best_candidate.side;
   const nbaRawConsensusLine = toNumber(oddsSnapshot?.spread_consensus_line);
