@@ -98,3 +98,6 @@ jobs:
 
       - name: Run worker tests
         run: npm --prefix apps/worker test
+
+      - name: Feature correlation gate
+        run: npm --prefix apps/worker test -- --testPathPattern="feature-correlation"
