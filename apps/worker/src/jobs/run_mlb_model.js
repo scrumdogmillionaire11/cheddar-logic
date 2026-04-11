@@ -80,6 +80,7 @@ const {
   dedupeFlags,
 } = require('./mlb-k-input-classifier');
 const { evaluateExecution } = require('./execution-gate');
+const { applyCalibration } = require('../utils/calibration');
 
 // MLB-specific watchdog vocabulary stays local to this runner so WI-0604 can
 // document the new codes without widening shared registries.
@@ -2353,6 +2354,24 @@ async function runMLBModel({
             if (!card.payloadData.raw_data) card.payloadData.raw_data = {};
             card.payloadData.raw_data.sigma_source = mlbSigma.sigma_source;
             card.payloadData.raw_data.sigma_games_sampled = mlbSigma.games_sampled ?? null;
+            // WI-0831: apply isotonic calibration to fair_prob before Kelly and card write.
+            {
+              const pd = card.payloadData;
+              if (Number.isFinite(pd.p_fair)) {
+                let breakpoints = null;
+                try {
+                  const calRow = db.prepare(
+                    'SELECT breakpoints_json FROM calibration_models WHERE sport = ? AND market_type = ?',
+                  ).get('MLB', 'MLB_F5_TOTAL');
+                  breakpoints = calRow ? JSON.parse(calRow.breakpoints_json) : null;
+                } catch (_e) {
+                  console.log('[CAL_APPLY] MLB calibration_models table not ready — using raw');
+                }
+                const { calibratedProb, calibrationSource } = applyCalibration(pd.p_fair, breakpoints);
+                pd.p_fair = calibratedProb;
+                pd.raw_data.calibration_source = calibrationSource;
+              }
+            }
             // WI-0819: attach advisory Kelly stake fraction to actionable cards.
             {
               const pd = card.payloadData;

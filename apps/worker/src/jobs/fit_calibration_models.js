@@ -16,6 +16,7 @@
  *   NHL_* → 'NHL', NBA_* → 'NBA', MLB_* → 'MLB', SPREAD/ML → 'ALL'
  */
 
+const { getDatabase } = require('@cheddar-logic/data');
 const { fitIsotonic, applyCalibration } = require('../utils/calibration');
 
 const MIN_SAMPLES = 30;
@@ -52,9 +53,10 @@ function brierScore(xs, ys, breakpoints) {
 
 /**
  * Run the calibration fit job.
- * @param {import('better-sqlite3').Database} db - SQL.js compatible DB handle
+ * @param {import('better-sqlite3').Database} [dbOverride] - Optional DB handle; falls back to getDatabase()
  */
-async function run(db) {
+async function run(dbOverride) {
+  const db = dbOverride || getDatabase();
   // Check that calibration_predictions table exists
   const tableCheck = db
     .prepare(

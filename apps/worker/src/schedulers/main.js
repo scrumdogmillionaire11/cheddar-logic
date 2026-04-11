@@ -61,6 +61,7 @@ const { mirrorPotdSettlement } = require('../jobs/potd/settlement-mirror');
 const { runClvSnapshot } = require('../jobs/run_clv_snapshot');
 const { runDailyPerformanceReport } = require('../jobs/run_daily_performance_report');
 const { runCalibrationReport } = require('../jobs/run_calibration_report');
+const { run: runFitCalibrationModels } = require('../jobs/fit_calibration_models');
 
 const { computeFplDueJobs } = require('./fpl');
 const { computePlayerPropsDueJobs } = require('./player-props');
@@ -357,6 +358,17 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
       execute: () => runCalibrationReport(),
       args: {},
       reason: `nightly calibration report + kill switch refresh ${nowEt.toISODate()}`,
+    });
+  }
+  // fit_calibration_models: fit per-market isotonic regression on historical fair_prob (06:00 ET)
+  if (process.env.ENABLE_SETTLEMENT !== 'false' && isFixedDue(nowEt, '06:00')) {
+    const fitCalibrationKey = `fit_calibration_models|${nowEt.toISODate()}`;
+    jobs.push({
+      jobName: 'fit_calibration_models',
+      jobKey: fitCalibrationKey,
+      execute: () => runFitCalibrationModels(),
+      args: {},
+      reason: `daily calibration model fit ${nowEt.toISODate()}`,
     });
   }
 
