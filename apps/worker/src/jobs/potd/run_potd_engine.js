@@ -91,6 +91,9 @@ const POTD_MIN_EDGE = Number(process.env.POTD_MIN_EDGE || 0.02);  // 2.0 %
 // If quarter-Kelly stake lands below this fraction of bankroll, reject the play
 // (Kelly is screaming the edge is too thin — honour that signal).
 const POTD_MIN_STAKE_PCT = Number(process.env.POTD_MIN_STAKE_PCT || 0.005); // 0.5 %
+// Minimum totalScore (0–1 confidence/quality blend) required for POTD candidate viability.
+// totalScore = (lineValue * 0.625) + (marketConsensus * 0.375), both [0,1] clamped.
+const POTD_MIN_TOTAL_SCORE = Number(process.env.POTD_MIN_TOTAL_SCORE || 0.30);  // 0.30
 const POTD_SPORT_ENV = {
   NHL: 'ENABLE_NHL_MODEL',
   NBA: 'ENABLE_NBA_MODEL',
@@ -314,11 +317,11 @@ async function gatherBestCandidate({
       isFiniteNumber(c.edgePct) &&
       c.edgePct > POTD_MIN_EDGE &&
       isFiniteNumber(c.totalScore) &&
-      c.totalScore >= confidenceThreshold('HIGH'),
+      c.totalScore >= POTD_MIN_TOTAL_SCORE,
   );
 
   return {
-    bestCandidate: selectBestPlayFn(scoredCandidates, { minConfidence: 'HIGH', minEdgePct: POTD_MIN_EDGE }),
+    bestCandidate: selectBestPlayFn(scoredCandidates, { minConfidence: POTD_MIN_TOTAL_SCORE, minEdgePct: POTD_MIN_EDGE }),
     fetchErrors,
     activeSports: sports,
     candidatesCount: scoredCandidates.length,
