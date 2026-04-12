@@ -6,6 +6,7 @@
 import assert from 'node:assert';
 
 import { transformToGameCard } from '../lib/game-card/transform/index';
+import { selectAuthoritativeTruePlay } from '../lib/games/route-handler';
 
 type OfficialStatus = 'PLAY' | 'LEAN' | 'PASS';
 
@@ -78,6 +79,76 @@ function buildGame(officialStatus?: OfficialStatus, edge = 0.04) {
   };
 }
 
+function buildAuthorityCandidate(params: {
+  id: string;
+  status: OfficialStatus;
+  edge: number;
+  supportScore?: number;
+  createdAt?: string;
+}) {
+  return {
+    source_card_id: params.id,
+    cardType: 'mlb-total-call',
+    cardTitle: 'Model total',
+    prediction: 'OVER' as const,
+    confidence: 0.71,
+    tier: 'BEST' as const,
+    reasoning: 'Authority candidate',
+    evPassed: true,
+    driverKey: `driver-${params.id}`,
+    projectedTotal: 8.7,
+    edge: params.edge,
+    kind: 'PLAY' as const,
+    created_at: params.createdAt ?? '2026-04-11T14:00:00.000Z',
+    decision_v2: {
+      direction: 'OVER' as const,
+      support_score: params.supportScore ?? 0.5,
+      conflict_score: 0.1,
+      drivers_used: ['total_projection'],
+      driver_reasons: ['edge'],
+      watchdog_status: 'OK' as const,
+      watchdog_reason_codes: [],
+      missing_data: {
+        missing_fields: [],
+        source_attempts: [],
+        severity: 'INFO' as const,
+      },
+      consistency: {
+        pace_tier: 'NORMAL',
+        event_env: 'NORMAL',
+        event_direction_tag: 'NEUTRAL',
+        vol_env: 'NORMAL',
+        total_bias: 'OK',
+      },
+      fair_prob: 0.57,
+      implied_prob: 0.52,
+      edge_pct: params.edge,
+      edge_delta_pct: params.edge,
+      edge_method: 'TOTAL_DELTA' as const,
+      edge_line_delta: 0.5,
+      edge_lean: 'OVER' as const,
+      proxy_used: false,
+      proxy_capped: false,
+      exact_wager_valid: true,
+      pricing_trace: {
+        market_type: 'TOTAL',
+        market_side: 'OVER',
+        market_line: 8.5,
+        market_price: -110,
+        line_source: 'odds_snapshot',
+        price_source: 'odds_snapshot',
+      },
+      sharp_price_status: 'CHEDDAR' as const,
+      price_reason_codes: [],
+      official_status: params.status,
+      play_tier: params.status === 'PLAY' ? 'GOOD' : params.status === 'LEAN' ? 'OK' : 'BAD',
+      primary_reason_code: params.status === 'PASS' ? 'NO_EDGE' : 'EDGE_CLEAR',
+      pipeline_version: 'v2' as const,
+      decided_at: params.createdAt ?? '2026-04-11T14:00:00.000Z',
+    },
+  };
+}
+
 console.log('🧪 Game card decision authority tests');
 
 {
@@ -96,6 +167,31 @@ console.log('🧪 Game card decision authority tests');
   const card = transformToGameCard(buildGame(undefined, 0.06));
   const reasonSource = (card.play as { reason_source?: string } | undefined)?.reason_source;
   assert.strictEqual(reasonSource, 'NON_CANONICAL_RENDER_FALLBACK');
+}
+
+{
+  const selected = selectAuthoritativeTruePlay([
+    buildAuthorityCandidate({ id: 'lean-high-edge', status: 'LEAN', edge: 0.09, supportScore: 0.9 }),
+    buildAuthorityCandidate({ id: 'play-lower-edge', status: 'PLAY', edge: 0.05, supportScore: 0.4 }),
+  ]);
+  assert.strictEqual(selected?.source_card_id, 'play-lower-edge');
+}
+
+{
+  const selected = selectAuthoritativeTruePlay([
+    buildAuthorityCandidate({ id: 'play-lower-edge', status: 'PLAY', edge: 0.05, supportScore: 0.4 }),
+    buildAuthorityCandidate({ id: 'play-higher-edge', status: 'PLAY', edge: 0.08, supportScore: 0.2 }),
+  ]);
+  assert.strictEqual(selected?.source_card_id, 'play-higher-edge');
+  assert.strictEqual(selected?.true_play_authority_source, 'CARD_PAYLOADS_DECISION_V2');
+  assert.strictEqual(selected?.true_play_authority_version, 'ADR-0003');
+}
+
+{
+  const selected = selectAuthoritativeTruePlay([
+    buildAuthorityCandidate({ id: 'pass-only', status: 'PASS', edge: 0.12, supportScore: 0.8 }),
+  ]);
+  assert.strictEqual(selected, null);
 }
 
 console.log('✅ Game card decision authority tests passed');

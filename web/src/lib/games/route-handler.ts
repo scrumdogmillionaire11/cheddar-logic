@@ -324,13 +324,6 @@ interface CardPayloadRow {
   payload_data: string;
 }
 
-interface DisplayLogRow {
-  id: number;
-  pick_id: string;
-  game_id: string;
-  displayed_at: string;
-}
-
 interface Play {
   source_card_id?: string;
   cardType: string;
@@ -543,6 +536,93 @@ interface Play {
     pass_reason_code: string | null;
     missing_inputs: string[];
   };
+  true_play_authority_source?: 'CARD_PAYLOADS_DECISION_V2';
+  true_play_authority_version?: 'ADR-0003';
+  true_play_authority_rationale?: string;
+}
+const TRUE_PLAY_AUTHORITY_SOURCE = 'CARD_PAYLOADS_DECISION_V2' as const;
+const TRUE_PLAY_AUTHORITY_VERSION = 'ADR-0003' as const;
+const TRUE_PLAY_AUTHORITY_RATIONALE =
+  'status_rank>edge_delta_pct>support_score>created_at>source_card_id';
+
+function resolveLiveOfficialStatus(play: Play): 'PLAY' | 'LEAN' | 'PASS' {
+  const explicit = play.decision_v2?.official_status;
+  if (explicit === 'PLAY' || explicit === 'LEAN' || explicit === 'PASS') {
+    return explicit;
+  }
+  if (play.action === 'FIRE') return 'PLAY';
+  if (play.action === 'HOLD') return 'LEAN';
+  if (play.status === 'FIRE') return 'PLAY';
+  if (play.status === 'WATCH') return 'LEAN';
+  return 'PASS';
+}
+
+function resolveTruePlayStatusRank(play: Play): number {
+  const officialStatus = resolveLiveOfficialStatus(play);
+  if (officialStatus === 'PLAY') return 2;
+  if (officialStatus === 'LEAN') return 1;
+  return 0;
+}
+
+function resolveTruePlayEdge(play: Play): number {
+  const edge = resolveDecisionV2EdgePct(play.decision_v2) ?? play.edge;
+  return Number.isFinite(edge) ? Number(edge) : -Infinity;
+}
+
+function resolveTruePlaySupportScore(play: Play): number {
+  const score = play.decision_v2?.support_score;
+  return Number.isFinite(score) ? Number(score) : -Infinity;
+}
+
+function resolveTruePlayCreatedAtEpoch(play: Play): number {
+  if (!play.created_at) return 0;
+  const parsed = Date.parse(play.created_at);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function compareTruePlayAuthority(a: Play, b: Play): number {
+  const statusDelta = resolveTruePlayStatusRank(a) - resolveTruePlayStatusRank(b);
+  if (statusDelta !== 0) return statusDelta;
+
+  const edgeDelta = resolveTruePlayEdge(a) - resolveTruePlayEdge(b);
+  if (edgeDelta !== 0) return edgeDelta;
+
+  const supportDelta = resolveTruePlaySupportScore(a) - resolveTruePlaySupportScore(b);
+  if (supportDelta !== 0) return supportDelta;
+
+  const createdAtDelta =
+    resolveTruePlayCreatedAtEpoch(a) - resolveTruePlayCreatedAtEpoch(b);
+  if (createdAtDelta !== 0) return createdAtDelta;
+
+  const aId = String(a.source_card_id ?? '');
+  const bId = String(b.source_card_id ?? '');
+  if (aId === bId) return 0;
+  return aId > bId ? 1 : -1;
+}
+
+function annotateAuthoritativePlay(play: Play): Play {
+  return {
+    ...play,
+    true_play_authority_source: TRUE_PLAY_AUTHORITY_SOURCE,
+    true_play_authority_version: TRUE_PLAY_AUTHORITY_VERSION,
+    true_play_authority_rationale: TRUE_PLAY_AUTHORITY_RATIONALE,
+  };
+}
+
+export function selectAuthoritativeTruePlay(plays: Play[]): Play | null {
+  const eligible = plays.filter((play) => {
+    if ((play.kind ?? 'PLAY') !== 'PLAY') return false;
+    const officialStatus = resolveLiveOfficialStatus(play);
+    return officialStatus === 'PLAY' || officialStatus === 'LEAN';
+  });
+  if (eligible.length === 0) return null;
+
+  const winner = eligible.reduce((best, candidate) => {
+    if (!best) return candidate;
+    return compareTruePlayAuthority(candidate, best) > 0 ? candidate : best;
+  }, null as Play | null);
+
+  return winner ? annotateAuthoritativePlay(winner) : null;
 }
 
 interface IngestFailureRow {
@@ -1705,7 +1785,6 @@ export async function GET(request: NextRequest) {
 
     // Build a plays map keyed by canonical game_id
     const playsMap = new Map<string, Play[]>();
-    const playByCardId = new Map<string, Play>();
     const truePlayMap = new Map<string, Play>();
     const gameConsistencyMap = new Map<string, Play['consistency']>();
     const seenNhlShotsPlayKeys = new Set<string>();
@@ -1853,62 +1932,9 @@ export async function GET(request: NextRequest) {
         // card_payloads table not yet created; plays will be empty
       }
 
-      let displayLogRows: DisplayLogRow[] = [];
-      try {
-        if (allQueryableIds.length > 0) {
-          const displayLogPlaceholders = allQueryableIds.map(() => '?').join(', ');
-          const displayLogStmt = db.prepare(`
-            SELECT id, pick_id, game_id, displayed_at
-            FROM card_display_log
-            WHERE game_id IN (${displayLogPlaceholders})
-            ORDER BY datetime(displayed_at) DESC, id DESC
-          `);
-          displayLogRows = displayLogStmt.all(...allQueryableIds) as DisplayLogRow[];
-
-          if (displayLogRows.length > 0) {
-            const dedupedCardRows = new Map<string, CardPayloadRow>();
-            for (const row of cardRows) {
-              dedupedCardRows.set(row.id, row);
-            }
-            const missingPickIds = Array.from(
-              new Set(
-                displayLogRows
-                  .map((row) => String(row.pick_id || ''))
-                  .filter((pickId) => pickId && !dedupedCardRows.has(pickId)),
-              ),
-            );
-            if (activeRunIds.length === 0 && missingPickIds.length > 0) {
-              const missingPayloadPlaceholders = missingPickIds
-                .map(() => '?')
-                .join(', ');
-              const missingPayloadRows = db
-                .prepare(
-                  `
-                  SELECT id, game_id, card_type, card_title, payload_data
-                  FROM card_payloads
-                  WHERE id IN (${missingPayloadPlaceholders})
-                `,
-                )
-                .all(...missingPickIds) as CardPayloadRow[];
-              for (const row of missingPayloadRows) {
-                dedupedCardRows.set(row.id, row);
-              }
-            }
-            cardRows = Array.from(dedupedCardRows.values());
-          }
-        }
-      } catch (error) {
-        if (isRecoverableGamesTimeoutError(error)) {
-          throw error;
-        }
-        const message = String(
-          error instanceof Error ? error.message : error ?? '',
-        ).toLowerCase();
-        if (!message.includes('no such table')) {
-          throw error;
-        }
-        displayLogRows = [];
-      }
+      // ADR-0003 true-play authority: live selection must be computed only from
+      // card_payloads decision data. card_display_log remains historical/analytics
+      // evidence and is intentionally excluded from live authority selection.
 
       perf.cardRows = cardRows.length;
       currentStage = 'cards_parse';
@@ -3206,8 +3232,6 @@ export async function GET(request: NextRequest) {
         } else {
           playsMap.set(canonicalGameId, [play]);
         }
-        playByCardId.set(cardRow.id, play);
-
         if (play.kind === 'PLAY') {
           incrementStageCounter(
             stageCounters,
@@ -3254,55 +3278,11 @@ export async function GET(request: NextRequest) {
         }
       }
 
-      for (const displayLogRow of displayLogRows) {
-        const canonicalGameId =
-          externalToCanonicalMap.get(displayLogRow.game_id) ?? displayLogRow.game_id;
-        const candidate = playByCardId.get(displayLogRow.pick_id);
-        if (!candidate) continue;
-        if ((candidate.kind ?? 'PLAY') !== 'PLAY') continue;
-        const officialStatus =
-          candidate.decision_v2?.official_status ??
-          (candidate.action === 'FIRE'
-            ? 'PLAY'
-            : candidate.action === 'HOLD'
-              ? 'LEAN'
-              : candidate.status === 'FIRE'
-                ? 'PLAY'
-                : candidate.status === 'WATCH'
-                  ? 'LEAN'
-                  : 'PASS');
-        if (officialStatus !== 'PLAY' && officialStatus !== 'LEAN') continue;
-
-        // officialTier: PLAY=2, LEAN=1, other=0
-        const officialTier = officialStatus === 'PLAY' ? 2 : officialStatus === 'LEAN' ? 1 : 0;
-
-        const existing = truePlayMap.get(canonicalGameId);
-        if (existing) {
-          const existingStatus =
-            existing.decision_v2?.official_status ??
-            (existing.action === 'FIRE'
-              ? 'PLAY'
-              : existing.action === 'HOLD'
-                ? 'LEAN'
-                : existing.status === 'FIRE'
-                  ? 'PLAY'
-                  : existing.status === 'WATCH'
-                    ? 'LEAN'
-                    : 'PASS');
-          const existingTier = existingStatus === 'PLAY' ? 2 : existingStatus === 'LEAN' ? 1 : 0;
-          // Only replace if candidate is strictly better tier, or same tier with higher edge
-          const candidateEdge =
-            resolveDecisionV2EdgePct(candidate.decision_v2) ??
-            candidate.edge ??
-            -Infinity;
-          const existingEdge =
-            resolveDecisionV2EdgePct(existing.decision_v2) ??
-            existing.edge ??
-            -Infinity;
-          if (officialTier < existingTier) continue;
-          if (officialTier === existingTier && candidateEdge <= existingEdge) continue;
+      for (const [canonicalGameId, plays] of playsMap.entries()) {
+        const authoritativePlay = selectAuthoritativeTruePlay(plays);
+        if (authoritativePlay) {
+          truePlayMap.set(canonicalGameId, authoritativePlay);
         }
-        truePlayMap.set(canonicalGameId, candidate);
       }
     }
 
