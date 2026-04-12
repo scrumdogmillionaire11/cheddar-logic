@@ -342,3 +342,74 @@ describe('Settlement contract (post-legacy)', () => {
     expect(__private.shouldEnableDisplayBackfill(null)).toBe(false);
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// resolvePlayerShotsActualValue — full-game shots contract (WI-0909)
+// ─────────────────────────────────────────────────────────────────────────────
+
+const FULL_GAME = 'FULL_GAME';
+
+// Minimal gameResultMetadata fixture builder
+function makeGRM({ byId = {}, byName = {} } = {}) {
+  return {
+    playerShots: {
+      fullGameByPlayerId: byId,
+      firstPeriodByPlayerId: {},
+      playerIdByNormalizedName: byName,
+    },
+  };
+}
+
+describe('resolvePlayerShotsActualValue — full-game shots contract (WI-0909)', () => {
+  test('returns shot value when player found by direct id (FULL_GAME)', () => {
+    const grm = makeGRM({ byId: { '8478402': 5 } });
+    const result = __private.resolvePlayerShotsActualValue({
+      gameResultMetadata: grm,
+      playerId: '8478402',
+      playerName: 'Connor McDavid',
+      period: FULL_GAME,
+    });
+    expect(result).toBe(5);
+  });
+
+  test('returns shot value when player found by normalized-name fallback (FULL_GAME)', () => {
+    const grm = makeGRM({
+      byId: { '8478402': 3 },
+      byName: { 'connor mcdavid': '8478402' },
+    });
+    // Use a player_id NOT in byId, but name maps to it
+    const result = __private.resolvePlayerShotsActualValue({
+      gameResultMetadata: grm,
+      playerId: '9999999',
+      playerName: 'Connor McDavid',
+      period: FULL_GAME,
+    });
+    expect(result).toBe(3);
+  });
+
+  test('throws MISSING_PLAYER_SHOTS_VALUE with resolvedAttempts=[id,name] when player absent by both methods (FULL_GAME)', () => {
+    // This is the previously-diverging mismatch fixture: player not in either lookup path
+    const grm = makeGRM({
+      byId: { '8888888': 4 },
+      byName: { 'some other player': '8888888' },
+    });
+    let thrownError;
+    try {
+      __private.resolvePlayerShotsActualValue({
+        gameResultMetadata: grm,
+        playerId: '9999999',
+        playerName: 'Unknown Player',
+        period: FULL_GAME,
+      });
+    } catch (err) {
+      thrownError = err;
+    }
+    expect(thrownError).toBeDefined();
+    expect(thrownError.code).toBe('MISSING_PLAYER_SHOTS_VALUE');
+    expect(thrownError.details).toEqual(
+      expect.objectContaining({
+        resolvedAttempts: expect.arrayContaining(['id', 'name']),
+      }),
+    );
+  });
+});

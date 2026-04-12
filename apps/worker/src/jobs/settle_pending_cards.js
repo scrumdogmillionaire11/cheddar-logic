@@ -1182,19 +1182,23 @@ function resolvePlayerShotsActualValue({ gameResultMetadata, playerId, playerNam
     );
   }
 
+  const resolvedAttempts = [];
+
   const directById = playerId ? Number(byPlayerId[String(playerId)]) : null;
   if (Number.isFinite(directById)) {
     return directById;
   }
+  if (playerId) resolvedAttempts.push('id');
 
   const normalizedName = normalizePlayerName(playerName);
   if (!normalizedName) {
     throw createMarketError(
       'MISSING_PLAYER_IDENTITY',
       'Unable to resolve player identity for NHL shots settlement',
-      { playerId, playerName },
+      { playerId, playerName, resolvedAttempts },
     );
   }
+  resolvedAttempts.push('name');
 
   const playerIdByNormalizedName =
     playerShots.playerIdByNormalizedName &&
@@ -1217,6 +1221,7 @@ function resolvePlayerShotsActualValue({ gameResultMetadata, playerId, playerNam
       playerId,
       playerName,
       period: normalizedPeriod,
+      resolvedAttempts,
     },
   );
 }
