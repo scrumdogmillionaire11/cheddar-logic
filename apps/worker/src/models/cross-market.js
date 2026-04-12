@@ -263,6 +263,7 @@ function computeNHLMarketDecisions(oddsSnapshot) {
   const raw = parseRawData(oddsSnapshot?.raw_data);
   const totalLine = toNumber(oddsSnapshot?.total);
   const spreadHome = toNumber(oddsSnapshot?.spread_home);
+  const spreadAway = toNumber(oddsSnapshot?.spread_away);
   const moneylineHome = toNumber(oddsSnapshot?.h2h_home);
   const moneylineAway = toNumber(oddsSnapshot?.h2h_away);
 
@@ -692,8 +693,10 @@ function computeNHLMarketDecisions(oddsSnapshot) {
     },
     fairPriceResolver: null,
     lineResolver: (side) => {
-      if (spreadHome === null) return null;
-      return side === 'HOME' ? spreadHome : -spreadHome;
+      if (side === 'HOME') return spreadHome;
+      // For AWAY plays: use spread_away directly rather than negating spread_home.
+      if (spreadAway !== null) return spreadAway;
+      return spreadHome !== null ? -spreadHome : null;
     },
     priceResolver: (side) =>
       side === 'HOME'
@@ -865,6 +868,7 @@ function computeNBAMarketDecisions(oddsSnapshot) {
   const raw = parseRawData(oddsSnapshot?.raw_data);
   const totalLine = toNumber(oddsSnapshot?.total);
   const spreadHome = toNumber(oddsSnapshot?.spread_home);
+  const spreadAway = toNumber(oddsSnapshot?.spread_away);
 
   const avgPtsHome = toNumber(
     raw?.espn_metrics?.home?.metrics?.avgPtsHome ??
@@ -1143,8 +1147,13 @@ function computeNBAMarketDecisions(oddsSnapshot) {
       };
     },
     fairPriceResolver: null,
-    lineResolver: (side) =>
-      spreadHome !== null ? (side === 'HOME' ? spreadHome : -spreadHome) : null,
+    lineResolver: (side) => {
+      if (side === 'HOME') return spreadHome;
+      // For AWAY plays: use spread_away directly (Hawks' actual line) rather than
+      // negating spread_home (which is the best HOME execution and may be an outlier).
+      if (spreadAway !== null) return spreadAway;
+      return spreadHome !== null ? -spreadHome : null;
+    },
     priceResolver: (side) =>
       side === 'HOME'
         ? toNumber(oddsSnapshot?.spread_price_home)

@@ -68,3 +68,66 @@ describe('nba total projection alignment', () => {
     expect(gate.missing_inputs).toEqual([]);
   });
 });
+
+describe('nba spread line perspective (away team uses spread_away, not -spread_home)', () => {
+  function buildSnapshot(spreadHome, spreadAway) {
+    return {
+      total: 224.5,
+      spread_home: spreadHome,
+      spread_away: spreadAway,
+      spread_price_home: -110,
+      spread_price_away: -110,
+      raw_data: {
+        espn_metrics: {
+          home: {
+            metrics: {
+              avgPtsHome: 112,
+              avgPointsAllowed: 114,
+              paceHome: 100,
+              restDays: 1,
+            },
+          },
+          away: {
+            metrics: {
+              avgPtsAway: 118,
+              avgPointsAllowed: 110,
+              paceAway: 102,
+              restDays: 2,
+            },
+          },
+        },
+      },
+    };
+  }
+
+  test('AWAY spread line uses spread_away directly, not -spread_home', () => {
+    // Scenario: Hawks (away) are -4.5 favorites. Outlier book inflates Miami to +6.5.
+    // spread_home = +6.5 (best home execution, outlier), spread_away = -4.5 (actual Hawks line)
+    const snapshot = buildSnapshot(6.5, -4.5);
+    const result = computeNBAMarketDecisions(snapshot);
+    expect(result.SPREAD).toBeDefined();
+
+    const awayCandidate = result.SPREAD.best_candidate;
+    if (awayCandidate.side === 'AWAY') {
+      // Line should be -4.5 (spread_away), NOT -6.5 (-spread_home)
+      expect(awayCandidate.line).toBeCloseTo(-4.5, 1);
+      expect(awayCandidate.line).not.toBeCloseTo(-6.5, 1);
+    } else {
+      // HOME side: line should be +6.5 (spread_home)
+      expect(awayCandidate.line).toBeCloseTo(6.5, 1);
+    }
+  });
+
+  test('when spread_away is null, falls back to -spread_home', () => {
+    const snapshot = buildSnapshot(-5.5, null);
+    const result = computeNBAMarketDecisions(snapshot);
+    expect(result.SPREAD).toBeDefined();
+
+    const candidate = result.SPREAD.best_candidate;
+    if (candidate.side === 'AWAY') {
+      expect(candidate.line).toBeCloseTo(5.5, 1);
+    } else {
+      expect(candidate.line).toBeCloseTo(-5.5, 1);
+    }
+  });
+});
