@@ -1833,6 +1833,13 @@ function getSettlementCoverageDiagnostics(db, sport = null, dateRange = null) {
   };
 }
 
+function shouldEnableDisplayBackfill(allowDisplayBackfill) {
+  // ADR-0003: settlement is historical-only for live true-play authority.
+  // Keep display-log backfill hard-disabled even if callers request it.
+  void allowDisplayBackfill;
+  return false;
+}
+
 /**
  * Main job entrypoint
  * @param {object} options - Job options
@@ -1892,7 +1899,9 @@ async function settlePendingCards({
 
       const db = getDatabase();
       const requestedDisplayBackfill = Boolean(allowDisplayBackfill);
-      const enableDisplayBackfill = false;
+      const enableDisplayBackfill = shouldEnableDisplayBackfill(
+        allowDisplayBackfill,
+      );
       let backfilledDisplayed = 0;
       if (requestedDisplayBackfill) {
         console.warn(
@@ -2519,5 +2528,6 @@ module.exports = {
     resolvePlayerShotsActualValue,
     resolveDecisionBasisForSettlement,
     resolveSettlementMarketBucket,
+    shouldEnableDisplayBackfill,
   },
 };
