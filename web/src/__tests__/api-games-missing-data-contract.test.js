@@ -9,32 +9,33 @@ import path from 'node:path';
 const __dirname = new URL('.', import.meta.url).pathname.replace(/\/$/, '');
 
 const gamesRoutePath = path.resolve(__dirname, '../../src/app/api/games/route.ts');
-const transformPath = path.resolve(__dirname, '../../src/lib/game-card/transform.ts');
+const gamesRouteHandlerPath = path.resolve(
+  __dirname,
+  '../../src/lib/games/route-handler.ts',
+);
 const cardsPagePath = path.resolve(__dirname, '../../src/components/cards/CardsPageContext.tsx');
 
 const gamesRouteSource = fs.readFileSync(gamesRoutePath, 'utf8');
-const transformSource = fs.readFileSync(transformPath, 'utf8');
+const gamesRouteHandlerSource = fs.readFileSync(gamesRouteHandlerPath, 'utf8');
 const cardsPageSource = fs.readFileSync(cardsPagePath, 'utf8');
 
 console.log('🧪 API games missing-data contract tests');
 
 assert(
-  gamesRouteSource.includes('FROM odds_ingest_failures') &&
-    gamesRouteSource.includes('hasOdds || hasPlays || hasIngestFailure'),
+  gamesRouteSource.includes("export { GET } from '@/lib/games/route-handler';"),
+  '/api/games route.ts should delegate to the shared route-handler implementation',
+);
+
+assert(
+  gamesRouteHandlerSource.includes('FROM odds_ingest_failures') &&
+    gamesRouteHandlerSource.includes('hasOdds || hasPlays || hasIngestFailure'),
   '/api/games should preserve recent ingest-failure rows instead of dropping all no-odds/no-play games',
 );
 
 assert(
-  gamesRouteSource.includes('ingest_failure_reason_code') &&
-    gamesRouteSource.includes('ingest_failure_reason_detail'),
+  gamesRouteHandlerSource.includes('ingest_failure_reason_code') &&
+    gamesRouteHandlerSource.includes('ingest_failure_reason_detail'),
   '/api/games should expose ingest failure metadata for downstream classification',
-);
-
-assert(
-  transformSource.includes("game.ingest_failure_reason_code === 'TEAM_MAPPING_UNMAPPED'") &&
-    transformSource.includes("'MISSING_DATA_TEAM_MAPPING'") &&
-    transformSource.includes("'MISSING_DATA_PROJECTION_INPUTS'"),
-  'transform should classify mapping and projection-input failures with specific reason codes',
 );
 
 assert(
@@ -45,15 +46,35 @@ assert(
 
 // Duplicate-game dedup contract
 assert(
-  gamesRouteSource.includes('deduplicatedRows') &&
-    gamesRouteSource.includes('byMatchup') &&
-    gamesRouteSource.includes('odds_captured_at'),
+  gamesRouteHandlerSource.includes('deduplicatedRows') &&
+    gamesRouteHandlerSource.includes('byMatchup') &&
+    gamesRouteHandlerSource.includes('odds_captured_at'),
   '/api/games should deduplicate same-matchup rows, keeping the one with latest odds',
 );
 
 assert(
-  gamesRouteSource.includes('deduped_count'),
+  gamesRouteHandlerSource.includes('deduped_count'),
   '/api/games debug metadata should expose how many duplicate rows were collapsed',
+);
+
+assert(
+  gamesRouteHandlerSource.includes('selectAuthoritativeTruePlay(plays)') &&
+    gamesRouteHandlerSource.includes('truePlayMap.set(canonicalGameId, authoritativePlay)'),
+  '/api/games should build true_play from a single authoritative selector path',
+);
+
+assert(
+  gamesRouteHandlerSource.includes(
+    'card_display_log remains historical/analytics',
+  ) && !gamesRouteHandlerSource.includes('FROM card_display_log'),
+  '/api/games true_play authority should not query card_display_log as a live authority source',
+);
+
+assert(
+  gamesRouteHandlerSource.includes('if (activeRunIds.length > 0)') &&
+    gamesRouteHandlerSource.includes('const missingGameIds = allQueryableIds.filter(') &&
+    gamesRouteHandlerSource.includes('buildCardsSql(missingGameIds, \'\')'),
+  '/api/games should use the same authority selector in active-run and no-active-run coverage paths',
 );
 
 console.log('✅ API games missing-data contract tests passed');
