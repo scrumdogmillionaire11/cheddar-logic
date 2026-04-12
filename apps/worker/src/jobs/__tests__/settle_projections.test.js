@@ -22,6 +22,7 @@ jest.mock('@cheddar-logic/data', () => ({
 // Mock nhl-settlement-source
 jest.mock('../nhl-settlement-source', () => ({
   fetchNhlSettlementSnapshot: jest.fn(),
+  resolveNhlFullGamePlayerShots: jest.requireActual('../nhl-settlement-source').resolveNhlFullGamePlayerShots,
 }));
 
 // Mock settle_mlb_f5 (imported for fetchF5Total, not used in player-prop handlers)
@@ -617,5 +618,55 @@ describe('settleProjections — proxy eval integration', () => {
     );
 
     consoleSpy.mockRestore();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// resolveNhlFullGamePlayerShots — unit tests (WI-0909)
+// ─────────────────────────────────────────────────────────────────────────────
+
+const { resolveNhlFullGamePlayerShots } = require('../nhl-settlement-source');
+
+function makeFullGameSnapshot({ fullGameByPlayerId = {}, playerIdByNormalizedName = {} } = {}) {
+  return {
+    available: true,
+    isFinal: true,
+    playerShots: {
+      fullGameByPlayerId,
+      firstPeriodByPlayerId: {},
+      playerNamesById: {},
+      playerIdByNormalizedName,
+      sources: { boxscore: true, playByPlay: true },
+    },
+  };
+}
+
+describe('resolveNhlFullGamePlayerShots', () => {
+  test('resolves by id when player id present in fullGameByPlayerId', () => {
+    const snapshot = makeFullGameSnapshot({ fullGameByPlayerId: { '8478402': 5 } });
+    const result = resolveNhlFullGamePlayerShots(snapshot, '8478402', 'Connor McDavid');
+    expect(result).toEqual({ value: 5, resolvedBy: 'id' });
+  });
+
+  test('resolves by name when id not in map but name-lookup succeeds', () => {
+    const snapshot = makeFullGameSnapshot({
+      fullGameByPlayerId: { '8478402': 3 },
+      playerIdByNormalizedName: { 'connor mcdavid': '8478402' },
+    });
+    // Use a player_id that is NOT in fullGameByPlayerId
+    const result = resolveNhlFullGamePlayerShots(snapshot, '9999999', 'Connor McDavid');
+    expect(result).toEqual({ value: 3, resolvedBy: 'name' });
+  });
+
+  test('returns null when player absent from both lookup paths', () => {
+    const snapshot = makeFullGameSnapshot({ fullGameByPlayerId: { '8478402': 5 } });
+    const result = resolveNhlFullGamePlayerShots(snapshot, '9999999', 'Unknown Player');
+    expect(result).toBeNull();
+  });
+
+  test('returns null when snapshot has no playerShots', () => {
+    const snapshot = { available: true, isFinal: true };
+    const result = resolveNhlFullGamePlayerShots(snapshot, '8478402', 'Connor McDavid');
+    expect(result).toBeNull();
   });
 });

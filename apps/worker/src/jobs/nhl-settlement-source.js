@@ -496,6 +496,45 @@ async function fetchNhlSettlementSnapshot({
   };
 }
 
+/**
+ * Canonical resolver for full-game NHL player shots.
+ *
+ * Tries direct playerId lookup first, then falls back to normalized-name
+ * lookup via playerIdByNormalizedName. Returns { value, resolvedBy } on
+ * success, or null if the player cannot be found.
+ *
+ * @param {object} snapshot - result of fetchNhlSettlementSnapshot
+ * @param {string|number|null} playerId
+ * @param {string|null} playerName
+ * @returns {{ value: number, resolvedBy: 'id' | 'name' } | null}
+ */
+function resolveNhlFullGamePlayerShots(snapshot, playerId, playerName) {
+  const playerShots = snapshot?.playerShots;
+  if (!playerShots || typeof playerShots !== 'object') return null;
+  const byId = playerShots.fullGameByPlayerId;
+  if (!byId || typeof byId !== 'object') return null;
+
+  const idKey = playerId !== null && playerId !== undefined ? String(playerId) : null;
+  if (idKey) {
+    const byIdValue = toFiniteNumberOrNull(byId[idKey]);
+    if (byIdValue !== null) return { value: byIdValue, resolvedBy: 'id' };
+  }
+
+  const normalized = normalizePlayerName(playerName);
+  if (normalized) {
+    const nameMap = playerShots.playerIdByNormalizedName;
+    if (nameMap && typeof nameMap === 'object') {
+      const mappedId = nameMap[normalized];
+      if (mappedId) {
+        const byNameValue = toFiniteNumberOrNull(byId[String(mappedId)]);
+        if (byNameValue !== null) return { value: byNameValue, resolvedBy: 'name' };
+      }
+    }
+  }
+
+  return null;
+}
+
 module.exports = {
   DEFAULT_NHL_API_TIMEOUT_MS,
   areNhlSnapshotsEquivalent,
@@ -506,4 +545,5 @@ module.exports = {
   fetchNhlSettlementSnapshot,
   normalizeNhlLandingSnapshot,
   normalizePlayerName,
+  resolveNhlFullGamePlayerShots,
 };
