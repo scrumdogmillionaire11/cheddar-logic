@@ -520,6 +520,11 @@ function applyExecutionGateToNhlCard(card, { oddsSnapshot, nowMs = Date.now() } 
   const snapshotAgeMs = resolveSnapshotAgeMs(oddsSnapshot, nowMs);
 
   if (executionStatus !== 'EXECUTABLE' || alreadyPass) {
+    const earlyExitDropReasonCode = alreadyPass
+      ? 'NOT_BET_ELIGIBLE'
+      : executionStatus === 'PROJECTION_ONLY'
+        ? 'PROJECTION_ONLY_EXCLUSION'
+        : 'NOT_EXECUTABLE_PATH';
     payload.execution_gate = {
       evaluated: false,
       should_bet: null,
@@ -528,6 +533,10 @@ function applyExecutionGateToNhlCard(card, { oddsSnapshot, nowMs = Date.now() } 
       model_status: resolvedModelStatus,
       snapshot_age_ms: snapshotAgeMs,
       evaluated_at: new Date(nowMs).toISOString(),
+      drop_reason: {
+        drop_reason_code: earlyExitDropReasonCode,
+        drop_reason_layer: 'worker_gate',
+      },
     };
     return { evaluated: false, blocked: false };
   }
@@ -553,6 +562,7 @@ function applyExecutionGateToNhlCard(card, { oddsSnapshot, nowMs = Date.now() } 
     model_status: resolvedModelStatus,
     snapshot_age_ms: snapshotAgeMs,
     evaluated_at: new Date(nowMs).toISOString(),
+    drop_reason: gateResult.drop_reason,
   };
 
   if (!gateResult.shouldBet) {

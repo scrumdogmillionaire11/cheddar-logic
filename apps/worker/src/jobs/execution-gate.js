@@ -2,6 +2,26 @@
 
 const { isMarketCalibrationEnabled } = require('../calibration/calibration-gate');
 
+/**
+ * Map the primary blocked_by entry to the bounded drop reason taxonomy.
+ *
+ * @param {string[]} blocked_by
+ * @returns {string}
+ */
+function mapBlockedByToDropReasonCode(blocked_by) {
+  const primary = Array.isArray(blocked_by) && blocked_by.length > 0 ? blocked_by[0] : null;
+  if (!primary) return 'UNKNOWN_GATE';
+  if (primary.startsWith('NO_EDGE_COMPUTED')) return 'MISSING_EDGE';
+  if (primary.startsWith('NET_EDGE_INSUFFICIENT')) return 'NO_EDGE_AT_CURRENT_PRICE';
+  if (primary.startsWith('MODEL_STATUS_')) return 'MODEL_STATUS_GATE';
+  if (primary === 'CALIBRATION_KILL_SWITCH') return 'CALIBRATION_GATE';
+  if (primary.startsWith('CONFIDENCE_BELOW_THRESHOLD')) return 'CONFIDENCE_GATE';
+  if (primary.startsWith('STALE_SNAPSHOT')) return 'STALE_SNAPSHOT_GATE';
+  if (primary === 'NOT_BET_ELIGIBLE') return 'NOT_BET_ELIGIBLE';
+  if (primary === 'NOT_EXECUTABLE_PATH') return 'PROJECTION_ONLY_EXCLUSION';
+  return 'UNKNOWN_GATE';
+}
+
 const VIG_COST_STANDARD = 0.045;
 const SLIPPAGE_ESTIMATE = 0.005;
 // Default: 5 minutes for the automated pipeline (odds pull → model run back-to-back).
@@ -99,11 +119,18 @@ function evaluateExecution(params) {
     block_reason,
     netEdge,
     blocked_by,
+    drop_reason: shouldBet
+      ? null
+      : {
+          drop_reason_code: mapBlockedByToDropReasonCode(blocked_by),
+          drop_reason_layer: 'worker_gate',
+        },
   };
 }
 
 module.exports = {
   evaluateExecution,
+  mapBlockedByToDropReasonCode,
   VIG_COST_STANDARD,
   SLIPPAGE_ESTIMATE,
 };
