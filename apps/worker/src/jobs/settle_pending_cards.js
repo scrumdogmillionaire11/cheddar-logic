@@ -1167,6 +1167,25 @@ function resolvePlayerShotsActualValue({ gameResultMetadata, playerId, playerNam
 
   const normalizedPeriod = normalizeSettlementPeriod(period);
   const usingFirstPeriod = normalizedPeriod === '1P';
+
+  // If settling a 1P prop, require explicit first-period completeness confirmation.
+  // Only blocks when isComplete is explicitly false — absent verification is treated permissively
+  // (e.g., game_results written before nhl_api_ method was available).
+  if (usingFirstPeriod) {
+    const verification =
+      gameResultMetadata.firstPeriodVerification &&
+      typeof gameResultMetadata.firstPeriodVerification === 'object'
+        ? gameResultMetadata.firstPeriodVerification
+        : null;
+    if (verification && verification.isComplete === false) {
+      throw createMarketError(
+        'PERIOD_NOT_COMPLETE',
+        'First period not yet complete — cannot grade 1P player shots',
+        { period: normalizedPeriod, gameState: verification.gameState ?? null },
+      );
+    }
+  }
+
   const byPlayerId = usingFirstPeriod
     ? playerShots.firstPeriodByPlayerId
     : playerShots.fullGameByPlayerId;

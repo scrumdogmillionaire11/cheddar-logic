@@ -413,3 +413,104 @@ describe('resolvePlayerShotsActualValue — full-game shots contract (WI-0909)',
     );
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// resolvePlayerShotsActualValue — 1P shots contract (WI-0910)
+// ─────────────────────────────────────────────────────────────────────────────
+
+const FIRST_PERIOD = '1P';
+
+function makeGRM1P({ firstPeriodById = {}, byName = {}, isComplete = true } = {}) {
+  return {
+    firstPeriodVerification: { isComplete },
+    playerShots: {
+      fullGameByPlayerId: {},
+      firstPeriodByPlayerId: firstPeriodById,
+      playerIdByNormalizedName: byName,
+    },
+  };
+}
+
+describe('resolvePlayerShotsActualValue — 1P shots contract (WI-0910)', () => {
+  test('returns 1P shot value when firstPeriodVerification.isComplete=true and player found', () => {
+    const grm = makeGRM1P({ firstPeriodById: { '8478402': 3 }, isComplete: true });
+    const result = __private.resolvePlayerShotsActualValue({
+      gameResultMetadata: grm,
+      playerId: '8478402',
+      playerName: 'Connor McDavid',
+      period: FIRST_PERIOD,
+    });
+    expect(result).toBe(3);
+  });
+
+  test('throws PERIOD_NOT_COMPLETE when firstPeriodVerification.isComplete=false', () => {
+    const grm = makeGRM1P({ firstPeriodById: { '8478402': 3 }, isComplete: false });
+    let thrownError;
+    try {
+      __private.resolvePlayerShotsActualValue({
+        gameResultMetadata: grm,
+        playerId: '8478402',
+        playerName: 'Connor McDavid',
+        period: FIRST_PERIOD,
+      });
+    } catch (err) {
+      thrownError = err;
+    }
+    expect(thrownError).toBeDefined();
+    expect(thrownError.code).toBe('PERIOD_NOT_COMPLETE');
+  });
+
+  test('throws MISSING_PERIOD_PLAYER_SHOTS_VALUE when 1P complete but player absent', () => {
+    const grm = makeGRM1P({ firstPeriodById: { '8888888': 2 }, isComplete: true });
+    let thrownError;
+    try {
+      __private.resolvePlayerShotsActualValue({
+        gameResultMetadata: grm,
+        playerId: '9999999',
+        playerName: 'Unknown Player',
+        period: FIRST_PERIOD,
+      });
+    } catch (err) {
+      thrownError = err;
+    }
+    expect(thrownError).toBeDefined();
+    expect(thrownError.code).toBe('MISSING_PERIOD_PLAYER_SHOTS_VALUE');
+  });
+
+  test('reads firstPeriodByPlayerId permissively when firstPeriodVerification absent', () => {
+    // No firstPeriodVerification key at all — treat as permissive (no throw from completeness guard)
+    const grm = {
+      playerShots: {
+        fullGameByPlayerId: {},
+        firstPeriodByPlayerId: { '8478402': 4 },
+        playerIdByNormalizedName: {},
+      },
+    };
+    const result = __private.resolvePlayerShotsActualValue({
+      gameResultMetadata: grm,
+      playerId: '8478402',
+      playerName: 'Connor McDavid',
+      period: FIRST_PERIOD,
+    });
+    expect(result).toBe(4);
+  });
+
+  test('FULL_GAME is not guarded even when firstPeriodVerification.isComplete=false', () => {
+    // Use makeGRM (existing helper) but add firstPeriodVerification with isComplete=false
+    const grm = {
+      firstPeriodVerification: { isComplete: false },
+      playerShots: {
+        fullGameByPlayerId: { '8478402': 7 },
+        firstPeriodByPlayerId: {},
+        playerIdByNormalizedName: {},
+      },
+    };
+    const result = __private.resolvePlayerShotsActualValue({
+      gameResultMetadata: grm,
+      playerId: '8478402',
+      playerName: 'Connor McDavid',
+      period: FULL_GAME,
+    });
+    expect(result).toBe(7);
+  });
+});
