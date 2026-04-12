@@ -15,7 +15,7 @@ const {
   batchInsertProjectionProxyEvals,
 } = require('@cheddar-logic/data');
 const { buildProjectionProxyMarketRows, CARD_TYPE_TO_FAMILY } = require('../audit/projection_evaluator');
-const { fetchNhlSettlementSnapshot } = require('./nhl-settlement-source');
+const { fetchNhlSettlementSnapshot, resolveNhlFullGamePlayerShots } = require('./nhl-settlement-source');
 const { fetchF5Total } = require('./settle_mlb_f5');
 
 const JOB_NAME = 'settle_projections';
@@ -289,13 +289,40 @@ async function settleProjections({ jobKey = null, dryRun = false } = {}) {
             }
 
             const playerId = String(payload.player_id);
-            const shots = snapshot.playerShots.fullGameByPlayerId[playerId];
-            if (shots === undefined || shots === null) {
+            const playerName = String(payload.player_name || '');
+            const resolved = resolveNhlFullGamePlayerShots(snapshot, playerId, playerName);
+            if (!resolved) {
               console.warn(
                 `  [${JOB_NAME}] nhl-player-shots ${card.game_id} player=${playerId}: not found in snapshot`,
               );
               skipped++;
               continue;
+            }
+            const shots = resolved.value;
+
+            // Mismatch check against game_results stored metadata
+            try {
+              const grRow = db.prepare(
+                `SELECT metadata FROM game_results WHERE game_id = ? LIMIT 1`,
+              ).get(card.game_id);
+              if (grRow?.metadata) {
+                const grMeta = typeof grRow.metadata === 'string'
+                  ? JSON.parse(grRow.metadata)
+                  : grRow.metadata;
+                const storedByPlayerId = grMeta?.playerShots?.fullGameByPlayerId;
+                if (storedByPlayerId && typeof storedByPlayerId === 'object') {
+                  const rawStored = storedByPlayerId[playerId];
+                  if (rawStored !== undefined && rawStored !== null) {
+                    const storedValue = Number(rawStored);
+                    if (Number.isFinite(storedValue) && storedValue !== shots) {
+                      console.warn(`[NHL_SHOTS_MISMATCH] game=${card.game_id} player=${playerId} apiValue=${shots} storedValue=${storedValue}`);
+                    }
+                  }
+                }
+              }
+            } catch (mismatchErr) {
+              // Non-fatal — mismatch check must not block settlement
+              console.warn(`[NHL_SHOTS_MISMATCH_CHECK_ERROR] ${mismatchErr.message}`);
             }
 
             if (!dryRun) {

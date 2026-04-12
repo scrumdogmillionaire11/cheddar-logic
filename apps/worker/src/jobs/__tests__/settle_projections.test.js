@@ -627,6 +627,132 @@ describe('settleProjections — proxy eval integration', () => {
 
 const { resolveNhlFullGamePlayerShots } = require('../nhl-settlement-source');
 
+// ─────────────────────────────────────────────────────────────────────────────
+// settle_projections — nhl-player-shots mismatch detection (WI-0909)
+// ─────────────────────────────────────────────────────────────────────────────
+
+function makeCardWithPlayerName(cardType, playerId, playerName, gameId = null) {
+  const defaultGameId = cardType.startsWith('mlb') ? 'mlb-test-game' : '2024020001';
+  return {
+    card_id: `card-${cardType}-${playerId}`,
+    game_id: gameId ?? defaultGameId,
+    sport: 'nhl',
+    card_type: cardType,
+    payload_data: JSON.stringify({ player_id: playerId, player_name: playerName }),
+    game_time_utc: new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString(),
+    home_team: 'EDM',
+    away_team: 'CGY',
+  };
+}
+
+function makeSnapshotWithNameLookup({
+  available = true,
+  isFinal = true,
+  fullGameByPlayerId = {},
+  playerIdByNormalizedName = {},
+} = {}) {
+  return {
+    available,
+    isFinal,
+    isFirstPeriodComplete: true,
+    playerShots: {
+      fullGameByPlayerId,
+      firstPeriodByPlayerId: {},
+      playerNamesById: {},
+      playerIdByNormalizedName,
+      sources: { boxscore: true, playByPlay: true },
+    },
+    playerBlocks: { fullGameByPlayerId: {}, playerNamesById: {}, playerIdByNormalizedName: {} },
+  };
+}
+
+describe('settleProjections — nhl-player-shots mismatch detection (WI-0909)', () => {
+  let warnSpy;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    warnSpy.mockRestore();
+  });
+
+  test('mismatch fixture: emits [NHL_SHOTS_MISMATCH] when stored shots=4 but live API shots=6', async () => {
+    const playerId = '8478402';
+    const card = makeCardWithPlayerName('nhl-player-shots', playerId, 'Connor McDavid');
+    getUnsettledProjectionCards.mockReturnValue([card]);
+    fetchNhlSettlementSnapshot.mockResolvedValue(
+      makeSnapshotWithNameLookup({ fullGameByPlayerId: { [playerId]: 6 } }),
+    );
+    // DB returns stored game_results metadata with shots=4 (different from live 6)
+    const storedMeta = JSON.stringify({
+      playerShots: { fullGameByPlayerId: { [playerId]: 4 } },
+    });
+    getDatabase.mockReturnValue({
+      prepare: jest.fn().mockReturnValue({
+        get: jest.fn().mockReturnValue({ metadata: storedMeta }),
+      }),
+    });
+
+    const result = await settleProjections({ dryRun: false });
+
+    expect(result.success).toBe(true);
+    expect(result.settled).toBe(1);
+    // API value (6) used for settlement, not stored (4)
+    expect(setProjectionActualResult).toHaveBeenCalledWith(card.card_id, { shots: 6 });
+    // Mismatch warn emitted
+    const warnCalls = warnSpy.mock.calls.map((args) => args[0]);
+    expect(warnCalls.some((msg) => String(msg).includes('[NHL_SHOTS_MISMATCH]'))).toBe(true);
+  });
+
+  test('no mismatch: no warn when stored shots=6 matches live API shots=6', async () => {
+    const playerId = '8478402';
+    const card = makeCardWithPlayerName('nhl-player-shots', playerId, 'Connor McDavid');
+    getUnsettledProjectionCards.mockReturnValue([card]);
+    fetchNhlSettlementSnapshot.mockResolvedValue(
+      makeSnapshotWithNameLookup({ fullGameByPlayerId: { [playerId]: 6 } }),
+    );
+    const storedMeta = JSON.stringify({
+      playerShots: { fullGameByPlayerId: { [playerId]: 6 } },
+    });
+    getDatabase.mockReturnValue({
+      prepare: jest.fn().mockReturnValue({
+        get: jest.fn().mockReturnValue({ metadata: storedMeta }),
+      }),
+    });
+
+    const result = await settleProjections({ dryRun: false });
+
+    expect(result.settled).toBe(1);
+    expect(setProjectionActualResult).toHaveBeenCalledWith(card.card_id, { shots: 6 });
+    const warnCalls = warnSpy.mock.calls.map((args) => args[0]);
+    expect(warnCalls.some((msg) => String(msg).includes('[NHL_SHOTS_MISMATCH]'))).toBe(false);
+  });
+
+  test('no stored row: proceeds normally with API value, no warn', async () => {
+    const playerId = '8478402';
+    const card = makeCardWithPlayerName('nhl-player-shots', playerId, 'Connor McDavid');
+    getUnsettledProjectionCards.mockReturnValue([card]);
+    fetchNhlSettlementSnapshot.mockResolvedValue(
+      makeSnapshotWithNameLookup({ fullGameByPlayerId: { [playerId]: 3 } }),
+    );
+    // No game_results row found
+    getDatabase.mockReturnValue({
+      prepare: jest.fn().mockReturnValue({
+        get: jest.fn().mockReturnValue(null),
+      }),
+    });
+
+    const result = await settleProjections({ dryRun: false });
+
+    expect(result.settled).toBe(1);
+    expect(setProjectionActualResult).toHaveBeenCalledWith(card.card_id, { shots: 3 });
+    const warnCalls = warnSpy.mock.calls.map((args) => args[0]);
+    expect(warnCalls.some((msg) => String(msg).includes('[NHL_SHOTS_MISMATCH]'))).toBe(false);
+  });
+});
+
 function makeFullGameSnapshot({ fullGameByPlayerId = {}, playerIdByNormalizedName = {} } = {}) {
   return {
     available: true,
