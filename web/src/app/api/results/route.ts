@@ -698,9 +698,8 @@ export async function GET(request: NextRequest) {
 
     const ids = dedupedIdRows.map((r) => r.id);
 
-    const actionableSourceRows = db
-      .prepare(
-        `
+    const actionableSourceStmt = db.prepare(
+      `
       ${clvByCardCte}
       SELECT
         cr.id,
@@ -718,8 +717,7 @@ export async function GET(request: NextRequest) {
       LEFT JOIN clv_by_card ON clv_by_card.card_id = cr.card_id
       WHERE cr.id IN (${placeholders})
     `,
-      )
-      .all(...ids) as ActionableSourceRow[];
+    );
 
     // Projection card types (mlb-f5, mlb-pitcher-k, nhl-player-shots, etc.) are
     // never shown in the betting UI so they never appear in card_display_log.
@@ -729,9 +727,8 @@ export async function GET(request: NextRequest) {
     // betting ledger path.
     const projTrackingPlaceholders = PROJECTION_TRACKING_CARD_TYPES.map(() => '?').join(',');
     const projTrackingSportFilter = buildSportFilter(sport, 'cr.sport');
-    const projectionTrackingRows = db
-      .prepare(
-        `
+    const projectionTrackingStmt = db.prepare(
+      `
       SELECT
         cr.sport,
         cr.card_type,
@@ -745,57 +742,33 @@ export async function GET(request: NextRequest) {
         AND gr.status = 'final'
         ${projTrackingSportFilter.sql}
     `,
-      )
-      .all(
-        ...PROJECTION_TRACKING_CARD_TYPES,
-        ...projTrackingSportFilter.params,
-      ) as { sport: string; card_type: string; payload_data: string; actual_result: string | null; game_result_metadata: string }[];
+    );
 
     const projectionSummaries = buildProjectionSummaries(
-      projectionTrackingRows.map((row) => ({
-        sport: row.sport,
-        cardType: row.card_type,
-        payload: safeJsonParse(row.payload_data).data as Record<string, unknown> | null,
-        actualResult: row.actual_result,
-        gameResultMetadata: safeJsonParse(row.game_result_metadata)
-          .data as Record<string, unknown> | null,
-      })),
+      (function* () {
+        for (const row of projectionTrackingStmt.iterate(
+          ...PROJECTION_TRACKING_CARD_TYPES,
+          ...projTrackingSportFilter.params,
+        ) as Iterable<{
+          sport: string;
+          card_type: string;
+          payload_data: string;
+          actual_result: string | null;
+          game_result_metadata: string;
+        }>) {
+          yield {
+            sport: row.sport,
+            cardType: row.card_type,
+            payload: safeJsonParse(row.payload_data)
+              .data as Record<string, unknown> | null,
+            actualResult: row.actual_result,
+            gameResultMetadata: safeJsonParse(row.game_result_metadata)
+              .data as Record<string, unknown> | null,
+          };
+        }
+      })(),
     );
-    const oddsBackedLedgerIds = actionableSourceRows.flatMap((row) => {
-      const parsed = safeJsonParse(row.payload_data);
-      const payload = parsed.data as Record<string, unknown> | null;
-      return deriveResultCardMode(payload, row.card_type) === 'ODDS_BACKED'
-        ? [row.id]
-        : [];
-    });
-
-    const actionableRows = actionableSourceRows.flatMap((row) => {
-      const parsed = safeJsonParse(row.payload_data);
-      const payload = parsed.data as Record<string, unknown> | null;
-      if (deriveResultCardMode(payload, row.card_type) !== 'ODDS_BACKED') {
-        return [];
-      }
-
-      const decisionTier = resolveDecisionTier(payload);
-      if (decisionTier !== 'PLAY' && decisionTier !== 'LEAN') {
-        return [];
-      }
-      const decisionSegment = deriveDecisionSegment(decisionTier);
-      const cardFamily = deriveCardFamily(row.sport, row.card_type);
-      const modelFamily = deriveModelFamily(row.sport, row.card_type);
-      const modelVersion = deriveModelVersion(row.sport, row.card_type);
-      return [
-        {
-          ...row,
-          decisionTier,
-          segmentId: decisionSegment.id,
-          segmentLabel: decisionSegment.label,
-          cardFamily,
-          modelFamily,
-          modelVersion,
-        },
-      ];
-    });
+    const oddsBackedLedgerIds: string[] = [];
 
     const segmentMap = new Map<
       string,
@@ -829,7 +802,27 @@ export async function GET(request: NextRequest) {
     let totalClvPctSum = 0;
     let totalClvPctCount = 0;
 
-    for (const row of actionableRows) {
+    for (const row of actionableSourceStmt.iterate(
+      ...ids,
+    ) as Iterable<ActionableSourceRow>) {
+      const parsed = safeJsonParse(row.payload_data);
+      const payload = parsed.data as Record<string, unknown> | null;
+      if (deriveResultCardMode(payload, row.card_type) !== 'ODDS_BACKED') {
+        continue;
+      }
+
+      oddsBackedLedgerIds.push(row.id);
+
+      const decisionTier = resolveDecisionTier(payload);
+      if (decisionTier !== 'PLAY' && decisionTier !== 'LEAN') {
+        continue;
+      }
+
+      const decisionSegment = deriveDecisionSegment(decisionTier);
+      const cardFamily = deriveCardFamily(row.sport, row.card_type);
+      const modelFamily = deriveModelFamily(row.sport, row.card_type);
+      const modelVersion = deriveModelVersion(row.sport, row.card_type);
+
       totalCards += 1;
       settledCards += 1;
       if (row.result === 'win') wins += 1;
@@ -850,9 +843,9 @@ export async function GET(request: NextRequest) {
       // This merges driver types (nhl-pace-totals) and call types (nhl-totals-call)
       // into a single NHL_TOTAL row rather than producing duplicate table rows.
       const key = [
-        row.segmentId,
+        decisionSegment.id,
         row.sport,
-        row.cardFamily,
+        cardFamily,
         recommendedBetType,
       ].join('||');
       const existing = segmentMap.get(key);
@@ -860,9 +853,9 @@ export async function GET(request: NextRequest) {
         segmentMap.set(key, {
           sport: row.sport,
           cardType: row.card_type,
-          cardFamily: row.cardFamily,
-          modelFamily: row.modelFamily,
-          modelVersion: row.modelVersion,
+          cardFamily,
+          modelFamily,
+          modelVersion,
           cardCategory,
           recommendedBetType,
           settledCards: 1,
@@ -875,9 +868,9 @@ export async function GET(request: NextRequest) {
               : 0,
           hasPnl:
             typeof row.pnl_units === 'number' && Number.isFinite(row.pnl_units),
-          segmentId: row.segmentId,
-          segmentLabel: row.segmentLabel,
-          decisionTier: row.decisionTier,
+          segmentId: decisionSegment.id,
+          segmentLabel: decisionSegment.label,
+          decisionTier,
         });
       } else {
         existing.settledCards += 1;

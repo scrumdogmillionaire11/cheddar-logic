@@ -505,7 +505,7 @@ export function deriveModelVersion(
 }
 
 export function buildProjectionSummaries(
-  rows: ProjectionMetricInputRow[],
+  rows: Iterable<ProjectionMetricInputRow>,
 ): ProjectionSummaryRow[] {
   const grouped = new Map<string, ProjectionAccumulator>();
 

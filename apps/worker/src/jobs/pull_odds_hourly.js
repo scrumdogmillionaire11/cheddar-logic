@@ -445,6 +445,29 @@ async function pullOddsHourly({ jobKey = null, dryRun = false } = {}) {
               gamesUpserted++;
               kpis.gamesUpserted += 1;
 
+              // WI-XXXX: Normalize spread perspective — provider's home/away may not match our DB
+              // If provider's home team ≠ our game's home team, spreads MUST be swapped
+              // to ensure spreads align with our database perspective.
+              let finalSpreadHome = normalized.odds?.spreadHome;
+              let finalSpreadAway = normalized.odds?.spreadAway;
+              let finalSpreadPriceHome = normalized.odds?.spreadPriceHome;
+              let finalSpreadPriceAway = normalized.odds?.spreadPriceAway;
+              
+              const providerHomeTeam = String(normalized.homeTeam).toLowerCase().trim();
+              const providerAwayTeam = String(normalized.awayTeam).toLowerCase().trim();
+              const dbHomeTeam = String(normalized.homeTeam).toLowerCase().trim();
+              const dbAwayTeam = String(normalized.awayTeam).toLowerCase().trim();
+              
+              // Check if teams are inverted: if provider's away team matches our home team,
+              // it means the provider saw the matchup from opposite perspective
+              if (providerAwayTeam === dbHomeTeam && providerHomeTeam === dbAwayTeam) {
+                // Provider reversed — swap all spread values to align with our DB perspective
+                finalSpreadHome = normalized.odds?.spreadAway;
+                finalSpreadAway = normalized.odds?.spreadHome;
+                finalSpreadPriceHome = normalized.odds?.spreadPriceAway;
+                finalSpreadPriceAway = normalized.odds?.spreadPriceHome;
+              }
+
               // Insert odds snapshot
               insertOddsSnapshot({
                 id: `odds-${sport.toLowerCase()}-${normalized.gameId}-${uuidV4().slice(0, 8)}`,
@@ -472,13 +495,13 @@ async function pullOddsHourly({ jobKey = null, dryRun = false } = {}) {
                 totalOutlierBook: normalized.odds?.totalOutlierBook,
                 totalOutlierDelta: normalized.odds?.totalOutlierDelta,
                 totalReviewFlag: normalized.odds?.totalReviewFlag,
-                spreadHome: normalized.odds?.spreadHome,
-                spreadAway: normalized.odds?.spreadAway,
+                spreadHome: finalSpreadHome,
+                spreadAway: finalSpreadAway,
                 spreadHomeBook: normalized.odds?.spreadHomeBook,
                 spreadAwayBook: normalized.odds?.spreadAwayBook,
-                spreadPriceHome: normalized.odds?.spreadPriceHome,
+                spreadPriceHome: finalSpreadPriceHome,
                 spreadPriceHomeBook: normalized.odds?.spreadPriceHomeBook,
-                spreadPriceAway: normalized.odds?.spreadPriceAway,
+                spreadPriceAway: finalSpreadPriceAway,
                 spreadPriceAwayBook: normalized.odds?.spreadPriceAwayBook,
                 spreadIsMispriced: normalized.odds?.spreadIsMispriced,
                 spreadMispriceType: normalized.odds?.spreadMispriceType,
