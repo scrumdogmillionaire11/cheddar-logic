@@ -190,4 +190,43 @@ describe('scheduler: run_calibration_report nightly at 04:00 ET (WI-0860)', () =
 
     expect(mockRunNBAModel).not.toHaveBeenCalled();
   });
+
+  test('hourly settlement queues settle_pending_cards before settle_mlb_f5', () => {
+    process.env.ENABLE_MLB_MODEL = 'true';
+    const scheduler = loadSchedulerModule();
+
+    const nowEt = DateTime.fromISO('2026-04-10T01:02:00', { zone: TZ });
+    const nowUtc = nowEt.toUTC();
+
+    const jobs = scheduler.computeDueJobs({ nowEt, nowUtc, games: [], dryRun: true });
+    const pendingIndex = jobs.findIndex((j) => j.jobName === 'settle_pending_cards');
+    const f5Index = jobs.findIndex((j) => j.jobName === 'settle_mlb_f5');
+
+    expect(pendingIndex).toBeGreaterThanOrEqual(0);
+    expect(f5Index).toBeGreaterThanOrEqual(0);
+    expect(pendingIndex).toBeLessThan(f5Index);
+  });
+
+  test('nightly settlement queues settle_pending_cards before settle_mlb_f5 at 02:00 ET', () => {
+    process.env.ENABLE_MLB_MODEL = 'true';
+    const scheduler = loadSchedulerModule();
+
+    const nowEt = DateTime.fromISO('2026-04-10T02:02:00', { zone: TZ });
+    const nowUtc = nowEt.toUTC();
+
+    const jobs = scheduler.computeDueJobs({ nowEt, nowUtc, games: [], dryRun: true });
+    const pendingIndex = jobs.findIndex((j) => j.jobName === 'settle_pending_cards');
+    const f5Index = jobs.findIndex((j) => j.jobName === 'settle_mlb_f5');
+
+    expect(
+      jobs.some(
+        (j) =>
+          j.jobName === 'settle_pending_cards' &&
+          j.jobKey === 'settle|nightly|2026-04-10|pending-cards',
+      ),
+    ).toBe(true);
+    expect(pendingIndex).toBeGreaterThanOrEqual(0);
+    expect(f5Index).toBeGreaterThanOrEqual(0);
+    expect(pendingIndex).toBeLessThan(f5Index);
+  });
 });
