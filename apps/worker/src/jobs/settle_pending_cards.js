@@ -579,15 +579,39 @@ function parseJsonObject(value) {
 // not full-game scores. settle_pending_cards must not touch them.
 const F5_CARD_TYPE_PREFIX = 'mlb-f5';
 
-function resolveNonActionableFinalReason(payloadData, row) {
-  // F5 market cards are projection-only — P&L is not tracked for them.
-  const cardTypeLower = String(row?.card_type || '').toLowerCase();
+const F5_MARKET_TYPE_TOKENS = Object.freeze([
+  'FIRST_5_INNINGS',
+  'F5_TOTAL',
+  'F5_ML',
+]);
+
+const F5_MARKET_TOKENS = Object.freeze(['f5_total', 'f5_ml']);
+
+function isProjectionOnlyF5Row(row, payloadData = null) {
+  const cardTypeLower = String(row?.card_type || '').trim().toLowerCase();
   if (cardTypeLower.startsWith(F5_CARD_TYPE_PREFIX)) {
-    return {
-      code: 'PROJECTION_ONLY_F5',
-      message: 'F5 card type is projection-only — settled separately by settle_mlb_f5',
-      details: { cardType: row.card_type },
-    };
+    return true;
+  }
+
+  const marketTypeToken = toUpperToken(row?.market_type);
+  if (F5_MARKET_TYPE_TOKENS.includes(marketTypeToken)) {
+    return true;
+  }
+
+  const payload =
+    payloadData && typeof payloadData === 'object' ? payloadData : null;
+  const payloadMarket = String(
+    payload?.market ?? payload?.market_key ?? '',
+  )
+    .trim()
+    .toLowerCase();
+  return F5_MARKET_TOKENS.some((token) => payloadMarket.includes(token));
+}
+
+function resolveNonActionableFinalReason(payloadData, row) {
+  // F5 market cards are projection-only and must remain pending for settle_mlb_f5.
+  if (isProjectionOnlyF5Row(row, payloadData)) {
+    return null;
   }
 
   // Rows with no market_key cannot be settled — auto-close with explicit reason
@@ -2078,6 +2102,15 @@ async function settlePendingCards({
         const awayScore = Number(pendingCard.final_score_away);
         const firstPeriodScores = readFirstPeriodScores(gameResultMetadata);
         const isNhlShotsCard = isNhlShotsOnGoalCard(pendingCard, payloadData);
+
+        if (isProjectionOnlyF5Row(pendingCard, payloadData)) {
+          cardsSkipped++;
+          console.log(
+            `[SettleCards] Skipping projection-only F5 row ${pendingCard.card_id} (${pendingCard.result_id}) for settle_mlb_f5`,
+          );
+          continue;
+        }
+
         let clvTracked = false;
         let lockedMarket = null;
 
@@ -2528,6 +2561,7 @@ module.exports = {
     resolvePlayerShotsActualValue,
     resolveDecisionBasisForSettlement,
     resolveSettlementMarketBucket,
+    isProjectionOnlyF5Row,
     shouldEnableDisplayBackfill,
   },
 };

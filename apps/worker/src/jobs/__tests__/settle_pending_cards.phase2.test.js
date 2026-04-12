@@ -6,6 +6,67 @@
 const { __private } = require('../settle_pending_cards.js');
 
 describe('Settlement contract (post-legacy)', () => {
+  test('F5 signature guard detects all canonical token variants', () => {
+    const cases = [
+      {
+        name: 'card_type mlb-f5',
+        row: { card_type: 'mlb-f5', market_type: 'TOTAL' },
+        payload: {},
+      },
+      {
+        name: 'card_type mlb-f5-ml',
+        row: { card_type: 'mlb-f5-ml', market_type: 'MONEYLINE' },
+        payload: {},
+      },
+      {
+        name: 'market_type FIRST_5_INNINGS',
+        row: { card_type: 'mlb-moneyline', market_type: 'FIRST_5_INNINGS' },
+        payload: {},
+      },
+      {
+        name: 'market_type F5_TOTAL',
+        row: { card_type: 'mlb-totals', market_type: 'F5_TOTAL' },
+        payload: {},
+      },
+      {
+        name: 'market_type F5_ML',
+        row: { card_type: 'mlb-moneyline', market_type: 'F5_ML' },
+        payload: {},
+      },
+      {
+        name: 'payload market f5_total',
+        row: { card_type: 'mlb-moneyline', market_type: 'TOTAL' },
+        payload: { market: 'f5_total' },
+      },
+      {
+        name: 'payload market_key mlb_f5_ml',
+        row: { card_type: 'mlb-moneyline', market_type: 'MONEYLINE' },
+        payload: { market_key: 'mlb_f5_ml' },
+      },
+    ];
+
+    for (const testCase of cases) {
+      expect(
+        __private.isProjectionOnlyF5Row(testCase.row, testCase.payload),
+      ).toBe(true);
+    }
+  });
+
+  test('F5 signature guard leaves non-F5 rows eligible for standard settlement', () => {
+    expect(
+      __private.isProjectionOnlyF5Row(
+        { card_type: 'mlb-moneyline', market_type: 'MONEYLINE' },
+        { market_key: 'mlb_moneyline' },
+      ),
+    ).toBe(false);
+    expect(
+      __private.isProjectionOnlyF5Row(
+        { card_type: 'nba-totals-call', market_type: 'TOTAL' },
+        { market: 'total' },
+      ),
+    ).toBe(false);
+  });
+
   test('does not expose legacy top-level card selector', () => {
     expect(__private.selectTopLevelCard).toBeUndefined();
   });
