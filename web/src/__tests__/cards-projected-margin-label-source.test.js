@@ -23,17 +23,16 @@ assert(
 );
 
 assert(
-  cardsPageSource.includes('formatProjectedMarginDirectional') &&
-    cardsPageSource.includes('return projectedMargin >= 0') &&
-    cardsPageSource.includes('projectedMargin.toFixed(1)'),
-  'spread projected formatter should preserve signed directional output',
+  cardsPageSource.includes('formatProjectedMarginTeamFacing') &&
+    cardsPageSource.includes('return `${favoredTeam} by ${Math.abs(projectedMargin).toFixed(1)}`;'),
+  'spread projected formatter should render team-facing output',
 );
 
 assert(
-  /formatProjectedSentence\(\s*projectedValue,\s*marketLine,\s*primaryReasonCode,\s*effectiveEdgePct,\s*marketType,\s*projectedMargin,\s*\)/m.test(
+  /formatProjectedSentence\(\s*projectedValue,\s*marketLine,\s*primaryReasonCode,\s*effectiveEdgePct,\s*marketType,\s*projectedMargin,\s*card\.homeTeam,\s*card\.awayTeam,\s*\)/m.test(
     cardsPageSource,
   ),
-  'projected sentence call should pass marketType and projectedMargin context',
+  'projected sentence call should pass marketType, projectedMargin, and matchup context',
 );
 
 assert(

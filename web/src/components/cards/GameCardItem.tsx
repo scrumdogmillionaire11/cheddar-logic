@@ -648,6 +648,8 @@ export default function GameCardItem({
           effectiveEdgePct,
           marketType,
           projectedMargin,
+          card.homeTeam,
+          card.awayTeam,
         )
       : null;
   const contextLine1 =
