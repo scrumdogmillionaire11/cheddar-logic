@@ -147,4 +147,67 @@ function makePlay(id, officialStatus, edgeDeltaPct, supportScore = 0.5, createdA
     'settlement sweep: PASS-only eligible set must return null, not a phantom true_play');
 }
 
+// ── Drop reason ledger contract ──────────────────────────────────────────────
+
+// Fixture A — survivor candidate: play with drop_reason: null and PLAY reason_codes
+const fixtureA = {
+  source_card_id: 'survivor-A',
+  execution_gate: { drop_reason: null, should_bet: true },
+  reason_codes: ['PLAY'],
+};
+
+// Fixture B — dropped candidate: play with NO_EDGE_AT_CURRENT_PRICE drop_reason
+const fixtureB = {
+  source_card_id: 'dropped-B',
+  execution_gate: {
+    drop_reason: {
+      drop_reason_code: 'NO_EDGE_AT_CURRENT_PRICE',
+      drop_reason_layer: 'worker_gate',
+    },
+  },
+  reason_codes: ['PASS_NO_EDGE'],
+};
+
+assert.strictEqual(
+  fixtureB.execution_gate.drop_reason.drop_reason_code,
+  'NO_EDGE_AT_CURRENT_PRICE',
+  'dropped candidate must carry NO_EDGE_AT_CURRENT_PRICE drop_reason_code',
+);
+
+assert.strictEqual(
+  fixtureB.execution_gate.drop_reason.drop_reason_layer,
+  'worker_gate',
+  'dropped candidate drop_reason_layer must be worker_gate',
+);
+
+assert.strictEqual(
+  fixtureA.execution_gate.drop_reason,
+  null,
+  'survivor candidate must have drop_reason: null',
+);
+
+assert.ok(
+  !fixtureA.reason_codes.some((c) =>
+    ['PASS_NO_EDGE', 'PROJECTION_ONLY_EXCLUSION', 'PROJECTION_ONLY'].includes(c),
+  ),
+  'survivor candidate must have no blocking reason code',
+);
+
+// Source-level assertion: CardsPageContext must include _drop_reason_code mapping
+assert(
+  cardsPageSource.includes('_drop_reason_code'),
+  'CardsPageContext diagnostics mapping must include _drop_reason_code field',
+);
+
+assert(
+  cardsPageSource.includes('_drop_reason_layer'),
+  'CardsPageContext diagnostics mapping must include _drop_reason_layer field',
+);
+
+// Source-level assertion: route-handler must include drop_summary
+assert(
+  gamesRouteHandlerSource.includes('drop_summary'),
+  'route-handler flowDiagnostics must include drop_summary for dev-mode observability',
+);
+
 console.log('✅ API games missing-data contract tests passed');

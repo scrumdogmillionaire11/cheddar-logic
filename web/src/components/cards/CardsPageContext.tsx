@@ -476,6 +476,7 @@ export function CardsPageProvider({
           driverLoadFailed: 0,
           noOdds: 0,
           noProjection: 0,
+          projectionOnly: 0,
         };
       }
       const buckets = result[sportKey];
@@ -495,6 +496,11 @@ export function CardsPageProvider({
         codes.includes('PASS_DATA_ERROR')
       ) {
         buckets.driverLoadFailed += 1;
+      } else if (
+        codes.includes('PROJECTION_ONLY_EXCLUSION') ||
+        card.play?.pass_reason_code === 'PROJECTION_ONLY'
+      ) {
+        buckets.projectionOnly += 1;
       } else {
         buckets.noProjection += 1;
       }
@@ -507,7 +513,7 @@ export function CardsPageProvider({
     const visibleIds = new Set(
       (filteredCards as CardsPageState['filteredCards']).map((card) => card.id),
     );
-    return enrichedCards.filter((card) => {
+    const filtered = enrichedCards.filter((card) => {
       if (visibleIds.has(card.id)) return false;
       if ((card.sport || 'UNKNOWN').toUpperCase() !== uiState.diagnosticFilter?.sport) {
         return false;
@@ -531,6 +537,11 @@ export function CardsPageProvider({
             codes.includes('MISSING_DATA_DRIVERS') ||
             codes.includes('PASS_DATA_ERROR')
           );
+        case 'projectionOnly':
+          return (
+            codes.includes('PROJECTION_ONLY_EXCLUSION') ||
+            card.play?.pass_reason_code === 'PROJECTION_ONLY'
+          );
         case 'noProjection':
           return (
             codes.includes('MISSING_DATA_PROJECTION_INPUTS') ||
@@ -540,13 +551,25 @@ export function CardsPageProvider({
               !codes.includes('MISSING_DATA_NO_PLAYS') &&
               !codes.includes('PASS_MISSING_MARKET_TYPE') &&
               !codes.includes('MISSING_DATA_DRIVERS') &&
-              !codes.includes('PASS_DATA_ERROR'))
+              !codes.includes('PASS_DATA_ERROR') &&
+              !codes.includes('PROJECTION_ONLY_EXCLUSION') &&
+              card.play?.pass_reason_code !== 'PROJECTION_ONLY')
           );
         default:
           return false;
       }
     });
-  }, [enrichedCards, filteredCards, uiState.diagnosticFilter]);
+    // In diagnostics mode, attach drop reason metadata for surface visibility
+    if (!diagnosticsEnabled) return filtered;
+    return filtered.map((card) => ({
+      ...card,
+      _drop_reason_code:
+        card.play?.transform_meta?.drop_reason?.drop_reason_code ??
+        card.play?.pass_reason_code ??
+        null,
+      _drop_reason_layer: card.play?.transform_meta?.drop_reason?.drop_reason_layer ?? null,
+    }));
+  }, [diagnosticsEnabled, enrichedCards, filteredCards, uiState.diagnosticFilter]);
 
   const hiddenDataErrors = useMemo(
     () =>

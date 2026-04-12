@@ -15,13 +15,14 @@ export default function SportDiagnosticsPanel({
       buckets.missingMapping +
         buckets.driverLoadFailed +
         buckets.noOdds +
-        buckets.noProjection >
+        buckets.noProjection +
+        (buckets.projectionOnly ?? 0) >
       0,
   );
   if (sportsWithBlocked.length === 0) return null;
   const totalBlocked = sportsWithBlocked.reduce(
     (sum, [, b]) =>
-      sum + b.missingMapping + b.driverLoadFailed + b.noOdds + b.noProjection,
+      sum + b.missingMapping + b.driverLoadFailed + b.noOdds + b.noProjection + (b.projectionOnly ?? 0),
     0,
   );
 
@@ -38,6 +39,7 @@ export default function SportDiagnosticsPanel({
               <th className="text-center px-2 pb-1 font-normal">No odds</th>
               <th className="text-center px-2 pb-1 font-normal">Missing map</th>
               <th className="text-center px-2 pb-1 font-normal">Driver failed</th>
+              <th className="text-center px-2 pb-1 font-normal">Proj only</th>
               <th className="text-center px-2 pb-1 font-normal">No projection</th>
             </tr>
           </thead>
@@ -50,6 +52,7 @@ export default function SportDiagnosticsPanel({
                     'noOdds',
                     'missingMapping',
                     'driverLoadFailed',
+                    'projectionOnly',
                     'noProjection',
                   ] as const
                 ).map((bucket) => (

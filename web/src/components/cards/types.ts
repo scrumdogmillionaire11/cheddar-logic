@@ -255,6 +255,7 @@ export type SportBuckets = {
   driverLoadFailed: number;
   noOdds: number;
   noProjection: number;
+  projectionOnly: number;
 };
 
 export type SportDiagnosticsMap = Record<string, SportBuckets>;
@@ -263,7 +264,8 @@ export type DiagnosticBucket =
   | 'missingMapping'
   | 'driverLoadFailed'
   | 'noOdds'
-  | 'noProjection';
+  | 'noProjection'
+  | 'projectionOnly';
 
 export type DiagnosticFilter = {
   sport: string;
