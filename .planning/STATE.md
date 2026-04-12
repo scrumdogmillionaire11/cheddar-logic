@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Model Integrity & Betting Execution Hardening
 status: active
-last_updated: "2026-04-11T00:00:00Z"
-last_activity: "2026-04-11 - Completed quick task 154: WI-0881 wire NHL goalie composite into POTD signal"
+last_updated: "2026-04-11T23:59:00Z"
+last_activity: "2026-04-11 - Completed WI-0891-01-PLAN.md: settlement display-backfill guard + /api/games true_play authority contract tests"
 ---
 
 # Project State

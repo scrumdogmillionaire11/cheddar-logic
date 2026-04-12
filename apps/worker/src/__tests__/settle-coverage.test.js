@@ -518,7 +518,7 @@ describe('settlement coverage parity', () => {
     }
   });
 
-  test('allowDisplayBackfill settles pending final cards missing display-log', async () => {
+  test('allowDisplayBackfill request is ignored under ADR-0003 strict mode', async () => {
     const originalGate = process.env.CHEDDAR_SETTLEMENT_ENABLE_DISPLAY_BACKFILL;
     process.env.CHEDDAR_SETTLEMENT_ENABLE_DISPLAY_BACKFILL = 'true';
     try {
@@ -526,8 +526,8 @@ describe('settlement coverage parity', () => {
       expect(result.success).toBe(true);
       expect(result.cardsErrored).toBe(0);
       expect(result.coverage.marketDailyCounts?.NHL_MONEYLINE).toMatchObject({
-        pending: 1,
-        settled: 1,
+        pending: 0,
+        settled: 0,
         failed: 0,
       });
 
@@ -541,11 +541,11 @@ describe('settlement coverage parity', () => {
         `,
         )
         .get('card-p5');
-      expect(cardP5?.status).toBe('settled');
-      expect(cardP5?.result).toBe('win');
+      expect(cardP5?.status).toBe('pending');
+      expect(cardP5?.result).toBe(null);
 
       const diagnosticsAfterBackfill = __private.getSettlementCoverageDiagnostics(db);
-      expect(diagnosticsAfterBackfill.pendingWithFinalButNotDisplayed).toBe(0);
+      expect(diagnosticsAfterBackfill.pendingWithFinalButNotDisplayed).toBe(1);
     } finally {
       if (originalGate === undefined) {
         delete process.env.CHEDDAR_SETTLEMENT_ENABLE_DISPLAY_BACKFILL;

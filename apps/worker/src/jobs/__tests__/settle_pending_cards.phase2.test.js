@@ -274,4 +274,10 @@ describe('Settlement contract (post-legacy)', () => {
     expect(passedMeta.market_period_token).toBe('1P');
     expect(passedMeta.backfilledAt).toBe('2025-12-01T00:00:00Z');
   });
+
+  test('display backfill authority guard stays disabled even when override requested', () => {
+    expect(__private.shouldEnableDisplayBackfill(false)).toBe(false);
+    expect(__private.shouldEnableDisplayBackfill(true)).toBe(false);
+    expect(__private.shouldEnableDisplayBackfill(null)).toBe(false);
+  });
 });

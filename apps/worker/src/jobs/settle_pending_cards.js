@@ -1833,6 +1833,13 @@ function getSettlementCoverageDiagnostics(db, sport = null, dateRange = null) {
   };
 }
 
+function shouldEnableDisplayBackfill(allowDisplayBackfill) {
+  // ADR-0003: settlement is historical-only for live true-play authority.
+  // Keep display-log backfill hard-disabled even if callers request it.
+  void allowDisplayBackfill;
+  return false;
+}
+
 /**
  * Main job entrypoint
  * @param {object} options - Job options
@@ -1891,22 +1898,21 @@ async function settlePendingCards({
       insertJobRun('settle_pending_cards', jobRunId, jobKey);
 
       const db = getDatabase();
-      const globalBackfillEnabled =
-        process.env.CHEDDAR_SETTLEMENT_ENABLE_DISPLAY_BACKFILL === 'true';
       const requestedDisplayBackfill = Boolean(allowDisplayBackfill);
-      const enableDisplayBackfill =
-        requestedDisplayBackfill && globalBackfillEnabled;
+      const enableDisplayBackfill = shouldEnableDisplayBackfill(
+        allowDisplayBackfill,
+      );
       let backfilledDisplayed = 0;
-      if (requestedDisplayBackfill && !globalBackfillEnabled) {
+      if (requestedDisplayBackfill) {
         console.warn(
-          '[SettleCards] Display backfill was requested but CHEDDAR_SETTLEMENT_ENABLE_DISPLAY_BACKFILL is not true; staying strict',
+          '[SettleCards] ADR-0003 authority guard: settlement display-log backfill is disabled; worker is historical-only for true-play authority',
         );
       }
       if (enableDisplayBackfill) {
         backfilledDisplayed = backfillDisplayedPlaysFromPayloads(db);
       } else {
         console.log(
-          '[SettleCards] Strict display-log mode enabled; payload backfill is disabled',
+          '[SettleCards] ADR-0003 strict mode enabled; payload display-log backfill is disabled',
         );
       }
       if (backfilledDisplayed > 0) {
@@ -2522,5 +2528,6 @@ module.exports = {
     resolvePlayerShotsActualValue,
     resolveDecisionBasisForSettlement,
     resolveSettlementMarketBucket,
+    shouldEnableDisplayBackfill,
   },
 };
