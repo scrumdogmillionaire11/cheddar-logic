@@ -202,6 +202,10 @@ interface ApiPlay {
   pass_reason?: string | null;
   basis?: 'PROJECTION_ONLY' | 'ODDS_BACKED';
   execution_status?: 'EXECUTABLE' | 'PROJECTION_ONLY' | 'BLOCKED';
+  execution_gate?: {
+    drop_reason?: { drop_reason_code: string; drop_reason_layer: string } | null;
+    blocked_by?: string[];
+  } | null;
   prop_decision?: ApiPropDecision | null;
   prop_display_state?: ApiPropDisplayState;
   run_id?: string;
@@ -1087,6 +1091,7 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
         quality: effectiveDecisionV2.watchdog_status === 'BLOCKED' ? 'DEGRADED' : 'OK',
         missing_inputs: effectiveDecisionV2.missing_data.missing_fields,
         placeholders_found: [],
+        drop_reason: wave1DecisionPlay.execution_gate?.drop_reason ?? null,
       },
       market_type: marketType,
       kind: 'PLAY',
@@ -1283,6 +1288,7 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
         quality: isHealthyNoEdge ? 'OK' : 'DEGRADED',
         missing_inputs: missingInputs,
         placeholders_found: [],
+        drop_reason: null,
       },
       status: 'PASS',
       market: 'NONE',
@@ -2381,6 +2387,9 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
       quality,
       missing_inputs: Array.from(missingInputs),
       placeholders_found: placeholdersFound,
+      drop_reason:
+        (propPlay ?? spreadPlay ?? totalPlay ?? scopedPlayCandidates[0])?.execution_gate
+          ?.drop_reason ?? null,
     },
     market_type: resolvedMarketType,
     kind: 'PLAY',

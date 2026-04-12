@@ -510,6 +510,11 @@ interface Play {
   market_bookmaker?: string | null;
   basis?: 'PROJECTION_ONLY' | 'ODDS_BACKED';
   execution_status?: 'EXECUTABLE' | 'PROJECTION_ONLY' | 'BLOCKED';
+  execution_gate?: {
+    drop_reason?: { drop_reason_code: string; drop_reason_layer: string } | null;
+    blocked_by?: string[];
+    [key: string]: unknown;
+  } | null;
   prop_display_state?: 'PLAY' | 'WATCH' | 'PROJECTION_ONLY';
   prop_decision?: {
     verdict: 'PLAY' | 'WATCH' | 'NO_PLAY' | 'PROJECTION';
@@ -1791,6 +1796,8 @@ export async function GET(request: NextRequest) {
     const seenMlbPitcherKPlayKeys = new Set<string>();
     const injuredNhlPlayerIds = new Set<string>();
     const injuredNhlPlayerNames = new Set<string>();
+    // Collect drop reasons from card payloads for dev-mode diagnostics
+    const parsedDropReasons: Array<{ drop_reason_code: string; drop_reason_layer: string }> = [];
 
     try {
       const availabilityRows = db
@@ -1955,6 +1962,24 @@ export async function GET(request: NextRequest) {
         } catch {
           // Skip malformed rows silently
           continue;
+        }
+
+        // Collect execution_gate.drop_reason for dev-mode diagnostics aggregation
+        const payloadExecGate = payload.execution_gate != null && typeof payload.execution_gate === 'object'
+          ? (payload.execution_gate as Record<string, unknown>)
+          : null;
+        const payloadDropReason = payloadExecGate?.drop_reason != null && typeof payloadExecGate.drop_reason === 'object'
+          ? (payloadExecGate.drop_reason as Record<string, unknown>)
+          : null;
+        if (
+          payloadDropReason &&
+          typeof payloadDropReason.drop_reason_code === 'string' &&
+          typeof payloadDropReason.drop_reason_layer === 'string'
+        ) {
+          parsedDropReasons.push({
+            drop_reason_code: payloadDropReason.drop_reason_code,
+            drop_reason_layer: payloadDropReason.drop_reason_layer,
+          });
         }
 
         const driverInputs =
@@ -3429,6 +3454,28 @@ export async function GET(request: NextRequest) {
         return { sport, card_type, count };
       })
       .sort((a, b) => b.count - a.count);
+    // Build drop_summary for dev-mode diagnostics: group by drop_reason_code, count, record layer
+    const buildDropSummary = (
+      dropReasons: Array<{ drop_reason_code: string; drop_reason_layer: string }>,
+    ): Array<{ drop_reason_code: string; drop_reason_layer: string; count: number }> => {
+      const countMap = new Map<string, { drop_reason_layer: string; count: number }>();
+      for (const dr of dropReasons) {
+        const existing = countMap.get(dr.drop_reason_code);
+        if (existing) {
+          existing.count += 1;
+        } else {
+          countMap.set(dr.drop_reason_code, { drop_reason_layer: dr.drop_reason_layer, count: 1 });
+        }
+      }
+      return Array.from(countMap.entries())
+        .map(([drop_reason_code, { drop_reason_layer, count }]) => ({
+          drop_reason_code,
+          drop_reason_layer,
+          count,
+        }))
+        .sort((a, b) => b.count - a.count);
+    };
+
     const flowDiagnostics = isDev
       ? {
           stage_counters: stageCounters,
@@ -3454,6 +3501,7 @@ export async function GET(request: NextRequest) {
             ...playableMarketDiagnostics,
             out_of_contract_play_rows: outOfContractRows,
           },
+          drop_summary: buildDropSummary(parsedDropReasons),
         }
       : undefined;
 
