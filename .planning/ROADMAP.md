@@ -111,3 +111,23 @@ Plans:
 - [ ] WI-0914-01-PLAN.md — Shared playoff overlay contract + scheduler/watchdog + payload validation (Wave 1)
 - [ ] WI-0914-02-PLAN.md — NHL + NBA playoff runner/model overlays (Wave 2)
 - [ ] WI-0914-03-PLAN.md — NFL + MLB playoff overlays + stricter playoff thresholds (Wave 2)
+
+
+---
+
+### Phase: ime-01-independent-market-eval — Independent Market Evaluation
+
+**Goal**: Replace winner-take-all market selection with independent evaluation + explicit rejection accounting for MLB and NHL moneyline markets. Every generated market candidate must end in exactly one terminal status with reason codes. No market may disappear without accounting. MLB full_game_ml and NHL ML are first-class markets, not fallback artifacts.
+
+**Audit source**: `.planning/MONEYLINE_AUDIT_FULL_SYSTEM.md`
+
+**Requirements:** [IME-CONTRACT-01, IME-CONTRACT-02, IME-MLB-01, IME-MLB-02, IME-MLB-03, IME-MLB-04, IME-NHL-01, IME-NHL-02, IME-NHL-03]
+
+**Plans:** 5 plans in 3 waves
+
+Plans:
+- [ ] ime-01-01-PLAN.md — Shared evaluation contract: evaluateSingleMarket, finalizeGameMarketEvaluation, assertNoSilentMarketDrop, REASON_CODES (Wave 1)
+- [ ] ime-01-02-PLAN.md — Kill MLB hardcoded selector: replace selectMlbGameMarket with evaluateMlbGameMarkets (Wave 1)
+- [ ] ime-01-03-PLAN.md — Wire evaluateMlbGameMarkets into run_mlb_model.js; multi-market insertion (Wave 2)
+- [ ] ime-01-04-PLAN.md — NHL independent evaluation: evaluateNHLGameMarkets + choosePrimaryDisplayMarket; wire into run_nhl_model.js (Wave 2)
+- [ ] ime-01-05-PLAN.md — Spec doc docs/market_evaluation_contract.md + VALID_STATUSES export (Wave 3)
