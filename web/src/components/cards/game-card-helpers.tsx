@@ -303,6 +303,19 @@ export function formatProjectedMarginDirectional(
     : projectedMargin.toFixed(1);
 }
 
+export function formatProjectedMarginTeamFacing(
+  projectedMargin: number | undefined,
+  homeTeam: string | undefined,
+  awayTeam: string | undefined,
+) {
+  if (typeof projectedMargin !== 'number') return 'N/A';
+  if (!homeTeam || !awayTeam) return formatProjectedMarginDirectional(projectedMargin);
+  if (Math.abs(projectedMargin) < 0.05) return 'Pick\'em';
+
+  const favoredTeam = projectedMargin > 0 ? homeTeam : awayTeam;
+  return `${favoredTeam} by ${Math.abs(projectedMargin).toFixed(1)}`;
+}
+
 export function normalizeSelectionSide(
   side: string | null | undefined,
 ): 'HOME' | 'AWAY' | 'OVER' | 'UNDER' | undefined {
@@ -355,6 +368,8 @@ export function formatProjectedSentence(
   edgePctValue: number | undefined,
   marketType: string | undefined,
   projectedMargin: number | undefined,
+  homeTeam?: string,
+  awayTeam?: string,
 ): string | null {
   if (typeof projection !== 'number') {
     return null;
@@ -364,7 +379,7 @@ export function formatProjectedSentence(
     marketType === 'SPREAD' || marketType === 'PUCKLINE';
   const spreadProjectedLabel =
     isSpreadLikeMarket && typeof projectedMargin === 'number'
-      ? `Model: ${formatProjectedMarginDirectional(projectedMargin)}`
+      ? `Model: ${formatProjectedMarginTeamFacing(projectedMargin, homeTeam, awayTeam)}`
       : `Model: ${projection.toFixed(1)}`;
 
   if (typeof line === 'number' && Math.abs(line) > 0.001) {
