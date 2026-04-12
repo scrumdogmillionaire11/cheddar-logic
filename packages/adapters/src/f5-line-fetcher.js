@@ -8,7 +8,7 @@
  * Production use is deferred pending legal/ToS review.
  */
 
-const fetch = require('node-fetch');
+// Uses Node 18+ built-in fetch (no node-fetch dep needed)
 
 const VSIN_BETTING_SPLITS_BASE = 'https://data.vsin.com/mlb/betting-splits/';
 const SPIKE_FETCH_TIMEOUT_MS = 5000;
