@@ -119,7 +119,14 @@ async function settleMlbF5({ jobKey = null, dryRun = false } = {}) {
           if (!String(marketKey).includes('f5')) continue;
 
           const prediction = payload?.prediction;
-          const line = payload?.market?.line ?? payload?.f5_line ?? null;
+          // WI-0913 Spike: Try to read F5 line from injected market line first (from spike fetcher),
+          // then fall back to original location
+          const line = payload?.f5_market_line?.line 
+            ?? payload?.market?.line 
+            ?? payload?.f5_line 
+            ?? null;
+          const marketLineSource = payload?.f5_market_line?.source ?? 'original';
+          
           if (!prediction || prediction === 'PASS' || line === null) continue;
 
           // Check if F5 total already cached in game_results metadata
@@ -198,7 +205,7 @@ async function settleMlbF5({ jobKey = null, dryRun = false } = {}) {
           }
 
           console.log(
-            `  [${JOB_NAME}] ${card.game_id}: F5 actual=${actualF5} vs line=${line} prediction=${prediction} → ${outcome}`,
+            `  [${JOB_NAME}] ${card.game_id}: F5 actual=${actualF5} vs line=${line} (source=${marketLineSource}) prediction=${prediction} → ${outcome}`,
           );
           settled++;
         } catch (err) {

@@ -41,6 +41,9 @@ const {
   computeMLBLeagueAverages,
 } = require('@cheddar-logic/data');
 
+// WI-0913: Spike F5 market line fetcher (non-prod)
+const { fetchF5LineFromVsin } = require('@cheddar-logic/adapters').f5LineFetcher;
+
 // Import pluggable inference layer
 const { getModel, computeMLBDriverCards, computePitcherKDriverCards } = require('../models');
 const { selectMlbGameMarket, projectF5ML, projectTeamF5RunsAgainstStarter, setLeagueConstants } = require('../models/mlb-model');
@@ -2553,6 +2556,29 @@ async function runMLBModel({
               }
             }
             insertCardPayload(card);
+
+            // WI-0913 Spike: Fetch real F5 market line and inject into payload for settlement
+            if (isF5 && gameId && !dryRun) {
+              (async () => {
+                try {
+                  const f5Result = await fetchF5LineFromVsin(gameId);
+                  if (f5Result && f5Result.line !== null && f5Result.line !== undefined) {
+                    // Line was fetched successfully — store it for settlement
+                    console.log(`[WI-0913] ${gameId} injecting F5 line ${f5Result.line} from ${f5Result.source}`);
+                    card.payloadData.f5_market_line = {
+                      line: f5Result.line,
+                      source: f5Result.source,
+                      fetched_at: f5Result.fetched_at,
+                      confidence: f5Result.confidence || 0.95,
+                    };
+                  } else if (f5Result && f5Result.error) {
+                    console.log(`[WI-0913] ${gameId} F5 line fetch failed: ${f5Result.error}`);
+                  }
+                } catch (spikeErr) {
+                  console.error(`[WI-0913] ${gameId} spike fetch exception: ${spikeErr.message}`);
+                }
+              })();
+            }
 
             _cardLogs.push(`  ✅ ${gameId} [${cardType}]: ${driver.prediction} (${(driver.confidence * 100).toFixed(0)}%)`);
           }
