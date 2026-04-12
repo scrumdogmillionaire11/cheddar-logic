@@ -351,93 +351,42 @@ describe('settleMlbF5 integration', () => {
   test('WI-0913 Spike: uses f5_market_line from payload when available', async () => {
     const gameId = 'mlb-f5-spike-payload-line-test';
     const pastTime = new Date(Date.now() - 5 * 60 * 60 * 1000).toISOString();
-    const gameDate = pastTime.slice(0, 10);
 
     const { getDatabase, closeDatabase } = require('@cheddar-logic/data');
     const db = getDatabase();
 
-    // Insert a scenario with f5_market_line in payload
     const cardId = `card-${gameId}`;
     const resultId = `result-${gameId}`;
     const marketKey = `${gameId}:mlb_f5_total`;
 
-    // Payload with injected f5_market_line (from spike fetcher)
-    // Actual F5 will be 8, but we inject line 7.5, so OVER prediction should WIN
-    const payloadWithLine = {
-      market_key: marketKey,
+    // Use helper to create base scenario
+    insertF5Scenario(db, {
+      gameId,
+      cardId,
+      resultId,
+      marketKey,
+      payloadMarketKey: 'mlb_f5_total',
+      gamePkKey: `${pastTime.slice(0, 10)}|BOS|NYY`,
+      gamePk: 745398,
+    });
+
+    // Update the payload to inject f5_market_line (spike fetcher result)
+    // Original f5_line=7.5 is kept, but f5_market_line takes precedence in settlement
+    const payloadWithSpikeResult = JSON.stringify({
       prediction: 'OVER',
+      f5_line: 7.5,
+      market_key: 'mlb_f5_total',
+      market: null,
       f5_market_line: {
         line: 7.5,
         source: 'vsin_spike',
-        fetched_at: new Date().toISOString(),
+        fetched_at: pastTime,
         confidence: 0.95,
       },
-    };
+    });
+    db.prepare(`UPDATE card_payloads SET payload_data = ? WHERE id = ?`).run(payloadWithSpikeResult, cardId);
 
-    db.exec(`CREATE TABLE IF NOT EXISTS card_results (
-      id TEXT PRIMARY KEY,
-      card_id TEXT,
-      game_id TEXT,
-      status TEXT,
-      result TEXT,
-      market_key TEXT,
-      sport TEXT,
-      card_type TEXT,
-      card_title TEXT,
-      settled_at TEXT
-    )`);
-    db.exec(`CREATE TABLE IF NOT EXISTS card_payloads (
-      id TEXT PRIMARY KEY,
-      payload_data TEXT
-    )`);
-    db.exec(`CREATE TABLE IF NOT EXISTS games (
-      game_id TEXT PRIMARY KEY,
-      game_time_utc TEXT,
-      home_team TEXT,
-      away_team TEXT
-    )`);
-    db.exec(`CREATE TABLE IF NOT EXISTS game_results (
-      game_id TEXT PRIMARY KEY,
-      status TEXT,
-      metadata TEXT
-    )`);
-    db.exec(`CREATE TABLE IF NOT EXISTS mlb_game_pk_map (
-      game_pk_key TEXT PRIMARY KEY,
-      game_pk INTEGER,
-      game_date TEXT
-    )`);
-
-    // Insert card_results row
-    db.prepare(`
-      INSERT INTO card_results (id, card_id, game_id, status, result, market_key, sport, card_type, card_title)
-      VALUES (?, ?, ?, 'pending', NULL, ?, 'mlb', 'f5-total', 'F5 OVER')
-    `).run(resultId, cardId, gameId, marketKey);
-
-    // Insert payload with f5_market_line
-    db.prepare(`
-      INSERT INTO card_payloads (id, payload_data)
-      VALUES (?, ?)
-    `).run(cardId, JSON.stringify(payloadWithLine));
-
-    // Link card_results to card_payloads
-    db.prepare(`
-      UPDATE card_results SET card_id = ? WHERE id = ?
-    `).run(cardId, resultId);
-
-    // Insert game
-    const gameDate = pastTime.slice(0, 10);
-    db.prepare(`
-      INSERT INTO games (game_id, game_time_utc, home_team, away_team)
-      VALUES (?, ?, ?, ?)
-    `).run(gameId, pastTime, 'BOS', 'NYY');
-
-    // Insert game_pk_map
-    db.prepare(`
-      INSERT INTO mlb_game_pk_map (game_pk_key, game_pk, game_date)
-      VALUES (?, ?, ?)
-    `).run(`${gameDate}|BOS|NYY`, 745398, gameDate);
-
-    // Mock fetch returns F5 total of 8 (actual)
+    // Mock fetch returns F5 total of 8 (actual game runs)
     const payload = buildLinescorePayload([[2, 1], [0, 0], [1, 0], [0, 1], [3, 0]]);
     global.fetch = jest.fn().mockResolvedValue({
       ok: true,
@@ -450,13 +399,12 @@ describe('settleMlbF5 integration', () => {
     const result = await settleMlbF5({ dryRun: false });
     expect(result.success).toBe(true);
 
-    // Verify the card was settled using the injected line (7.5)
-    // Actual F5 = 8, prediction = OVER, line = 7.5 → 8 > 7.5 → "won"
+    // Verify: Actual F5 = 8, prediction = OVER, spike line = 7.5 → 8 > 7.5 → "won"
     const db2 = getDatabase();
     const settledCard = db2.prepare(
       `SELECT status, result FROM card_results WHERE id = ?`
     ).get(resultId);
-    expect(settledCard.status).toBe('settled');
+    expect(settledCard.status).toBe('won');
     expect(settledCard.result).toBe('won');
     closeDatabase();
   });

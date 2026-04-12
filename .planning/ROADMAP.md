@@ -96,3 +96,18 @@ Plans:
 - [ ] di-01-06-PLAN.md — Threshold registry completeness: NHL SPREAD/PUCKLINE + exhaustive coverage test (Wave 2)
 - [ ] di-01-07-PLAN.md — Stale threshold to env var; EDGE_UPGRADE_MIN recalibrated to 0.04; assertNoDecisionMutation hardened (Wave 3)
 - [ ] di-01-08-PLAN.md — Playoff sigma explicit contract + 5-case test suite (Wave 3)
+
+---
+
+### Phase: WI-0914 — Multi-Sport Playoff Overlay Layer
+
+**Goal**: Implement a deterministic playoff overlay layer across NHL/NBA/NFL/MLB that adjusts volatility bands, eligibility strictness, and execution thresholds in the existing single-model paths.
+
+**Requirements:** [PO-OVERLAY-01, PO-OVERLAY-02, PO-OVERLAY-03, PO-NHL-01, PO-NHL-02, PO-NBA-01, PO-NFL-01, PO-MLB-01, PO-THRESH-01]
+
+**Plans:** 3 plans in 2 waves
+
+Plans:
+- [ ] WI-0914-01-PLAN.md — Shared playoff overlay contract + scheduler/watchdog + payload validation (Wave 1)
+- [ ] WI-0914-02-PLAN.md — NHL + NBA playoff runner/model overlays (Wave 2)
+- [ ] WI-0914-03-PLAN.md — NFL + MLB playoff overlays + stricter playoff thresholds (Wave 2)
