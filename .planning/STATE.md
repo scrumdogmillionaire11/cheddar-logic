@@ -4,7 +4,7 @@ milestone: v1.1
 milestone_name: Model Integrity & Betting Execution Hardening
 status: active
 last_updated: "2026-04-11T23:59:00Z"
-last_activity: "2026-04-11 - Completed WI-0891-01-PLAN.md: settlement display-backfill guard + /api/games true_play authority contract tests"
+last_activity: "2026-04-12 - Completed quick task 155: WI-0909 NHL player-shots full-game settlement source unification"
 ---
 
 # Project State
@@ -172,6 +172,7 @@ Notable: WI-0797 (pipeline health Discord watchdog), WI-0798 (NHL season key fix
 
 | # | Description | Date | Commit | Directory |
 |---|-------------|------|--------|-----------|
+| 155 | WI-0909 NHL player-shots full-game settlement source unification | 2026-04-12 | e92e444 | [155-wi-0909-nhl-player-shots-full-game-settl](./quick/155-wi-0909-nhl-player-shots-full-game-settl/) |
 | 156 | WI-0881: Wire NHL goalie composite into POTD signal — resolveNHLModelSignal, getLatestNhlModelOutput, nhlSnapshot wiring, 22 new tests | 2026-04-11 | 096653b | [154-wire-nhl-goalie-composite-into-potd-sign](./quick/154-wire-nhl-goalie-composite-into-potd-sign/) |
 | 155 | WI-0884: POTD multi-day sanity tracking — potd_daily_stats migration 075, stats writes on all engine paths, sanity-check script, 3 new tests | 2026-04-11 | a8f5360 | [152-wi-0884-potd-multi-day-sanity-tracking](./quick/152-wi-0884-potd-multi-day-sanity-tracking/) |
 | 154 | WI-0883 POTD confidence-weighted sizing — confidenceMultiplier, migration 074, 4 new tests | 2026-04-11 | 0db8488 | [151-wi-0883-potd-confidence-weighted-sizing](./quick/151-wi-0883-potd-confidence-weighted-sizing/) |
