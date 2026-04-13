@@ -3304,25 +3304,80 @@ export async function GET(request: NextRequest) {
         // wave-1 path for them so they aren't silently dropped.
         const isPropPlay = play.market_type === 'PROP';
 
-        if (wave1Eligible && !isPropPlay && !isProjectionSurfaceCardType) {
-          // Wave-1 rows MUST have decision_v2 from worker - skip if missing
-          if (!play.decision_v2) {
-            incrementStageCounter(
-              stageCounters,
-              'wave1_skipped_no_d2',
-              parsedSport,
-              parsedMarket,
+        const shouldSkipWave1DecisionV2Enforcement =
+          isProjectionSurfaceCardType;
+
+        if (wave1Eligible && !isPropPlay) {
+          if (!shouldSkipWave1DecisionV2Enforcement) {
+            // Wave-1 rows MUST have decision_v2 from worker - skip if missing
+            if (!play.decision_v2) {
+              incrementStageCounter(
+                stageCounters,
+                'wave1_skipped_no_d2',
+                parsedSport,
+                parsedMarket,
+              );
+              continue; // Skip plays without decision_v2 in wave-1
+            }
+            applyWave1DecisionFields(play);
+            play.reason_codes = Array.from(
+              new Set([
+                ...(play.reason_codes ?? []),
+                play.decision_v2.primary_reason_code,
+              ]),
             );
-            continue; // Skip plays without decision_v2 in wave-1
+          } else if (!play.decision_v2) {
+            const fallbackStatus =
+              play.action === 'FIRE' || play.classification === 'BASE'
+                ? 'PLAY'
+                : play.action === 'HOLD' || play.classification === 'LEAN'
+                  ? 'LEAN'
+                  : 'PASS';
+            const fallbackReasonCode =
+              normalizePassReasonCode(
+                firstString(play.pass_reason_code, ...(play.reason_codes ?? [])),
+              ) ?? 'PROJECTION_SURFACE_FALLBACK';
+            play.decision_v2 = {
+              direction: 'NONE',
+              support_score: 0,
+              conflict_score: 0,
+              drivers_used: [],
+              driver_reasons: [],
+              watchdog_status: 'BLOCKED',
+              watchdog_reason_codes: [],
+              missing_data: {
+                missing_fields: [],
+                source_attempts: [],
+                severity: 'INFO',
+              },
+              consistency: {
+                pace_tier: 'unknown',
+                event_env: 'unknown',
+                event_direction_tag: 'none',
+                vol_env: 'unknown',
+                total_bias: 'INSUFFICIENT_DATA',
+              },
+              fair_prob: null,
+              implied_prob: null,
+              edge_pct: null,
+              sharp_price_status: 'UNPRICED',
+              price_reason_codes: [],
+              official_status: fallbackStatus,
+              play_tier: 'BAD',
+              primary_reason_code: fallbackReasonCode,
+              pipeline_version: 'v2',
+              decided_at: new Date().toISOString(),
+            };
+            play.reason_codes = Array.from(
+              new Set([...(play.reason_codes ?? []), fallbackReasonCode]),
+            );
           }
-          applyWave1DecisionFields(play);
-          play.reason_codes = Array.from(
-            new Set([
-              ...(play.reason_codes ?? []),
-              play.decision_v2.primary_reason_code,
-            ]),
-          );
-        } else if (!play.consistency?.total_bias) {
+        }
+
+        if (
+          (!wave1Eligible || isPropPlay || shouldSkipWave1DecisionV2Enforcement) &&
+          !play.consistency?.total_bias
+        ) {
           const totalDecision =
             payload.all_markets &&
             typeof payload.all_markets === 'object' &&
