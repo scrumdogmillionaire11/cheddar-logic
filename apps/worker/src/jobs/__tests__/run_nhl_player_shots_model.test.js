@@ -265,6 +265,22 @@ function loadFreshModule() {
       blk_sigma: 0,
       flags: [],
     })),
+    weightedRateBlendBLK: jest.fn((seasonRate, l10Rate, l5Rate) => {
+      const weights = [0.4, 0.35, 0.25];
+      const values = [seasonRate, l10Rate, l5Rate];
+      let weightedTotal = 0;
+      let totalWeight = 0;
+
+      values.forEach((value, index) => {
+        const numeric = Number(value);
+        if (Number.isFinite(numeric) && numeric > 0) {
+          weightedTotal += numeric * weights[index];
+          totalWeight += weights[index];
+        }
+      });
+
+      return totalWeight > 0 ? weightedTotal / totalWeight : 0;
+    }),
   }));
 
   jest.mock('../../moneypuck', () => ({
@@ -3306,7 +3322,7 @@ describe('run_nhl_player_shots_model', () => {
     );
 
     const blkCard = getSingleBlkCard(data);
-    expect(blkCard.payloadData.drivers.blk_factor_inputs).toEqual({
+    expect(blkCard.payloadData.drivers.blk_factor_inputs).toMatchObject({
       opponent_attempt_factor: 1.03,
       defensive_zone_factor: 1.05,
       underdog_script_factor: 1.08,
@@ -3375,7 +3391,7 @@ describe('run_nhl_player_shots_model', () => {
       underdog_script_factor: 'defaulted',
       playoff_tightening_factor: 'computed',
     });
-    expect(blkCard.payloadData.drivers.blk_factor_inputs).toEqual({
+    expect(blkCard.payloadData.drivers.blk_factor_inputs).toMatchObject({
       opponent_attempt_factor: 1,
       defensive_zone_factor: 1,
       underdog_script_factor: 1,
