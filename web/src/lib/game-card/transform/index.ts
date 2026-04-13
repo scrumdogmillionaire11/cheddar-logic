@@ -302,11 +302,102 @@ interface GameData {
   plays: ApiPlay[];
 }
 
+type DropReasonMeta = {
+  drop_reason_code: string;
+  drop_reason_layer: string;
+};
+
 function resolveDecisionV2EdgePct(
   decisionV2: Pick<DecisionV2, 'edge_pct' | 'edge_delta_pct'> | null | undefined,
 ): number | null {
   if (typeof decisionV2?.edge_delta_pct === 'number') return decisionV2.edge_delta_pct;
   if (typeof decisionV2?.edge_pct === 'number') return decisionV2.edge_pct;
+  return null;
+}
+
+function normalizeReasonCode(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const normalized = value.trim().toUpperCase();
+  return normalized.length > 0 ? normalized : null;
+}
+
+function normalizeDropReasonMeta(
+  value: ApiPlay['execution_gate'] extends { drop_reason?: infer T } ? T : unknown,
+): DropReasonMeta | null {
+  if (!value || typeof value !== 'object') return null;
+
+  const code = normalizeReasonCode(
+    (value as { drop_reason_code?: unknown }).drop_reason_code,
+  );
+  const layer =
+    typeof (value as { drop_reason_layer?: unknown }).drop_reason_layer === 'string'
+      ? String((value as { drop_reason_layer?: unknown }).drop_reason_layer).trim()
+      : '';
+
+  if (!code || layer.length === 0) return null;
+
+  return {
+    drop_reason_code: code,
+    drop_reason_layer: layer,
+  };
+}
+
+function resolvePlayDropReason(play: ApiPlay | null | undefined): DropReasonMeta | null {
+  if (!play) return null;
+
+  const explicitDropReason = normalizeDropReasonMeta(play.execution_gate?.drop_reason);
+  if (explicitDropReason) return explicitDropReason;
+
+  const watchdogReasonCode =
+    Array.isArray(play.decision_v2?.watchdog_reason_codes) &&
+    play.decision_v2.watchdog_reason_codes.length > 0
+      ? normalizeReasonCode(play.decision_v2.watchdog_reason_codes[0])
+      : null;
+  if (play.decision_v2?.watchdog_status === 'BLOCKED' && watchdogReasonCode) {
+    return {
+      drop_reason_code: watchdogReasonCode,
+      drop_reason_layer: 'decision_watchdog',
+    };
+  }
+
+  const priceReasonCode =
+    Array.isArray(play.decision_v2?.price_reason_codes) &&
+    play.decision_v2.price_reason_codes.length > 0
+      ? play.decision_v2.price_reason_codes
+          .map((value) => normalizeReasonCode(value))
+          .find((value) => value != null && value !== 'EDGE_CLEAR') ?? null
+      : null;
+  if (
+    (play.decision_v2?.official_status === 'PASS' ||
+      play.decision_v2?.official_status === 'LEAN') &&
+    priceReasonCode
+  ) {
+    return {
+      drop_reason_code: priceReasonCode,
+      drop_reason_layer: 'decision_price',
+    };
+  }
+
+  const passReasonCode = normalizePassReasonCode(play.pass_reason_code ?? null);
+  if (passReasonCode) {
+    return {
+      drop_reason_code: passReasonCode,
+      drop_reason_layer: 'publish_pass_reason',
+    };
+  }
+
+  const primaryReasonCode = normalizeReasonCode(play.decision_v2?.primary_reason_code);
+  if (
+    (play.decision_v2?.official_status === 'PASS' ||
+      play.decision_v2?.official_status === 'LEAN') &&
+    primaryReasonCode
+  ) {
+    return {
+      drop_reason_code: primaryReasonCode,
+      drop_reason_layer: 'decision_primary',
+    };
+  }
+
   return null;
 }
 
@@ -1091,7 +1182,7 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
         quality: effectiveDecisionV2.watchdog_status === 'BLOCKED' ? 'DEGRADED' : 'OK',
         missing_inputs: effectiveDecisionV2.missing_data.missing_fields,
         placeholders_found: [],
-        drop_reason: wave1DecisionPlay.execution_gate?.drop_reason ?? null,
+        drop_reason: resolvePlayDropReason(wave1DecisionPlay),
       },
       market_type: marketType,
       kind: 'PLAY',
@@ -2387,9 +2478,9 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
       quality,
       missing_inputs: Array.from(missingInputs),
       placeholders_found: placeholdersFound,
-      drop_reason:
-        (propPlay ?? spreadPlay ?? totalPlay ?? scopedPlayCandidates[0])?.execution_gate
-          ?.drop_reason ?? null,
+      drop_reason: resolvePlayDropReason(
+        propPlay ?? spreadPlay ?? totalPlay ?? scopedPlayCandidates[0],
+      ),
     },
     market_type: resolvedMarketType,
     kind: 'PLAY',

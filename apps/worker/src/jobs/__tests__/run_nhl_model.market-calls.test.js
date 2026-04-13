@@ -444,6 +444,39 @@ describe('run_nhl_model market call generation', () => {
     expect(mlCard.payloadData.decision_v2?.official_status).toBe('PASS');
   });
 
+  test('execution gate tags projection-only NHL cards with explicit early-exit reason metadata', () => {
+    const oddsSnapshot = buildBaseOddsSnapshot();
+    const mlCard = {
+      payloadData: {
+        execution_status: 'PROJECTION_ONLY',
+        model_status: 'MODEL_OK',
+        status: 'WATCH',
+        action: 'HOLD',
+        classification: 'LEAN',
+        pass_reason_code: 'PROJECTION_ONLY_EXCLUSION',
+        reason_codes: ['PROJECTION_ONLY_EXCLUSION'],
+      },
+    };
+    const nowMs = new Date(oddsSnapshot.captured_at).getTime() + 120_000;
+
+    const result = applyExecutionGateToNhlCard(mlCard, {
+      oddsSnapshot,
+      nowMs,
+    });
+
+    expect(result.evaluated).toBe(false);
+    expect(result.blocked).toBe(false);
+    expect(mlCard.payloadData.execution_gate).toMatchObject({
+      evaluated: false,
+      blocked_by: ['PROJECTION_ONLY_EXCLUSION'],
+      snapshot_age_ms: 120_000,
+      drop_reason: {
+        drop_reason_code: 'PROJECTION_ONLY_EXCLUSION',
+        drop_reason_layer: 'worker_gate',
+      },
+    });
+  });
+
   test('emits 1P period odds context fields for nhl-pace-1p cards', () => {
     const oddsSnapshot = {
       ...buildBaseOddsSnapshot(),

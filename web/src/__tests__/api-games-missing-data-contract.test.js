@@ -204,10 +204,25 @@ assert(
   'CardsPageContext diagnostics mapping must include _drop_reason_layer field',
 );
 
+assert(
+  cardsPageSource.includes('_reason_code_set'),
+  'CardsPageContext diagnostics mapping must expose the filtered card reason-code set',
+);
+
 // Source-level assertion: route-handler must include drop_summary
 assert(
   gamesRouteHandlerSource.includes('drop_summary'),
   'route-handler flowDiagnostics must include drop_summary for dev-mode observability',
+);
+
+assert(
+  gamesRouteHandlerSource.includes('execution_gate: normalizedExecutionGate'),
+  '/api/games should expose execution_gate metadata on play rows',
+);
+
+assert(
+  gamesRouteHandlerSource.includes('executionGate?.drop_reason?.drop_reason_code'),
+  '/api/games reason_codes should include execution-gate drop reason codes',
 );
 
 console.log('✅ API games missing-data contract tests passed');

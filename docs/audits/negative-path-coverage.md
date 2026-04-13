@@ -16,5 +16,5 @@ This audit tracks deterministic negative-path fixtures and expected behavior out
 
 - Hidden means excluded from default FIRE/WATCH main-view filters.
 - Status assertions use behavior fields only (`action`, `classification`, `decision_v2.official_status`, emitted/omitted card rows).
-- Gate and settlement failures are asserted via explicit reason/status outputs, not source-string matching.
+- Gate/settlement failures are asserted via explicit reason/status outputs, not source-string matching.
 - For settlement no-rewrite, success requires write guard behavior (`changes = 0` for no-longer-pending row) and preserved closed id set.

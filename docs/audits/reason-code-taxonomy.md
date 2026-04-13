@@ -51,7 +51,7 @@ Examples:
 - `SIGMA_FALLBACK_DEGRADED`
 - `PASS_EXECUTION_GATE_NET_EDGE_INSUFFICIENT`
 
-### Hidden output and diagnostics-only surfacing
+### Hidden output / diagnostics-only surfacing
 
 - Diagnostics mode may expose the reason-code set
 - Default cards UI must remain unchanged

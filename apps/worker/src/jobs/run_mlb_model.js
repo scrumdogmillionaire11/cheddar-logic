@@ -739,12 +739,30 @@ function applyExecutionGateToMlbPayload(payload, { oddsSnapshot, nowMs = Date.no
     String(payload.status || '').toUpperCase() === 'PASS' ||
     String(payload.action || '').toUpperCase() === 'PASS' ||
     String(payload.classification || '').toUpperCase() === 'PASS';
+  const resolvedModelStatus = String(payload.model_status || 'MODEL_OK').toUpperCase();
+  const snapshotAgeMs = resolveSnapshotAgeMs(oddsSnapshot, nowMs);
   if (executionStatus !== 'EXECUTABLE' || alreadyPass) {
+    const earlyExitDropReasonCode = alreadyPass
+      ? 'NOT_BET_ELIGIBLE'
+      : executionStatus === 'PROJECTION_ONLY'
+        ? 'PROJECTION_ONLY_EXCLUSION'
+        : 'NOT_EXECUTABLE_PATH';
+    payload.execution_gate = {
+      evaluated: false,
+      should_bet: null,
+      net_edge: null,
+      blocked_by: [earlyExitDropReasonCode],
+      model_status: resolvedModelStatus,
+      snapshot_age_ms: snapshotAgeMs,
+      evaluated_at: new Date(nowMs).toISOString(),
+      drop_reason: {
+        drop_reason_code: earlyExitDropReasonCode,
+        drop_reason_layer: 'worker_gate',
+      },
+    };
     return { evaluated: false, blocked: false };
   }
 
-  const resolvedModelStatus = String(payload.model_status || 'MODEL_OK').toUpperCase();
-  const snapshotAgeMs = resolveSnapshotAgeMs(oddsSnapshot, nowMs);
   const gateResult = evaluateExecution({
     modelStatus: resolvedModelStatus,
     rawEdge: Number.isFinite(payload.edge) ? payload.edge : null,
@@ -766,6 +784,7 @@ function applyExecutionGateToMlbPayload(payload, { oddsSnapshot, nowMs = Date.no
     model_status: resolvedModelStatus,
     snapshot_age_ms: snapshotAgeMs,
     evaluated_at: new Date(nowMs).toISOString(),
+    drop_reason: gateResult.drop_reason,
   };
 
   if (!gateResult.shouldBet) {
