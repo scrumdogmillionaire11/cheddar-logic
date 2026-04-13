@@ -11,6 +11,7 @@ const {
   applyUiActionFields,
   assertNoDecisionMutation,
   capturePublishedDecisionState,
+  computeWebhookFields,
   deriveAction,
   deriveVolEnv,
   finalizeDecisionFields,
@@ -1537,5 +1538,124 @@ describe('decision publisher v2 pipeline', () => {
 
     expect(payload.decision_v2).toBeDefined();
     expect(payload.decision_v2.edge_units).toBe('decimal_fraction');
+  });
+});
+
+describe('computeWebhookFields', () => {
+  it('stamps official for NHL total with nhl_totals_status=PLAY', () => {
+    const p = {
+      sport: 'NHL', kind: 'PLAY', market_type: 'total', recommended_bet_type: 'total',
+      selection: { side: 'OVER' }, edge: 1.2,
+      nhl_totals_status: { status: 'PLAY', reasonCodes: [] },
+    };
+    computeWebhookFields(p);
+    expect(p.webhook_bucket).toBe('official');
+    expect(p.webhook_eligible).toBe(true);
+    expect(p.webhook_reason_code).toBeNull();
+  });
+
+  it('stamps lean for NHL total capped by goalie uncertainty', () => {
+    const p = {
+      sport: 'NHL', kind: 'PLAY', market_type: 'total', recommended_bet_type: 'total',
+      selection: { side: 'OVER' }, edge: 1.1,
+      nhl_totals_status: { status: 'SLIGHT EDGE', reasonCodes: ['CAP_GOALIES_UNCONFIRMED'] },
+    };
+    computeWebhookFields(p);
+    expect(p.webhook_bucket).toBe('lean');
+    expect(p.webhook_eligible).toBe(true);
+    expect(p.webhook_reason_code).toBeNull();
+  });
+
+  it('stamps pass_blocked for NHL total with nhl_totals_status=PASS', () => {
+    const p = {
+      sport: 'NHL', kind: 'PLAY', market_type: 'total', recommended_bet_type: 'total',
+      selection: { side: 'OVER' },
+      nhl_totals_status: { status: 'PASS', reasonCodes: ['PASS_INTEGRITY_BLOCK'] },
+    };
+    computeWebhookFields(p);
+    expect(p.webhook_bucket).toBe('pass_blocked');
+    expect(p.webhook_eligible).toBe(false);
+    expect(p.webhook_reason_code).toBe('PASS_INTEGRITY_BLOCK');
+  });
+
+  it('stamps lean for NHL 1P with surfaced_status=SLIGHT EDGE', () => {
+    const p = {
+      sport: 'NHL', kind: 'PLAY', market_type: 'total', period: '1p',
+      prediction: 'OVER',
+      nhl_1p_decision: {
+        projection: { side: 'OVER' },
+        surfaced_status: 'SLIGHT EDGE',
+        surfaced_reason_code: 'FIRST_PERIOD_PRICE_UNAVAILABLE',
+      },
+    };
+    computeWebhookFields(p);
+    expect(p.webhook_bucket).toBe('lean');
+    expect(p.webhook_display_side).toBe('OVER');
+  });
+
+  it('stamps official for NBA total via decision_v2.official_status=PLAY', () => {
+    const p = {
+      sport: 'NBA', kind: 'PLAY', market_type: 'total',
+      selection: { side: 'OVER' }, edge: 0.5,
+      decision_v2: { official_status: 'PLAY' }, action: 'FIRE', classification: 'BASE',
+    };
+    computeWebhookFields(p);
+    expect(p.webhook_bucket).toBe('official');
+  });
+
+  it('stamps lean for card with action=HOLD', () => {
+    const p = { sport: 'MLB', kind: 'PLAY', market_type: 'total', action: 'HOLD', classification: 'LEAN', edge: 0.4 };
+    computeWebhookFields(p);
+    expect(p.webhook_bucket).toBe('lean');
+    expect(p.webhook_lean_eligible).toBe(true);
+  });
+
+  it('stamps pass_blocked when action=PASS overrides nhl_totals_status=PLAY', () => {
+    const p = {
+      sport: 'NHL', kind: 'PLAY', market_type: 'total',
+      action: 'PASS', classification: 'PASS',
+      decision_v2: { official_status: 'PLAY' },
+      nhl_totals_status: { status: 'PLAY', reasonCodes: [] },
+    };
+    computeWebhookFields(p);
+    expect(p.webhook_bucket).toBe('pass_blocked');
+    expect(p.webhook_eligible).toBe(false);
+  });
+
+  it('stamps official for prop card via play.action=FIRE', () => {
+    const p = {
+      sport: 'NHL', card_type: 'nhl-player-shots',
+      play: { action: 'FIRE', classification: 'BASE', selection: 'OVER 3.5' },
+    };
+    computeWebhookFields(p);
+    expect(p.webhook_bucket).toBe('official');
+    expect(p.webhook_eligible).toBe(true);
+  });
+
+  it('webhook_lean_eligible false when |edge| < 0.15', () => {
+    const p = { sport: 'NBA', action: 'HOLD', classification: 'LEAN', edge: 0.08 };
+    computeWebhookFields(p);
+    expect(p.webhook_lean_eligible).toBe(false);
+  });
+
+  it('webhook_lean_eligible true when edge absent', () => {
+    const p = { sport: 'NBA', action: 'HOLD', classification: 'LEAN' };
+    computeWebhookFields(p);
+    expect(p.webhook_lean_eligible).toBe(true);
+  });
+
+  it('webhook_display_side from nhl_1p_decision.projection.side beats selection.side', () => {
+    const p = {
+      selection: { side: 'UNDER' }, period: '1p',
+      nhl_1p_decision: { projection: { side: 'over' }, surfaced_status: 'PLAY' },
+      action: 'FIRE',
+    };
+    computeWebhookFields(p);
+    expect(p.webhook_display_side).toBe('OVER');
+  });
+
+  it('no-op for null or undefined payload', () => {
+    expect(() => computeWebhookFields(null)).not.toThrow();
+    expect(() => computeWebhookFields(undefined)).not.toThrow();
   });
 });
