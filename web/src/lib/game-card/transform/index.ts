@@ -545,9 +545,29 @@ function isProjectionOnlyCardPlay(play: ApiPlay): boolean {
   );
 }
 
+function shouldSuppressNoActionableNonTotalPass(play: ApiPlay): boolean {
+  if (play.market_type === 'TOTAL' || play.market_type === 'TEAM_TOTAL') {
+    return false;
+  }
+
+  const displayAction = resolvePlayDisplayDecision(play).action;
+  if (displayAction !== 'PASS') return false;
+
+  const reasonCodes = Array.isArray(play.reason_codes)
+    ? play.reason_codes
+    : [];
+  const hasWeakSupportPass = reasonCodes.includes('PASS_DRIVER_SUPPORT_WEAK');
+  const hasEdgeSanityNonTotal =
+    reasonCodes.includes('PASS_EDGE_SANITY_NON_TOTAL') ||
+    reasonCodes.includes('DOWNGRADED_EDGE_SANITY_NON_TOTAL');
+
+  return hasWeakSupportPass && hasEdgeSanityNonTotal;
+}
+
 function isRenderableGameSurfacePlay(game: GameData, play: ApiPlay): boolean {
   return (
     !isProjectionOnlyCardPlay(play) &&
+    !shouldSuppressNoActionableNonTotalPass(play) &&
     isPlayItem(play, game.sport) &&
     play.market_type !== 'PROP'
   );
@@ -569,6 +589,13 @@ function shouldExcludeProjectionOnlyGameSurface(game: GameData): boolean {
     isRenderableGameSurfacePlay(game, play),
   );
   if (hasRenderablePlay) return false;
+
+  const hasSuppressedNonTotalPass = game.plays.some((play) =>
+    shouldSuppressNoActionableNonTotalPass(play) &&
+    isPlayItem(play, game.sport) &&
+    play.market_type !== 'PROP',
+  );
+  if (hasSuppressedNonTotalPass) return true;
 
   return game.plays.some((play) =>
     isProjectionOnlyGameSurfacePlay(game, play),
@@ -977,6 +1004,7 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
   const canonicalTruePlay =
     game.true_play &&
     !isProjectionOnlyCardPlay(game.true_play) &&
+    !shouldSuppressNoActionableNonTotalPass(game.true_play) &&
     game.true_play.market_type !== 'PROP' &&
     isPlayItem(game.true_play, game.sport) &&
     (ENABLE_WELCOME_HOME || !isWelcomeHomePlay(game.true_play))
@@ -2295,6 +2323,108 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
     finalDecision = 'WATCH';
   }
   if (hardPass) finalDecision = 'PASS';
+
+  // WI-0934: NHL totals bucket policy — PLAY / SLIGHT EDGE / PASS
+  // Mirrors classifyNhlTotalsBucketStatus() in post_discord_cards.js.
+  // Applied after hardPass so the policy is the last word on NHL total status.
+  const isNhlTotalsCard =
+    normalizeSport(game.sport) === 'NHL' &&
+    (sourcePlay?.cardType === 'nhl-totals-call' ||
+      resolvedMarketType === 'TOTAL');
+  if (isNhlTotalsCard) {
+    const srcReasonCodes: string[] = Array.isArray(sourcePlay?.reason_codes)
+      ? (sourcePlay.reason_codes as string[])
+      : [];
+    const srcWatchdogCodes: string[] = Array.isArray(
+      sourcePlay?.decision_v2?.watchdog_reason_codes,
+    )
+      ? (sourcePlay.decision_v2!.watchdog_reason_codes as string[])
+      : [];
+    const srcDropCode = String(
+      sourcePlay?.execution_gate?.drop_reason?.drop_reason_code ?? '',
+    ).toUpperCase();
+    const allNhlCodes = [
+      ...srcReasonCodes.map((c) => String(c).toUpperCase()),
+      ...srcWatchdogCodes.map((c) => String(c).toUpperCase()),
+      srcDropCode,
+    ].filter(Boolean);
+
+    // 1. Integrity veto — mixed-book or stale block is never actionable
+    const isNhlIntegrityBlocked = allNhlCodes.some(
+      (c) => c.includes('MIXED_BOOK') || c.includes('STALE'),
+    );
+    if (isNhlIntegrityBlocked) {
+      finalDecision = 'PASS';
+    } else {
+      // 2. Goals-delta edge (sourcePlay.edge = goals delta, NOT probability %)
+      const goalsEdgeRaw = sourcePlay?.edge;
+      const goalsEdgeAbs =
+        typeof goalsEdgeRaw === 'number' ? Math.abs(goalsEdgeRaw) : 0;
+
+      // 3. Noise floor: < 0.35 goals delta → PASS
+      if (goalsEdgeAbs < 0.35) {
+        finalDecision = 'PASS';
+      } else {
+        // 4. Goalie/injury uncertainty hold → cap at WATCH (SLIGHT EDGE) max
+        const uncertaintyHoldCodes = new Set([
+          'GOALIE_UNCONFIRMED',
+          'GOALIE_CONFLICTING',
+          'INJURY_UNCERTAIN',
+        ]);
+        const hasNhlUncertaintyHold = allNhlCodes.some((c) =>
+          uncertaintyHoldCodes.has(c),
+        );
+
+        // 5. Base tier from goals delta magnitude
+        let nhlBaseTier: 'FIRE' | 'WATCH' | 'PASS';
+        if (hasNhlUncertaintyHold) {
+          nhlBaseTier = goalsEdgeAbs >= 0.5 ? 'WATCH' : 'PASS';
+        } else if (goalsEdgeAbs >= 1.0) {
+          nhlBaseTier = 'FIRE';
+        } else if (goalsEdgeAbs >= 0.5) {
+          nhlBaseTier = 'WATCH';
+        } else {
+          nhlBaseTier = 'PASS';
+        }
+
+        // 6. Fragility adjustments
+        if (nhlBaseTier !== 'PASS') {
+          const totalLine = typeof line === 'number' ? line : null;
+          const selectionDir = String(direction ?? '').toUpperCase();
+          if (totalLine !== null) {
+            if (selectionDir === 'UNDER' && totalLine <= 5.5) {
+              // UNDER ≤5.5: unconditional one-tier downgrade
+              nhlBaseTier = nhlBaseTier === 'FIRE' ? 'WATCH' : 'PASS';
+            }
+            if (
+              selectionDir === 'OVER' &&
+              totalLine >= 6.5 &&
+              nhlBaseTier === 'FIRE'
+            ) {
+              // OVER ≥6.5: needs accelerant_score >= 0.20 to stay FIRE
+              const accelScore = (sourcePlay as unknown as Record<string, unknown>)?.accelerant_score;
+              const passesAccelerant =
+                typeof accelScore === 'number' &&
+                Number.isFinite(accelScore) &&
+                accelScore >= 0.2;
+              if (!passesAccelerant) nhlBaseTier = 'WATCH';
+            }
+          }
+        }
+
+        // 7. Write resolved tier to finalDecision
+        if (nhlBaseTier === 'PASS') {
+          finalDecision = 'PASS';
+        } else if (nhlBaseTier === 'WATCH') {
+          // Preserve PASS if already PASS; otherwise cap at WATCH
+          if (finalDecision !== 'PASS') finalDecision = 'WATCH';
+        } else {
+          // nhlBaseTier === 'FIRE': allow promotion only when not hard-blocked
+          if (!hardPass) finalDecision = 'FIRE';
+        }
+      }
+    }
+  }
 
   const hasBlockingGate = gates.some((gate) => gate.blocks_bet);
   let finalBet = candidateBet;
