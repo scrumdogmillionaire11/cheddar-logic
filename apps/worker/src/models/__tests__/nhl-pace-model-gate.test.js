@@ -19,10 +19,8 @@ function buildBase(overrides = {}) {
     awayPkPct: 0.8,
     homeGoalieSavePct: 0.93,
     awayGoalieSavePct: 0.89,
-    homeGoalieConfirmed: false,
-    awayGoalieConfirmed: false,
-    homeGoalieCertainty: 'UNKNOWN',
-    awayGoalieCertainty: 'UNKNOWN',
+    homeGoalieState: null,
+    awayGoalieState: null,
     homeB2B: false,
     awayB2B: false,
     restDaysHome: 1,
@@ -74,10 +72,6 @@ describe('predictNHLGame — WI-0820 input gate', () => {
     const state = {
       homeGoalieState: confirmedGoalieState('home'),
       awayGoalieState: confirmedGoalieState('away'),
-      homeGoalieCertainty: 'CONFIRMED',
-      awayGoalieCertainty: 'CONFIRMED',
-      homeGoalieConfirmed: true,
-      awayGoalieConfirmed: true,
     };
     const result = predictNHLGame(buildBase(state));
     expect(result).not.toBeNull();

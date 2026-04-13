@@ -11,17 +11,12 @@ function buildBase(overrides = {}) {
     awayGoalsAgainst: 3.0,
     homeGoalieSavePct: 0.93,
     awayGoalieSavePct: 0.931,
-    homeGoalieConfirmed: true,
-    awayGoalieConfirmed: true,
-    homeGoalieCertainty: null,
-    awayGoalieCertainty: null,
     ...overrides,
   };
 }
 
-describe('predictNHLGame goalie-state shim', () => {
-  test('homeGoalieState/awayGoalieState override legacy booleans', () => {
-    const legacyConfirmed = predictNHLGame(buildBase());
+describe('predictNHLGame goalie-state contract', () => {
+  test('unknown canonical state yields UNKNOWN certainty and neutralized trust', () => {
 
     const homeGoalieState = makeCanonicalGoalieState({
       game_id: 'game-1',
@@ -51,16 +46,8 @@ describe('predictNHLGame goalie-state shim', () => {
       }),
     );
 
-    expect(legacyConfirmed.homeGoalieCertainty).toBe('CONFIRMED');
     expect(canonicalOverride.homeGoalieCertainty).toBe('UNKNOWN');
-    expect(canonicalOverride.homeGoalieConfirmed).toBe(false);
-    expect(canonicalOverride.awayGoalieConfirmed).toBe(false);
-    expect(canonicalOverride.expectedTotal).toBeGreaterThan(
-      legacyConfirmed.expectedTotal,
-    );
-    expect(legacyConfirmed.homeAdjustmentTrust).toBe('FULL');
-    expect(legacyConfirmed.awayAdjustmentTrust).toBe('FULL');
-    expect(legacyConfirmed.official_eligible).toBe(true);
+    expect(canonicalOverride.awayGoalieCertainty).toBe('UNKNOWN');
     expect(canonicalOverride.homeAdjustmentTrust).toBe('NEUTRALIZED');
     expect(canonicalOverride.awayAdjustmentTrust).toBe('NEUTRALIZED');
     expect(canonicalOverride.official_eligible).toBe(true);
@@ -68,36 +55,11 @@ describe('predictNHLGame goalie-state shim', () => {
     expect(canonicalOverride.awayGoalieState).toEqual(awayGoalieState);
   });
 
-  test('legacy shim still applies when canonical state is null', () => {
+  test('null canonical state defaults certainty/trust to UNKNOWN/NEUTRALIZED', () => {
     const result = predictNHLGame(
       buildBase({
         homeGoalieState: null,
         awayGoalieState: null,
-        homeGoalieConfirmed: true,
-        awayGoalieConfirmed: true,
-      }),
-    );
-
-    expect(result.homeGoalieCertainty).toBe('CONFIRMED');
-    expect(result.awayGoalieCertainty).toBe('CONFIRMED');
-    expect(result.homeGoalieConfirmed).toBe(true);
-    expect(result.awayGoalieConfirmed).toBe(true);
-    expect(result.homeAdjustmentTrust).toBe('FULL');
-    expect(result.awayAdjustmentTrust).toBe('FULL');
-    expect(result.official_eligible).toBe(true);
-    expect(result.homeGoalieState).toBeNull();
-    expect(result.awayGoalieState).toBeNull();
-  });
-
-  test('legacy unconfirmed booleans map to neutralized trust fallback', () => {
-    const result = predictNHLGame(
-      buildBase({
-        homeGoalieState: null,
-        awayGoalieState: null,
-        homeGoalieConfirmed: false,
-        awayGoalieConfirmed: false,
-        homeGoalieCertainty: null,
-        awayGoalieCertainty: null,
       }),
     );
 
@@ -105,6 +67,44 @@ describe('predictNHLGame goalie-state shim', () => {
     expect(result.awayGoalieCertainty).toBe('UNKNOWN');
     expect(result.homeAdjustmentTrust).toBe('NEUTRALIZED');
     expect(result.awayAdjustmentTrust).toBe('NEUTRALIZED');
+    expect(result.official_eligible).toBe(true);
+    expect(result.homeGoalieState).toBeNull();
+    expect(result.awayGoalieState).toBeNull();
+  });
+
+  test('confirmed canonical state yields FULL trust and confirmed certainty', () => {
+    const homeGoalieState = makeCanonicalGoalieState({
+      game_id: 'game-1',
+      team_side: 'home',
+      starter_state: 'CONFIRMED',
+      starter_source: 'NHL_API_CONFIRMED',
+      goalie_name: 'Home Goalie',
+      goalie_tier: 'STRONG',
+      tier_confidence: 'HIGH',
+      evidence_flags: [],
+    });
+    const awayGoalieState = makeCanonicalGoalieState({
+      game_id: 'game-1',
+      team_side: 'away',
+      starter_state: 'CONFIRMED',
+      starter_source: 'NHL_API_CONFIRMED',
+      goalie_name: 'Away Goalie',
+      goalie_tier: 'STRONG',
+      tier_confidence: 'HIGH',
+      evidence_flags: [],
+    });
+
+    const result = predictNHLGame(
+      buildBase({
+        homeGoalieState,
+        awayGoalieState,
+      }),
+    );
+
+    expect(result.homeGoalieCertainty).toBe('CONFIRMED');
+    expect(result.awayGoalieCertainty).toBe('CONFIRMED');
+    expect(result.homeAdjustmentTrust).toBe('FULL');
+    expect(result.awayAdjustmentTrust).toBe('FULL');
     expect(result.official_eligible).toBe(true);
   });
 });

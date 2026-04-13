@@ -163,18 +163,6 @@ function normalizeCanonicalGoalieState(goalieState, label) {
   return goalieState;
 }
 
-function normalizeGoalieCertainty(certainty, confirmedFallback) {
-  const token = String(certainty || '').toUpperCase();
-  if (token === 'CONFIRMED' || token === 'STARTING' || token === 'OFFICIAL') {
-    return 'CONFIRMED';
-  }
-  if (token === 'EXPECTED' || token === 'PROJECTED' || token === 'LIKELY') {
-    return 'EXPECTED';
-  }
-  if (token === 'UNKNOWN') return 'UNKNOWN';
-  return confirmedFallback ? 'CONFIRMED' : 'UNKNOWN';
-}
-
 function adjustmentTrustFromCertainty(certainty) {
   if (certainty === 'CONFIRMED') return 'FULL';
   if (certainty === 'EXPECTED') return 'DEGRADED';
