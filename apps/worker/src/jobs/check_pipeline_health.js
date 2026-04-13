@@ -235,7 +235,15 @@ function checkOddsFreshness() {
         : '';
     const reason = `All ${dedupedGames.length} games within T-6h have fresh odds${duplicateSuffix}`;
     writePipelineHealth('odds', 'freshness', 'ok', reason);
-    return { ok: true, reason };
+    return {
+      ok: true,
+      reason,
+      diagnostics: {
+        detected: 0,
+        blocked: 0,
+        refreshed: 0,
+      },
+    };
   }
 
   // Only escalate to failed/alert when stale games are within T-2h.
@@ -255,18 +263,42 @@ function checkOddsFreshness() {
   if (quotaConstrained) {
     const reason = `${staleGames.length}/${dedupedGames.length} games within T-6h have stale odds (>${ODDS_FRESHNESS_MAX_AGE_MINUTES}m old) — odds fetch paused (quota tier: ${quotaTier})${duplicateSuffix}`;
     writePipelineHealth('odds', 'freshness', 'warning', reason);
-    return { ok: false, reason };
+    return {
+      ok: false,
+      reason,
+      diagnostics: {
+        detected: staleGames.length,
+        blocked: staleNearTerm.length,
+        refreshed: 0,
+      },
+    };
   }
 
   if (staleNearTerm.length === 0) {
     const reason = `${staleGames.length}/${dedupedGames.length} games within T-6h have stale odds (>${ODDS_FRESHNESS_MAX_AGE_MINUTES}m old) but none within T-2h${duplicateSuffix}`;
     writePipelineHealth('odds', 'freshness', 'warning', reason);
-    return { ok: false, reason };
+    return {
+      ok: false,
+      reason,
+      diagnostics: {
+        detected: staleGames.length,
+        blocked: 0,
+        refreshed: 0,
+      },
+    };
   }
 
   const reason = `${staleNearTerm.length}/${dedupedGames.length} games within T-2h have stale odds (>${ODDS_FRESHNESS_MAX_AGE_MINUTES}m old)${duplicateSuffix}`;
   writePipelineHealth('odds', 'freshness', 'failed', reason);
-  return { ok: false, reason };
+  return {
+    ok: false,
+    reason,
+    diagnostics: {
+      detected: staleGames.length,
+      blocked: staleNearTerm.length,
+      refreshed: 0,
+    },
+  };
 }
 
 /**

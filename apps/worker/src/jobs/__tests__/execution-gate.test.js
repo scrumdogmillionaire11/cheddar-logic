@@ -67,4 +67,24 @@ describe('evaluateExecution', () => {
     expect(result.shouldBet).toBe(false);
     expect(result.blocked_by).toContain('CONFIDENCE_BELOW_THRESHOLD:0.500');
   });
+
+  test('blocks mixed-book line/price source mismatches before executable status', () => {
+    const result = evaluateExecution({
+      modelStatus: 'MODEL_OK',
+      rawEdge: 0.1,
+      confidence: 0.75,
+      snapshotAgeMs: 30_000,
+      lineSource: 'draftkings',
+      priceSource: 'fanduel',
+    });
+
+    expect(result.shouldBet).toBe(false);
+    expect(result.blocked_by).toContain(
+      'MIXED_BOOK_SOURCE_MISMATCH:draftkings->fanduel',
+    );
+    expect(result.drop_reason).toMatchObject({
+      drop_reason_code: 'MIXED_BOOK_INTEGRITY_GATE',
+      drop_reason_layer: 'worker_gate',
+    });
+  });
 });

@@ -17,6 +17,7 @@ function mapBlockedByToDropReasonCode(blocked_by) {
   if (primary === 'CALIBRATION_KILL_SWITCH') return 'CALIBRATION_GATE';
   if (primary.startsWith('CONFIDENCE_BELOW_THRESHOLD')) return 'CONFIDENCE_GATE';
   if (primary.startsWith('STALE_SNAPSHOT')) return 'STALE_SNAPSHOT_GATE';
+  if (primary.startsWith('MIXED_BOOK_SOURCE_MISMATCH')) return 'MIXED_BOOK_INTEGRITY_GATE';
   if (primary === 'NOT_BET_ELIGIBLE') return 'NOT_BET_ELIGIBLE';
   if (primary === 'NOT_EXECUTABLE_PATH') return 'PROJECTION_ONLY_EXCLUSION';
   return 'UNKNOWN_GATE';
@@ -44,6 +45,8 @@ const MAX_SNAPSHOT_AGE_MS =
  * @param {string|null} [params.marketType]
  * @param {string|null} [params.period]
  * @param {string|null} [params.cardType]
+ * @param {string|null} [params.lineSource]
+ * @param {string|null} [params.priceSource]
  * @param {number} [params.vigCost]
  * @param {number} [params.slippageCost]
  * @param {number} [params.minNetEdge]
@@ -62,6 +65,8 @@ function evaluateExecution(params) {
     marketType = null,
     period = null,
     cardType = null,
+    lineSource = null,
+    priceSource = null,
     vigCost = VIG_COST_STANDARD,
     slippageCost = SLIPPAGE_ESTIMATE,
     minNetEdge = 0.025,
@@ -93,6 +98,16 @@ function evaluateExecution(params) {
 
   if (hasSnapshotAge && snapshotAgeMs > MAX_SNAPSHOT_AGE_MS) {
     blocked_by.push(`STALE_SNAPSHOT:${Math.round(snapshotAgeMs / 1000)}s`);
+  }
+
+  if (
+    typeof lineSource === 'string' &&
+    lineSource.trim().length > 0 &&
+    typeof priceSource === 'string' &&
+    priceSource.trim().length > 0 &&
+    lineSource !== priceSource
+  ) {
+    blocked_by.push(`MIXED_BOOK_SOURCE_MISMATCH:${lineSource}->${priceSource}`);
   }
 
   if (

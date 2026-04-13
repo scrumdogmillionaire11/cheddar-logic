@@ -567,6 +567,16 @@ function applyExecutionGateToNhlCard(card, { oddsSnapshot, nowMs = Date.now() } 
     marketType: payload.market_type ?? null,
     period: payload.period ?? payload.market?.period ?? null,
     cardType: card.cardType ?? null,
+    lineSource:
+      payload.line_source ??
+      payload.market_context?.wager?.line_source ??
+      payload.pricing_trace?.line_source ??
+      null,
+    priceSource:
+      payload.price_source ??
+      payload.market_context?.wager?.price_source ??
+      payload.pricing_trace?.price_source ??
+      null,
   });
 
   payload.execution_gate = {
@@ -581,8 +591,31 @@ function applyExecutionGateToNhlCard(card, { oddsSnapshot, nowMs = Date.now() } 
   };
 
   if (!gateResult.shouldBet) {
-    const passReasonCode = toExecutionGatePassReasonCode(gateResult.reason);
-    applyDecisionVeto(payload, passReasonCode);
+    const isStaleBlock = String(gateResult.reason || '').startsWith('STALE_SNAPSHOT');
+    const isMixedBookBlock = String(gateResult.reason || '').startsWith('MIXED_BOOK_SOURCE_MISMATCH');
+
+    if (isStaleBlock || isMixedBookBlock) {
+      const blockReasonCode = isStaleBlock
+        ? 'BLOCK_STALE_DATA'
+        : 'EDGE_VERIFICATION_REQUIRED';
+      payload.action = 'HOLD';
+      payload.status = 'WATCH';
+      payload.classification = 'LEAN';
+      payload.execution_status = 'BLOCKED';
+      payload.pass_reason_code = null;
+      payload.blocked_reason_code = blockReasonCode;
+      payload.gate_reason = blockReasonCode;
+      payload.reason_codes = Array.from(
+        new Set([...(Array.isArray(payload.reason_codes) ? payload.reason_codes : []), blockReasonCode]),
+      );
+      if (payload.decision_v2 && typeof payload.decision_v2 === 'object') {
+        payload.decision_v2.official_status = 'LEAN';
+        payload.decision_v2.primary_reason_code = blockReasonCode;
+      }
+    } else {
+      const passReasonCode = toExecutionGatePassReasonCode(gateResult.reason);
+      applyDecisionVeto(payload, passReasonCode);
+    }
     payload._publish_state = {
       ...(payload._publish_state && typeof payload._publish_state === 'object'
         ? payload._publish_state

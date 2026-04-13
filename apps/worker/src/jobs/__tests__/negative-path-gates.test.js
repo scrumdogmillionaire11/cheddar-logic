@@ -101,6 +101,24 @@ describe('negative-path execution and gate coverage', () => {
     });
   });
 
+  test('mixed-book line/price mismatch blocks execution with integrity gate reason', () => {
+    const result = evaluateExecution({
+      modelStatus: 'MODEL_OK',
+      rawEdge: 0.08,
+      confidence: 0.74,
+      snapshotAgeMs: 30 * 1000,
+      lineSource: 'draftkings',
+      priceSource: 'fanduel',
+    });
+
+    expect(result.should_bet).toBe(false);
+    expect(result.blocked_by[0]).toMatch(/^MIXED_BOOK_SOURCE_MISMATCH:/);
+    expect(result.drop_reason).toMatchObject({
+      drop_reason_code: 'MIXED_BOOK_INTEGRITY_GATE',
+      drop_reason_layer: 'worker_gate',
+    });
+  });
+
   test('selected play downgraded by gate preserves prior reasons and emits PASS', () => {
     const card = {
       action: 'FIRE',
