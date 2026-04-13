@@ -6,6 +6,7 @@ const {
   fetchF5Total,
   settleMlbF5,
 } = require('../settle_mlb_f5');
+const { settlePendingCards } = require('../settle_pending_cards');
 
 // ─────────────────────────────────────────────────────────────────────────────
 // gradeF5Card — pure function unit tests
@@ -13,19 +14,19 @@ const {
 
 describe('gradeF5Card', () => {
   test('OVER win: actual total exceeds line', () => {
-    expect(gradeF5Card('OVER', 8.5, 10)).toBe('won');
+    expect(gradeF5Card('OVER', 8.5, 10)).toBe('win');
   });
 
   test('OVER loss: actual total below line', () => {
-    expect(gradeF5Card('OVER', 8.5, 7)).toBe('lost');
+    expect(gradeF5Card('OVER', 8.5, 7)).toBe('loss');
   });
 
   test('UNDER win: actual total below line', () => {
-    expect(gradeF5Card('UNDER', 8.5, 7)).toBe('won');
+    expect(gradeF5Card('UNDER', 8.5, 7)).toBe('win');
   });
 
   test('UNDER loss: actual total exceeds line', () => {
-    expect(gradeF5Card('UNDER', 8.5, 10)).toBe('lost');
+    expect(gradeF5Card('UNDER', 8.5, 10)).toBe('loss');
   });
 
   test('push (exact): actual total equals line exactly', () => {
@@ -217,6 +218,23 @@ function insertF5Scenario(db, {
   }
 }
 
+function insertFinalGameResult(db, gameId) {
+  db.prepare(
+    `
+      INSERT OR REPLACE INTO game_results (
+        id,
+        game_id,
+        sport,
+        status,
+        result_source,
+        final_score_home,
+        final_score_away,
+        metadata
+      ) VALUES (?, ?, 'mlb', 'final', 'primary_api', 5, 3, '{}')
+    `,
+  ).run(`gr-${gameId}`, gameId);
+}
+
 describe('settleMlbF5 integration', () => {
   let originalFetch;
 
@@ -346,5 +364,161 @@ describe('settleMlbF5 integration', () => {
     const result = await settleMlbF5({ dryRun: true });
     expect(result.success).toBe(true);
     expect(result.failed).toBeGreaterThanOrEqual(1);
+  });
+
+  test('WI-0913 Spike: uses f5_market_line from payload when available', async () => {
+    const gameId = 'mlb-f5-spike-payload-line-test';
+    const pastTime = new Date(Date.now() - 5 * 60 * 60 * 1000).toISOString();
+
+    const { getDatabase, closeDatabase } = require('@cheddar-logic/data');
+    const db = getDatabase();
+
+    const cardId = `card-${gameId}`;
+    const resultId = `result-${gameId}`;
+    const marketKey = `${gameId}:mlb_f5_total`;
+
+    // Use helper to create base scenario
+    insertF5Scenario(db, {
+      gameId,
+      cardId,
+      resultId,
+      marketKey,
+      payloadMarketKey: 'mlb_f5_total',
+      gamePkKey: `${pastTime.slice(0, 10)}|BOS|NYY`,
+      gamePk: 745398,
+    });
+
+    // Update the payload to inject f5_market_line (spike fetcher result)
+    // Original f5_line=7.5 is kept, but f5_market_line takes precedence in settlement
+    const payloadWithSpikeResult = JSON.stringify({
+      prediction: 'OVER',
+      f5_line: 7.5,
+      market_key: 'mlb_f5_total',
+      market: null,
+      f5_market_line: {
+        line: 7.5,
+        source: 'vsin_spike',
+        fetched_at: pastTime,
+        confidence: 0.95,
+      },
+    });
+    db.prepare(`UPDATE card_payloads SET payload_data = ? WHERE id = ?`).run(payloadWithSpikeResult, cardId);
+
+    // Mock fetch returns F5 total of 8 (actual game runs)
+    const payload = buildLinescorePayload([[2, 1], [0, 0], [1, 0], [0, 1], [3, 0]]);
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      json: async () => payload,
+    });
+
+    closeDatabase();
+
+    // Run settlement
+    const result = await settleMlbF5({ dryRun: false });
+    expect(result.success).toBe(true);
+
+    // Verify: Actual F5 = 8, prediction = OVER, spike line = 7.5 → 8 > 7.5 → "won"
+    const db2 = getDatabase();
+    const settledCard = db2.prepare(
+      `SELECT status, result FROM card_results WHERE id = ?`
+    ).get(resultId);
+    expect(settledCard.status).toBe('settled');
+    expect(settledCard.result).toBe('win');
+    closeDatabase();
+  });
+
+  test('e2e single path: settle_pending_cards leaves F5 pending, settle_mlb_f5 performs the only terminal write', async () => {
+    const gameId = 'mlb-f5-e2e-single-path';
+    const pastTime = new Date(Date.now() - 5 * 60 * 60 * 1000).toISOString();
+    const gameDate = pastTime.slice(0, 10);
+
+    const { getDatabase, closeDatabase } = require('@cheddar-logic/data');
+    const db = getDatabase();
+    const cardId = `card-${gameId}`;
+    const resultId = `result-${gameId}`;
+
+    insertF5Scenario(db, {
+      gameId,
+      cardId,
+      resultId,
+      marketKey: `${gameId}:mlb_f5_total`,
+      payloadMarketKey: 'mlb_f5_total',
+      gamePkKey: `${gameDate}|BOS|NYY`,
+      gamePk: 745398,
+    });
+    insertFinalGameResult(db, gameId);
+    closeDatabase();
+
+    const pendingJobResult = await settlePendingCards({ dryRun: false });
+    expect(pendingJobResult.success).toBe(true);
+
+    const dbAfterPending = getDatabase();
+    const afterPending = dbAfterPending
+      .prepare('SELECT status, result FROM card_results WHERE id = ?')
+      .get(resultId);
+    expect(afterPending.status).toBe('pending');
+    expect(afterPending.result).toBeNull();
+    closeDatabase();
+
+    const f5JobResult = await settleMlbF5({ dryRun: false });
+    expect(f5JobResult.success).toBe(true);
+    expect(f5JobResult.settled).toBeGreaterThanOrEqual(1);
+
+    const dbAfterF5 = getDatabase();
+    const finalRow = dbAfterF5
+      .prepare('SELECT status, result, settled_at FROM card_results WHERE id = ?')
+      .get(resultId);
+    expect(finalRow.status).toBe('settled');
+    expect(['win', 'loss', 'push']).toContain(finalRow.result);
+    expect(finalRow.settled_at).toBeTruthy();
+    closeDatabase();
+  });
+
+  test('idempotent terminal write guard: second settle run does not mutate already-settled F5 row', async () => {
+    const gameId = 'mlb-f5-idempotent-write';
+    const pastTime = new Date(Date.now() - 5 * 60 * 60 * 1000).toISOString();
+    const gameDate = pastTime.slice(0, 10);
+
+    const { getDatabase, closeDatabase } = require('@cheddar-logic/data');
+    const db = getDatabase();
+    const resultId = `result-${gameId}`;
+
+    insertF5Scenario(db, {
+      gameId,
+      cardId: `card-${gameId}`,
+      resultId,
+      marketKey: `${gameId}:mlb_f5_total`,
+      payloadMarketKey: 'mlb_f5_total',
+      gamePkKey: `${gameDate}|BOS|NYY`,
+      gamePk: 745398,
+    });
+    closeDatabase();
+
+    const firstRun = await settleMlbF5({ dryRun: false });
+    expect(firstRun.success).toBe(true);
+    expect(firstRun.settled).toBeGreaterThanOrEqual(1);
+
+    const dbAfterFirstRun = getDatabase();
+    const firstRow = dbAfterFirstRun
+      .prepare('SELECT status, result, settled_at FROM card_results WHERE id = ?')
+      .get(resultId);
+    expect(firstRow.status).toBe('settled');
+    expect(['win', 'loss', 'push']).toContain(firstRow.result);
+    expect(firstRow.settled_at).toBeTruthy();
+    const firstSettledAt = firstRow.settled_at;
+    closeDatabase();
+
+    const secondRun = await settleMlbF5({ dryRun: false });
+    expect(secondRun.success).toBe(true);
+    expect(secondRun.settled).toBe(0);
+
+    const dbAfterSecondRun = getDatabase();
+    const secondRow = dbAfterSecondRun
+      .prepare('SELECT status, result, settled_at FROM card_results WHERE id = ?')
+      .get(resultId);
+    expect(secondRow.status).toBe('settled');
+    expect(secondRow.result).toBe(firstRow.result);
+    expect(secondRow.settled_at).toBe(firstSettledAt);
+    closeDatabase();
   });
 });

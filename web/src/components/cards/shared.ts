@@ -48,13 +48,14 @@ export const CHUNK_ERROR_LOG_CODE = 'CARDS_CHUNK_LOAD_FAILED';
 export const FETCH_ERROR_LOG_CODE = 'CARDS_FETCH_FAILED';
 
 export const BUCKET_LABELS: Record<
-  'missingMapping' | 'driverLoadFailed' | 'noOdds' | 'noProjection',
+  'missingMapping' | 'driverLoadFailed' | 'noOdds' | 'noProjection' | 'projectionOnly',
   string
 > = {
   missingMapping: 'Missing mapping',
   driverLoadFailed: 'Driver load failed',
   noOdds: 'No odds',
   noProjection: 'No projection',
+  projectionOnly: 'Projection only',
 };
 
 export function createEmptySportCounts(): SportCountMap {

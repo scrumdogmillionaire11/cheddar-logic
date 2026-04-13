@@ -6,6 +6,67 @@
 const { __private } = require('../settle_pending_cards.js');
 
 describe('Settlement contract (post-legacy)', () => {
+  test('F5 signature guard detects all canonical token variants', () => {
+    const cases = [
+      {
+        name: 'card_type mlb-f5',
+        row: { card_type: 'mlb-f5', market_type: 'TOTAL' },
+        payload: {},
+      },
+      {
+        name: 'card_type mlb-f5-ml',
+        row: { card_type: 'mlb-f5-ml', market_type: 'MONEYLINE' },
+        payload: {},
+      },
+      {
+        name: 'market_type FIRST_5_INNINGS',
+        row: { card_type: 'mlb-moneyline', market_type: 'FIRST_5_INNINGS' },
+        payload: {},
+      },
+      {
+        name: 'market_type F5_TOTAL',
+        row: { card_type: 'mlb-totals', market_type: 'F5_TOTAL' },
+        payload: {},
+      },
+      {
+        name: 'market_type F5_ML',
+        row: { card_type: 'mlb-moneyline', market_type: 'F5_ML' },
+        payload: {},
+      },
+      {
+        name: 'payload market f5_total',
+        row: { card_type: 'mlb-moneyline', market_type: 'TOTAL' },
+        payload: { market: 'f5_total' },
+      },
+      {
+        name: 'payload market_key mlb_f5_ml',
+        row: { card_type: 'mlb-moneyline', market_type: 'MONEYLINE' },
+        payload: { market_key: 'mlb_f5_ml' },
+      },
+    ];
+
+    for (const testCase of cases) {
+      expect(
+        __private.isProjectionOnlyF5Row(testCase.row, testCase.payload),
+      ).toBe(true);
+    }
+  });
+
+  test('F5 signature guard leaves non-F5 rows eligible for standard settlement', () => {
+    expect(
+      __private.isProjectionOnlyF5Row(
+        { card_type: 'mlb-moneyline', market_type: 'MONEYLINE' },
+        { market_key: 'mlb_moneyline' },
+      ),
+    ).toBe(false);
+    expect(
+      __private.isProjectionOnlyF5Row(
+        { card_type: 'nba-totals-call', market_type: 'TOTAL' },
+        { market: 'total' },
+      ),
+    ).toBe(false);
+  });
+
   test('does not expose legacy top-level card selector', () => {
     expect(__private.selectTopLevelCard).toBeUndefined();
   });
@@ -279,5 +340,177 @@ describe('Settlement contract (post-legacy)', () => {
     expect(__private.shouldEnableDisplayBackfill(false)).toBe(false);
     expect(__private.shouldEnableDisplayBackfill(true)).toBe(false);
     expect(__private.shouldEnableDisplayBackfill(null)).toBe(false);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// resolvePlayerShotsActualValue — full-game shots contract (WI-0909)
+// ─────────────────────────────────────────────────────────────────────────────
+
+const FULL_GAME = 'FULL_GAME';
+
+// Minimal gameResultMetadata fixture builder
+function makeGRM({ byId = {}, byName = {} } = {}) {
+  return {
+    playerShots: {
+      fullGameByPlayerId: byId,
+      firstPeriodByPlayerId: {},
+      playerIdByNormalizedName: byName,
+    },
+  };
+}
+
+describe('resolvePlayerShotsActualValue — full-game shots contract (WI-0909)', () => {
+  test('returns shot value when player found by direct id (FULL_GAME)', () => {
+    const grm = makeGRM({ byId: { '8478402': 5 } });
+    const result = __private.resolvePlayerShotsActualValue({
+      gameResultMetadata: grm,
+      playerId: '8478402',
+      playerName: 'Connor McDavid',
+      period: FULL_GAME,
+    });
+    expect(result).toBe(5);
+  });
+
+  test('returns shot value when player found by normalized-name fallback (FULL_GAME)', () => {
+    const grm = makeGRM({
+      byId: { '8478402': 3 },
+      byName: { 'connor mcdavid': '8478402' },
+    });
+    // Use a player_id NOT in byId, but name maps to it
+    const result = __private.resolvePlayerShotsActualValue({
+      gameResultMetadata: grm,
+      playerId: '9999999',
+      playerName: 'Connor McDavid',
+      period: FULL_GAME,
+    });
+    expect(result).toBe(3);
+  });
+
+  test('throws MISSING_PLAYER_SHOTS_VALUE with resolvedAttempts=[id,name] when player absent by both methods (FULL_GAME)', () => {
+    // This is the previously-diverging mismatch fixture: player not in either lookup path
+    const grm = makeGRM({
+      byId: { '8888888': 4 },
+      byName: { 'some other player': '8888888' },
+    });
+    let thrownError;
+    try {
+      __private.resolvePlayerShotsActualValue({
+        gameResultMetadata: grm,
+        playerId: '9999999',
+        playerName: 'Unknown Player',
+        period: FULL_GAME,
+      });
+    } catch (err) {
+      thrownError = err;
+    }
+    expect(thrownError).toBeDefined();
+    expect(thrownError.code).toBe('MISSING_PLAYER_SHOTS_VALUE');
+    expect(thrownError.details).toEqual(
+      expect.objectContaining({
+        resolvedAttempts: expect.arrayContaining(['id', 'name']),
+      }),
+    );
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// resolvePlayerShotsActualValue — 1P shots contract (WI-0910)
+// ─────────────────────────────────────────────────────────────────────────────
+
+const FIRST_PERIOD = '1P';
+
+function makeGRM1P({ firstPeriodById = {}, byName = {}, isComplete = true } = {}) {
+  return {
+    firstPeriodVerification: { isComplete },
+    playerShots: {
+      fullGameByPlayerId: {},
+      firstPeriodByPlayerId: firstPeriodById,
+      playerIdByNormalizedName: byName,
+    },
+  };
+}
+
+describe('resolvePlayerShotsActualValue — 1P shots contract (WI-0910)', () => {
+  test('returns 1P shot value when firstPeriodVerification.isComplete=true and player found', () => {
+    const grm = makeGRM1P({ firstPeriodById: { '8478402': 3 }, isComplete: true });
+    const result = __private.resolvePlayerShotsActualValue({
+      gameResultMetadata: grm,
+      playerId: '8478402',
+      playerName: 'Connor McDavid',
+      period: FIRST_PERIOD,
+    });
+    expect(result).toBe(3);
+  });
+
+  test('throws PERIOD_NOT_COMPLETE when firstPeriodVerification.isComplete=false', () => {
+    const grm = makeGRM1P({ firstPeriodById: { '8478402': 3 }, isComplete: false });
+    let thrownError;
+    try {
+      __private.resolvePlayerShotsActualValue({
+        gameResultMetadata: grm,
+        playerId: '8478402',
+        playerName: 'Connor McDavid',
+        period: FIRST_PERIOD,
+      });
+    } catch (err) {
+      thrownError = err;
+    }
+    expect(thrownError).toBeDefined();
+    expect(thrownError.code).toBe('PERIOD_NOT_COMPLETE');
+  });
+
+  test('throws MISSING_PERIOD_PLAYER_SHOTS_VALUE when 1P complete but player absent', () => {
+    const grm = makeGRM1P({ firstPeriodById: { '8888888': 2 }, isComplete: true });
+    let thrownError;
+    try {
+      __private.resolvePlayerShotsActualValue({
+        gameResultMetadata: grm,
+        playerId: '9999999',
+        playerName: 'Unknown Player',
+        period: FIRST_PERIOD,
+      });
+    } catch (err) {
+      thrownError = err;
+    }
+    expect(thrownError).toBeDefined();
+    expect(thrownError.code).toBe('MISSING_PERIOD_PLAYER_SHOTS_VALUE');
+  });
+
+  test('reads firstPeriodByPlayerId permissively when firstPeriodVerification absent', () => {
+    // No firstPeriodVerification key at all — treat as permissive (no throw from completeness guard)
+    const grm = {
+      playerShots: {
+        fullGameByPlayerId: {},
+        firstPeriodByPlayerId: { '8478402': 4 },
+        playerIdByNormalizedName: {},
+      },
+    };
+    const result = __private.resolvePlayerShotsActualValue({
+      gameResultMetadata: grm,
+      playerId: '8478402',
+      playerName: 'Connor McDavid',
+      period: FIRST_PERIOD,
+    });
+    expect(result).toBe(4);
+  });
+
+  test('FULL_GAME is not guarded even when firstPeriodVerification.isComplete=false', () => {
+    // Use makeGRM (existing helper) but add firstPeriodVerification with isComplete=false
+    const grm = {
+      firstPeriodVerification: { isComplete: false },
+      playerShots: {
+        fullGameByPlayerId: { '8478402': 7 },
+        firstPeriodByPlayerId: {},
+        playerIdByNormalizedName: {},
+      },
+    };
+    const result = __private.resolvePlayerShotsActualValue({
+      gameResultMetadata: grm,
+      playerId: '8478402',
+      playerName: 'Connor McDavid',
+      period: FULL_GAME,
+    });
+    expect(result).toBe(7);
   });
 });

@@ -70,6 +70,145 @@ function americanToImplied(americanOdds) {
   return Math.abs(americanOdds) / (Math.abs(americanOdds) + 100);
 }
 
+function toFiniteNumber(value) {
+  const numericValue = Number(value);
+  return Number.isFinite(numericValue) ? numericValue : null;
+}
+
+function pickFiniteNumber(...values) {
+  for (const value of values) {
+    const numericValue = toFiniteNumber(value);
+    if (numericValue !== null) {
+      return numericValue;
+    }
+  }
+  return null;
+}
+
+function parseJsonObject(rawValue) {
+  if (typeof rawValue !== 'string' || rawValue.trim().length === 0) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(rawValue);
+    return parsed && typeof parsed === 'object' ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function loadLatestOddsSnapshotRow(db, resolvedGameId) {
+  if (!db || typeof resolvedGameId !== 'string' || resolvedGameId.length === 0) {
+    return null;
+  }
+  try {
+    return (
+      db.prepare(`
+        SELECT *
+        FROM odds_snapshots
+        WHERE game_id = ?
+        ORDER BY datetime(COALESCE(captured_at, created_at)) DESC, datetime(created_at) DESC
+        LIMIT 1
+      `).get(resolvedGameId) || null
+    );
+  } catch {
+    return null;
+  }
+}
+
+function resolveOddsSnapshotMoneylines(snapshotRow) {
+  if (!snapshotRow || typeof snapshotRow !== 'object') return null;
+
+  const rawData = parseJsonObject(snapshotRow.raw_data);
+  const candidates = [
+    {
+      source: 'h2h',
+      home: pickFiniteNumber(
+        snapshotRow.h2h_home,
+        rawData?.h2h_home,
+        rawData?.h2hHome,
+      ),
+      away: pickFiniteNumber(
+        snapshotRow.h2h_away,
+        rawData?.h2h_away,
+        rawData?.h2hAway,
+      ),
+    },
+    {
+      source: 'moneyline',
+      home: pickFiniteNumber(
+        snapshotRow.moneyline_home,
+        rawData?.moneyline_home,
+        rawData?.moneylineHome,
+      ),
+      away: pickFiniteNumber(
+        snapshotRow.moneyline_away,
+        rawData?.moneyline_away,
+        rawData?.moneylineAway,
+      ),
+    },
+  ];
+
+  return (
+    candidates.find(
+      (candidate) =>
+        Number.isFinite(candidate.home) &&
+        candidate.home !== 0 &&
+        Number.isFinite(candidate.away) &&
+        candidate.away !== 0,
+    ) || null
+  );
+}
+
+function computeBlkUnderdogScriptContext({
+  db,
+  resolvedGameId,
+  isHome,
+}) {
+  const defaultResult = {
+    factor: 1.0,
+    source: 'defaulted',
+    missing: true,
+    winProbability: null,
+  };
+  const snapshotRow = loadLatestOddsSnapshotRow(db, resolvedGameId);
+  const resolvedMoneylines = resolveOddsSnapshotMoneylines(snapshotRow);
+  if (!resolvedMoneylines) {
+    return defaultResult;
+  }
+
+  const fairHomeProb = twoSidedFairProb(
+    resolvedMoneylines.home,
+    resolvedMoneylines.away,
+  );
+  const fallbackTeamProb = americanToImplied(
+    isHome ? resolvedMoneylines.home : resolvedMoneylines.away,
+  );
+  const playerTeamWinProbability = Number.isFinite(fairHomeProb)
+    ? (isHome ? fairHomeProb : 1 - fairHomeProb)
+    : fallbackTeamProb;
+
+  if (!Number.isFinite(playerTeamWinProbability)) {
+    return defaultResult;
+  }
+
+  let factor = 1.0;
+  if (playerTeamWinProbability < 0.35) {
+    factor = 1.1;
+  } else if (playerTeamWinProbability < 0.4) {
+    factor = 1.08;
+  } else if (playerTeamWinProbability < 0.45) {
+    factor = 1.05;
+  }
+
+  return {
+    factor,
+    source: 'computed',
+    missing: false,
+    winProbability: playerTeamWinProbability,
+  };
+}
+
 const PROP_PROJECTION_FLAGS = new Set([
   'PROJECTION_ANOMALY',
   'SYNTHETIC_LINE',
@@ -1182,6 +1321,162 @@ function buildSharedPropFlags({
   return flags;
 }
 
+function loadNhlMatchupFactors({
+  db,
+  playerName,
+  playerTeamName,
+  opponentTeamName,
+  opponentLookupNote,
+  resolvedGameId,
+}) {
+  let opponentFactor = 1.0;
+  let paceFactor = 1.0;
+  let blkOppAttemptFactor = 1.0;
+  let blkDefensiveZoneFactor = 1.0;
+  let opponentFactorMissing = false;
+  let paceFactorMissing = false;
+  let blkOpponentAttemptFactorSource = 'defaulted';
+  let blkDefensiveZoneFactorSource = 'defaulted';
+  const matchupContext =
+    `${playerName} (${playerTeamName}) vs ${opponentTeamName} [game=${resolvedGameId}]`;
+
+  try {
+    const factorRow = db.prepare(`
+      SELECT
+        (
+          SELECT COALESCE(
+            CAST(json_extract(metrics, '$.shots_against_pg') AS REAL),
+            CAST(json_extract(metrics, '$.avgShotsAgainst') AS REAL),
+            CAST(json_extract(metrics, '$.shotsAgainstPerGame') AS REAL),
+            CAST(json_extract(metrics, '$.avgGoalsAgainst') AS REAL)
+          )
+          FROM team_metrics_cache
+          WHERE UPPER(sport) = 'NHL'
+            AND status = 'ok'
+            AND UPPER(team_name) = UPPER(?)
+          ORDER BY cache_date DESC
+          LIMIT 1
+        ) AS opponent_shots_against_pg,
+        (
+          SELECT AVG(COALESCE(
+            CAST(json_extract(metrics, '$.shots_against_pg') AS REAL),
+            CAST(json_extract(metrics, '$.avgShotsAgainst') AS REAL),
+            CAST(json_extract(metrics, '$.shotsAgainstPerGame') AS REAL),
+            CAST(json_extract(metrics, '$.avgGoalsAgainst') AS REAL)
+          ))
+          FROM team_metrics_cache
+          WHERE UPPER(sport) = 'NHL'
+            AND status = 'ok'
+            AND COALESCE(
+              CAST(json_extract(metrics, '$.shots_against_pg') AS REAL),
+              CAST(json_extract(metrics, '$.avgShotsAgainst') AS REAL),
+              CAST(json_extract(metrics, '$.shotsAgainstPerGame') AS REAL),
+              CAST(json_extract(metrics, '$.avgGoalsAgainst') AS REAL)
+            ) IS NOT NULL
+        ) AS league_avg_shots_against_pg,
+        (
+          SELECT COALESCE(
+            CAST(json_extract(metrics, '$.pace_proxy') AS REAL),
+            CAST(json_extract(metrics, '$.paceFactor') AS REAL),
+            CAST(json_extract(metrics, '$.pace') AS REAL),
+            CAST(json_extract(metrics, '$.corsi_for_pct') AS REAL) / 50.0,
+            CAST(json_extract(metrics, '$.shots_for_pg') AS REAL) /
+              NULLIF((
+                SELECT AVG(CAST(json_extract(metrics, '$.shots_for_pg') AS REAL))
+                FROM team_metrics_cache
+                WHERE UPPER(sport) = 'NHL'
+                  AND status = 'ok'
+                  AND json_extract(metrics, '$.shots_for_pg') IS NOT NULL
+              ), 0)
+          )
+          FROM team_metrics_cache
+          WHERE UPPER(sport) = 'NHL'
+            AND status = 'ok'
+            AND UPPER(team_name) = UPPER(?)
+          ORDER BY cache_date DESC
+          LIMIT 1
+        ) AS team_pace_proxy,
+        (
+          SELECT COALESCE(
+            CAST(json_extract(metrics, '$.pace_proxy') AS REAL),
+            CAST(json_extract(metrics, '$.paceFactor') AS REAL),
+            CAST(json_extract(metrics, '$.pace') AS REAL),
+            CAST(json_extract(metrics, '$.corsi_for_pct') AS REAL) / 50.0,
+            CAST(json_extract(metrics, '$.shots_for_pg') AS REAL) /
+              NULLIF((
+                SELECT AVG(CAST(json_extract(metrics, '$.shots_for_pg') AS REAL))
+                FROM team_metrics_cache
+                WHERE UPPER(sport) = 'NHL'
+                  AND status = 'ok'
+                  AND json_extract(metrics, '$.shots_for_pg') IS NOT NULL
+              ), 0)
+          )
+          FROM team_metrics_cache
+          WHERE UPPER(sport) = 'NHL'
+            AND status = 'ok'
+            AND UPPER(team_name) = UPPER(?)
+          ORDER BY cache_date DESC
+          LIMIT 1
+        ) AS opponent_pace_proxy
+    `).get(opponentTeamName, playerTeamName, opponentTeamName);
+
+    if (
+      factorRow &&
+      factorRow.opponent_shots_against_pg > 0 &&
+      factorRow.league_avg_shots_against_pg > 0
+    ) {
+      opponentFactor =
+        factorRow.opponent_shots_against_pg /
+        factorRow.league_avg_shots_against_pg;
+      blkDefensiveZoneFactor = opponentFactor;
+      blkDefensiveZoneFactorSource = 'computed';
+    } else {
+      opponentFactorMissing = true;
+      console.warn(
+        `[${JOB_NAME}] [opponent-factor-fallback] ${matchupContext} — ${opponentLookupNote}no usable team_metrics_cache matchup data; opponentFactor defaulting to 1.0`,
+      );
+    }
+
+    const teamPaceProxy = Number(factorRow?.team_pace_proxy);
+    const opponentPaceProxy = Number(factorRow?.opponent_pace_proxy);
+    if (Number.isFinite(opponentPaceProxy) && opponentPaceProxy > 0) {
+      blkOppAttemptFactor = opponentPaceProxy;
+      blkOpponentAttemptFactorSource = 'computed';
+    }
+    if (
+      Number.isFinite(teamPaceProxy) &&
+      teamPaceProxy > 0 &&
+      Number.isFinite(opponentPaceProxy) &&
+      opponentPaceProxy > 0
+    ) {
+      paceFactor = clamp((teamPaceProxy + opponentPaceProxy) / 2, 0.85, 1.2);
+    } else {
+      paceFactorMissing = true;
+      console.warn(
+        `[${JOB_NAME}] [pace-factor-fallback] ${matchupContext} — no usable NHL pace proxy; paceFactor defaulting to 1.0`,
+      );
+    }
+  } catch (error) {
+    opponentFactorMissing = true;
+    paceFactorMissing = true;
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    console.warn(
+      `[${JOB_NAME}] [matchup-factor-fallback] ${matchupContext} — could not query team_metrics_cache for matchup factors; defaulting to opponentFactor=1.0 paceFactor=1.0 (${errorMessage})`,
+    );
+  }
+
+  return {
+    opponentFactor,
+    paceFactor,
+    blkOppAttemptFactor,
+    blkDefensiveZoneFactor,
+    opponentFactorMissing,
+    paceFactorMissing,
+    blkOpponentAttemptFactorSource,
+    blkDefensiveZoneFactorSource,
+  };
+}
+
 function getPropVerdictRank(verdict) {
   switch (verdict) {
     case 'PLAY':
@@ -1806,9 +2101,43 @@ async function runNHLPlayerShotsModel() {
               ? player.player_name.trim()
               : `Player #${player.player_id}`;
             const roleStability = playerAvailabilityTier === 'DTD' ? 'MEDIUM' : 'HIGH';
-            // Hoisted to shared scope so the blkEnabled branch can access it
-            // when hasSogLookback is false (e.g. defensemen with <5 SOG logs).
-            let blkOppAttemptFactor = 1.0;
+            const isHome =
+              player.team_abbrev?.toUpperCase() === homeTeam.toUpperCase() ||
+              TEAM_ABBREV_TO_NAME[player.team_abbrev?.toUpperCase()]?.toUpperCase() === homeTeam.toUpperCase();
+            const playerTeamAbbrev = resolveTeamAbbrev(player.team_abbrev);
+            const playerTeamName =
+              (playerTeamAbbrev && TEAM_ABBREV_TO_NAME[playerTeamAbbrev]) ||
+              player.team_abbrev;
+            const opponentTeam = isHome ? awayTeam : homeTeam;
+            const opponentAbbrev = resolveTeamAbbrev(opponentTeam);
+            if (!opponentAbbrev) {
+              console.debug(
+                `[${JOB_NAME}] Could not resolve opponent abbreviation for '${opponentTeam}' — using raw team name for matchup lookup`,
+              );
+            }
+            const opponentTeamName =
+              (opponentAbbrev && TEAM_ABBREV_TO_NAME[opponentAbbrev]) ||
+              opponentTeam;
+            const opponentLookupNote = !opponentAbbrev
+              ? 'opponent abbreviation unresolved; '
+              : '';
+            const {
+              opponentFactor,
+              paceFactor,
+              blkOppAttemptFactor,
+              blkDefensiveZoneFactor,
+              opponentFactorMissing,
+              paceFactorMissing,
+              blkOpponentAttemptFactorSource,
+              blkDefensiveZoneFactorSource,
+            } = loadNhlMatchupFactors({
+              db,
+              playerName,
+              playerTeamName,
+              opponentTeamName,
+              opponentLookupNote,
+              resolvedGameId,
+            });
 
             if (hasSogLookback) {
             const l5Games = playerLookbackGames.slice(0, 5);
@@ -1845,164 +2174,11 @@ async function runNHLPlayerShotsModel() {
               }
             }
 
-            const isHome =
-              player.team_abbrev?.toUpperCase() === homeTeam.toUpperCase() ||
-              TEAM_ABBREV_TO_NAME[player.team_abbrev?.toUpperCase()]?.toUpperCase() === homeTeam.toUpperCase();
-
-            const playerTeamAbbrev = resolveTeamAbbrev(player.team_abbrev);
-            const playerTeamName =
-              (playerTeamAbbrev && TEAM_ABBREV_TO_NAME[playerTeamAbbrev]) ||
-              player.team_abbrev;
             const moneyPuckSkater = resolveMoneyPuckSkaterEntry(
               moneyPuckSnapshot,
               playerTeamName,
               playerName,
             );
-            const opponentTeam = isHome ? awayTeam : homeTeam;
-            const opponentAbbrev = resolveTeamAbbrev(opponentTeam);
-            if (!opponentAbbrev) {
-              console.debug(
-                `[${JOB_NAME}] Could not resolve opponent abbreviation for '${opponentTeam}' — using raw team name for matchup lookup`,
-              );
-            }
-            const opponentTeamName =
-              (opponentAbbrev && TEAM_ABBREV_TO_NAME[opponentAbbrev]) ||
-              opponentTeam;
-
-            let opponentFactor = 1.0;
-            let paceFactor = 1.0;
-            // blkOppAttemptFactor is declared in shared scope above (hoisted for BLK block).
-            let opponentFactorMissing = false;
-            let paceFactorMissing = false;
-            const opponentLookupNote = !opponentAbbrev
-              ? 'opponent abbreviation unresolved; '
-              : '';
-            const matchupContext =
-              `${playerName} (${playerTeamName}) vs ${opponentTeamName} [game=${resolvedGameId}]`;
-            try {
-              const factorRow = db.prepare(`
-                SELECT
-                  (
-                    SELECT COALESCE(
-                      CAST(json_extract(metrics, '$.shots_against_pg') AS REAL),
-                      CAST(json_extract(metrics, '$.avgShotsAgainst') AS REAL),
-                      CAST(json_extract(metrics, '$.shotsAgainstPerGame') AS REAL),
-                      CAST(json_extract(metrics, '$.avgGoalsAgainst') AS REAL)
-                    )
-                    FROM team_metrics_cache
-                    WHERE UPPER(sport) = 'NHL'
-                      AND status = 'ok'
-                      AND UPPER(team_name) = UPPER(?)
-                    ORDER BY cache_date DESC
-                    LIMIT 1
-                  ) AS opponent_shots_against_pg,
-                  (
-                    SELECT AVG(COALESCE(
-                      CAST(json_extract(metrics, '$.shots_against_pg') AS REAL),
-                      CAST(json_extract(metrics, '$.avgShotsAgainst') AS REAL),
-                      CAST(json_extract(metrics, '$.shotsAgainstPerGame') AS REAL),
-                      CAST(json_extract(metrics, '$.avgGoalsAgainst') AS REAL)
-                    ))
-                    FROM team_metrics_cache
-                    WHERE UPPER(sport) = 'NHL'
-                      AND status = 'ok'
-                      AND COALESCE(
-                        CAST(json_extract(metrics, '$.shots_against_pg') AS REAL),
-                        CAST(json_extract(metrics, '$.avgShotsAgainst') AS REAL),
-                        CAST(json_extract(metrics, '$.shotsAgainstPerGame') AS REAL),
-                        CAST(json_extract(metrics, '$.avgGoalsAgainst') AS REAL)
-                      ) IS NOT NULL
-                  ) AS league_avg_shots_against_pg,
-                  (
-                    SELECT COALESCE(
-                      CAST(json_extract(metrics, '$.pace_proxy') AS REAL),
-                      CAST(json_extract(metrics, '$.paceFactor') AS REAL),
-                      CAST(json_extract(metrics, '$.pace') AS REAL),
-                      CAST(json_extract(metrics, '$.corsi_for_pct') AS REAL) / 50.0,
-                      CAST(json_extract(metrics, '$.shots_for_pg') AS REAL) /
-                        NULLIF((
-                          SELECT AVG(CAST(json_extract(metrics, '$.shots_for_pg') AS REAL))
-                          FROM team_metrics_cache
-                          WHERE UPPER(sport) = 'NHL'
-                            AND status = 'ok'
-                            AND json_extract(metrics, '$.shots_for_pg') IS NOT NULL
-                        ), 0)
-                    )
-                    FROM team_metrics_cache
-                    WHERE UPPER(sport) = 'NHL'
-                      AND status = 'ok'
-                      AND UPPER(team_name) = UPPER(?)
-                    ORDER BY cache_date DESC
-                    LIMIT 1
-                  ) AS team_pace_proxy,
-                  (
-                    SELECT COALESCE(
-                      CAST(json_extract(metrics, '$.pace_proxy') AS REAL),
-                      CAST(json_extract(metrics, '$.paceFactor') AS REAL),
-                      CAST(json_extract(metrics, '$.pace') AS REAL),
-                      CAST(json_extract(metrics, '$.corsi_for_pct') AS REAL) / 50.0,
-                      CAST(json_extract(metrics, '$.shots_for_pg') AS REAL) /
-                        NULLIF((
-                          SELECT AVG(CAST(json_extract(metrics, '$.shots_for_pg') AS REAL))
-                          FROM team_metrics_cache
-                          WHERE UPPER(sport) = 'NHL'
-                            AND status = 'ok'
-                            AND json_extract(metrics, '$.shots_for_pg') IS NOT NULL
-                        ), 0)
-                    )
-                    FROM team_metrics_cache
-                    WHERE UPPER(sport) = 'NHL'
-                      AND status = 'ok'
-                      AND UPPER(team_name) = UPPER(?)
-                    ORDER BY cache_date DESC
-                    LIMIT 1
-                  ) AS opponent_pace_proxy
-              `).get(opponentTeamName, playerTeamName, opponentTeamName);
-
-              if (
-                factorRow &&
-                factorRow.opponent_shots_against_pg > 0 &&
-                factorRow.league_avg_shots_against_pg > 0
-              ) {
-                opponentFactor =
-                  factorRow.opponent_shots_against_pg /
-                  factorRow.league_avg_shots_against_pg;
-              } else {
-                opponentFactorMissing = true;
-                console.warn(
-                  `[${JOB_NAME}] [opponent-factor-fallback] ${matchupContext} — ${opponentLookupNote}no usable team_metrics_cache matchup data; opponentFactor defaulting to 1.0`,
-                );
-              }
-
-              const teamPaceProxy = Number(factorRow?.team_pace_proxy);
-              const opponentPaceProxy = Number(factorRow?.opponent_pace_proxy);
-              // BLK: opponent attempt factor — opponent's corsi proxy (shots generated ratio)
-              // Clamping to [0.90, 1.12] is enforced inside projectBlkV1.
-              if (Number.isFinite(opponentPaceProxy) && opponentPaceProxy > 0) {
-                blkOppAttemptFactor = opponentPaceProxy;
-              }
-              if (
-                Number.isFinite(teamPaceProxy) &&
-                teamPaceProxy > 0 &&
-                Number.isFinite(opponentPaceProxy) &&
-                opponentPaceProxy > 0
-              ) {
-                paceFactor = clamp((teamPaceProxy + opponentPaceProxy) / 2, 0.85, 1.2);
-              } else {
-                paceFactorMissing = true;
-                console.warn(
-                  `[${JOB_NAME}] [pace-factor-fallback] ${matchupContext} — no usable NHL pace proxy; paceFactor defaulting to 1.0`,
-                );
-              }
-            } catch (error) {
-              opponentFactorMissing = true;
-              paceFactorMissing = true;
-              const errorMessage = error instanceof Error ? error.message : String(error);
-              console.warn(
-                `[${JOB_NAME}] [matchup-factor-fallback] ${matchupContext} — could not query team_metrics_cache for matchup factors; defaulting to opponentFactor=1.0 paceFactor=1.0 (${errorMessage})`,
-              );
-            }
-
             // WI-0532: PP matchup layer from opponent PK quality + penalties against/60.
             let ppMatchupFactor = 1.0;
             let oppPkPct = null;
@@ -3109,6 +3285,50 @@ async function runNHLPlayerShotsModel() {
                   blkGameMonth === 5 ||
                   blkGameMonth === 6;
                 const blkPlayoffFactor = blkInPlayoffs ? 1.06 : 1.0;
+                const blkUnderdogContext = computeBlkUnderdogScriptContext({
+                  db,
+                  resolvedGameId,
+                  isHome,
+                });
+                const blkFactorSource = {
+                  opponent_attempt_factor: blkOpponentAttemptFactorSource,
+                  defensive_zone_factor: blkDefensiveZoneFactorSource,
+                  underdog_script_factor: blkUnderdogContext.source,
+                  playoff_tightening_factor: 'computed',
+                };
+                const blkContextFlags = [];
+                if (blkDefensiveZoneFactorSource !== 'computed') {
+                  blkContextFlags.push('BLK_DZ_FACTOR_MISSING');
+                }
+                if (blkUnderdogContext.missing) {
+                  blkContextFlags.push('BLK_UNDERDOG_FACTOR_MISSING');
+                }
+                const blkCombinedDynamic =
+                  blkOppAttemptFactor *
+                  blkDefensiveZoneFactor *
+                  blkUnderdogContext.factor;
+                let blkDefensiveZoneFactorFinal = blkDefensiveZoneFactor;
+                let blkUnderdogScriptFactorFinal = blkUnderdogContext.factor;
+                if (blkCombinedDynamic > 1.2) {
+                  const blkContextScale = Math.sqrt(1.2 / blkCombinedDynamic);
+                  blkDefensiveZoneFactorFinal *= blkContextScale;
+                  blkUnderdogScriptFactorFinal *= blkContextScale;
+                  blkContextFlags.push('BLK_CONTEXT_CAP_APPLIED');
+                }
+                const blkFactorInputs = {
+                  opponent_attempt_factor: roundMetric(blkOppAttemptFactor, 4),
+                  defensive_zone_factor: roundMetric(blkDefensiveZoneFactorFinal, 4),
+                  underdog_script_factor: roundMetric(blkUnderdogScriptFactorFinal, 4),
+                  playoff_tightening_factor: roundMetric(blkPlayoffFactor, 4),
+                };
+                const blkContextTag =
+                  blkUnderdogScriptFactorFinal > 1.0 &&
+                  blkDefensiveZoneFactorFinal > 1.0
+                    ? 'UNDERDOG_HIGH_PRESSURE'
+                    : blkUnderdogScriptFactorFinal === 1.0 &&
+                        blkDefensiveZoneFactorFinal < 1.0
+                      ? 'FAVORITE_LOW_BLOCK'
+                      : 'NEUTRAL';
 
                 const blkProjection = projectBlkV1({
                   player_id: player.player_id,
@@ -3127,6 +3347,8 @@ async function runNHLPlayerShotsModel() {
                   market_price_under: blkMarket.under_price,
                   play_direction: blkLeanSide,
                   opponent_attempt_factor: blkOppAttemptFactor,
+                  defensive_zone_factor: blkDefensiveZoneFactorFinal,
+                  underdog_script_factor: blkUnderdogScriptFactorFinal,
                   playoff_tightening_factor: blkPlayoffFactor,
                   lines_to_price: blkLineCandidates
                     .map((c) => c.line)
@@ -3142,7 +3364,9 @@ async function runNHLPlayerShotsModel() {
                     0.55 + Math.abs((blkProjection.blk_mu ?? 0) - blkMarket.line) * 0.08,
                   ),
                 );
-                const blkFlags = Array.from(new Set(blkProjection.flags ?? []));
+                const blkFlags = Array.from(
+                  new Set([...(blkProjection.flags ?? []), ...blkContextFlags]),
+                );
                 let blkPropDecision = buildCanonicalPropDecision({
                   projection: blkProjection.blk_mu,
                   marketLine: blkMarket.line,
@@ -3285,6 +3509,10 @@ async function runNHLPlayerShotsModel() {
                     market_line: blkMarket.line,
                     direction: blkResolvedLean,
                     confidence: blkConfidence,
+                    v2: {
+                      flags: blkPropDecision.flags,
+                      odds_backed: blkUsingRealLine,
+                    },
                   },
                   drivers: {
                     l5_avg: l5BlkMean,
@@ -3295,6 +3523,9 @@ async function runNHLPlayerShotsModel() {
                     ev_block_rate: blkProjection.block_rate_ev_per60,
                     pk_block_rate: blkProjection.block_rate_pk_per60,
                     role_stability: blkProjection.role_stability ?? roleStability,
+                    blk_factor_inputs: blkFactorInputs,
+                    blk_factor_source: blkFactorSource,
+                    blk_context_tag: blkContextTag,
                   },
                 };
 
@@ -3448,6 +3679,10 @@ async function runNHLPlayerShotsModel() {
                         market_line: extraLine,
                         direction: extraLeanSide,
                         confidence: blkConfidence,
+                        v2: {
+                          flags: extraPropDecision.flags,
+                          odds_backed: true,
+                        },
                       },
                     };
                     applyNhlDecisionBasisMeta(extraPayload, {

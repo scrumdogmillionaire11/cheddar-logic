@@ -47,15 +47,23 @@ async function fetchF5Total(gamePk) {
 
 /**
  * Grade an F5 card: compare OVER/UNDER prediction vs actual total vs line.
- * Returns 'won', 'lost', 'push', or null (if unsettleable).
+ * Returns 'win', 'loss', 'push', or null (if unsettleable).
  */
 function gradeF5Card(prediction, line, actualTotal) {
   if (actualTotal === null || line === null) return null;
   const edge = actualTotal - line;
   if (Math.abs(edge) < 0.05) return 'push'; // within rounding
-  if (prediction === 'OVER') return actualTotal > line ? 'won' : 'lost';
-  if (prediction === 'UNDER') return actualTotal < line ? 'won' : 'lost';
+  if (prediction === 'OVER') return actualTotal > line ? 'win' : 'loss';
+  if (prediction === 'UNDER') return actualTotal < line ? 'win' : 'loss';
   return null; // PASS cards and unknown predictions are not settled
+}
+
+function normalizeOutcomeToken(outcome) {
+  const token = String(outcome || '').trim().toLowerCase();
+  if (token === 'won') return 'win';
+  if (token === 'lost') return 'loss';
+  if (token === 'win' || token === 'loss' || token === 'push') return token;
+  return null;
 }
 
 async function settleMlbF5({ jobKey = null, dryRun = false } = {}) {
@@ -119,7 +127,14 @@ async function settleMlbF5({ jobKey = null, dryRun = false } = {}) {
           if (!String(marketKey).includes('f5')) continue;
 
           const prediction = payload?.prediction;
-          const line = payload?.market?.line ?? payload?.f5_line ?? null;
+          // WI-0913 Spike: Try to read F5 line from injected market line first (from spike fetcher),
+          // then fall back to original location
+          const line = payload?.f5_market_line?.line 
+            ?? payload?.market?.line 
+            ?? payload?.f5_line 
+            ?? null;
+          const marketLineSource = payload?.f5_market_line?.source ?? 'original';
+          
           if (!prediction || prediction === 'PASS' || line === null) continue;
 
           // Check if F5 total already cached in game_results metadata
@@ -177,7 +192,8 @@ async function settleMlbF5({ jobKey = null, dryRun = false } = {}) {
             continue;
           }
 
-          const outcome = gradeF5Card(prediction, line, actualF5);
+          const gradedOutcome = gradeF5Card(prediction, line, actualF5);
+          const outcome = normalizeOutcomeToken(gradedOutcome);
           if (!outcome) {
             console.warn(
               `  [${JOB_NAME}] ${card.game_id}: ungradeable prediction="${prediction}" line=${line} actual=${actualF5}`,
@@ -187,18 +203,26 @@ async function settleMlbF5({ jobKey = null, dryRun = false } = {}) {
           }
 
           if (!dryRun) {
-            db.prepare(`
+            const writeResult = db.prepare(`
               UPDATE card_results SET
-                status = ?,
+                status = 'settled',
                 result = ?,
                 settled_at = datetime('now'),
                 updated_at = datetime('now')
               WHERE id = ?
-            `).run(outcome, outcome, card.result_id);
+                AND status = 'pending'
+            `).run(outcome, card.result_id);
+
+            if (Number(writeResult?.changes || 0) === 0) {
+              console.log(
+                `  [${JOB_NAME}] ${card.game_id}: skipped idempotent terminal write (result_id=${card.result_id} already terminal)`,
+              );
+              continue;
+            }
           }
 
           console.log(
-            `  [${JOB_NAME}] ${card.game_id}: F5 actual=${actualF5} vs line=${line} prediction=${prediction} → ${outcome}`,
+            `  [${JOB_NAME}] ${card.game_id}: F5 actual=${actualF5} vs line=${line} (source=${marketLineSource}) prediction=${prediction} → ${outcome}`,
           );
           settled++;
         } catch (err) {

@@ -41,6 +41,9 @@ const {
   computeMLBLeagueAverages,
 } = require('@cheddar-logic/data');
 
+// WI-0913: Spike F5 market line fetcher (non-prod)
+const { fetchF5LineFromVsin } = require('@cheddar-logic/adapters').f5LineFetcher;
+
 // Import pluggable inference layer
 const { getModel, computeMLBDriverCards, computePitcherKDriverCards } = require('../models');
 const { selectMlbGameMarket, projectF5ML, projectTeamF5RunsAgainstStarter, setLeagueConstants } = require('../models/mlb-model');
@@ -2192,6 +2195,18 @@ async function runMLBModel({
                   }),
                 }]
               : []),
+            // Full-game total and ML from computeMLBDriverCards — odds-backed
+            ...gameDriverCards
+              .filter((d) => (d.market === 'full_game_total' || d.market === 'full_game_ml') && d.ev_threshold_passed)
+              .map((d) => ({
+                driver: d,
+                executionEnvelope: deriveMlbExecutionEnvelope({
+                  driver: d,
+                  pricingStatus: gamePricingStatus,
+                  pricingReason: gamePricingReason,
+                  pricingCapturedAt: gameOddsSnapshot?.captured_at ?? null,
+                }),
+              })),
             ...(projectionFloorDriver
               ? [{
                   driver: projectionFloorDriver,
@@ -2262,12 +2277,21 @@ async function runMLBModel({
             prepareModelAndCardWrite(gameId, 'mlb-model-v1', 'mlb-f5', { runId: jobRunId });
             prepareModelAndCardWrite(gameId, 'mlb-model-v1', 'mlb-f5-ml', { runId: jobRunId });
             prepareModelAndCardWrite(gameId, 'mlb-model-v1', 'mlb-pitcher-k', { runId: jobRunId });
+            prepareModelAndCardWrite(gameId, 'mlb-model-v1', 'mlb-full-game', { runId: jobRunId });
+            prepareModelAndCardWrite(gameId, 'mlb-model-v1', 'mlb-full-game-ml', { runId: jobRunId });
 
           for (const driver of qualified) {
             const isF5 = driver.market === 'f5_total';
             const isF5ML = driver.market === 'f5_ml';
+            const isFullGameTotal = driver.market === 'full_game_total';
+            const isFullGameML = driver.market === 'full_game_ml';
             const isPitcherK = driver.market?.startsWith('pitcher_k_');
-            const cardType = isF5 ? 'mlb-f5' : isF5ML ? 'mlb-f5-ml' : isPitcherK ? 'mlb-pitcher-k' : 'mlb-strikeout';
+            const cardType = isF5 ? 'mlb-f5'
+              : isF5ML ? 'mlb-f5-ml'
+              : isFullGameTotal ? 'mlb-full-game'
+              : isFullGameML ? 'mlb-full-game-ml'
+              : isPitcherK ? 'mlb-pitcher-k'
+              : 'mlb-strikeout';
 
             const driverDetail = driver.drivers?.[0] ?? {};
             const projected =
@@ -2307,7 +2331,7 @@ async function runMLBModel({
               away_team: gameOddsSnapshot?.away_team ?? null,
               matchup,
               start_time_utc: gameOddsSnapshot?.game_time_utc ?? null,
-              market_type: (isF5 || isF5ML) ? 'FIRST_5_INNINGS' : 'PROP',
+              market_type: (isF5 || isF5ML) ? 'FIRST_5_INNINGS' : (isFullGameTotal || isFullGameML) ? 'FULL_GAME' : 'PROP',
               status: driver.status ?? (driver.ev_threshold_passed ? 'FIRE' : 'PASS'),
               action: driver.action ?? (driver.ev_threshold_passed ? 'FIRE' : 'PASS'),
               classification: driver.classification ?? (driver.ev_threshold_passed ? 'BASE' : 'PASS'),
@@ -2362,6 +2386,34 @@ async function runMLBModel({
                       projection: {
                         projected_win_prob_home: driver.drivers?.[0]?.projected_win_prob_home ?? null,
                       },
+                    }
+                : isFullGameTotal
+                  ? (() => {
+                      const fgCtx = resolveMlbFullGameTotalContext(gameOddsSnapshot);
+                      return {
+                        recommended_bet_type: 'total',
+                        odds_context: {
+                          total: fgCtx.line ?? null,
+                          total_price_over: fgCtx.over_price ?? null,
+                          total_price_under: fgCtx.under_price ?? null,
+                          captured_at: gameOddsSnapshot?.captured_at ?? null,
+                        },
+                        projection: driver.projection ?? null,
+                        primary_game_market: true,
+                      };
+                    })()
+                : isFullGameML
+                  ? {
+                      recommended_bet_type: 'moneyline',
+                      odds_context: {
+                        h2h_home: gameOddsSnapshot?.h2h_home ?? null,
+                        h2h_away: gameOddsSnapshot?.h2h_away ?? null,
+                        captured_at: gameOddsSnapshot?.captured_at ?? null,
+                      },
+                      projection: {
+                        projected_win_prob_home: driver.drivers?.[0]?.win_prob_home ?? null,
+                      },
+                      primary_game_market: false,
                     }
                 : isPitcherK
                   ? {
@@ -2446,6 +2498,10 @@ async function runMLBModel({
               ? `F5 ${driver.prediction}: ${gameOddsSnapshot?.away_team ?? '?'} @ ${gameOddsSnapshot?.home_team ?? '?'}`
               : isF5ML
                 ? `F5 ML ${driver.prediction}: ${gameOddsSnapshot?.away_team ?? '?'} @ ${gameOddsSnapshot?.home_team ?? '?'}`
+                : isFullGameTotal
+                  ? `Full Game Total ${driver.prediction}: ${gameOddsSnapshot?.away_team ?? '?'} @ ${gameOddsSnapshot?.home_team ?? '?'}`
+                : isFullGameML
+                  ? `Full Game ML ${driver.prediction}: ${gameOddsSnapshot?.away_team ?? '?'} @ ${gameOddsSnapshot?.home_team ?? '?'}`
                 : isPitcherK
                   ? `${pitcherTeam ?? '?'} SP Ks ${driver.prediction} [PROJECTION_ONLY]`
                   : `${pitcherTeam ?? '?'} SP Strikeouts ${driver.prediction}`;
@@ -2553,6 +2609,29 @@ async function runMLBModel({
               }
             }
             insertCardPayload(card);
+
+            // WI-0913 Spike: Fetch real F5 market line and inject into payload for settlement
+            if (isF5 && gameId && !dryRun) {
+              (async () => {
+                try {
+                  const f5Result = await fetchF5LineFromVsin(gameId);
+                  if (f5Result && f5Result.line !== null && f5Result.line !== undefined) {
+                    // Line was fetched successfully — store it for settlement
+                    console.log(`[WI-0913] ${gameId} injecting F5 line ${f5Result.line} from ${f5Result.source}`);
+                    card.payloadData.f5_market_line = {
+                      line: f5Result.line,
+                      source: f5Result.source,
+                      fetched_at: f5Result.fetched_at,
+                      confidence: f5Result.confidence || 0.95,
+                    };
+                  } else if (f5Result && f5Result.error) {
+                    console.log(`[WI-0913] ${gameId} F5 line fetch failed: ${f5Result.error}`);
+                  }
+                } catch (spikeErr) {
+                  console.error(`[WI-0913] ${gameId} spike fetch exception: ${spikeErr.message}`);
+                }
+              })();
+            }
 
             _cardLogs.push(`  ✅ ${gameId} [${cardType}]: ${driver.prediction} (${(driver.confidence * 100).toFixed(0)}%)`);
           }

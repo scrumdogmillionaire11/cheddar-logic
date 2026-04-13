@@ -16,6 +16,7 @@ key_files:
     - apps/worker/src/jobs/settle_pending_cards.js
     - apps/worker/src/jobs/__tests__/settle_pending_cards.phase2.test.js
     - web/src/__tests__/api-games-missing-data-contract.test.js
+    - apps/worker/src/__tests__/settle-coverage.test.js
 decisions:
   - "shouldEnableDisplayBackfill is hard-coded to return false, preventing split-brain even from env-override callers"
   - "API contract test now validates against route-handler (delegate arch) not the thin route.ts shim"
@@ -69,6 +70,14 @@ Updated `api-games-missing-data-contract.test.js` to fix stale assertions (the r
 - **Files modified:** `web/src/__tests__/api-games-missing-data-contract.test.js`
 - **Commit:** `909b709`
 
+**3. [Rule 1 - Bug] Updated stale backfill assertions in settle-coverage regression suite**
+- **Found during:** Task 3 (commit 909b709) — the backfill guard introduced in Task 1 made the existing `allowDisplayBackfill` coverage test fail because it previously expected the backfill to succeed
+- **Issue:** `apps/worker/src/__tests__/settle-coverage.test.js` line 518 test asserted `pending: 1 / settled: 1 / cardP5.status: 'settled'` — behavior only valid when backfill was enabled. WI-0891 hard-disabled backfill, so those assertions now assert the wrong outcome.
+- **Fix:** Renamed test to `'allowDisplayBackfill request is ignored under ADR-0003 strict mode'`; flipped assertions to `pending: 0 / settled: 0 / cardP5.status: 'pending' / cardP5.result: null / pendingWithFinalButNotDisplayed: 1` — reflecting the post-guard reality. No behavior was changed; only test expectations were aligned to the newly enforced policy.
+- **Note:** This file is outside the declared WI-0891 scope but the change was a blocking correctness requirement (the test would have failed with incorrect assertions post-guard). Filed here as a scope deviation per AGENTS.md deviation rules.
+- **Files modified:** `apps/worker/src/__tests__/settle-coverage.test.js`
+- **Commit:** `909b709`
+
 ## Self-Check
 
 ### Created file exists
@@ -78,5 +87,6 @@ Updated `api-games-missing-data-contract.test.js` to fix stale assertions (the r
 ### Commits exist
 - `2bed099`: feat(WI-0891-01): enforce settlement display-backfill authority guard ✅
 - `909b709`: test(WI-0891-01): add authority contract assertions for /api/games true_play path ✅
+  - Also updates `apps/worker/src/__tests__/settle-coverage.test.js` (scope deviation — documented above as Deviation 3)
 
 ## Self-Check: PASSED
