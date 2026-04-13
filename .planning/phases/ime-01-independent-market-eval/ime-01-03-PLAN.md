@@ -88,15 +88,14 @@ const { assertNoSilentMarketDrop, logRejectedMarkets } = require('@cheddar-logic
 // Keep existing cardType derivation per driver:
 const isF5 = driver.market === 'f5_total';
 const isF5ML = driver.market === 'f5_ml';
-const isPitcherK = driver.market?.startsWith('pitcher_k_');
-// New:
-const isFullGameML = driver.market === 'full_game_ml';
 const isFullGameTotal = driver.market === 'full_game_total';
+const isFullGameML = driver.market === 'full_game_ml';
+const isPitcherK = driver.market?.startsWith('pitcher_k_');
 const cardType = isF5 ? 'mlb-f5'
   : isF5ML ? 'mlb-f5-ml'
+  : isFullGameTotal ? 'mlb-full-game'
+  : isFullGameML ? 'mlb-full-game-ml'
   : isPitcherK ? 'mlb-pitcher-k'
-  : isFullGameML ? 'mlb-moneyline'
-  : isFullGameTotal ? 'mlb-full-game-total'
   : 'mlb-strikeout';
 ```
 </interfaces>
@@ -178,14 +177,15 @@ const cardType = isF5 ? 'mlb-f5'
        `if (qualifiedDrivers.length === 0) { ... continue; }`
 
     5. In `prepareModelAndCardWrite` calls (line ~2250), add:
-       `prepareModelAndCardWrite(gameId, 'mlb-model-v1', 'mlb-moneyline', { runId: jobRunId });`
-       `prepareModelAndCardWrite(gameId, 'mlb-model-v1', 'mlb-full-game-total', { runId: jobRunId });`
+       Do not introduce new MLB card-type strings. Keep the existing accepted validator/runtime types:
+       `prepareModelAndCardWrite(gameId, 'mlb-model-v1', 'mlb-full-game', { runId: jobRunId });`
+       `prepareModelAndCardWrite(gameId, 'mlb-model-v1', 'mlb-full-game-ml', { runId: jobRunId });`
 
     6. In the card-type derivation block (line ~2280):
        Add the two new card type cases:
        `const isFullGameML = driver.market === 'full_game_ml';`
        `const isFullGameTotal = driver.market === 'full_game_total';`
-       Update `cardType` ternary to include them (before the final `'mlb-strikeout'` fallback).
+       Update `cardType` ternary to include them using the existing names `mlb-full-game` and `mlb-full-game-ml` (before the final `'mlb-strikeout'` fallback).
 
     7. In the market_type assignment in payloadData (~line 2300):
        ```javascript
