@@ -333,6 +333,15 @@ function applyProjectionInputMetadata(card, projectionGate) {
     : [];
 }
 
+function isHardProjectionInputBlock(projectionGate) {
+  const missingInputs = Array.isArray(projectionGate?.missing_inputs)
+    ? projectionGate.missing_inputs
+    : [];
+  // NHL projection inputs include 4 core ESPN metrics; missing all 4 means no
+  // projection signal exists and we must skip card generation for that game.
+  return missingInputs.length >= 4;
+}
+
 function hasFiniteNumber(value) {
   return typeof value === 'number' && Number.isFinite(value);
 }
@@ -2159,6 +2168,7 @@ async function runNHLModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
       let blockedCount = 0;
       let noBetCount = 0;
       let projectionBlockedCount = 0;
+      let projectionDegradedCount = 0;
       const gamePipelineStates = {};
       const errors = [];
       const moneyPuckSnapshot = await fetchMoneyPuckSnapshot({ ttlMs: 0 });
@@ -2199,7 +2209,10 @@ async function runNHLModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
             : nhlBaseSigma;
 
           const projectionGate = assessProjectionInputs('NHL', oddsSnapshot);
-          if (!projectionGate.projection_inputs_complete) {
+          const hardProjectionBlock =
+            !projectionGate.projection_inputs_complete &&
+            isHardProjectionInputBlock(projectionGate);
+          if (hardProjectionBlock) {
             projectionBlockedCount++;
             gamePipelineStates[gameId] = buildGamePipelineState({
               oddsSnapshot,
@@ -2217,6 +2230,12 @@ async function runNHLModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
               `  [gate] ${gameId}: PROJECTION_INPUTS_INCOMPLETE (${projectionGate.missing_inputs.join(', ')})`,
             );
             continue;
+          }
+          if (!projectionGate.projection_inputs_complete) {
+            projectionDegradedCount++;
+            console.log(
+              `  [degraded] ${gameId}: PROJECTION_INPUTS_PARTIAL (${projectionGate.missing_inputs.join(', ')}) — continuing with degraded signal`,
+            );
           }
 
           // Query schedule for Welcome Home Fade
@@ -2727,6 +2746,11 @@ async function runNHLModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
           `[NHLModel] Projection input gate: ${projectionBlockedCount}/${gameIds.length} games blocked`,
         );
       }
+      if (projectionDegradedCount > 0) {
+        console.log(
+          `[NHLModel] Projection input degraded: ${projectionDegradedCount}/${gameIds.length} games proceeded with partial projection inputs`,
+        );
+      }
       console.log(
         `[NHLModel] Pipeline states: ${JSON.stringify(gamePipelineStates)}`,
       );
@@ -2825,4 +2849,5 @@ module.exports = {
   applyExecutionGateToNhlCard,
   applyNoBetGuard,
   applyPlayoffSigmaMultiplier,
+  isHardProjectionInputBlock,
 };

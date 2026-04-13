@@ -169,6 +169,7 @@ describe('scheduler: run_calibration_report nightly at 04:00 ET (WI-0860)', () =
   test('tick blocks MLB when fresh odds are required and stale', async () => {
     jest.useFakeTimers();
     jest.setSystemTime(new Date('2026-04-10T16:00:00Z'));
+    process.env.ENABLE_ODDS_PULL = 'true';
     process.env.ENABLE_MLB_MODEL = 'true';
     const scheduler = loadSchedulerModule();
     mockWasJobRecentlySuccessful.mockReturnValue(false);

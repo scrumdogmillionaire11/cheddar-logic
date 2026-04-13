@@ -46,6 +46,7 @@ const {
   buildMlbPitcherKPayloadFields,
   resolvePitcherKPayloadIdentity,
   computeSyntheticLineF5Driver,
+  resolveMlbMoneylineExecutionInputs,
 } = require('../run_mlb_model');
 
 // ---------------------------------------------------------------------------
@@ -1582,6 +1583,42 @@ describe('validatePitcherKInputs — required field gates (WI-0596)', () => {
         'starter_leash',
       ]),
     );
+  });
+});
+
+describe('resolveMlbMoneylineExecutionInputs', () => {
+  test('maps HOME selection to home price and home fair probability', () => {
+    const result = resolveMlbMoneylineExecutionInputs({
+      prediction: 'HOME',
+      winProbHome: 0.582,
+      homePrice: -145,
+      awayPrice: 130,
+      rawEdge: 0.087,
+    });
+
+    expect(result).toMatchObject({
+      edge: 0.087,
+      price: -145,
+      p_fair: 0.582,
+    });
+    expect(result.p_implied).toBeCloseTo(0.5918, 4);
+  });
+
+  test('maps AWAY selection to away price and inverse fair probability', () => {
+    const result = resolveMlbMoneylineExecutionInputs({
+      prediction: 'AWAY',
+      winProbHome: 0.524,
+      homePrice: -168,
+      awayPrice: 150,
+      rawEdge: 0.087,
+    });
+
+    expect(result).toMatchObject({
+      edge: 0.087,
+      price: 150,
+      p_fair: 0.476,
+    });
+    expect(result.p_implied).toBeCloseTo(0.4, 6);
   });
 });
 

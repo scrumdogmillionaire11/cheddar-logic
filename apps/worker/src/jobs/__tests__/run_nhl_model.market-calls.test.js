@@ -6,6 +6,7 @@ const {
   attachNhlDriverContextToRawData,
   buildDualRunRecord,
   applyExecutionGateToNhlCard,
+  isHardProjectionInputBlock,
 } = require('../run_nhl_model');
 const { validateCardPayload } = require('@cheddar-logic/data');
 
@@ -714,5 +715,28 @@ describe('run_nhl_model market call generation', () => {
     expect(card.payloadData.nhl_driver_context.shot_environment.proxy_delta).toEqual(
       expect.any(Number),
     );
+  });
+
+  describe('isHardProjectionInputBlock', () => {
+    test('returns true when all four core projection inputs are missing', () => {
+      expect(
+        isHardProjectionInputBlock({
+          missing_inputs: [
+            'home_avg_goals_for',
+            'away_avg_goals_for',
+            'home_avg_goals_against',
+            'away_avg_goals_against',
+          ],
+        }),
+      ).toBe(true);
+    });
+
+    test('returns false when only partial inputs are missing', () => {
+      expect(
+        isHardProjectionInputBlock({
+          missing_inputs: ['home_avg_goals_for', 'away_avg_goals_for'],
+        }),
+      ).toBe(false);
+    });
   });
 });

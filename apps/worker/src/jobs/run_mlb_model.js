@@ -728,6 +728,49 @@ function toExecutionGatePassReasonCode(reason) {
     : 'PASS_EXECUTION_GATE_BLOCKED';
 }
 
+function americanOddsToImpliedProbability(price) {
+  if (!Number.isFinite(price) || price === 0) return null;
+  if (price > 0) {
+    return 100 / (price + 100);
+  }
+  return Math.abs(price) / (Math.abs(price) + 100);
+}
+
+function resolveMlbMoneylineExecutionInputs({
+  prediction,
+  winProbHome,
+  homePrice,
+  awayPrice,
+  rawEdge,
+}) {
+  const side = String(prediction || '').toUpperCase();
+  const selectedPrice =
+    side === 'HOME'
+      ? toFiniteNumber(homePrice)
+      : side === 'AWAY'
+        ? toFiniteNumber(awayPrice)
+        : null;
+  const pFairHome = toFiniteNumber(winProbHome);
+  const pFair =
+    pFairHome !== null
+      ? side === 'HOME'
+        ? pFairHome
+        : side === 'AWAY'
+          ? 1 - pFairHome
+          : null
+      : null;
+
+  return {
+    edge: Number.isFinite(rawEdge) ? rawEdge : null,
+    price: selectedPrice,
+    p_fair: pFair,
+    p_implied:
+      selectedPrice !== null
+        ? americanOddsToImpliedProbability(selectedPrice)
+        : null,
+  };
+}
+
 function applyExecutionGateToMlbPayload(payload, { oddsSnapshot, nowMs = Date.now() } = {}) {
   if (!payload || typeof payload !== 'object') {
     return { evaluated: false, blocked: false };
@@ -2502,6 +2545,22 @@ async function runMLBModel({
               disclaimer: 'Analysis provided for educational purposes. Not a recommendation.',
               // Note: driver.prop_decision already carries model_quality (set by WI-0747 classifier block above)
               generated_at: now,
+              ...(isF5ML || isFullGameML
+                ? resolveMlbMoneylineExecutionInputs({
+                    prediction: driver.prediction,
+                    winProbHome:
+                      driver.drivers?.[0]?.projected_win_prob_home ??
+                      driver.drivers?.[0]?.win_prob_home ??
+                      null,
+                    homePrice: isF5ML
+                      ? driver.ml_f5_home
+                      : gameOddsSnapshot?.h2h_home,
+                    awayPrice: isF5ML
+                      ? driver.ml_f5_away
+                      : gameOddsSnapshot?.h2h_away,
+                    rawEdge: driverDetail.edge,
+                  })
+                : {}),
               // When global withoutOddsMode is active (MLB odds disabled in config), mark all cards
               // as without_odds_mode so the DB lock bypasses the price requirement.
               // projection_floor is only set when the driver itself is a synthetic floor driver.
@@ -2863,6 +2922,7 @@ module.exports = {
   filterSnapshotsByGameIds,
   evaluatePitcherPropPublishability,
   deriveMlbExecutionEnvelope,
+  resolveMlbMoneylineExecutionInputs,
   assertMlbExecutionInvariant,
   applyExecutionGateToMlbPayload,
   // Exported for WI-0596 unit tests
