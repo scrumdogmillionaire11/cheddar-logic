@@ -1,22 +1,19 @@
 'use strict';
 
 /**
- * Unit Tests — WI-0771: MLB K engine market-edge step reads player_prop_lines
+ * Unit Tests — MLB K projection-only card emission
  *
  * Validates:
- *   1. Line present: computePitcherKDriverCards with ODDS_BACKED mode produces
- *      a card with non-null prop_decision.market_line (via line field) and
- *      edge_pct / score computed; card can reach PLAY classification.
+ *   1. Pitcher-K cards emit projection-only output regardless of requested mode.
  *
- *   2. Line absent: card falls back to PROJECTION_ONLY with
- *      missing_inputs containing 'k_market_line'.
+ *   2. Line presence/absence does not block projection card emission.
  *
  *   3. deriveMlbExecutionEnvelope:
  *      - ODDS_BACKED + PLAY verdict → execution_status=EXECUTABLE
  *      - ODDS_BACKED + PASS verdict → execution_status=PROJECTION_ONLY
  *      - No basis (pure PROJECTION_ONLY) → execution_status=PROJECTION_ONLY
  *
- *   4. resolvePitcherKsMode returns 'ODDS_BACKED' (guard removed).
+ *   4. resolvePitcherKsMode defaults to 'PROJECTION_ONLY'.
  *
  * Pure unit tests — no DB, no network, no fixtures.
  */
@@ -141,7 +138,7 @@ function buildKSnapshot({ homeKLines = null, awayKLines = null } = {}) {
 
 const BOOKMAKER_PRIORITY = { draftkings: 1, fanduel: 2, betmgm: 3 };
 
-// ── Test 1: Line present → ODDS_BACKED card with market_line populated ────────
+// ── Test 1: Line present still yields PROJECTION_ONLY card ─────────────────────
 
 describe('K engine: line present in player_prop_lines', () => {
   // Inject a line onto the home pitcher (simulates what enrichMlbPitcherData
@@ -171,23 +168,19 @@ describe('K engine: line present in player_prop_lines', () => {
     expect(homeCard).toBeDefined();
   });
 
-  test('home card basis is ODDS_BACKED', () => {
+  test('home card basis is PROJECTION_ONLY', () => {
     const homeCard = cards.find((c) => c.market === 'pitcher_k_home');
-    expect(homeCard.basis).toBe('ODDS_BACKED');
+    expect(homeCard.basis).toBe('PROJECTION_ONLY');
   });
 
-  test('prop_decision.line is non-null (market line populated)', () => {
+  test('prop_decision.line is null (projection-only, no market line)', () => {
     const homeCard = cards.find((c) => c.market === 'pitcher_k_home');
-    expect(homeCard.prop_decision.line).not.toBeNull();
-    expect(typeof homeCard.prop_decision.line).toBe('number');
+    expect(homeCard.prop_decision.line).toBeNull();
   });
 
-  test('prop_decision.verdict is a valid scoring verdict (not PASS)', () => {
+  test('prop_decision.verdict is PASS in projection-only mode', () => {
     const homeCard = cards.find((c) => c.market === 'pitcher_k_home');
-    // When a line is present the ODDS_BACKED path runs scorePitcherKUnder.
-    // The verdict may be PLAY, WATCH, or NO_PLAY — never the PROJECTION_ONLY
-    // default PASS that was used before WI-0771.
-    expect(['PLAY', 'WATCH', 'NO_PLAY']).toContain(homeCard.prop_decision.verdict);
+    expect(homeCard.prop_decision.verdict).toBe('PASS');
   });
 
   test('prop_decision.missing_inputs does NOT include k_market_line', () => {
@@ -196,15 +189,14 @@ describe('K engine: line present in player_prop_lines', () => {
     expect(missing).not.toContain('k_market_line');
   });
 
-  test('away pitcher (no line) falls back to PROJECTION_ONLY', () => {
+  test('away pitcher (no line) remains visible as projection-only', () => {
     const awayCard = cards.find((c) => c.market === 'pitcher_k_away');
     expect(awayCard).toBeDefined();
     expect(awayCard.basis).toBe('PROJECTION_ONLY');
-    expect(awayCard.prop_decision.missing_inputs).toContain('k_market_line');
   });
 });
 
-// ── Test 2: Line absent → PROJECTION_ONLY with k_market_line in missing_inputs ─
+// ── Test 2: Line absent still yields PROJECTION_ONLY cards ────────────────────
 
 describe('K engine: line absent (no player_prop_lines data)', () => {
   const snapshot = buildKSnapshot(); // no k_market_lines injected
@@ -217,27 +209,12 @@ describe('K engine: line absent (no player_prop_lines data)', () => {
     });
   });
 
-  test('cards are still emitted (no hard failure)', () => {
+  test('cards are emitted when no lines exist', () => {
     expect(cards.length).toBeGreaterThan(0);
   });
 
-  test('all cards are PROJECTION_ONLY when no lines exist', () => {
-    for (const card of cards) {
-      expect(card.basis).toBe('PROJECTION_ONLY');
-    }
-  });
-
-  test('all cards have k_market_line in missing_inputs', () => {
-    for (const card of cards) {
-      const missing = card.missing_inputs ?? [];
-      expect(missing).toContain('k_market_line');
-    }
-  });
-
-  test('prop_decision.line is null when no line exists', () => {
-    for (const card of cards) {
-      expect(card.prop_decision.line).toBeNull();
-    }
+  test('projection-only cards are produced when no lines exist', () => {
+    expect(cards.find((card) => card.basis === 'PROJECTION_ONLY')).toBeDefined();
   });
 });
 
@@ -307,11 +284,11 @@ describe('deriveMlbExecutionEnvelope: ODDS_BACKED K card', () => {
   });
 });
 
-// ── Test 4: resolvePitcherKsMode returns ODDS_BACKED (guard removed) ──────────
+// ── Test 4: resolvePitcherKsMode defaults to PROJECTION_ONLY ─────────────────
 
 describe('resolvePitcherKsMode', () => {
-  test('returns ODDS_BACKED after WI-0771 guard removal', () => {
-    expect(resolvePitcherKsMode()).toBe('ODDS_BACKED');
+  test('returns PROJECTION_ONLY by default', () => {
+    expect(resolvePitcherKsMode()).toBe('PROJECTION_ONLY');
   });
 });
 

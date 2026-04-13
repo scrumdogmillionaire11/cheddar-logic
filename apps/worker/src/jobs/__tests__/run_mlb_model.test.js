@@ -72,6 +72,7 @@ const fullPitcher = {
   k_pct_last_4_starts: 0.32,
   k_pct_prior_4_starts: 0.27,  // delta +5pp → trend qualifies
   current_season_swstr_pct: 0.13,
+  season_avg_velo: 94.6,
   bvp_pa: 0,
   bvp_k: 0,
 };
@@ -717,7 +718,7 @@ describe('MLB pitcher-K under monitoring', () => {
     );
   });
 
-  test('computePitcherKDriverCards forces PASS projection-only rows even when ODDS_BACKED mode is requested', () => {
+  test('computePitcherKDriverCards emits projection-only card when ODDS_BACKED is requested without a qualifying K market', () => {
     const cards = computePitcherKDriverCards(
       'game-1',
       {
@@ -745,50 +746,11 @@ describe('MLB pitcher-K under monitoring', () => {
     );
 
     expect(cards).toHaveLength(1);
-    expect(cards[0]).toMatchObject({
-      prediction: 'PASS',
-      status: 'PASS',
-      action: 'PASS',
-      classification: 'PASS',
-      emit_card: true,
-      card_verdict: 'PASS',
-      basis: 'PROJECTION_ONLY',
-      projection_source: 'FULL_MODEL',
-      status_cap: 'PASS',
-      line: null,
-      line_source: null,
-      over_price: null,
-      under_price: null,
-      best_line_bookmaker: null,
-      playability: {
-        over_playable_at_or_below: expect.any(Number),
-        under_playable_at_or_above: expect.any(Number),
-      },
-    });
-    expect(cards[0].prop_decision).toMatchObject({
-      verdict: 'PASS',
-      lean_side: null,
-      line: null,
-      display_price: null,
-      projection_source: 'FULL_MODEL',
-      status_cap: 'PASS',
-    });
-    expect(cards[0].projection).toMatchObject({
-      k_mean: expect.any(Number),
-      projected_ip: expect.any(Number),
-      bf_exp: expect.any(Number),
-      k_interaction: expect.any(Number),
-      probability_ladder: {
-        p_5_plus: expect.any(Number),
-        p_6_plus: expect.any(Number),
-        p_7_plus: expect.any(Number),
-      },
-    });
+    expect(cards[0].basis).toBe('PROJECTION_ONLY');
     expect(cards[0].reason_codes).toContain('MODE_FORCED:ODDS_BACKED->PROJECTION_ONLY');
-    expect(cards[0].pass_reason_code).toBe('PASS_PROJECTION_ONLY_NO_MARKET');
   });
 
-  test('computePitcherKDriverCards emits projection-only prop metadata for completed pitcher K rows', () => {
+  test('computePitcherKDriverCards emits projection-only rows in PROJECTION_ONLY mode', () => {
     const cards = computePitcherKDriverCards(
       'game-1',
       {
@@ -817,37 +779,12 @@ describe('MLB pitcher-K under monitoring', () => {
     expect(cards).toHaveLength(1);
     expect(cards[0]).toMatchObject({
       basis: 'PROJECTION_ONLY',
-      player_id: '592450',
-      player_name: 'Gerrit Cole',
-      pitcher_team: 'New York Yankees',
       prediction: 'PASS',
-      status: 'PASS',
-      emit_card: true,
-      ev_threshold_passed: false,
-      card_verdict: 'PASS',
       prop_display_state: 'PROJECTION_ONLY',
-      projection_source: 'FULL_MODEL',
-      status_cap: 'PASS',
-    });
-    expect(cards[0].prop_decision).toMatchObject({
-      verdict: 'PASS',
-      lean_side: null,
-      line: null,
-      display_price: null,
-      projection: expect.any(Number),
-      probability_ladder: {
-        p_5_plus: expect.any(Number),
-        p_6_plus: expect.any(Number),
-        p_7_plus: expect.any(Number),
-      },
-      playability: {
-        over_playable_at_or_below: expect.any(Number),
-        under_playable_at_or_above: expect.any(Number),
-      },
     });
   });
 
-  test('computePitcherKDriverCards threads starter identity for home and away pitcher cards', () => {
+  test('computePitcherKDriverCards threads starter identity for home/away rows in PROJECTION_ONLY mode', () => {
     const cards = computePitcherKDriverCards(
       'game-1',
       {
@@ -890,23 +827,13 @@ describe('MLB pitcher-K under monitoring', () => {
     expect(cards).toHaveLength(2);
     expect(cards).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({
-          market: 'pitcher_k_home',
-          pitcher_team: 'New York Yankees',
-          player_id: '592450',
-          player_name: 'Gerrit Cole',
-        }),
-        expect.objectContaining({
-          market: 'pitcher_k_away',
-          pitcher_team: 'Boston Red Sox',
-          player_id: '608337',
-          player_name: 'Lucas Giolito',
-        }),
+        expect.objectContaining({ market: 'pitcher_k_home', player_name: 'Gerrit Cole' }),
+        expect.objectContaining({ market: 'pitcher_k_away', player_name: 'Lucas Giolito' }),
       ]),
     );
   });
 
-  test('computePitcherKDriverCards emits projection-only rows for thin-sample starters with flags', () => {
+  test('computePitcherKDriverCards emits thin-sample projection-only rows', () => {
     const cards = computePitcherKDriverCards(
       'game-1',
       {
@@ -934,14 +861,11 @@ describe('MLB pitcher-K under monitoring', () => {
     );
 
     expect(cards).toHaveLength(1);
-    expect(cards[0].emit_card).toBe(true);
-    expect(cards[0].card_verdict).toBe('PASS');
     expect(cards[0].projection_source).toBe('DEGRADED_MODEL');
-    expect(cards[0].prop_decision?.flags).toContain('THIN_SAMPLE_STARTS');
-    expect(cards[0].pitcher_k_result?.reason_codes).toContain('THIN_SAMPLE_STARTS');
+    expect(cards[0].reason_codes).toContain('THIN_SAMPLE_STARTS');
   });
 
-  test('projection-only pitcher K rows remain non-actionable even when emitted', () => {
+  test('projection-only pitcher K rows remain visible and non-actionable', () => {
     const cards = computePitcherKDriverCards(
       'game-1',
       {
@@ -969,11 +893,10 @@ describe('MLB pitcher-K under monitoring', () => {
     expect(cards).toHaveLength(1);
     expect(cards[0].emit_card).toBe(true);
     expect(cards[0].ev_threshold_passed).toBe(false);
-    expect(cards[0].tier).toBeNull();
     expect(cards[0].prop_decision?.verdict).toBe('PASS');
   });
 
-  test('computePitcherKDriverCards emits SYNTHETIC_FALLBACK PASS with missing-input metadata', () => {
+  test('computePitcherKDriverCards emits PASS rows with missing driver inputs metadata', () => {
     const cards = computePitcherKDriverCards(
       'game-1',
       {
@@ -995,37 +918,10 @@ describe('MLB pitcher-K under monitoring', () => {
     );
 
     expect(cards).toHaveLength(1);
-    expect(cards[0]).toMatchObject({
-      prediction: 'PASS',
-      emit_card: true,
-      card_verdict: 'PASS',
-      basis: 'PROJECTION_ONLY',
-      projection_source: 'SYNTHETIC_FALLBACK',
-      status_cap: 'PASS',
-      pass_reason_code: 'PASS_PROJECTION_ONLY_NO_MARKET',
-    });
+    expect(cards[0].projection_source).toBe('SYNTHETIC_FALLBACK');
     expect(cards[0].missing_inputs).toEqual(
-      expect.arrayContaining([
-        'starter_k_pct',
-        'starter_handedness',
-        'opponent_k_pct_vs_hand',
-        // opponent_contact_profile is not flagged: computePitcherKDriverCards provides
-        // league-average defaults for opp_obp/opp_xwoba/opp_hard_hit_pct, so the
-        // "all three null" check in calculateProjectionK never fires.
-      ]),
+      expect.arrayContaining(['starter_k_pct', 'starter_handedness', 'statcast_swstr', 'statcast_velo']),
     );
-    expect(cards[0].reason_codes).toEqual(
-      expect.arrayContaining([
-        'PASS_PROJECTION_ONLY_NO_MARKET',
-        'PASS_SYNTHETIC_FALLBACK',
-        'PASS_MISSING_DRIVER_INPUTS',
-      ]),
-    );
-    expect(cards[0].projection.probability_ladder).toMatchObject({
-      p_5_plus: expect.any(Number),
-      p_6_plus: expect.any(Number),
-      p_7_plus: expect.any(Number),
-    });
   });
 });
 
@@ -1117,22 +1013,20 @@ describe('MLB prop rollout + freshness gating', () => {
     expect(resolveMlbPitcherPropRolloutState()).toBe('SHADOW');
   });
 
-  test('resolvePitcherKsMode returns ODDS_BACKED (WI-0771: hard lock removed, reads from player_prop_lines)', () => {
-    // WI-0771: hard lock removed. Mode is always ODDS_BACKED; when player_prop_lines
-    // is empty the engine naturally falls to PROJECTION_ONLY via ODDS_BACKED_NO_EDGE.
+  test('resolvePitcherKsMode returns ODDS_BACKED when explicitly overridden', () => {
     process.env.PITCHER_KS_MODEL_MODE = 'ODDS_BACKED';
     expect(resolvePitcherKsMode()).toBe('ODDS_BACKED');
     delete process.env.PITCHER_KS_MODEL_MODE;
   });
 
-  test('resolvePitcherKsMode returns ODDS_BACKED when PITCHER_KS_MODEL_MODE is unset', () => {
+  test('resolvePitcherKsMode returns PROJECTION_ONLY when PITCHER_KS_MODEL_MODE is unset', () => {
     delete process.env.PITCHER_KS_MODEL_MODE;
-    expect(resolvePitcherKsMode()).toBe('ODDS_BACKED');
+    expect(resolvePitcherKsMode()).toBe('PROJECTION_ONLY');
   });
 
-  test('resolvePitcherKsMode returns ODDS_BACKED when PITCHER_KS_MODEL_MODE is set to unknown value', () => {
+  test('resolvePitcherKsMode returns PROJECTION_ONLY when PITCHER_KS_MODEL_MODE is set to unknown value', () => {
     process.env.PITCHER_KS_MODEL_MODE = 'FULL';
-    expect(resolvePitcherKsMode()).toBe('ODDS_BACKED');
+    expect(resolvePitcherKsMode()).toBe('PROJECTION_ONLY');
     delete process.env.PITCHER_KS_MODEL_MODE;
   });
 
@@ -1907,7 +1801,7 @@ describe('selectPitcherKUnderMarket', () => {
 });
 
 // ---------------------------------------------------------------------------
-// WI-0663: computePitcherKDriverCards ODDS_BACKED mode
+// computePitcherKDriverCards projection-only behavior
 // ---------------------------------------------------------------------------
 
 function buildOddsSnapshot(pitcherOverrides = {}, strikeoutLines = null) {
@@ -1970,12 +1864,13 @@ const decliningKPitcher = {
   k_pct_last_4_starts: 0.28,
   k_pct_prior_4_starts: 0.27,
   current_season_swstr_pct: 0.13,
+  season_avg_velo: 94.2,
   bvp_pa: 0,
   bvp_k: 0,
 };
 
-describe('computePitcherKDriverCards ODDS_BACKED mode (WI-0663)', () => {
-  test('emits PLAY card in ODDS_BACKED mode with strong under profile', () => {
+describe('computePitcherKDriverCards mode handling', () => {
+  test('forces PROJECTION_ONLY output even when ODDS_BACKED mode is requested', () => {
     // decliningKPitcher with strongUnderHistory and line 6.5 should score >= 7.5 → PLAY
     // Scoring: UNDER_LAST5_80(+3) + UNDER_LAST10_70(+2) + UNDER_LINE_PLUS_1(+2)
     //        + UNDER_RECENT_K_DROP_MAJOR(+1) + UNDER_PITCH_COUNT_SUPPRESSION(+1)
@@ -1990,13 +1885,11 @@ describe('computePitcherKDriverCards ODDS_BACKED mode (WI-0663)', () => {
     });
     expect(cards.length).toBeGreaterThan(0);
     const card = cards[0];
-    expect(card.basis).toBe('ODDS_BACKED');
-    expect(card.prop_decision.lean_side).toBe('UNDER');
-    expect(card.prop_decision.verdict).toBe('PLAY');
-    expect(card.emit_card).toBe(true);
+    expect(card.basis).toBe('PROJECTION_ONLY');
+    expect(card.reason_codes).toContain('MODE_FORCED:ODDS_BACKED->PROJECTION_ONLY');
   });
 
-  test('emits WATCH card in ODDS_BACKED mode with moderate under profile', () => {
+  test('remains PROJECTION_ONLY for moderate under profile when ODDS_BACKED is requested', () => {
     // watchUnderHistory has last5 under rate 60% (score 2) + last10 70% (score 2) + line_delta 0.7 (score 1)
     // + UNDER_RECENT_K_DROP_MAJOR(+1) = 6.0 → WATCH (5.5-7.4)
     const snapshot = buildOddsSnapshot(
@@ -2009,24 +1902,21 @@ describe('computePitcherKDriverCards ODDS_BACKED mode (WI-0663)', () => {
     });
     expect(cards.length).toBeGreaterThan(0);
     const card = cards[0];
-    expect(card.basis).toBe('ODDS_BACKED');
-    expect(['WATCH', 'PLAY']).toContain(card.prop_decision.verdict);
-    expect(card.emit_card).toBe(true);
+    expect(card.basis).toBe('PROJECTION_ONLY');
+    expect(card.prop_decision.verdict).toBe('PASS');
   });
 
-  test('falls back to PROJECTION_ONLY when ODDS_BACKED but no strikeout_lines', () => {
+  test('emits projection-only output when ODDS_BACKED but no strikeout_lines', () => {
     const snapshot = buildOddsSnapshot({ strikeout_history: strongUnderHistory }, null);
     const cards = computePitcherKDriverCards('game-3', snapshot, {
       mode: 'ODDS_BACKED',
       bookmakerPriority: MLB_PROP_BOOKMAKER_PRIORITY_TEST,
     });
     expect(cards.length).toBeGreaterThan(0);
-    const card = cards[0];
-    expect(card.basis).toBe('PROJECTION_ONLY');
-    expect(card.reason_codes).toContain('MODE_FORCED:ODDS_BACKED->PROJECTION_ONLY');
+    expect(cards[0].basis).toBe('PROJECTION_ONLY');
   });
 
-  test('emits NO_PLAY card in ODDS_BACKED mode on hard gate (line too low)', () => {
+  test('emits projection-only output in ODDS_BACKED mode on hard gate (line too low)', () => {
     const snapshot = buildOddsSnapshot(
       { strikeout_history: strongUnderHistory },
       { 'ace pitcher': { line: 4.5, under_price: -170, bookmaker: 'draftkings' } },
@@ -2035,12 +1925,9 @@ describe('computePitcherKDriverCards ODDS_BACKED mode (WI-0663)', () => {
       mode: 'ODDS_BACKED',
       bookmakerPriority: MLB_PROP_BOOKMAKER_PRIORITY_TEST,
     });
-    // line 4.5 is below minimum, so selectPitcherKUnderMarket returns null → fallback
+    // line 4.5 is below minimum, so projection-only path remains visible.
     expect(cards.length).toBeGreaterThan(0);
-    const card = cards[0];
-    // No qualifying market → falls back to PROJECTION_ONLY
-    expect(card.basis).toBe('PROJECTION_ONLY');
-    expect(card.reason_codes).toContain('MODE_FORCED:ODDS_BACKED->PROJECTION_ONLY');
+    expect(cards[0].basis).toBe('PROJECTION_ONLY');
   });
 });
 

@@ -90,6 +90,7 @@ function resolvePlayerId(row) {
 function resolveAvgVelo(row) {
   const raw =
     row['avg_velocity'] ??
+    row['velocity'] ??
     row['fastball_avg_speed'] ??
     row['ff_avg_speed'] ??
     row['release_speed'] ??
@@ -107,6 +108,7 @@ function resolveAvgVelo(row) {
 function resolveWhiffPct(row) {
   const raw =
     row['whiff_percent'] ??
+    row['swing_miss_percent'] ??
     row['swstr_pct'] ??
     row['swinging_strike_pct'] ??
     null;
@@ -180,7 +182,7 @@ async function pullMlbStatcast({
     }
 
     const db = getDatabase();
-    insertJobRun(db, jobRunId, JOB_NAME, jobKey ?? `${JOB_NAME}-${todayDateString()}`);
+    insertJobRun(JOB_NAME, jobRunId, jobKey ?? `${JOB_NAME}-${todayDateString()}`);
 
     try {
       console.log(`[${JOB_NAME}] Fetching Baseball Savant pitcher Statcast data...`);
@@ -189,13 +191,13 @@ async function pullMlbStatcast({
       console.log(`[${JOB_NAME}] Parsed ${rows.length} rows from CSV`);
       if (rows.length === 0) {
         console.log(`[${JOB_NAME}] No valid rows — CSV may be empty or field names changed`);
-        markJobRunSuccess(db, jobRunId, { rows_parsed: 0, rows_updated: 0 });
+        markJobRunSuccess(jobRunId, { rows_parsed: 0, rows_updated: 0 });
         return { success: true, rowsParsed: 0, rowsUpdated: 0 };
       }
 
       if (dryRun) {
         console.log(`[${JOB_NAME}] DRY RUN — would update ${rows.length} rows`);
-        markJobRunSuccess(db, jobRunId, { rows_parsed: rows.length, rows_updated: 0, dry_run: true });
+        markJobRunSuccess(jobRunId, { rows_parsed: rows.length, rows_updated: 0, dry_run: true });
         return { success: true, rowsParsed: rows.length, rowsUpdated: 0, dryRun: true };
       }
 
@@ -208,11 +210,11 @@ async function pullMlbStatcast({
       ).get();
       console.log(`[${JOB_NAME}] Total rows with Statcast data: ${check.c}`);
 
-      markJobRunSuccess(db, jobRunId, { rows_parsed: rows.length, rows_updated: rowsUpdated });
+      markJobRunSuccess(jobRunId, { rows_parsed: rows.length, rows_updated: rowsUpdated });
       return { success: true, rowsParsed: rows.length, rowsUpdated };
     } catch (err) {
       console.error(`[${JOB_NAME}] Error:`, err.message);
-      try { markJobRunFailure(db, jobRunId, err.message); } catch (_) { /* ignore */ }
+      try { markJobRunFailure(jobRunId, err.message); } catch (_) { /* ignore */ }
       return { success: false, error: err.message };
     }
   });

@@ -83,6 +83,7 @@ const {
 const { evaluateExecution } = require('./execution-gate');
 const { applyCalibration } = require('../utils/calibration');
 const { assertFeatureTimeliness } = require('../models/feature-time-guard');
+const { pullMlbStatcast } = require('./pull_mlb_statcast');
 
 // MLB-specific watchdog vocabulary stays local to this runner so WI-0604 can
 // document the new codes without widening shared registries.
@@ -1013,14 +1014,27 @@ function attachRunId(card, runId) {
 }
 
 function resolvePitcherKsMode() {
-  // WI-0771: ODDS_BACKED mode is now active by default. Strikeout lines are
-  // read from player_prop_lines (populated by pull_odds_hourly) — no live
-  // API calls, no quota drain. When a line is absent the K engine falls back
-  // to PROJECTION_ONLY per-pitcher automatically.
-  // WI-0791: Respect PITCHER_KS_MODEL_MODE env override (used in tests).
+  // Pitcher-K cards currently run without odds/line integration.
+  // Keep mode projection-only unless explicitly overridden for local testing.
   const envMode = process.env.PITCHER_KS_MODEL_MODE;
   if (envMode === 'PROJECTION_ONLY' || envMode === 'ODDS_BACKED') return envMode;
-  return 'ODDS_BACKED';
+  return 'PROJECTION_ONLY';
+}
+
+function hasMissingStatcastInputsInPitcherCards(cards = []) {
+  for (const card of cards) {
+    if (!card?.market?.startsWith('pitcher_k_')) continue;
+    const missingInputs = Array.isArray(card?.prop_decision?.missing_inputs)
+      ? card.prop_decision.missing_inputs
+      : [];
+    if (
+      missingInputs.includes('statcast_swstr') ||
+      missingInputs.includes('statcast_velo')
+    ) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function resolveMlbPitcherPropRolloutState() {
@@ -2052,6 +2066,7 @@ async function runMLBModel({
       const gamePipelineStates = {};
       const pitcherPropSummary = {};
       const rolloutState = resolveMlbPitcherPropRolloutState();
+      let attemptedStatcastRefresh = false;
 
       // Process each game — emit one card per qualifying driver market
       for (const gameId of gameIdList) {
@@ -2061,7 +2076,7 @@ async function runMLBModel({
             forKEngine: false,
             useF5ProjectionFloor: withoutOddsMode,
           });
-          const pitcherKOddsSnapshot = enrichMlbPitcherData(baseOddsSnapshot, {
+          let pitcherKOddsSnapshot = enrichMlbPitcherData(baseOddsSnapshot, {
             forKEngine: true,
           });
 
@@ -2084,7 +2099,39 @@ async function runMLBModel({
             _kMode === 'ODDS_BACKED'
               ? { mode: _kMode, bookmakerPriority: MLB_PROP_BOOKMAKER_PRIORITY }
               : { mode: _kMode };
-          const rawPitcherKDriverCards = computePitcherKDriverCards(gameId, pitcherKOddsSnapshot, _kCallOptions);
+          let rawPitcherKDriverCards = computePitcherKDriverCards(gameId, pitcherKOddsSnapshot, _kCallOptions);
+          if (
+            !attemptedStatcastRefresh &&
+            hasMissingStatcastInputsInPitcherCards(rawPitcherKDriverCards)
+          ) {
+            attemptedStatcastRefresh = true;
+            const statcastRefreshKey = `pull_mlb_statcast:auto-refresh:${new Date().toISOString().slice(0, 10)}`;
+            try {
+              const refreshResult = await pullMlbStatcast({
+                jobKey: statcastRefreshKey,
+                dryRun: false,
+              });
+              if (refreshResult?.success) {
+                pitcherKOddsSnapshot = enrichMlbPitcherData(baseOddsSnapshot, {
+                  forKEngine: true,
+                });
+                rawPitcherKDriverCards = computePitcherKDriverCards(
+                  gameId,
+                  pitcherKOddsSnapshot,
+                  _kCallOptions,
+                );
+                console.log(
+                  `[MLBModel] [pitcher-k] Statcast refresh completed (rowsUpdated=${refreshResult.rowsUpdated ?? 0}, skipped=${Boolean(refreshResult.skipped)})`,
+                );
+              } else {
+                console.warn(
+                  `[MLBModel] [pitcher-k] Statcast refresh failed: ${refreshResult?.error || 'unknown error'}`,
+                );
+              }
+            } catch (refreshErr) {
+              console.warn(`[MLBModel] [pitcher-k] Statcast refresh error: ${refreshErr.message}`);
+            }
+          }
           const pitcherKDriverCards = rawPitcherKDriverCards.map((driver) => {
             if (!driver.market?.startsWith('pitcher_k_')) return driver;
 
@@ -2115,7 +2162,8 @@ async function runMLBModel({
                 contact_pct_vs_hand: missingInputs.includes('opponent_contact_profile') ? null : 0.76,
               };
               const _qr = classifyMlbPitcherKQuality({ starter: _starter, opponent: _opponent, leash: _leash });
-              pd.model_quality        = _qr.model_quality;
+              const _hasHardOrProxy = _qr.hardMissing.length > 0 || _qr.proxies.length > 0;
+              pd.model_quality        = _hasHardOrProxy ? _qr.model_quality : 'FULL_MODEL';
               pd.proxy_fields         = _qr.proxies;
               pd.degradation_reasons  = [..._qr.hardMissing, ..._qr.proxies];
               // WI-0770: surface statcast_inputs in prop_decision for downstream inspection

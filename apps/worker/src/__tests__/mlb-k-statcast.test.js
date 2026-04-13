@@ -35,7 +35,7 @@ function makePitcher(overrides = {}) {
     last_three_pitch_counts: [95, 98, 92],
     season_swstr_pct: null,
     swstr_pct: null,
-    season_avg_velo: null,
+    season_avg_velo: 92,
     ...overrides,
   };
 }
@@ -136,13 +136,15 @@ describe('calculateProjectionK — swstr_pct gate (WI-0770)', () => {
     expect(result.missing_inputs).toContain('statcast_swstr');
   });
 
-  test('null swstr_pct caps status_cap at LEAN', () => {
+  test('null swstr_pct degrades projection and caps status at LEAN', () => {
     const result = calculateProjectionK(
       makePitcher({ season_swstr_pct: null, swstr_pct: null }),
       makeMatchup(),
       LEASH_TIER,
       WEATHER,
     );
+    expect(result.uncalculable).toBe(false);
+    expect(result.projection_source).toBe('DEGRADED_MODEL');
     expect(result.status_cap).toBe('LEAN');
   });
 
@@ -228,7 +230,7 @@ describe('calculateProjectionK — season_avg_velo modifier (WI-0770)', () => {
     expect(result.missing_inputs).toContain('statcast_velo');
   });
 
-  test('null season_avg_velo does NOT change status_cap to LEAN (non-blocking)', () => {
+  test('null season_avg_velo degrades projection but keeps status PASS', () => {
     const withVelo = calculateProjectionK(
       makePitcher({ swstr_pct: 0.14, season_avg_velo: 92 }),
       makeMatchup(),
@@ -241,8 +243,10 @@ describe('calculateProjectionK — season_avg_velo modifier (WI-0770)', () => {
       LEASH_TIER,
       WEATHER,
     );
-    // Both should be PASS — velo absence does not block
+    // Missing velo degrades quality but does not block projection.
     expect(withVelo.status_cap).toBe('PASS');
+    expect(withoutVelo.uncalculable).toBe(false);
+    expect(withoutVelo.projection_source).toBe('DEGRADED_MODEL');
     expect(withoutVelo.status_cap).toBe('PASS');
   });
 

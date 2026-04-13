@@ -3162,6 +3162,42 @@ function normalizePropVerdict(
   return undefined;
 }
 
+function normalizePropDedupeName(name: string | undefined): string {
+  if (!name) return '';
+  return name.trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+function buildPropRowDedupeKey(row: PropPlayRow): string {
+  const normalizedName = normalizePropDedupeName(row.playerName);
+  const identity = normalizedName || row.playerId || '';
+  return `${identity}|${row.propType}`;
+}
+
+function dedupePropPlayRows(rows: PropPlayRow[]): PropPlayRow[] {
+  const deduped: PropPlayRow[] = [];
+  const seen = new Set<string>();
+  for (const row of rows) {
+    const rowKey = buildPropRowDedupeKey(row);
+    if (seen.has(rowKey)) continue;
+    seen.add(rowKey);
+    deduped.push(row);
+  }
+  return deduped;
+}
+
+function normalizeMatchupKeyPart(value: string): string {
+  return value.trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+function buildPropGameMatchupKey(card: PropGameCard): string {
+  return [
+    card.sport,
+    card.gameTimeUtc,
+    normalizeMatchupKeyPart(card.homeTeam),
+    normalizeMatchupKeyPart(card.awayTeam),
+  ].join('|');
+}
+
 /**
  * Transform games to PropGameCard format - for player props view
  * Groups all PROP plays under each game as rows
@@ -3306,7 +3342,7 @@ export function transformPropGames(games: GameData[]): PropGameCard[] {
         playerId,
         playerName,
         teamAbbr: play.team_abbr ?? undefined,
-        gameId: play.game_id ?? game.gameId,
+        gameId: game.gameId,
         propType,
         line: canonicalPropLine ?? play.suggested_line ?? null,
         projection: canonicalPropProjection,
@@ -3416,8 +3452,10 @@ export function transformPropGames(games: GameData[]): PropGameCard[] {
       return (b.edge ?? 0) - (a.edge ?? 0);
     });
 
+    const dedupedPropPlayRows = dedupePropPlayRows(propPlayRows);
+
     const maxConfidence = Math.max(
-      ...propPlayRows.map((p) => p.confidence ?? 0),
+      ...dedupedPropPlayRows.map((p) => p.confidence ?? 0),
     );
 
     // Build prop game card
@@ -3434,7 +3472,7 @@ export function transformPropGames(games: GameData[]): PropGameCard[] {
           ? { home: game.odds.h2hHome, away: game.odds.h2hAway }
           : undefined,
       total: game.odds?.total ? { line: game.odds.total } : undefined,
-      propPlays: propPlayRows,
+      propPlays: dedupedPropPlayRows,
       maxConfidence,
       tags: [], // add filtering tags as needed
     };
@@ -3442,8 +3480,28 @@ export function transformPropGames(games: GameData[]): PropGameCard[] {
     propGames.push(propGameCard);
   }
 
-  // Sort games by max confidence desc
-  propGames.sort((a, b) => b.maxConfidence - a.maxConfidence);
+  const mergedByMatchup = new Map<string, PropGameCard>();
+  for (const card of propGames) {
+    const matchupKey = buildPropGameMatchupKey(card);
+    const existing = mergedByMatchup.get(matchupKey);
+    if (!existing) {
+      mergedByMatchup.set(matchupKey, card);
+      continue;
+    }
 
-  return propGames;
+    const mergedRows = dedupePropPlayRows([...existing.propPlays, ...card.propPlays]);
+    existing.propPlays = mergedRows;
+    existing.maxConfidence = Math.max(
+      existing.maxConfidence,
+      card.maxConfidence,
+      ...mergedRows.map((p) => p.confidence ?? 0),
+    );
+  }
+
+  const dedupedPropGames = Array.from(mergedByMatchup.values());
+
+  // Sort games by max confidence desc
+  dedupedPropGames.sort((a, b) => b.maxConfidence - a.maxConfidence);
+
+  return dedupedPropGames;
 }

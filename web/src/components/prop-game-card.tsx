@@ -507,8 +507,25 @@ const getLeashDisplay = (flags: string[] | null | undefined) => {
   return null;
 };
 
+const dedupeFlagsCaseInsensitive = (flags: Array<string | null | undefined>) => {
+  const seen = new Set<string>();
+  const deduped: string[] = [];
+  for (const rawFlag of flags) {
+    const flag = typeof rawFlag === 'string' ? rawFlag.trim() : '';
+    if (!flag) continue;
+    const key = flag.toUpperCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    deduped.push(flag);
+  }
+  return deduped;
+};
+
 const getPitcherKDiagnostics = (prop: PropPlayRow) => {
-  const isFallback = prop.projectionSource === 'SYNTHETIC_FALLBACK';
+  const projectionOnlyNoOdds =
+    prop.basis === 'PROJECTION_ONLY' ||
+    prop.propDisplayState === 'PROJECTION_ONLY' ||
+    prop.propVerdict === 'PROJECTION';
 
   const coreMissing = (prop.missingInputs ?? [])
     .filter((k) => k in CORE_MISSING_INPUTS)
@@ -528,23 +545,25 @@ const getPitcherKDiagnostics = (prop: PropPlayRow) => {
       ? `Secondary degradation: ${secondaryMissing.join(', ')}`
       : null;
 
+  const hasCoreMissing = coreMissing.length > 0;
+  const isFallback =
+    prop.projectionSource === 'SYNTHETIC_FALLBACK' && hasCoreMissing;
+
   const qualityLabel = isFallback
     ? 'FALLBACK'
-    : prop.projectionSource === 'DEGRADED_MODEL'
+    : hasCoreMissing
       ? 'DEGRADED'
       : 'FULL MODEL';
 
-  const statusLine = isFallback
-    ? 'Model Projection \u2014 No Line Applied'
-    : prop.basis === 'PROJECTION_ONLY'
-      ? 'Model Projection \u2014 No Line Applied'
-      : null;
+  const statusLine = projectionOnlyNoOdds
+    ? 'Projection only \u2014 no market odds applied'
+    : null;
 
   const reasonText =
     prop.passReason ||
     formatReasonLabel(prop.passReasonCode) ||
     (isFallback ? 'Synthetic fallback projection' : null) ||
-    (prop.basis === 'PROJECTION_ONLY' ? 'Model Projection \u2014 No Line Applied' : null);
+    (projectionOnlyNoOdds ? 'Projection only \u2014 no market odds applied' : null);
 
   const missingInputsText =
     prop.missingInputs && prop.missingInputs.length > 0
@@ -927,7 +946,13 @@ export default function PropGameCardComponent({ card }: PropGameCardProps) {
                           Model Quality
                         </div>
                         <div className="mt-2 space-y-1 text-sm">
-                          <p className={`font-semibold ${isFallback ? 'text-red-300' : 'text-amber-200'}`}>
+                          <p className={`font-semibold ${
+                            qualityLabel === 'FALLBACK'
+                              ? 'text-red-300'
+                              : qualityLabel === 'DEGRADED'
+                                ? 'text-amber-200'
+                                : 'text-emerald-200'
+                          }`}>
                             {qualityLabel}
                           </p>
                           {coreMissingText && (
@@ -1005,7 +1030,10 @@ export default function PropGameCardComponent({ card }: PropGameCardProps) {
                           <div className="pt-1">
                             <p className="mb-0.5 text-cloud/40">Model flags</p>
                             <p className="break-all font-mono text-[10px] text-cloud/35">
-                              {[...(prop.propFlags ?? []), ...(prop.reasonCodes ?? [])].filter(Boolean).join(' \u00b7 ')}
+                              {dedupeFlagsCaseInsensitive([
+                                ...(prop.propFlags ?? []),
+                                ...(prop.reasonCodes ?? []),
+                              ]).join(' \u00b7 ')}
                             </p>
                           </div>
                         )}

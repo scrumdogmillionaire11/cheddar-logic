@@ -1773,20 +1773,12 @@ function calculateProjectionK(pitcher, matchup, leashTier, weather, options = {}
   }
   if (starterKPct === null) missingInputs.push('starter_k_pct');
   if (!pitcher?.handedness) missingInputs.push('starter_handedness');
-  // Statcast driver inputs are hard requirements for pitcher-K projections.
+  // Statcast driver inputs improve projection quality; when absent we degrade
+  // quality and project with proxies instead of suppressing output.
   if (starterSwStrPct === null) missingInputs.push('statcast_swstr');
   if (veloMph === null) missingInputs.push('statcast_velo');
-  if (starterSwStrPct === null || veloMph === null) {
-    return {
-      value: null,
-      projection: null,
-      reason_code: 'MISSING_DRIVER_INPUTS',
-      missing_inputs: Array.from(new Set(missingInputs)),
-      projection_source: 'SYNTHETIC_FALLBACK',
-      status_cap: 'PASS',
-      uncalculable: true,
-    };
-  }
+  if (starterSwStrPct === null) degradedInputs.push('starter_whiff_proxy');
+  if (veloMph === null) degradedInputs.push('starter_velo_proxy');
   missingInputs.push(...(opponentProfile.missing_inputs || []));
   if (
     opponentProfile.opp_obp === null &&
@@ -1800,7 +1792,11 @@ function calculateProjectionK(pitcher, matchup, leashTier, weather, options = {}
   }
 
   const effectiveStarterKPct = starterKPct ?? _leagueAvgKPct;
-  const whiffProxyPct = starterSwStrPct;
+  const whiffProxyPct = starterSwStrPct ?? clampValue(
+    effectiveStarterKPct * 0.42,
+    0.08,
+    0.18,
+  );
   const oppKPctVsHand =
     opponentProfile.opp_k_pct_vs_hand ?? _leagueAvgKPct;
   const oppObp = opponentProfile.opp_obp ?? MLB_K_DEFAULT_OPP_OBP;
@@ -1847,9 +1843,11 @@ function calculateProjectionK(pitcher, matchup, leashTier, weather, options = {}
   const temp = weather?.temp_at_first_pitch ?? weather?.temp_f ?? 72;
   if (temp < 45) kMean *= 0.95;
 
-  if (veloMph >= 95) kMean *= 1.025;      // high-velo advantage: +2.5%
-  else if (veloMph < 90) kMean *= 0.975; // low-velo penalty: -2.5%
-  // 90–94.9: no modifier
+  if (veloMph !== null) {
+    if (veloMph >= 95) kMean *= 1.025;      // high-velo advantage: +2.5%
+    else if (veloMph < 90) kMean *= 0.975; // low-velo penalty: -2.5%
+    // 90–94.9: no modifier
+  }
 
   // WI-0763: BB% adjustment derived from game log walks/batters_faced.
   // High walk-rate pitchers tend to have lower true K rates per batter because
@@ -1914,6 +1912,10 @@ function calculateProjectionK(pitcher, matchup, leashTier, weather, options = {}
     'ceil',
   );
 
+  const hardMissingInputs = missingInputs.filter(
+    (field) => field !== 'statcast_swstr' && field !== 'statcast_velo',
+  );
+
   return {
     value: roundedMean,
     projection: roundedMean,
@@ -1928,16 +1930,16 @@ function calculateProjectionK(pitcher, matchup, leashTier, weather, options = {}
     bf_exp: Math.round(bfExp * 10) / 10,
     k_interaction: Math.round(kInteraction * 1000) / 1000,
     k_leash_mult: kLeashMult,
-    projection_source: missingInputs.length > 0
+    projection_source: hardMissingInputs.length > 0
       ? 'SYNTHETIC_FALLBACK'
-      : degradedInputs.length > 0 || projectionFlags.length > 0
+      : degradedInputs.length > 0 || projectionFlags.length > 0 || missingInputs.length > 0
         ? 'DEGRADED_MODEL'
         : 'FULL_MODEL',
-    // WI-0770: null swstr_pct caps card at LEAN — real signal absent, not proxy-filled.
-    // Only cap at LEAN when statcast_swstr is the sole blocking missing input; when other
-    // inputs are also missing the projection degrades to SYNTHETIC_FALLBACK which already
-    // implies a PASS cap (no confident signal to act on).
-    status_cap: (missingInputs.length === 1 && missingInputs.includes('statcast_swstr')) ? 'LEAN' : 'PASS',
+    // Missing swstr specifically caps confidence to LEAN when no hard inputs are missing.
+    status_cap:
+      hardMissingInputs.length === 0 && missingInputs.includes('statcast_swstr')
+        ? 'LEAN'
+        : 'PASS',
     missing_inputs: Array.from(new Set([...missingInputs, ...observabilityMissing])),
     degraded_inputs: Array.from(new Set(degradedInputs)),
     statcast_inputs: {
@@ -2790,20 +2792,18 @@ function selectPitcherKUnderMarket(strikeoutLines, pitcherName, bookmakerPriorit
  * Build pitcher-K driver cards from an odds snapshot.
  *
  * Reads raw_data.mlb.{home,away}_pitcher (populated by enrichMlbPitcherData).
- * Default mode is PROJECTION_ONLY — no market line required.
- * When mode='ODDS_BACKED', attempts to select an under market from
- * raw_data.mlb.strikeout_lines and calls scorePitcherKUnder.
+ * Pitcher-K currently emits projection-only cards (no market line required).
+ * If mode='ODDS_BACKED' is requested, the function still forces
+ * PROJECTION_ONLY output and includes MODE_FORCED reason codes.
  *
  * @param {string} gameId
  * @param {object} oddsSnapshot
  * @param {object} [options]
  * @param {'PROJECTION_ONLY'|'ODDS_BACKED'} [options.mode]
- * @param {object} [options.bookmakerPriority]  bookmaker -> priority map (required for ODDS_BACKED)
  * @returns {Array<object>}
  */
 function computePitcherKDriverCards(gameId, oddsSnapshot, options) {
   const requestedMode = (options || {}).mode || 'PROJECTION_ONLY';
-  const bookmakerPriority = (options || {}).bookmakerPriority || {};
   const mlb = parseRawMlb(oddsSnapshot);
   const cards = [];
 
@@ -2897,127 +2897,111 @@ function computePitcherKDriverCards(gameId, oddsSnapshot, options) {
       wind_in_mph: mlb.wind_mph ?? null,
       wind_direction: mlb.wind_dir ?? null,
     };
+    // Pitcher-K currently runs as projection-only: no line/price dependency.
+    const result = scorePitcherK(
+      pitcherInput,
+      matchupInput,
+      {},
+      null,
+      weatherInput,
+      { mode: 'PROJECTION_ONLY', side: 'over' },
+    );
+    const hasProjection =
+      typeof result.projection === 'number' &&
+      Number.isFinite(result.projection);
+    const reasonCodes = Array.from(new Set([
+      ...(Array.isArray(result.reason_codes) ? result.reason_codes : []),
+      MLB_K_PROJECTION_ONLY_PASS_REASON,
+      ...(requestedMode === 'ODDS_BACKED' ? ['MODE_FORCED:ODDS_BACKED->PROJECTION_ONLY'] : []),
+      ...(result.projection_source === 'SYNTHETIC_FALLBACK'
+        ? ['PASS_SYNTHETIC_FALLBACK', 'PASS_MISSING_DRIVER_INPUTS']
+        : []),
+      ...(!hasProjection ? ['PASS_MISSING_DRIVER_INPUTS'] : []),
+    ]));
+    const projectionOnlyMissingInputs = Array.isArray(result.missing_inputs)
+      ? [...result.missing_inputs]
+      : [];
+    const passReasonCode =
+      reasonCodes.find((code) => code.startsWith('PASS_')) ??
+      MLB_K_PROJECTION_ONLY_PASS_REASON;
 
-    // Only emit pitcher-K cards when odds-backed market data is available.
-    if (requestedMode !== 'ODDS_BACKED') {
-      continue;
-    }
-
-    // ── ODDS_BACKED branch ─────────────────────────────────────────────────
-    if (requestedMode === 'ODDS_BACKED') {
-      // WI-0771: prefer per-pitcher k_market_lines (keyed by bookmaker) that
-      // enrichMlbPitcherData attaches from player_prop_lines. Fall back to
-      // the legacy mlb.strikeout_lines map if k_market_lines is absent.
-      const strikeoutLinesMap = pitcher.k_market_lines ?? mlb.strikeout_lines ?? {};
-      const selectedMarket = selectPitcherKUnderMarket(
-        strikeoutLinesMap,
-        playerName,
-        bookmakerPriority,
-      );
-
-      if (selectedMarket !== null) {
-        const normalizedMarket = normalizePitcherKMarketInput(selectedMarket);
-        if (
-          normalizedMarket?.line == null ||
-          normalizedMarket?.under_price == null
-        ) {
-          continue;
-        }
-        const underResult = scorePitcherKUnder(pitcherInput, matchupInput, normalizedMarket, weatherInput);
-        const hardMissingMarket = Array.isArray(underResult.flags)
-          ? underResult.flags.some((flag) =>
-            flag === 'UNDER_MARKET_LINE_MISSING' || flag === 'UNDER_MARKET_PRICE_MISSING'
-          )
-          : false;
-        const missingDriverInputs = Array.isArray(underResult.flags)
-          ? underResult.flags.includes('MISSING_DRIVER_INPUTS')
-          : false;
-        if (hardMissingMarket || missingDriverInputs) {
-          continue;
-        }
-        const verdict = underResult.verdict ?? 'NO_PLAY';
-        const emitCard = verdict === 'PLAY' || verdict === 'WATCH';
-        // Determine prop_display_state inline
-        const propDisplayState = verdict === 'PLAY' ? 'PLAY' : verdict === 'WATCH' ? 'WATCH' : 'PROJECTION_ONLY';
-        const underReasonCodes = Array.from(new Set([
-          'ODDS_BACKED_UNDER',
-          ...(Array.isArray(underResult.flags) ? underResult.flags : []),
-        ]));
-
-        cards.push({
-          market: `pitcher_k_${role}`,
-          pitcher_team: team,
-          player_id: playerId,
-          player_name: playerName,
-          prediction: verdict,
-          status: verdict,
-          action: verdict,
-          classification: verdict,
-          confidence: 0,
-          ev_threshold_passed: emitCard,
-          emit_card: emitCard,
-          card_verdict: verdict,
-          tier: null,
-          reasoning: _buildPitcherKReasoning(underResult),
-          projection_source: 'ODDS_BACKED',
-          status_cap: verdict,
-          missing_inputs: [],
-          reason_codes: underReasonCodes,
-          pass_reason_code: null,
-          playability: null,
-          projection: null,
-          drivers: [{
-            type: 'pitcher-k',
-            projection: underResult.projection ?? null,
-            k_mean: null,
-            probability_ladder: null,
-            fair_prices: null,
-            leash_tier: null,
-            net_score: null,
-            tier: null,
-          }],
-          prop_decision: {
-            verdict,
-            lean_side: 'UNDER',
-            line: normalizedMarket?.line ?? null,
-            display_price: normalizedMarket?.under_price ?? null,
-            projection: underResult.projection ?? null,
-            k_mean: null,
-            line_delta: underResult.line_delta ?? null,
-            under_score: underResult.under_score ?? null,
-            score_components: underResult.score_components ?? null,
-            history_metrics: underResult.history_metrics ?? null,
-            current_form_metrics: underResult.current_form_metrics ?? null,
-            selected_market: underResult.selected_market ?? null,
-            flags: underResult.flags ?? null,
-            why: underResult.why ?? null,
-            probability_ladder: null,
-            fair_prices: null,
-            playability: null,
-            projection_source: 'ODDS_BACKED',
-            status_cap: verdict,
-            missing_inputs: [],
-            fair_prob: null,
-            implied_prob: null,
-            prob_edge_pp: null,
-            ev: null,
-          },
-          prop_display_state: propDisplayState,
-          pitcher_k_result: underResult,
-          basis: 'ODDS_BACKED',
-          direction: 'UNDER',
-          line: normalizedMarket?.line ?? null,
-          line_source: normalizedMarket?.line_source ?? null,
-          over_price: normalizedMarket?.over_price ?? null,
-          under_price: normalizedMarket?.under_price ?? null,
-          best_line_bookmaker: normalizedMarket?.bookmaker ?? null,
-        });
-        continue; // skip PROJECTION_ONLY path for this pitcher
-      }
-
-      // No qualifying market: do not surface a projection-only fallback card.
-      continue;
-    }
+    cards.push({
+      market: `pitcher_k_${role}`,
+      pitcher_team: team,
+      player_id: playerId,
+      player_name: playerName,
+      prediction: 'PASS',
+      status: 'PASS',
+      action: 'PASS',
+      classification: 'PASS',
+      confidence: result.net_score != null ? result.net_score / 10 : 0,
+      ev_threshold_passed: false,
+      emit_card: true,
+      card_verdict: 'PASS',
+      tier: null,
+      reasoning: _buildPitcherKReasoning(result),
+      projection_source: result.projection_source ?? 'SYNTHETIC_FALLBACK',
+      status_cap: result.status_cap ?? 'PASS',
+      missing_inputs: projectionOnlyMissingInputs,
+      reason_codes: reasonCodes,
+      pass_reason_code: passReasonCode,
+      playability: result.playability ?? null,
+      projection: hasProjection
+        ? {
+            k_mean: result.k_mean ?? result.projection ?? null,
+            projected_ip: result.projected_ip ?? result.expected_ip ?? null,
+            bf_exp: result.bf_exp ?? null,
+            batters_per_inning: result.batters_per_inning ?? null,
+            k_interaction: result.k_interaction ?? null,
+            k_leash_mult: result.k_leash_mult ?? null,
+            starter_k_pct: result.starter_k_pct ?? null,
+            starter_swstr_pct: result.starter_swstr_pct ?? null,
+            whiff_proxy_pct: result.whiff_proxy_pct ?? null,
+            opp_k_pct_vs_hand: result.opp_k_pct_vs_hand ?? null,
+            probability_ladder: result.probability_ladder ?? null,
+            fair_prices: result.fair_prices ?? null,
+          }
+        : null,
+      drivers: [{
+        type: 'pitcher-k',
+        projection: result.projection ?? null,
+        k_mean: result.k_mean ?? result.projection ?? null,
+        probability_ladder: result.probability_ladder ?? null,
+        fair_prices: result.fair_prices ?? null,
+        leash_tier: result.leash_tier ?? null,
+        net_score: result.net_score ?? null,
+        tier: result.tier ?? null,
+      }],
+      prop_decision: {
+        verdict: 'PASS',
+        lean_side: null,
+        line: null,
+        display_price: null,
+        projection: result.projection ?? null,
+        k_mean: result.k_mean ?? result.projection ?? null,
+        probability_ladder: result.probability_ladder ?? null,
+        fair_prices: result.fair_prices ?? null,
+        playability: result.playability ?? null,
+        projection_source: result.projection_source ?? 'SYNTHETIC_FALLBACK',
+        status_cap: result.status_cap ?? 'PASS',
+        missing_inputs: projectionOnlyMissingInputs,
+        line_delta: null,
+        fair_prob: result.probability_ladder?.p_6_plus ?? null,
+        implied_prob: null,
+        prob_edge_pp: null,
+        ev: null,
+        why: _buildPitcherKReasoning(result),
+        flags: reasonCodes,
+      },
+      prop_display_state: 'PROJECTION_ONLY',
+      pitcher_k_result: result,
+      basis: 'PROJECTION_ONLY',
+      line: null,
+      line_source: null,
+      over_price: null,
+      under_price: null,
+      best_line_bookmaker: null,
+    });
   }
 
   return cards;
