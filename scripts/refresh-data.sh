@@ -21,8 +21,8 @@ echo "=== Step 3: Run NHL Model ==="
 npm --prefix apps/worker run job:run-nhl-model 2>&1 | grep -E "(NHLModel|complete|cards generated)"
 echo ""
 
-echo "=== Step 4: Run NCAAM Model ==="
-npm --prefix apps/worker run job:run-ncaam-model 2>&1 | grep -E "(NCAAMModel|complete|cards generated)"
+echo "=== Step 4: Run MLB Model ==="
+npm --prefix apps/worker run job:run-mlb-model 2>&1 | grep -E "(MLBModel|complete|cards generated)"
 echo ""
 
 echo "=== All Jobs Complete ==="

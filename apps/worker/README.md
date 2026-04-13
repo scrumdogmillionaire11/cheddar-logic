@@ -2,7 +2,7 @@
 
 Worker jobs for cheddar-logic: scheduled tasks, ETL jobs, model runs.
 
-## NBA/NHL/NCAAM null-data diagnostic loop
+## NBA/NHL/MLB null-data diagnostic loop
 
 Use this run order when tracking missing ESPN/projection inputs in the main Cheddar DB.
 
@@ -19,23 +19,20 @@ npm run job:pull-odds
 # 4) Run each model (same shell/env)
 npm run job:run-nba-model
 npm run job:run-nhl-model
-npm run job:run-ncaam-model
+npm run job:run-mlb-model
 ```
 
 Structured null-data tags to filter:
 
 ```bash
 # Projection-input blocks from model runners
-grep -E "\[NBAModel\]\[PROJECTION_INPUTS_INCOMPLETE\]|\[NHLModel\]\[PROJECTION_INPUTS_INCOMPLETE\]|\[NCAAMModel\]\[PROJECTION_INPUTS_INCOMPLETE\]" logs/worker-*.log
+grep -E "\[NBAModel\]\[PROJECTION_INPUTS_INCOMPLETE\]|\[NHLModel\]\[PROJECTION_INPUTS_INCOMPLETE\]|\[MLBModel\]\[PROJECTION_INPUTS_INCOMPLETE\]" logs/worker-*.log
 
 # Team metrics / enrichment nulls from data layer
 grep -E "\[TeamMetrics\]\[TEAM_METRICS_NULL\]|\[TeamMetrics\]\[TEAM_METRICS_ERROR\]|\[OddsEnrichment\]\[NULL_TEAM_METRICS\]|\[OddsEnrichment\]\[SOURCE_CONTRACT_FAILURE_TEAM_MAPPING\]" logs/worker-*.log
 ```
 
-Known NCAAM live-odds aliases that previously caused prod `MISSING_DATA_NO_PLAYS` despite valid odds:
-
-- `Seattle Redhawks` ↔ `Seattle U Redhawks`
-- `St. Thomas (MN) Tommies` ↔ `St. Thomas-Minnesota Tommies`
+Known alias note: historical NCAAM aliases previously caused `MISSING_DATA_NO_PLAYS` when that pipeline existed.
 
 ## Jobs
 
