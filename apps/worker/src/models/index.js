@@ -25,7 +25,6 @@
 const http = require('http');
 const https = require('https');
 const {
-  projectNBA,
   projectNBACanonical,
   projectNHL,
 } = require('./projections');
