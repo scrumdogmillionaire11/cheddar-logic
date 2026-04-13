@@ -999,7 +999,7 @@ function buildDiscordSnapshot({ now = new Date(), cards = [] } = {}) {
     }
 
     headerLines.push('─────────────────');
-    messages.push(headerLines.join('\n'));
+    messages.push({ sport: normalizeToken(seed?.sport || ''), text: headerLines.join('\n') });
   }
 
   const lines = [
@@ -1007,18 +1007,35 @@ function buildDiscordSnapshot({ now = new Date(), cards = [] } = {}) {
     `Games posted: ${messages.length} | Cards: ${filtered.length} | Play: ${sectionCounts.official} | Lean: ${sectionCounts.lean}`,
   ];
 
+  const messageTexts = messages.map((m) => m.text);
   return {
     content: lines.join('\n'),
-    messages,
+    messages: messageTexts,
+    messagesBySport: messages.reduce((acc, m) => {
+      if (!acc[m.sport]) acc[m.sport] = [];
+      acc[m.sport].push(m.text);
+      return acc;
+    }, {}),
     totalCards: filtered.length,
     totalGames: messages.length,
     sectionCounts,
   };
 }
 
+// Resolve the webhook URL for a given sport token.
+// Checks DISCORD_CARD_WEBHOOK_URL_<SPORT> first, falls back to DISCORD_CARD_WEBHOOK_URL.
+function resolveWebhookUrlForSport(sport) {
+  const sportKey = normalizeToken(sport);
+  const sportSpecific = sportKey
+    ? String(process.env[`DISCORD_CARD_WEBHOOK_URL_${sportKey}`] || '').trim()
+    : '';
+  if (sportSpecific) return sportSpecific;
+  return String(process.env.DISCORD_CARD_WEBHOOK_URL || '').trim();
+}
+
 async function postDiscordCards({ jobKey = null, dryRun = false } = {}) {
   const enabled = process.env.ENABLE_DISCORD_CARD_WEBHOOKS === 'true';
-  const webhookUrl = String(process.env.DISCORD_CARD_WEBHOOK_URL || '').trim();
+  const fallbackUrl = String(process.env.DISCORD_CARD_WEBHOOK_URL || '').trim();
   const charLimit = Number(process.env.DISCORD_CARD_WEBHOOK_CHAR_LIMIT || DEFAULT_CHAR_LIMIT);
   const maxRows = Number(process.env.DISCORD_CARD_WEBHOOK_MAX_ROWS || DEFAULT_MAX_ROWS);
 
@@ -1034,7 +1051,7 @@ async function postDiscordCards({ jobKey = null, dryRun = false } = {}) {
     };
   }
 
-  if (!webhookUrl) {
+  if (!fallbackUrl) {
     console.log(
       `[post-discord-cards] Skipping: DISCORD_CARD_WEBHOOK_URL is unset — provide a webhook URL to enable Discord posts`,
     );
@@ -1055,13 +1072,41 @@ async function postDiscordCards({ jobKey = null, dryRun = false } = {}) {
 
     const cards = fetchCardsForSnapshot({ maxRows });
     const snapshot = buildDiscordSnapshot({ cards, now: new Date() });
-    const chunks = snapshot.messages.flatMap((message) => chunkDiscordContent(message, charLimit));
+
+    // Group chunks by sport so each sport can route to its own webhook channel.
+    // Sports with no dedicated URL fall back to DISCORD_CARD_WEBHOOK_URL.
+    const routingPlan = [];
+    const routedSports = new Set();
+    for (const [sport, sportMessages] of Object.entries(snapshot.messagesBySport)) {
+      const url = resolveWebhookUrlForSport(sport);
+      if (!url) continue;
+      const chunks = sportMessages.flatMap((m) => chunkDiscordContent(m, charLimit));
+      if (chunks.length === 0) continue;
+      routingPlan.push({ sport, url, chunks });
+      routedSports.add(sport);
+    }
+    // Any messages whose sport had no specific URL have already been routed via fallback above.
+    // Collect unrouted messages and route to fallback if there are any sports not yet handled.
+    const fallbackMessages = snapshot.messages.filter((_, i) => {
+      const sport = Object.keys(snapshot.messagesBySport).find((s) =>
+        (snapshot.messagesBySport[s] || []).includes(snapshot.messages[i]),
+      );
+      return !sport || !routedSports.has(sport) || resolveWebhookUrlForSport(sport) === fallbackUrl;
+    });
+    // Simplest: if any sport URLs differ from fallback, use messagesBySport routing.
+    // Otherwise fall back to the original flat send.
+    const hasPerSportRouting = routingPlan.some((r) => r.url !== fallbackUrl);
+    const allChunks = hasPerSportRouting
+      ? null
+      : snapshot.messages.flatMap((message) => chunkDiscordContent(message, charLimit));
 
     if (dryRun) {
       return {
         success: true,
         dryRun: true,
-        chunks: chunks.length,
+        chunks: hasPerSportRouting
+          ? routingPlan.reduce((s, r) => s + r.chunks.length, 0)
+          : allChunks.length,
         totalCards: snapshot.totalCards,
         totalGames: snapshot.totalGames,
         sectionCounts: snapshot.sectionCounts,
@@ -1070,7 +1115,15 @@ async function postDiscordCards({ jobKey = null, dryRun = false } = {}) {
 
     insertJobRun(JOB_NAME, runId, jobKey);
     try {
-      const sentCount = await sendDiscordMessages({ webhookUrl, messages: chunks });
+      let sentCount = 0;
+      if (hasPerSportRouting) {
+        for (const { sport, url, chunks } of routingPlan) {
+          console.log(`[post-discord-cards] Routing ${chunks.length} chunk(s) for ${sport} to dedicated channel`);
+          sentCount += await sendDiscordMessages({ webhookUrl: url, messages: chunks });
+        }
+      } else {
+        sentCount = await sendDiscordMessages({ webhookUrl: fallbackUrl, messages: allChunks });
+      }
       markJobRunSuccess(runId, {
         chunks: sentCount,
         total_cards: snapshot.totalCards,
