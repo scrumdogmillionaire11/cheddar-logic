@@ -90,14 +90,10 @@ function findBestDatabase(dataDir) {
 
 function resolveDatabasePath({ env = process.env, cwd = process.cwd() } = {}) {
   const canonical = normalizePath(env.CHEDDAR_DB_PATH, cwd);
-  const recordPath = normalizePath(env.RECORD_DATABASE_PATH, cwd);
-  const legacyPath = normalizePath(env.DATABASE_PATH, cwd);
   const fromUrl = parseSqliteUrl(env.DATABASE_URL, cwd);
 
   const explicitCandidates = [
     canonical ? { source: 'CHEDDAR_DB_PATH', value: canonical } : null,
-    recordPath ? { source: 'RECORD_DATABASE_PATH', value: recordPath } : null,
-    legacyPath ? { source: 'DATABASE_PATH', value: legacyPath } : null,
     fromUrl ? { source: 'DATABASE_URL', value: fromUrl } : null,
   ].filter(Boolean);
 
@@ -114,8 +110,6 @@ function resolveDatabasePath({ env = process.env, cwd = process.cwd() } = {}) {
   }
 
   if (canonical) return { dbPath: canonical, source: 'CHEDDAR_DB_PATH', isExplicitFile: true };
-  if (recordPath) return { dbPath: recordPath, source: 'RECORD_DATABASE_PATH', isExplicitFile: true };
-  if (legacyPath) return { dbPath: legacyPath, source: 'DATABASE_PATH', isExplicitFile: true };
   if (fromUrl) return { dbPath: fromUrl, source: 'DATABASE_URL', isExplicitFile: true };
 
   // In production, CHEDDAR_DB_PATH must be set explicitly as the single source of truth.
