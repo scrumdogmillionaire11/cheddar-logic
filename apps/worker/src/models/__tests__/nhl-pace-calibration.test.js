@@ -6,6 +6,7 @@ const {
   NHL_PACE_AUDIT_RULES,
 } = require('../nhl-pace-model');
 const { edgeCalculator } = require('@cheddar-logic/models');
+const { makeCanonicalGoalieState } = require('../nhl-goalie-state');
 
 function buildBaseOverrides(overrides = {}) {
   return {
@@ -31,8 +32,24 @@ function buildBaseOverrides(overrides = {}) {
   };
 }
 
-function goalieState(starterState, adjustmentTrust) {
-  return { starter_state: starterState, adjustment_trust: adjustmentTrust };
+function goalieState(teamSide, starterState, adjustmentTrust) {
+  const tierConfidence = adjustmentTrust === 'FULL'
+    ? 'HIGH'
+    : adjustmentTrust === 'DEGRADED'
+      ? 'MEDIUM'
+      : 'NONE';
+
+  return makeCanonicalGoalieState({
+    game_id: 'calibration-game',
+    team_side: teamSide,
+    starter_state: starterState,
+    starter_source: 'USER_INPUT',
+    goalie_name: starterState === 'UNKNOWN' ? null : `${teamSide}-goalie`,
+    goalie_tier: starterState === 'UNKNOWN' ? 'UNKNOWN' : 'STRONG',
+    tier_confidence: starterState === 'UNKNOWN' ? 'NONE' : tierConfidence,
+    adjustment_trust: adjustmentTrust,
+    evidence_flags: [],
+  });
 }
 
 describe('NHL pace calibration rails', () => {
@@ -51,8 +68,8 @@ describe('NHL pace calibration rails', () => {
         awayPkPct: 0.71,
         homeGoalieSavePct: 0.885,
         awayGoalieSavePct: 0.884,
-        homeGoalieState: { starter_state: 'CONFIRMED', adjustment_trust: 'FULL' },
-        awayGoalieState: { starter_state: 'CONFIRMED', adjustment_trust: 'FULL' },
+        homeGoalieState: goalieState('home', 'CONFIRMED', 'FULL'),
+        awayGoalieState: goalieState('away', 'CONFIRMED', 'FULL'),
       }),
     );
 
@@ -86,8 +103,8 @@ describe('NHL pace calibration rails', () => {
         awayPaceFactor: 0.9,
         homeGoalieSavePct: 0.93,
         awayGoalieSavePct: 0.932,
-        homeGoalieState: goalieState('CONFIRMED', 'FULL'),
-        awayGoalieState: goalieState('CONFIRMED', 'FULL'),
+        homeGoalieState: goalieState('home', 'CONFIRMED', 'FULL'),
+        awayGoalieState: goalieState('away', 'CONFIRMED', 'FULL'),
       }),
     );
 
@@ -103,18 +120,18 @@ describe('NHL pace calibration rails', () => {
 
     const confirmed = predictNHLGame({
       ...base,
-      homeGoalieState: goalieState('CONFIRMED', 'FULL'),
-      awayGoalieState: goalieState('CONFIRMED', 'FULL'),
+      homeGoalieState: goalieState('home', 'CONFIRMED', 'FULL'),
+      awayGoalieState: goalieState('away', 'CONFIRMED', 'FULL'),
     });
     const expected = predictNHLGame({
       ...base,
-      homeGoalieState: goalieState('EXPECTED', 'DEGRADED'),
-      awayGoalieState: goalieState('EXPECTED', 'DEGRADED'),
+      homeGoalieState: goalieState('home', 'EXPECTED', 'DEGRADED'),
+      awayGoalieState: goalieState('away', 'EXPECTED', 'DEGRADED'),
     });
     const unknown = predictNHLGame({
       ...base,
-      homeGoalieState: goalieState('UNKNOWN', 'NEUTRALIZED'),
-      awayGoalieState: goalieState('UNKNOWN', 'NEUTRALIZED'),
+      homeGoalieState: goalieState('home', 'UNKNOWN', 'NEUTRALIZED'),
+      awayGoalieState: goalieState('away', 'UNKNOWN', 'NEUTRALIZED'),
     });
 
     expect(confirmed.expectedTotal).toBeLessThan(expected.expectedTotal);
@@ -126,8 +143,8 @@ describe('NHL pace calibration rails', () => {
       buildBaseOverrides({
         homeGoalieSavePct: 0.912,
         awayGoalieSavePct: 0.888,
-        homeGoalieState: goalieState('CONFIRMED', 'FULL'),
-        awayGoalieState: goalieState('CONFIRMED', 'FULL'),
+        homeGoalieState: goalieState('home', 'CONFIRMED', 'FULL'),
+        awayGoalieState: goalieState('away', 'CONFIRMED', 'FULL'),
       }),
     );
     const composite = predictNHLGame(
@@ -136,8 +153,8 @@ describe('NHL pace calibration rails', () => {
         awayGoalieSavePct: 0.888,
         homeGoalieGsax: 0.28,
         awayGoalieGsax: -0.28,
-        homeGoalieState: goalieState('CONFIRMED', 'FULL'),
-        awayGoalieState: goalieState('CONFIRMED', 'FULL'),
+        homeGoalieState: goalieState('home', 'CONFIRMED', 'FULL'),
+        awayGoalieState: goalieState('away', 'CONFIRMED', 'FULL'),
       }),
     );
 
@@ -153,8 +170,8 @@ describe('NHL pace calibration rails', () => {
       buildBaseOverrides({
         homeGoalieSavePct: 0.914,
         awayGoalieSavePct: 0.913,
-        homeGoalieState: goalieState('CONFIRMED', 'FULL'),
-        awayGoalieState: goalieState('CONFIRMED', 'FULL'),
+        homeGoalieState: goalieState('home', 'CONFIRMED', 'FULL'),
+        awayGoalieState: goalieState('away', 'CONFIRMED', 'FULL'),
       }),
     );
 
@@ -166,8 +183,8 @@ describe('NHL pace calibration rails', () => {
       buildBaseOverrides({
         homeGoalieSavePct: 0.914,
         awayGoalieSavePct: 0.913,
-        homeGoalieState: goalieState('EXPECTED', 'DEGRADED'),
-        awayGoalieState: goalieState('EXPECTED', 'DEGRADED'),
+        homeGoalieState: goalieState('home', 'EXPECTED', 'DEGRADED'),
+        awayGoalieState: goalieState('away', 'EXPECTED', 'DEGRADED'),
       }),
     );
 
@@ -189,8 +206,8 @@ describe('NHL pace calibration rails', () => {
         awayPkPct: 0.7,
         homeGoalieSavePct: 0.885,
         awayGoalieSavePct: 0.886,
-        homeGoalieState: goalieState('CONFIRMED', 'FULL'),
-        awayGoalieState: goalieState('CONFIRMED', 'FULL'),
+        homeGoalieState: goalieState('home', 'CONFIRMED', 'FULL'),
+        awayGoalieState: goalieState('away', 'CONFIRMED', 'FULL'),
       }),
     );
 
@@ -225,8 +242,8 @@ describe('NHL 1P calibration rails', () => {
         awayPkPct: 0.9,
         homeGoalieSavePct: 0.936,
         awayGoalieSavePct: 0.935,
-        homeGoalieState: goalieState('CONFIRMED', 'FULL'),
-        awayGoalieState: goalieState('CONFIRMED', 'FULL'),
+        homeGoalieState: goalieState('home', 'CONFIRMED', 'FULL'),
+        awayGoalieState: goalieState('away', 'CONFIRMED', 'FULL'),
       }),
     );
 
@@ -255,8 +272,8 @@ describe('NHL 1P calibration rails', () => {
         awayPkPct: 0.69,
         homeGoalieSavePct: 0.884,
         awayGoalieSavePct: 0.883,
-        homeGoalieState: goalieState('CONFIRMED', 'FULL'),
-        awayGoalieState: goalieState('CONFIRMED', 'FULL'),
+        homeGoalieState: goalieState('home', 'CONFIRMED', 'FULL'),
+        awayGoalieState: goalieState('away', 'CONFIRMED', 'FULL'),
       }),
     );
 
@@ -281,8 +298,8 @@ describe('NHL 1P calibration rails', () => {
         awayPaceFactor: 1.15,
         homeGoalieSavePct: 0.902,
         awayGoalieSavePct: 0.901,
-        homeGoalieState: goalieState('UNKNOWN', 'NEUTRALIZED'),
-        awayGoalieState: goalieState('CONFIRMED', 'FULL'),
+        homeGoalieState: goalieState('home', 'UNKNOWN', 'NEUTRALIZED'),
+        awayGoalieState: goalieState('away', 'CONFIRMED', 'FULL'),
       }),
     );
 
@@ -300,8 +317,8 @@ describe('NHL 1P calibration rails', () => {
       buildBaseOverrides({
         homeGoalieSavePct: 0.935,
         awayGoalieSavePct: 0.936,
-        homeGoalieState: goalieState('UNKNOWN', 'NEUTRALIZED'),
-        awayGoalieState: goalieState('UNKNOWN', 'NEUTRALIZED'),
+        homeGoalieState: goalieState('home', 'UNKNOWN', 'NEUTRALIZED'),
+        awayGoalieState: goalieState('away', 'UNKNOWN', 'NEUTRALIZED'),
       }),
     );
 
@@ -331,18 +348,18 @@ describe('NHL 1P calibration rails', () => {
 
     const confirmed = predictNHLGame({
       ...base,
-      homeGoalieState: goalieState('CONFIRMED', 'FULL'),
-      awayGoalieState: goalieState('CONFIRMED', 'FULL'),
+      homeGoalieState: goalieState('home', 'CONFIRMED', 'FULL'),
+      awayGoalieState: goalieState('away', 'CONFIRMED', 'FULL'),
     });
     const expected = predictNHLGame({
       ...base,
-      homeGoalieState: goalieState('EXPECTED', 'DEGRADED'),
-      awayGoalieState: goalieState('EXPECTED', 'DEGRADED'),
+      homeGoalieState: goalieState('home', 'EXPECTED', 'DEGRADED'),
+      awayGoalieState: goalieState('away', 'EXPECTED', 'DEGRADED'),
     });
     const unknown = predictNHLGame({
       ...base,
-      homeGoalieState: goalieState('UNKNOWN', 'NEUTRALIZED'),
-      awayGoalieState: goalieState('UNKNOWN', 'NEUTRALIZED'),
+      homeGoalieState: goalieState('home', 'UNKNOWN', 'NEUTRALIZED'),
+      awayGoalieState: goalieState('away', 'UNKNOWN', 'NEUTRALIZED'),
     });
 
     // EXPECTED multiplier should be 0.6, placing it between CONFIRMED (1.0) and UNKNOWN (0.0)
