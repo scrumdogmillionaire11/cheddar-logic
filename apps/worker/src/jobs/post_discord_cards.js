@@ -20,6 +20,19 @@ const DEFAULT_MAX_ROWS = 300;
 // Leans with |edge| below this are suppressed — rounding error, not signal
 // Override with env DISCORD_MIN_LEAN_EDGE (e.g. '0.2')
 const MIN_LEAN_EDGE_ABS = Number(process.env.DISCORD_MIN_LEAN_EDGE ?? 0.15);
+
+// NHL totals bucket policy thresholds (WI-0934)
+const NHL_TOTAL_PLAY_MIN_EDGE = 1.0;           // abs(edge) >= 1.0 → PLAY candidate
+const NHL_TOTAL_SLIGHT_EDGE_MIN_EDGE = 0.5;    // abs(edge) >= 0.5 → SLIGHT EDGE candidate
+const NHL_TOTAL_PASS_MAX_EDGE = 0.35;          // abs(edge) < 0.35 → always PASS
+const NHL_TOTAL_OVER65_ACCELERANT_THRESHOLD = 0.20; // required for OVER ≥6.5 to stay PLAY
+// Reason codes that cap NHL total status at SLIGHT EDGE (not PLAY)
+const NHL_TOTAL_UNCERTAINTY_HOLD_REASONS = new Set([
+  'GOALIE_UNCONFIRMED',
+  'GOALIE_CONFLICTING',
+  'INJURY_UNCERTAIN',
+]);
+
 const NHL_TOTAL_CONVICTION_LABELS = {
   STRONG_PLAY: 'Strong Play Edge',
   PLAY_GRADE: 'Play-Grade Edge',
@@ -388,7 +401,95 @@ function summarizePick(card) {
   return `${card.matchup} — ${card.cardType}${side}${lineText}${priceText}${projectionOnly}`;
 }
 
+// Hockey totals bucket policy (WI-0934).
+// Returns 'official' (PLAY), 'lean' (SLIGHT EDGE), or 'pass_blocked' (PASS).
+// Called only for cards where sport=NHL and market=TOTAL.
+function _nhlTierDowngrade(tier) {
+  if (tier === 'PLAY') return 'SLIGHT_EDGE';
+  return 'PASS'; // SLIGHT_EDGE or lower → PASS
+}
+
+function classifyNhlTotalsBucketStatus(card) {
+  const payload = card?.payloadData || {};
+
+  // 1. Integrity veto — mixed-book or stale snapshot is never actionable
+  const action = normalizeToken(payload?.action || payload?.status || '');
+  const blocked = normalizeToken(payload?.blocked_reason_code || '');
+  const reasonCodes = Array.isArray(payload?.reason_codes)
+    ? payload.reason_codes.map(normalizeToken)
+    : [];
+  const isIntegrityBlocked =
+    action.includes('BLOCK') ||
+    action.includes('GATE') ||
+    blocked.includes('MIXED_BOOK') ||
+    blocked.includes('STALE') ||
+    reasonCodes.some((r) => r.includes('MIXED_BOOK') || r.includes('STALE'));
+
+  if (isIntegrityBlocked) return 'pass_blocked';
+
+  // 2. Edge noise floor — sub-threshold edges are PASS
+  const edgeRaw = payload?.edge ?? payload?.edge_pct ?? payload?.edge_over_pp;
+  const edgeNum = Number(edgeRaw);
+  const edgeAbs = Number.isFinite(edgeNum) ? Math.abs(edgeNum) : 0;
+
+  if (edgeAbs < NHL_TOTAL_PASS_MAX_EDGE) return 'pass_blocked';
+
+  // 3. Goalie/injury uncertainty caps status at SLIGHT_EDGE
+  const gateReason = normalizeToken(payload?.gate_reason || '');
+  const allReasonTokens = [...reasonCodes, gateReason, blocked].filter(Boolean);
+  const hasUncertaintyHold = allReasonTokens.some((r) =>
+    NHL_TOTAL_UNCERTAINTY_HOLD_REASONS.has(r),
+  );
+
+  // 4. Base tier derived from edge magnitude (with uncertainty cap)
+  let baseTier;
+  if (hasUncertaintyHold) {
+    baseTier = edgeAbs >= NHL_TOTAL_SLIGHT_EDGE_MIN_EDGE ? 'SLIGHT_EDGE' : 'PASS';
+  } else if (edgeAbs >= NHL_TOTAL_PLAY_MIN_EDGE) {
+    baseTier = 'PLAY';
+  } else if (edgeAbs >= NHL_TOTAL_SLIGHT_EDGE_MIN_EDGE) {
+    baseTier = 'SLIGHT_EDGE';
+  } else {
+    baseTier = 'PASS';
+  }
+
+  if (baseTier === 'PASS') return 'pass_blocked';
+
+  // 5. Fragility adjustments
+  const line = Number(payload?.line ?? payload?.total ?? payload?.market_total);
+  const selectionRaw = payload?.selection;
+  const selectionSide = normalizeToken(
+    typeof selectionRaw === 'object'
+      ? (selectionRaw?.side || '')
+      : (selectionRaw || ''),
+  );
+
+  if (Number.isFinite(line)) {
+    // UNDER ≤5.5: unconditional one-tier downgrade (key number, compressed scoring range)
+    if (selectionSide === 'UNDER' && line <= 5.5) {
+      baseTier = _nhlTierDowngrade(baseTier);
+    }
+    // OVER ≥6.5: blocks PLAY unless accelerant_score >= threshold
+    if (selectionSide === 'OVER' && line >= 6.5 && baseTier === 'PLAY') {
+      const accelerantScore = Number(payload?.accelerant_score ?? payload?.accelerant ?? NaN);
+      const passesAccelerant =
+        Number.isFinite(accelerantScore) && accelerantScore >= NHL_TOTAL_OVER65_ACCELERANT_THRESHOLD;
+      if (!passesAccelerant) {
+        baseTier = 'SLIGHT_EDGE';
+      }
+    }
+  }
+
+  if (baseTier === 'PASS') return 'pass_blocked';
+  return baseTier === 'PLAY' ? 'official' : 'lean';
+}
+
 function classifyDecisionBucket(card) {
+  // NHL totals use a deterministic edge/integrity/fragility bucket policy
+  if (normalizeToken(card?.sport) === 'NHL' && normalizeMarketTag(card) === 'TOTAL') {
+    return classifyNhlTotalsBucketStatus(card);
+  }
+
   const payload = card?.payloadData || {};
   const action = normalizeToken(payload?.action || payload?.status);
   const classification = normalizeToken(payload?.classification);
