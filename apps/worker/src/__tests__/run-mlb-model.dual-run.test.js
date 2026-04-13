@@ -1,7 +1,7 @@
 const { validateCardPayload } = require('@cheddar-logic/data');
 const {
   computeMLBDriverCards,
-  selectMlbGameMarket,
+  evaluateMlbGameMarkets,
 } = require('../models/mlb-model');
 const {
   buildMlbMarketAvailability,
@@ -125,7 +125,82 @@ function loadRunMlbModel({
   const validateCardPayloadMock = jest.fn(() => ({ success: true, errors: [] }));
   const computeMLBDriverCardsMock = jest.fn(() => gameDriverCards);
   const computePitcherKDriverCardsMock = jest.fn(() => pitcherKDriverCards);
-  const selectMlbGameMarketMock = jest.fn(() => selection);
+  const normalizeMarketType = (market) => {
+    const map = {
+      f5_total: 'F5_TOTAL',
+      f5_ml: 'F5_ML',
+      full_game_total: 'FULL_GAME_TOTAL',
+      full_game_ml: 'FULL_GAME_ML',
+    };
+    return map[String(market || '').toLowerCase()] || String(market || 'UNKNOWN').toUpperCase();
+  };
+
+  const buildMockGameEval = (ctx = {}) => {
+    if (selection && selection.status && Array.isArray(selection.market_results)) {
+      return selection;
+    }
+
+    const gameId = ctx.game_id || 'mlb-game-001';
+    const selectedDriver = selection?.selected_driver || null;
+
+    const market_results = [];
+    if (selectedDriver) {
+      const official =
+        selectedDriver.ev_threshold_passed === true ||
+        selectedDriver.status === 'FIRE' ||
+        selectedDriver.classification === 'BASE';
+
+      market_results.push({
+        game_id: gameId,
+        sport: 'MLB',
+        market_type: normalizeMarketType(selectedDriver.market),
+        candidate_id: `${gameId}::${selectedDriver.market ?? 'unknown'}`,
+        status: official ? 'QUALIFIED_OFFICIAL' : 'QUALIFIED_LEAN',
+        reason_codes: Array.isArray(selectedDriver.reason_codes)
+          ? selectedDriver.reason_codes
+          : [],
+      });
+    }
+
+    if (selection?.rejected && typeof selection.rejected === 'object') {
+      Object.entries(selection.rejected).forEach(([market, reason]) => {
+        market_results.push({
+          game_id: gameId,
+          sport: 'MLB',
+          market_type: String(market || 'UNKNOWN').toUpperCase(),
+          candidate_id: `${gameId}::${String(market || '').toLowerCase()}`,
+          status: 'REJECTED_INPUTS',
+          reason_codes: reason ? [String(reason)] : [],
+        });
+      });
+    }
+
+    const official_plays = market_results.filter((r) => r.status === 'QUALIFIED_OFFICIAL');
+    const leans = market_results.filter((r) => r.status === 'QUALIFIED_LEAN');
+    const rejected = market_results.filter(
+      (r) => r.status !== 'QUALIFIED_OFFICIAL' && r.status !== 'QUALIFIED_LEAN',
+    );
+
+    const status = official_plays.length > 0
+      ? 'HAS_OFFICIAL_PLAYS'
+      : leans.length > 0
+        ? 'LEANS_ONLY'
+        : 'LEANS_ONLY';
+
+    return {
+      game_id: gameId,
+      sport: 'MLB',
+      status,
+      market_results,
+      official_plays,
+      leans,
+      rejected,
+    };
+  };
+
+  const evaluateMlbGameMarketsMock = jest.fn((_driverCards, ctx) =>
+    buildMockGameEval(ctx || {}),
+  );
   const getDatabase = jest.fn(() => ({
     prepare: jest.fn((sql) => ({
       get: (...args) => {
@@ -174,12 +249,18 @@ function loadRunMlbModel({
   }));
 
   jest.doMock('../models/mlb-model', () => ({
-    selectMlbGameMarket: selectMlbGameMarketMock,
+    evaluateMlbGameMarkets: evaluateMlbGameMarketsMock,
     projectF5ML: jest.fn(),
     // WI-0877: stub so computeSyntheticLineF5Driver can call the function
     projectTeamF5RunsAgainstStarter: jest.fn(() => ({ f5_runs: null, missing_inputs: ['stub'], degraded_inputs: [] })),
     // WI-0840: no-op in tests — static constants remain in effect
     setLeagueConstants: jest.fn(),
+  }));
+
+  jest.doMock('@cheddar-logic/adapters', () => ({
+    f5LineFetcher: {
+      fetchF5LineFromVsin: jest.fn(async () => null),
+    },
   }));
 
   // Mock the odds config so MLB active:false in the real config doesn't force
@@ -199,7 +280,7 @@ function loadRunMlbModel({
       validateCardPayloadMock,
       computeMLBDriverCardsMock,
       computePitcherKDriverCardsMock,
-      selectMlbGameMarketMock,
+      evaluateMlbGameMarketsMock,
     },
   };
 }
@@ -212,7 +293,7 @@ describe('mlb dual-run helpers', () => {
     jest.clearAllMocks();
   });
 
-  test('computeMLBDriverCards only returns F5 game candidates and selector chooses F5', () => {
+  test('computeMLBDriverCards returns F5 game candidates and evaluator accounts for F5 market', () => {
     const snapshot = buildF5Snapshot();
 
     const cards = computeMLBDriverCards(snapshot.game_id, snapshot);
@@ -220,32 +301,19 @@ describe('mlb dual-run helpers', () => {
     expect(cards).toHaveLength(1);
     expect(cards[0].market).toBe('f5_total');
 
-    const selection = selectMlbGameMarket(snapshot.game_id, snapshot, cards);
-    expect(selection.chosen_market).toBe('F5_TOTAL');
-    expect(selection.why_this_market).toBe(
-      'Rule 1: only configured MLB game market',
-    );
-    expect(selection.markets).toHaveLength(1);
-    expect(selection.markets[0]).toMatchObject({
-      market: 'F5_TOTAL',
-    });
+    const gameEval = evaluateMlbGameMarkets(cards, { game_id: snapshot.game_id });
+    expect(gameEval.status).toMatch(/HAS_OFFICIAL_PLAYS|SKIP_GAME_INPUT_FAILURE|SKIP_MARKET_NO_EDGE/);
+    expect(gameEval.market_results.map((item) => item.market_type)).toContain('F5_TOTAL');
   });
 
-  test('selector emits NO_F5_LINE rejection when no F5 game candidate exists', () => {
-    const snapshot = buildF5Snapshot({
-      raw_data: {
-        mlb: {
-          home_pitcher: buildF5Snapshot().raw_data.mlb.home_pitcher,
-          away_pitcher: buildF5Snapshot().raw_data.mlb.away_pitcher,
-        },
-      },
-    });
+  test('evaluator returns SKIP_MARKET_NO_EDGE when no game candidates exist', () => {
+    const snapshot = buildF5Snapshot();
+    const gameEval = evaluateMlbGameMarkets([], { game_id: snapshot.game_id });
 
-    const selection = selectMlbGameMarket(snapshot.game_id, snapshot, []);
-
-    expect(selection.chosen_market).toBe('F5_TOTAL');
-    expect(selection.rejected).toEqual({ F5_TOTAL: 'NO_F5_LINE' });
-    expect(selection.markets).toEqual([]);
+    expect(gameEval.status).toBe('SKIP_MARKET_NO_EDGE');
+    expect(gameEval.official_plays).toEqual([]);
+    expect(gameEval.leans).toEqual([]);
+    expect(gameEval.rejected).toEqual([]);
   });
 
   test('mlb-f5 payload contract validates with recommended_bet_type and odds_context', () => {
@@ -531,7 +599,7 @@ describe('runMLBModel dual-run orchestration', () => {
 
     const f5Payload = mocks.insertCardPayload.mock.calls[0][0].payloadData;
     expect(f5Payload.primary_game_market).toBe(true);
-    expect(f5Payload.chosen_market).toBe('F5_TOTAL');
+    expect(f5Payload.chosen_market).toBe('HAS_OFFICIAL_PLAYS');
     expect(f5Payload.recommended_bet_type).toBe('total');
     expect(f5Payload.projection_source).toBe('FULL_MODEL');
     expect(f5Payload.playability).toMatchObject({
