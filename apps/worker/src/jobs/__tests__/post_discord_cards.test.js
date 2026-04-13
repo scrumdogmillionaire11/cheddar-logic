@@ -234,6 +234,38 @@ describe('post_discord_cards helpers', () => {
     expect(snapshot.messages[0]).not.toContain('1P | 1.5');
   });
 
+  test('buildDiscordSnapshot suppresses 1P cards with no direction — never posts 1P | 1.5', () => {
+    const cards = [
+      makeCard({
+        id: 'pace-1p-no-direction',
+        sport: 'nhl',
+        cardType: 'nhl-pace-1p',
+        matchup: 'Dallas Stars @ Toronto Maple Leafs',
+        payloadData: {
+          action: 'LEAN',
+          kind: 'PLAY',
+          market_type: 'FIRST_PERIOD',
+          period: '1P',
+          selection: null,
+          prediction: 'LEAN', // no OVER/UNDER suffix
+          market_context: { selection_side: null },
+          pricing_trace: { called_side: null },
+          line: 1.5,
+          edge: 0.5,
+          model_projection: 1.9,
+          price: -108,
+          projection_only: false,
+        },
+      }),
+    ];
+
+    const snapshot = buildDiscordSnapshot({ cards, now: new Date('2026-03-20T14:00:00.000Z') });
+
+    // Card with no direction must not post — not even as a lean
+    expect(snapshot.totalGames).toBe(0);
+    expect(snapshot.messages).toHaveLength(0);
+  });
+
   test('buildDiscordSnapshot resolves 1P direction from market_context when selection side is missing', () => {
     const cards = [
       makeCard({

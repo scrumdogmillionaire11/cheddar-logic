@@ -736,6 +736,9 @@ function renderDecisionLine(card, bucket) {
   const line      = lineSummary(card);
   const price     = priceSummary(card);
 
+  // 1P cards without a resolved OVER/UNDER direction are unactionable — suppress entirely
+  if (market === '1P' && selection !== 'OVER' && selection !== 'UNDER') return null;
+
   // For TOTAL markets, require a model projection — projection-less totals have no bettor value
   if (market === 'TOTAL') {
     const hasModel = safeScalar(
