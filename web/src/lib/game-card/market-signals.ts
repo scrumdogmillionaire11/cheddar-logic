@@ -59,7 +59,6 @@ export function deriveMarketSignals(card: GameCard): MarketSignalPill[] {
     play?.pass_reason_code ??
     null;
   const hasSharpDivergence =
-    primaryReasonCode === 'PASS_SHARP_MONEY_OPPOSITE' || // legacy dead code — preserved for old cards
     tags.includes('SHARP_MONEY_OPPOSITE') ||
     hasFadePublicPositive;
 
