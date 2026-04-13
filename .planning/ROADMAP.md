@@ -131,3 +131,16 @@ Plans:
 - [ ] ime-01-03-PLAN.md — Wire evaluateMlbGameMarkets into run_mlb_model.js; multi-market insertion (Wave 2)
 - [ ] ime-01-04-PLAN.md — NHL independent evaluation: evaluateNHLGameMarkets + choosePrimaryDisplayMarket; wire into run_nhl_model.js (Wave 2)
 - [ ] ime-01-05-PLAN.md — Spec doc docs/market_evaluation_contract.md + VALID_STATUSES export (Wave 3)
+
+---
+
+### Phase: WI-0911 — NHL Player Blocks Projection Settlement Policy
+
+**Goal**: Enforce an explicit, deterministic settlement policy for `nhl-player-blk` so this market cannot silently flow through unsupported grading paths.
+
+**Requirements:** [BLK-SETTLE-01, BLK-SETTLE-02, BLK-SETTLE-03]
+
+**Plans:** 1 plan in 1 wave
+
+Plans:
+- [ ] WI-0911-01-PLAN.md — Lock `nhl-player-blk` as projection-audit-only, add market-specific closeout reason metadata, and harden settlement tests (Wave 1)
