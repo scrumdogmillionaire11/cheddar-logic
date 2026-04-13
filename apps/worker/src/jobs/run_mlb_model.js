@@ -2033,6 +2033,16 @@ async function runMLBModel({
           });
 
           const gameDriverCards = computeMLBDriverCards(gameId, gameOddsSnapshot);
+          
+          // Mark F5 cards with without_odds_mode flag when in projection-only mode (WI-0919)
+          // This allows market-eval to properly gate projection-only cards
+          if (withoutOddsMode) {
+            gameDriverCards.forEach((card) => {
+              if (card.market === 'f5_total' || card.market === 'f5_ml' || card.market === 'full_game_total') {
+                card.without_odds_mode = true;
+              }
+            });
+          }
           // K props draw from player_prop_lines — independent of F5 total line.
           // Always pass the resolved mode; per-pitcher fallback to PROJECTION_ONLY
           // happens inside computePitcherKDriverCards when no strikeout line is found.

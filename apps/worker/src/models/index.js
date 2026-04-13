@@ -2046,10 +2046,7 @@ function getModel(sport) {
 }
 
 module.exports = {
-  getInference,
   getModel,
-  callRemoteModel,
-  mockModels,
   computeNHLDriverCards,
   computeNBADriverCards,
   determineTier,
@@ -2061,7 +2058,6 @@ module.exports = {
   generateCard,
   buildMarketCallCard,
   extractNhlDriverDataQualityContext,
-  computeSkaterInjuryFactor,
   computeSkaterDefInjuryFactor,
   computeMLBDriverCards,
   computePitcherKDriverCards,

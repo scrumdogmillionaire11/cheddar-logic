@@ -65,4 +65,13 @@ describe('AST Ownership Enforcement', () => {
       );
     }
   });
+
+  test('models index does not expose legacy unused exports', () => {
+    const models = require('../index');
+
+    expect(models).not.toHaveProperty('getInference');
+    expect(models).not.toHaveProperty('callRemoteModel');
+    expect(models).not.toHaveProperty('mockModels');
+    expect(models).not.toHaveProperty('computeSkaterInjuryFactor');
+  });
 });

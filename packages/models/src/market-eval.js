@@ -109,6 +109,19 @@ function evaluateSingleMarket(card, ctx) {
 
   // --- Missing inputs gate ---
   if (Array.isArray(card.missing_inputs) && card.missing_inputs.length > 0) {
+    // Allow projection-floor cards to pass even with market odds missing (WI-0919)
+    // Projection-only scenarios intentionally have no market line; this is correct
+    const isProjectionFloor = card.projection_floor === true || card.without_odds_mode === true;
+    const hasOnlyMarketOddsMissing = card.missing_inputs.every((name) => {
+      const n = String(name).toLowerCase();
+      return n.includes('odds') || n.includes('price') || n.includes('market');
+    });
+    
+    if (isProjectionFloor && hasOnlyMarketOddsMissing) {
+      // Projection-floor cards are allowed with missing market odds
+      return buildResult(card, safeCtx, 'ELIGIBLE_CAP_EXCEEDED', [REASON_CODES.EDGE_BELOW_THRESHOLD], { inputs_ok: true });
+    }
+    
     const codes = card.missing_inputs.map((name) => {
       const n = String(name).toLowerCase();
       if (n.includes('pitcher') || n.includes('sp_')) return REASON_CODES.MISSING_STARTING_PITCHER;
