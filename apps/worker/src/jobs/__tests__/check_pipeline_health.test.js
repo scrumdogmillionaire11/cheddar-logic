@@ -289,7 +289,7 @@ describe('checkOddsFreshness', () => {
         sport: 'NBA',
         away_team: 'Golden State Warriors',
         home_team: 'Sacramento Kings',
-        game_time_utc: now.plus({ minutes: 30 }).toISO(),
+        game_time_utc: now.plus({ minutes: 20 }).toISO(),
       },
     ];
     const latestOddsByGame = {
