@@ -457,6 +457,8 @@ const schemaByCardType = {
   'mlb-strikeout': basePayloadSchema,
   'mlb-f5': mlbF5PayloadSchema,
   'mlb-f5-ml': basePayloadSchema,
+  'mlb-full-game': basePayloadSchema,
+  'mlb-full-game-ml': basePayloadSchema,
   'nfl-model-output': basePayloadSchema,
   'fpl-model-output': basePayloadSchema,
 
