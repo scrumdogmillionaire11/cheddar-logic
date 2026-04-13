@@ -514,3 +514,23 @@ describe('resolvePlayerShotsActualValue — 1P shots contract (WI-0910)', () => 
     expect(result).toBe(7);
   });
 });
+
+describe('nhl-player-blk settlement guard', () => {
+  test('isProjectionAuditOnlyBlkRow detects nhl-player-blk', () => {
+    expect(
+      __private.isProjectionAuditOnlyBlkRow({ card_type: 'nhl-player-blk' }),
+    ).toBe(true);
+  });
+
+  test('isProjectionAuditOnlyBlkRow does not match nhl-player-shots', () => {
+    expect(
+      __private.isProjectionAuditOnlyBlkRow({ card_type: 'nhl-player-shots' }),
+    ).toBe(false);
+  });
+
+  test('isProjectionAuditOnlyBlkRow does not match nhl-pace-1p', () => {
+    expect(
+      __private.isProjectionAuditOnlyBlkRow({ card_type: 'nhl-pace-1p' }),
+    ).toBe(false);
+  });
+});

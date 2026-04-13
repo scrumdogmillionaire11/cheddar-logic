@@ -3526,4 +3526,44 @@ describe('run_nhl_player_shots_model', () => {
       favoriteScenario.blkCard.payloadData.projectedTotal,
     );
   });
+
+  test('WI-0911: nhl-player-blk payloads include settlement_policy.grading_eligible === false', async () => {
+    process.env.NHL_BLK_CARDS_ENABLED = 'true';
+    const { mod, data, shots } = loadFreshModule();
+
+    shots.projectBlkV1.mockImplementation((inputs = {}) => ({
+      blk_mu: 1.8,
+      blk_sigma: 1.05,
+      block_rate_ev_per60: 2.1,
+      block_rate_pk_per60: 0.8,
+      role_stability: 'HIGH',
+      fair_over_prob_by_line: { [String(inputs.market_line)]: 0.52 },
+      fair_under_prob_by_line: { [String(inputs.market_line)]: 0.48 },
+      edge_over_pp: 0.03,
+      edge_under_pp: -0.03,
+      ev_over: 0.02,
+      ev_under: -0.02,
+      opportunity_score: 0.35,
+      flags: [],
+    }));
+
+    data.getDatabase.mockReturnValue(buildMockDb({
+      games: [buildFutureGame({ game_id: 'wi-0911-settlement-policy-01' })],
+      players: [buildPlayer({ player_id: 8477492, player_name: 'Policy Test Player' })],
+      playerLogs: [],
+      playerBlkLogs: buildBlkGames([3, 2, 3, 2, 3]),
+      playerBlkRateRow: buildBlkRateRow(),
+      availabilityRow: { status: 'ACTIVE', checked_at: new Date().toISOString() },
+    }));
+
+    await mod.runNHLPlayerShotsModel();
+
+    const blkCards = getInsertedCardsByType(data, 'nhl-player-blk');
+    expect(blkCards.length).toBeGreaterThanOrEqual(1);
+    expect(blkCards[0].payloadData.settlement_policy).toMatchObject({
+      grading_eligible: false,
+      reason: 'PROJECTION_AUDIT_ONLY',
+      market: 'player_blocked_shots',
+    });
+  });
 });

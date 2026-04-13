@@ -4,7 +4,7 @@ milestone: v1.1
 milestone_name: Model Integrity & Betting Execution Hardening
 status: active
 last_updated: "2026-04-12T21:30:00Z"
-last_activity: "2026-04-13 - Completed quick task 158: WI-0902 Endpoint Behavioral Parity Fixtures for Cards and Games"
+last_activity: "2026-04-13 - Completed quick task 159: WI-0911 NHL Player Blocks Projection Settlement Policy"
 ---
 
 # Project State
@@ -172,6 +172,7 @@ Notable: WI-0797 (pipeline health Discord watchdog), WI-0798 (NHL season key fix
 
 | # | Description | Date | Commit | Directory |
 |---|-------------|------|--------|-----------|
+| 159 | WI-0911 NHL Player Blocks Projection Settlement Policy | 2026-04-13 | ed879b5 | [159-wi-0911-nhl-player-blocks-projection-set](./quick/159-wi-0911-nhl-player-blocks-projection-set/) |
 | 158 | WI-0902 Endpoint Behavioral Parity Fixtures for Cards and Games | 2026-04-13 | af624ff | [158-wi-0902-endpoint-behavioral-parity-fixtu](./quick/158-wi-0902-endpoint-behavioral-parity-fixtu/) |
 | 157 | WI-0893 End-to-end drop reason ledger — worker gate taxonomy, API diagnostics drop_summary, transform_meta.drop_reason, CardsPageContext diagnostics surface | 2026-04-12 | 4857ecb | [157-wi-0893-add-end-to-end-odds-to-surface-d](./quick/157-wi-0893-add-end-to-end-odds-to-surface-d/) |
 | 156 | WI-0910 NHL 1P player-shots settlement completeness guard | 2026-04-12 | f1d1903 | [156-wi-0910-nhl-player-shots-1p-settlement-c](./quick/156-wi-0910-nhl-player-shots-1p-settlement-c/) |
