@@ -478,6 +478,20 @@ function checkMlbF5MarketAvailability({ expectF5Ml = false } = {}) {
     };
   }
 
+  const configuredMlbMarkets = Array.isArray(ODDS_SPORTS_CONFIG?.MLB?.markets)
+    ? ODDS_SPORTS_CONFIG.MLB.markets.map((market) =>
+        String(market || '').toLowerCase(),
+      )
+    : [];
+  const enforceF5Totals = configuredMlbMarkets.some((market) =>
+    [
+      'totals_1st_5_innings',
+      'totals_f5',
+      'first_5_totals',
+      'f5_totals',
+    ].includes(market),
+  );
+
   const db = getDatabase();
   const nowUtc = DateTime.utc();
   // Exclude games within 15 minutes of start — F5 markets are already closed
@@ -532,7 +546,7 @@ function checkMlbF5MarketAvailability({ expectF5Ml = false } = {}) {
       { expectF5Ml },
     );
 
-    if (!availability.f5_line_ok) {
+    if (enforceF5Totals && !availability.f5_line_ok) {
       missingF5Total.push(game.game_id);
     }
     if (!availability.full_game_total_ok) {
@@ -546,11 +560,16 @@ function checkMlbF5MarketAvailability({ expectF5Ml = false } = {}) {
     }
   }
 
-  const baseReason =
-    missingF5Total.length === 0
-      ? `F5 totals available for all ${upcomingGames.length} MLB games within T-${MLB_F5_ALERT_WINDOW_HOURS}h`
-      : `${missingF5Total.length}/${upcomingGames.length} MLB games within T-${MLB_F5_ALERT_WINDOW_HOURS}h missing F5 totals`;
-  const reasonParts = [baseReason];
+  const reasonParts = [];
+  if (enforceF5Totals) {
+    const f5Reason =
+      missingF5Total.length === 0
+        ? `F5 totals available for all ${upcomingGames.length} MLB games within T-${MLB_F5_ALERT_WINDOW_HOURS}h`
+        : `${missingF5Total.length}/${upcomingGames.length} MLB games within T-${MLB_F5_ALERT_WINDOW_HOURS}h missing F5 totals`;
+    reasonParts.push(f5Reason);
+  } else {
+    reasonParts.push('F5 totals not enforced (disabled in odds featured-market config)');
+  }
 
   if (missingFullGameTotal.length > 0) {
     reasonParts.push(
@@ -564,14 +583,24 @@ function checkMlbF5MarketAvailability({ expectF5Ml = false } = {}) {
   }
 
   const reason = reasonParts.join('; ');
-  if (missingF5Total.length > 0 || missingFullGameTotal.length > 0) {
+
+  const hardFailF5 = enforceF5Totals && missingF5Total.length > 0;
+  const hardFailFullGame =
+    missingFullGameTotal.length > 0 &&
+    missingFullGameTotal.length === upcomingGames.length;
+  const warnFullGame =
+    missingFullGameTotal.length > 0 && !hardFailFullGame;
+
+  if (hardFailF5 || hardFailFullGame) {
     writePipelineHealth('mlb', 'f5_market_availability', 'failed', reason);
+  } else if (warnFullGame) {
+    writePipelineHealth('mlb', 'f5_market_availability', 'warning', reason);
   } else if (upcomingGames.length > 0) {
     writePipelineHealth('mlb', 'f5_market_availability', 'ok', reason);
   }
 
   return {
-    ok: missingF5Total.length === 0 && missingFullGameTotal.length === 0,
+    ok: !(hardFailF5 || hardFailFullGame),
     reason,
     games_checked: upcomingGames.length,
     missing_f5_total_count: missingF5Total.length,

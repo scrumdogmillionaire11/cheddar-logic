@@ -18,7 +18,7 @@ describe('checkMlbF5MarketAvailability', () => {
       SPORTS_CONFIG: {
         NHL: { active: true },
         NBA: { active: true },
-        MLB: { active: true },
+        MLB: { active: true, markets: ['h2h', 'totals'] },
         NFL: { active: false },
       },
     }));
@@ -104,7 +104,7 @@ describe('checkMlbF5MarketAvailability', () => {
     expect(pipelineWrites[0][2]).toBe('failed');
   });
 
-  test('fails with a distinct MLB row when F5 totals are missing', () => {
+  test('does not fail when F5 totals are missing but F5 markets are not configured', () => {
     upcomingGames = [
       {
         game_id: 'mlb-game-002',
@@ -129,14 +129,14 @@ describe('checkMlbF5MarketAvailability', () => {
 
     const result = checkMlbF5MarketAvailability();
 
-    expect(result.ok).toBe(false);
-    expect(result.missing_f5_total_count).toBe(1);
+    expect(result.ok).toBe(true);
+    expect(result.missing_f5_total_count).toBe(0);
     expect(result.missing_full_game_total_count).toBe(0);
-    expect(result.reason).toContain('missing F5 totals');
+    expect(result.reason).toContain('not enforced');
     expect(pipelineWrites).toHaveLength(1);
     expect(pipelineWrites[0][0]).toBe('mlb');
     expect(pipelineWrites[0][1]).toBe('f5_market_availability');
-    expect(pipelineWrites[0][2]).toBe('failed');
+    expect(pipelineWrites[0][2]).toBe('ok');
   });
 
   test('keeps F5 ML informational while dormant', () => {
