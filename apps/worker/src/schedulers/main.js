@@ -66,7 +66,6 @@ const { run: runResidualValidation } = require('../jobs/run_residual_validation'
 
 const { computeFplDueJobs } = require('./fpl');
 const { computePlayerPropsDueJobs } = require('./player-props');
-const { computeNflDueJobs } = require('./nfl');
 const { computeNhlDueJobs } = require('./nhl');
 const { computeNbaDueJobs } = require('./nba');
 const { computeMlbDueJobs } = require('./mlb');
@@ -90,7 +89,6 @@ const SPORT_JOBS = {
   nhl: { env: 'ENABLE_NHL_MODEL' },
   nba: { env: 'ENABLE_NBA_MODEL' },
   mlb: { env: 'ENABLE_MLB_MODEL' },
-  nfl: { env: 'ENABLE_NFL_MODEL' },
 };
 
 function enabledSports() {
@@ -247,7 +245,6 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
   jobs.push(...computeNhlDueJobs(nowEt, subCtx));
   jobs.push(...computeNbaDueJobs(nowEt, subCtx));
   jobs.push(...computeMlbDueJobs(nowEt, subCtx));
-  jobs.push(...computeNflDueJobs(nowEt, subCtx));
   const settlementJobs = computeSettlementDueJobs(nowEt, { nowUtc, dryRun, ENABLE_WITHOUT_ODDS_MODE });
   jobs.push(...settlementJobs);
 
