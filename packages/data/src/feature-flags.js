@@ -30,14 +30,20 @@ function isFeatureEnabled(sport, featureName) {
   const normalizedSport = String(sport).toLowerCase().trim();
   const normalizedFeature = String(featureName).toLowerCase().trim();
 
-  // Model execution (default: enabled unless explicitly disabled)
+  // Known sports that have models
+  const knownSports = ['nhl', 'nba', 'mlb', 'fpl', 'nfl'];
+
+  // Model execution (default: enabled unless explicitly disabled for known sports)
   if (normalizedFeature === 'model') {
+    if (!knownSports.includes(normalizedSport)) return false;
     const key = `ENABLE_${normalizedSport.toUpperCase()}_MODEL`;
     return process.env[key] !== 'false';
   }
 
-  // Player availability sync (default: enabled unless explicitly disabled)
+  // Player availability sync (default: enabled for known sports unless explicitly disabled)
   if (normalizedFeature === 'player-availability-sync') {
+    const syncableSports = ['nhl', 'nba'];
+    if (!syncableSports.includes(normalizedSport)) return false;
     const key = `ENABLE_${normalizedSport.toUpperCase()}_PLAYER_AVAILABILITY_SYNC`;
     return process.env[key] !== 'false';
   }
@@ -72,7 +78,7 @@ function isFeatureEnabled(sport, featureName) {
     return process.env[key] !== 'false';
   }
 
-  // Unknown feature
+  // Unknown feature or sport
   return false;
 }
 
