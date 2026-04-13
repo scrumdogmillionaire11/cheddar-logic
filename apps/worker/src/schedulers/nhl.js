@@ -32,6 +32,7 @@ const { syncNhlPlayerAvailability } = require('../jobs/sync_nhl_player_availabil
 const { pullNhlGoalieStarters } = require('../jobs/pull_nhl_goalie_starters');
 const { syncNhlSogPlayerIds } = require('../jobs/sync_nhl_sog_player_ids');
 const { pullNhlTeamStats } = require('../jobs/pull_nhl_team_stats');
+const { isFeatureEnabled } = require('@cheddar-logic/data/src/feature-flags');
 
 /**
  * Compute due NHL jobs for this tick

@@ -984,11 +984,8 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
       : null;
   // Game mode must not promote player props into canonical game-line play slots.
   // Props are rendered via transformPropGames in cards props mode only.
-  const basePlayCandidates = game.plays.filter(
-    (play) =>
-      !isProjectionOnlyCardPlay(play) &&
-      isPlayItem(play, game.sport) &&
-      play.market_type !== 'PROP',
+  const basePlayCandidates = game.plays.filter((play) =>
+    isRenderableGameSurfacePlay(game, play),
   );
   const hasCanonicalInCandidates = canonicalTruePlay
     ? basePlayCandidates.some((play) => {
@@ -1964,7 +1961,11 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
       resolvedMarketType === 'SPREAD' ||
       resolvedMarketType === 'TOTAL') &&
     typeof price === 'number';
-  if (requiresModelProbForEdge && modelProb === undefined) {
+  if (
+    requiresModelProbForEdge &&
+    modelProb === undefined &&
+    (sourceAction === 'FIRE' || sourceAction === 'HOLD')
+  ) {
     reasonCodes.push('PASS_DATA_ERROR');
   }
   if (canonicalPlayableCount === 0) reasonCodes.push('PASS_NO_PRIMARY_SUPPORT');
@@ -2116,7 +2117,11 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
     };
   }
 
-  if (candidateBet && !validateCanonicalBet(candidateBet)) {
+  if (
+    candidateBet &&
+    !validateCanonicalBet(candidateBet) &&
+    (sourceAction === 'FIRE' || sourceAction === 'HOLD')
+  ) {
     reasonCodes.push('PASS_DATA_ERROR');
     candidateBet = null;
   }
@@ -2590,7 +2595,7 @@ export function transformToGameCard(game: GameData): GameCard {
   // Convert plays to drivers and dedupe
   // Keep game-mode driver/truth calculations scoped to non-prop markets.
   const rawDrivers = game.plays
-    .filter((play) => isPlayItem(play, game.sport) && play.market_type !== 'PROP')
+    .filter((play) => isRenderableGameSurfacePlay(game, play))
     .map(playToDriver);
   const scopedRawDrivers = ENABLE_WELCOME_HOME
     ? rawDrivers
@@ -2888,7 +2893,9 @@ function assertContractInDev(cards: GameCard[]): void {
  * Transform array of GameData to GameCard[]
  */
 export function transformGames(games: GameData[]): GameCard[] {
-  const transformed = games.map(transformToGameCard);
+  const transformed = games
+    .filter((game) => !shouldExcludeProjectionOnlyGameSurface(game))
+    .map(transformToGameCard);
   const deduped = dedupeCardsByGameMarket(transformed);
   assertContractInDev(deduped);
   return deduped;

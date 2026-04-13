@@ -62,6 +62,12 @@ assert(
 );
 
 assert(
+  source.includes("(sourceAction === 'FIRE' || sourceAction === 'HOLD')") &&
+    source.includes("reasonCodes.push('PASS_DATA_ERROR');"),
+  'transform should only classify missing model_prob as PASS_DATA_ERROR on actionable priced paths',
+);
+
+assert(
   source.includes('getRiskTagsFromText') &&
     titleInferenceSource.includes("tags.push('RISK_FRAGILITY')") &&
     titleInferenceSource.includes("tags.push('RISK_BLOWOUT')"),

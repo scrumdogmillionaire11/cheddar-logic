@@ -63,16 +63,23 @@ assert.ok(
     apiGamesSource.includes("play.execution_status === 'PROJECTION_ONLY'") &&
     apiGamesSource.includes("play.prop_display_state === 'PROJECTION_ONLY'") &&
     apiGamesSource.includes("projectionSource === 'SYNTHETIC_FALLBACK'") &&
-    apiGamesSource.includes('if (isProjectionOnlyPlayPayload(play)) {') &&
+    apiGamesSource.includes('const isProjectionSurfaceCardType =') &&
+    apiGamesSource.includes("cardRow.card_type === 'mlb-f5'") &&
+    apiGamesSource.includes(
+      'if (isProjectionOnlyPlayPayload(play) && !isPropMarket && !isProjectionSurfaceCardType) {',
+    ) &&
     apiGamesSource.includes('continue;'),
-  '/api/games should strip projection-only play payloads before cards transforms consume them',
+  '/api/games should strip generic projection-only rows while preserving designated projection-surface card types',
 );
 
 assert.ok(
   transformSource.includes('function isProjectionOnlyCardPlay(play: ApiPlay): boolean') &&
     transformSource.includes('!isProjectionOnlyCardPlay(game.true_play)') &&
     transformSource.includes('!isProjectionOnlyCardPlay(play) &&') &&
-    transformSource.includes("(p) => p.market_type === 'PROP' && !isProjectionOnlyPropPlay(p, p.prop_decision)"),
+    transformSource.includes('if (play.market_type !== \'PROP\') continue;') &&
+    transformSource.includes('if (isProjectionOnlyPropPlay(play, propDecision)) {') &&
+    transformSource.includes('shouldExcludeProjectionOnlyGameSurface(game)') &&
+    transformSource.includes('isRenderableGameSurfacePlay(game, play)'),
   'card transforms should exclude projection-only rows from game-line and player-props surfaces',
 );
 

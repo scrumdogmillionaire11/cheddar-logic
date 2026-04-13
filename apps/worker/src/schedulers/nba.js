@@ -23,6 +23,7 @@ const {
 
 const { runNBAModel } = require('../jobs/run_nba_model');
 const { syncNbaPlayerAvailability } = require('../jobs/sync_nba_player_availability');
+const { isFeatureEnabled } = require('@cheddar-logic/data/src/feature-flags');
 
 /**
  * Compute due NBA jobs for this tick
