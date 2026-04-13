@@ -123,6 +123,16 @@ function actionFromClassificationValue(
   return undefined;
 }
 
+function actionFromOfficialStatus(
+  value: unknown,
+): PlayDisplayAction | undefined {
+  const official = String(value ?? '').toUpperCase();
+  if (official === 'PLAY') return 'FIRE';
+  if (official === 'LEAN') return 'HOLD';
+  if (official === 'PASS') return 'PASS';
+  return undefined;
+}
+
 function classificationFromAction(
   action: PlayDisplayAction,
 ): 'BASE' | 'LEAN' | 'PASS' {
@@ -139,15 +149,35 @@ function expressionStatusFromAction(
 }
 
 export function resolvePlayDisplayDecision(
-  play?: Partial<Pick<Play, 'action' | 'status' | 'classification'>> | null,
+  play?:
+    | {
+        action?: Play['action'];
+        status?: Play['status'];
+        classification?: Play['classification'];
+        decision_v2?: { official_status?: 'PLAY' | 'LEAN' | 'PASS' } | null;
+      }
+    | null,
 ): ResolvedPlayDisplayDecision {
   const explicitAction = isValidAction(play?.action) ? play.action : undefined;
   const classificationAction = actionFromClassificationValue(
     play?.classification,
   );
+  const decisionV2Action = actionFromOfficialStatus(
+    play?.decision_v2?.official_status,
+  );
   const legacyAction = actionFromLegacyStatus(play?.status);
+
+  const hasCanonicalDecisionFields =
+    explicitAction !== undefined ||
+    classificationAction !== undefined ||
+    decisionV2Action !== undefined;
+
   const action =
-    explicitAction ?? classificationAction ?? legacyAction ?? 'PASS';
+    decisionV2Action ??
+    explicitAction ??
+    classificationAction ??
+    (hasCanonicalDecisionFields ? undefined : legacyAction) ??
+    'PASS';
 
   return {
     action,

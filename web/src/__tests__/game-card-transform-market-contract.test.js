@@ -37,6 +37,10 @@ const marketInferenceSource = fs.readFileSync(
   path.resolve(repoRoot, 'web/src/lib/games/market-inference.ts'),
   'utf8',
 );
+const marketNormalizeSource = fs.readFileSync(
+  path.resolve(repoRoot, 'web/src/lib/game-card/transform/market-normalize.ts'),
+  'utf8',
+);
 
 console.log('🧪 Transform market contract source tests');
 
@@ -88,6 +92,19 @@ assert(
     marketInferenceSource.includes("normalized === 'mlb-full-game'") &&
     marketInferenceSource.includes("return 'TOTAL';"),
   'shared market inference should map MLB full-game card types to canonical MONEYLINE/TOTAL markets',
+);
+
+assert(
+  marketNormalizeSource.includes("reasonCodes.push('PASS_MISSING_MARKET_TYPE');") &&
+    marketNormalizeSource.includes("market: 'UNKNOWN'") &&
+    marketNormalizeSource.includes("canonical: 'INFO'"),
+  'market-normalize should deterministically downgrade rows missing canonical market_type',
+);
+
+assert(
+  !marketNormalizeSource.includes('inferCanonicalFromSecondary(') &&
+    !marketNormalizeSource.includes('inferMarketFromCardTitle(play.cardTitle)'),
+  'market-normalize should not infer canonical market from legacy recommendation/title fallbacks',
 );
 
 assert(

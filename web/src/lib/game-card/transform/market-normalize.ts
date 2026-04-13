@@ -92,35 +92,6 @@ export function inferMarketFromCardTitle(cardTitle: string): Market {
   return 'UNKNOWN';
 }
 
-export function inferCanonicalFromSecondary(
-  play: ApiPlayLike,
-): CanonicalMarketType | undefined {
-  const recommendationType = play.recommendation?.type?.toLowerCase();
-  if (recommendationType) {
-    if (recommendationType.includes('first_period')) return 'FIRST_PERIOD';
-    if (recommendationType.includes('total')) return 'TOTAL';
-    if (recommendationType.includes('spread')) return 'SPREAD';
-    if (
-      recommendationType.includes('moneyline') ||
-      recommendationType.includes('ml')
-    ) {
-      return 'MONEYLINE';
-    }
-  }
-
-  const recommendedBetType = play.recommended_bet_type?.toLowerCase();
-  if (recommendedBetType) {
-    if (recommendedBetType === 'first_period') return 'FIRST_PERIOD';
-    if (recommendedBetType === 'total') return 'TOTAL';
-    if (recommendedBetType === 'spread') return 'SPREAD';
-    if (recommendedBetType === 'moneyline' || recommendedBetType === 'ml') {
-      return 'MONEYLINE';
-    }
-  }
-
-  return undefined;
-}
-
 export function inferMarketFromPlay(play: ApiPlayLike): InferredMarket {
   const reasonCodes = [...(play.reason_codes ?? [])];
   const tags = [...(play.tags ?? [])];
@@ -143,40 +114,13 @@ export function inferMarketFromPlay(play: ApiPlayLike): InferredMarket {
     };
   }
 
-  const secondary = inferCanonicalFromSecondary(play);
-  if (secondary) {
-    return {
-      market: mapCanonicalToLegacyMarket(secondary) as Market,
-      canonical: secondary,
-      reasonCodes,
-      tags: Array.from(new Set(tags)),
-    };
-  }
+  reasonCodes.push('PASS_MISSING_MARKET_TYPE');
 
-  const side = play.selection?.side || play.prediction;
-  if ((side === 'OVER' || side === 'UNDER') && typeof play.line === 'number') {
-    return { market: 'TOTAL', canonical: 'TOTAL', reasonCodes, tags };
-  }
-  if ((side === 'HOME' || side === 'AWAY') && typeof play.line === 'number') {
-    return { market: 'SPREAD', canonical: 'SPREAD', reasonCodes, tags };
-  }
-  if ((side === 'HOME' || side === 'AWAY') && typeof play.price === 'number') {
-    return { market: 'ML', canonical: 'MONEYLINE', reasonCodes, tags };
-  }
-
-  const fallbackMarket = inferMarketFromCardTitle(play.cardTitle);
   return {
-    market: fallbackMarket,
-    canonical:
-      fallbackMarket === 'TOTAL'
-        ? 'TOTAL'
-        : fallbackMarket === 'SPREAD'
-          ? 'SPREAD'
-          : fallbackMarket === 'ML'
-            ? 'MONEYLINE'
-            : undefined,
+    market: 'UNKNOWN',
+    canonical: 'INFO',
     reasonCodes,
-    tags,
+    tags: Array.from(new Set(tags)),
   };
 }
 

@@ -3260,13 +3260,22 @@ export async function GET(request: NextRequest) {
 
         const fallbackKind =
           play.kind ?? (play.market_type === 'INFO' ? 'EVIDENCE' : 'PLAY');
+        const sportCardTypeContract =
+          ACTIVE_SPORT_CARD_TYPE_CONTRACT[normalizeSport(parsedSport) ?? ''];
+        const playProducerCardTypes =
+          sportCardTypeContract?.playProducerCardTypes;
         const kindContractResult = applyCardTypeKindContract(
           parsedSport,
           cardRow.card_type,
           fallbackKind,
-          ACTIVE_SPORT_CARD_TYPE_CONTRACT[normalizeSport(parsedSport) ?? ''],
+          sportCardTypeContract,
         );
         play.kind = kindContractResult.kind;
+        const isDeclaredPlayProducerCardType =
+          playProducerCardTypes?.has(cardRow.card_type) === true;
+        if (isDeclaredPlayProducerCardType && play.kind !== 'PLAY') {
+          play.kind = 'PLAY';
+        }
         if (kindContractResult.downgradedOutOfContractPlay) {
           play.reason_codes = Array.from(
             new Set([

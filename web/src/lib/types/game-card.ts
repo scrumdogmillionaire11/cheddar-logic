@@ -389,9 +389,14 @@ export interface ExpressionChoice {
  *  - reason_codes (deterministic blockers)
  *  - tags (risk tags, inference markers, etc.)
  *
- * LEGACY FIELDS (for backward compat during migration):
+ * LEGACY COMPAT FIELDS (historical rows only; non-authoritative):
  *  - market (legacy: ML, SPREAD, TOTAL, RISK, UNKNOWN)
  *  - side (legacy direction)
+ *
+ * Migration note:
+ *  - New code must derive filtering/visibility from canonical fields
+ *    (`market_type`, `selection`, `action`, `classification`, `decision_v2`).
+ *  - Legacy fields remain for historical row rendering only.
  */
 export interface Play {
   // Canonical contract fields for display/reducer invariants
@@ -430,7 +435,7 @@ export interface Play {
   pass_reason_code?: string | null;
   decision_v2?: DecisionV2;
 
-  // Legacy fields (kept for compat)
+  // Legacy compatibility fields (historical rows only)
   status: ExpressionStatus;
   market: Market | 'NONE';
   pick: string;

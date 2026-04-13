@@ -14,10 +14,24 @@ test('market-normalize smoke', () => {
     cardTitle: 'NHL totals',
     prediction: 'OVER',
     kind: 'PLAY',
+    market_type: 'TOTAL',
     line: 6.5,
     selection: { side: 'OVER' },
   });
   assert.equal(inferred.canonical, 'TOTAL');
+
+  const downgraded = inferMarketFromPlay({
+    cardType: 'nhl-totals-call',
+    cardTitle: 'NHL totals',
+    prediction: 'OVER',
+    kind: 'PLAY',
+    line: 6.5,
+    selection: { side: 'OVER' },
+  });
+  assert.equal(downgraded.canonical, 'INFO');
+  assert.equal(downgraded.market, 'UNKNOWN');
+  assert.equal(downgraded.reasonCodes.includes('PASS_MISSING_MARKET_TYPE'), true);
+
   assert.equal(normalizeSideToken('away'), 'AWAY');
   assert.equal(buildMarketKey('TOTAL', 'OVER'), 'TOTAL|OVER');
   assert.deepEqual(

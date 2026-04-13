@@ -118,6 +118,8 @@ const fireControl = buildCard('fire-control', {
     action: 'FIRE',
     classification: 'BASE',
     status: 'FIRE',
+    market_type: 'MONEYLINE',
+    selection: { side: 'HOME' },
     pick: 'Home ML -110',
     decision_v2: {
       official_status: 'PLAY',
@@ -125,15 +127,28 @@ const fireControl = buildCard('fire-control', {
   },
 });
 
+const legacyOnlyFire = buildCard('legacy-only-fire', {
+  play: {
+    action: 'FIRE',
+    classification: 'BASE',
+    status: 'FIRE',
+    market_type: undefined,
+    selection: undefined,
+    market: 'ML',
+    side: 'HOME',
+    pick: 'Home ML -115',
+  },
+});
+
 const defaultResult = applyFilters(
-  [passTagHeavy, passPickText, passOfficialStatus, fireControl],
+  [passTagHeavy, passPickText, passOfficialStatus, fireControl, legacyOnlyFire],
   DEFAULT_GAME_FILTERS,
   'game',
 );
 assert.deepStrictEqual(
   ids(defaultResult),
   ['fire-control'],
-  'default FIRE/WATCH filters must exclude PASS cards from strong tags, non-NO-PLAY text, and decision_v2 official_status PASS',
+  'default FIRE/WATCH filters must exclude PASS cards and legacy-only market rows without canonical market_type/selection',
 );
 
 const includePassFilters = {
@@ -141,13 +156,18 @@ const includePassFilters = {
   statuses: ['FIRE', 'WATCH', 'PASS'],
 };
 const includePassResult = applyFilters(
-  [passTagHeavy, passPickText, passOfficialStatus, fireControl],
+  [passTagHeavy, passPickText, passOfficialStatus, fireControl, legacyOnlyFire],
   includePassFilters,
   'game',
 );
 assert.deepStrictEqual(
   ids(includePassResult),
-  ['fire-control', 'pass-official-status', 'pass-pick-text', 'pass-tag-heavy'],
+  [
+    'fire-control',
+    'pass-official-status',
+    'pass-pick-text',
+    'pass-tag-heavy',
+  ],
   'including PASS status should include PASS cards in full-slate mode',
 );
 
