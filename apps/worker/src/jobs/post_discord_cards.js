@@ -53,6 +53,15 @@ function compactToken(value) {
   return String(value || '').trim();
 }
 
+function normalizeSelectionSide(value) {
+  const token = normalizeToken(value);
+  if (!token) return '';
+  if (token.includes('OVER')) return 'OVER';
+  if (token.includes('UNDER')) return 'UNDER';
+  if (token === 'HOME' || token === 'AWAY') return token;
+  return '';
+}
+
 function parseCsvTokens(value, normalizer = normalizeToken) {
   const raw = String(value || '').trim();
   if (!raw) return null;
@@ -570,21 +579,38 @@ function normalizeMarketTag(card) {
 function selectionSummary(card) {
   const payload = card?.payloadData || {};
   const selection = payload?.selection;
+
+  const sideFromPayload =
+    normalizeSelectionSide(payload?.market_context?.selection_side) ||
+    normalizeSelectionSide(payload?.pricing_trace?.called_side) ||
+    normalizeSelectionSide(payload?.market?.selection_side) ||
+    normalizeSelectionSide(payload?.driver?.inputs?.selection_side) ||
+    normalizeSelectionSide(payload?.selection_type) ||
+    normalizeSelectionSide(payload?.recommended_direction) ||
+    normalizeSelectionSide(payload?.prediction);
+
   if (selection && typeof selection === 'object') {
-    const derived = compactToken(
-      selection.team ||
-        selection.side ||
-        selection.player ||
-        selection.name ||
-        selection.direction ||
-        payload?.selection_type ||
-        payload?.recommended_direction ||
-        payload?.play?.selection ||
-        '',
-    );
+    const derivedSide =
+      normalizeSelectionSide(selection.side) ||
+      normalizeSelectionSide(selection.direction) ||
+      normalizeSelectionSide(selection.selection_side) ||
+      normalizeSelectionSide(selection.pick) ||
+      sideFromPayload;
+    const derived = derivedSide || compactToken(selection.team || selection.player || selection.name || '');
     if (derived) return derived;
   }
-  if (selection && typeof selection !== 'object') return compactToken(selection);
+  if (selection && typeof selection !== 'object') {
+    const sideFromSelection = normalizeSelectionSide(selection);
+    if (sideFromSelection) return sideFromSelection;
+    // Some legacy 1P payloads store the line in selection (e.g. 1.5).
+    // Don't render numeric selection tokens as direction labels.
+    if (isFirstPeriodCard(card) && Number.isFinite(Number(selection))) {
+      return sideFromPayload;
+    }
+    return compactToken(selection);
+  }
+
+  if (sideFromPayload) return sideFromPayload;
 
   // Fallback for 1P / pace cards: extract direction from one_p_model_call
   // e.g. "NHL_1P_OVER_1.5" or "NHL_1P_UNDER_PLAY"

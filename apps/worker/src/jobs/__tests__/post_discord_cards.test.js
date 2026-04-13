@@ -234,6 +234,62 @@ describe('post_discord_cards helpers', () => {
     expect(snapshot.messages[0]).not.toContain('1P | 1.5');
   });
 
+  test('buildDiscordSnapshot resolves 1P direction from market_context when selection side is missing', () => {
+    const cards = [
+      makeCard({
+        id: 'pace-1p-market-context-side',
+        sport: 'nhl',
+        cardType: 'nhl-pace-1p',
+        payloadData: {
+          action: 'LEAN',
+          kind: 'PLAY',
+          market_type: 'FIRST_PERIOD',
+          period: '1P',
+          selection: { line: 1.5 },
+          market_context: { selection_side: 'UNDER' },
+          line: 1.5,
+          edge: 0.6,
+          model_projection: 1.2,
+          price: -110,
+          projection_only: false,
+        },
+      }),
+    ];
+
+    const snapshot = buildDiscordSnapshot({ cards, now: new Date('2026-03-20T14:00:00.000Z') });
+
+    expect(snapshot.messages[0]).toContain('1P | UNDER 1.5 (-110)');
+    expect(snapshot.messages[0]).not.toContain('1P | 1.5');
+  });
+
+  test('buildDiscordSnapshot ignores numeric 1P selection token and uses prediction side', () => {
+    const cards = [
+      makeCard({
+        id: 'pace-1p-numeric-selection',
+        sport: 'nhl',
+        cardType: 'nhl-pace-1p',
+        payloadData: {
+          action: 'FIRE',
+          kind: 'PLAY',
+          market_type: 'FIRST_PERIOD',
+          period: '1P',
+          selection: 1.5,
+          prediction: 'OVER',
+          line: 1.5,
+          edge: 0.8,
+          model_projection: 2.1,
+          price: -105,
+          projection_only: false,
+        },
+      }),
+    ];
+
+    const snapshot = buildDiscordSnapshot({ cards, now: new Date('2026-03-20T14:00:00.000Z') });
+
+    expect(snapshot.messages[0]).toContain('1P | OVER 1.5 (-105)');
+    expect(snapshot.messages[0]).not.toContain('1P | 1.5');
+  });
+
   test('buildDiscordSnapshot can restrict webhook output to official buckets only via env', () => {
     const originalBuckets = process.env.DISCORD_CARD_WEBHOOK_BUCKETS;
     process.env.DISCORD_CARD_WEBHOOK_BUCKETS = 'play';

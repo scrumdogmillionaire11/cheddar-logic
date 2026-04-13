@@ -52,6 +52,13 @@ const CARDS_FRESHNESS_MAX_AGE_MINUTES = Number(
 const MODEL_FRESHNESS_MAX_AGE_MINUTES = Number(
   process.env.MODEL_FRESHNESS_MAX_AGE_MINUTES || 240, // 4h default
 );
+// Alert timing windows for checks that depend on T-minus execution, not schedule ingestion.
+const MODEL_FRESHNESS_ALERT_WINDOW_HOURS = Number(
+  process.env.MODEL_FRESHNESS_ALERT_WINDOW_HOURS || 2,
+);
+const MLB_F5_ALERT_WINDOW_HOURS = Number(
+  process.env.MLB_F5_ALERT_WINDOW_HOURS || 2,
+);
 const PIPELINE_HEALTH_ALERT_CONSECUTIVE = Number(
   process.env.PIPELINE_HEALTH_ALERT_CONSECUTIVE || 3,
 );
@@ -447,7 +454,8 @@ function getLatestOddsSnapshot(db, gameId) {
 
 /**
  * Check 4: MLB F5 market availability
- * For upcoming MLB games within T-6h, report F5 total availability separately
+ * For upcoming MLB games in the near T-minus window, report F5 total
+ * availability separately
  * from full-game totals so watchdog output matches MLB market intent.
  *
  * Games within T-15min of gametime are excluded: F5 markets close before
@@ -474,7 +482,7 @@ function checkMlbF5MarketAvailability({ expectF5Ml = false } = {}) {
   const nowUtc = DateTime.utc();
   // Exclude games within 15 minutes of start — F5 markets are already closed
   const checkFromUtc = nowUtc.plus({ minutes: 15 });
-  const endUtc = nowUtc.plus({ hours: 6 });
+  const endUtc = nowUtc.plus({ hours: MLB_F5_ALERT_WINDOW_HOURS });
   const upcomingGames = db
     .prepare(
       `
@@ -490,7 +498,7 @@ function checkMlbF5MarketAvailability({ expectF5Ml = false } = {}) {
   if (upcomingGames.length === 0) {
     return {
       ok: true,
-      reason: 'No MLB games within T-6h',
+      reason: `No MLB games within T-${MLB_F5_ALERT_WINDOW_HOURS}h`,
       games_checked: 0,
       missing_f5_total_count: 0,
       missing_full_game_total_count: 0,
@@ -540,13 +548,13 @@ function checkMlbF5MarketAvailability({ expectF5Ml = false } = {}) {
 
   const baseReason =
     missingF5Total.length === 0
-      ? `F5 totals available for all ${upcomingGames.length} MLB games within T-6h`
-      : `${missingF5Total.length}/${upcomingGames.length} MLB games within T-6h missing F5 totals`;
+      ? `F5 totals available for all ${upcomingGames.length} MLB games within T-${MLB_F5_ALERT_WINDOW_HOURS}h`
+      : `${missingF5Total.length}/${upcomingGames.length} MLB games within T-${MLB_F5_ALERT_WINDOW_HOURS}h missing F5 totals`;
   const reasonParts = [baseReason];
 
   if (missingFullGameTotal.length > 0) {
     reasonParts.push(
-      `${missingFullGameTotal.length}/${upcomingGames.length} MLB games within T-6h missing full-game totals`,
+      `${missingFullGameTotal.length}/${upcomingGames.length} MLB games within T-${MLB_F5_ALERT_WINDOW_HOURS}h missing full-game totals`,
     );
   }
   if (expectedF5MlCount > 0) {
@@ -665,7 +673,7 @@ function checkMlbSeedFreshness(maxAgeMinutes = SEED_FRESHNESS_MAX_AGE_MINUTES) {
 function checkSportModelFreshness(sport, jobName, checkName, maxAgeMinutes) {
   const db = getDatabase();
   const nowUtc = DateTime.utc();
-  const horizonUtc = nowUtc.plus({ hours: 6 });
+  const horizonUtc = nowUtc.plus({ hours: MODEL_FRESHNESS_ALERT_WINDOW_HOURS });
 
   const upcomingCount = db
     .prepare(
@@ -679,7 +687,7 @@ function checkSportModelFreshness(sport, jobName, checkName, maxAgeMinutes) {
   if (upcomingCount === 0) {
     return {
       ok: true,
-      reason: `No ${sport.toUpperCase()} games within T-6h - model check skipped`,
+      reason: `No ${sport.toUpperCase()} games within T-${MODEL_FRESHNESS_ALERT_WINDOW_HOURS}h - model check skipped`,
     };
   }
 
