@@ -10,6 +10,8 @@ const {
   selectExpressionChoice,
   computeTotalBias,
   goalieUncertaintyBlocks,
+  evaluateNHLGameMarkets,
+  choosePrimaryDisplayMarket,
 } = require('../cross-market');
 
 describe('cross-market orchestration', () => {
@@ -465,5 +467,41 @@ describe('NHL ML win probability calibration (WI-0538)', () => {
     if (projectedWinProb !== null && projectedWinProb !== undefined) {
       expect(projectedWinProb).toBeGreaterThan(0.6);
     }
+  });
+});
+
+describe('evaluateNHLGameMarkets independent evaluation (IME-01-04)', () => {
+  function buildDecisions({ totalStatus = 'PASS', spreadStatus = 'PASS', mlStatus = 'PASS' } = {}) {
+    return {
+      [Market.TOTAL]: { status: totalStatus, best_candidate: { side: 'OVER', line: 6.5 }, edge: 0.03, score: 0.62, p_fair: 0.52, p_implied: 0.49 },
+      [Market.SPREAD]: { status: spreadStatus, best_candidate: { side: 'HOME', line: -1.5 }, edge: 0.02, score: 0.58, p_fair: 0.53, p_implied: 0.51 },
+      [Market.ML]: { status: mlStatus, best_candidate: { side: 'HOME' }, edge: 0.05, score: 0.70, p_fair: 0.55, p_implied: 0.50 },
+    };
+  }
+
+  test('ML=FIRE + TOTAL=WATCH → ML in official_plays, TOTAL in leans', () => {
+    const marketDecisions = buildDecisions({ totalStatus: 'WATCH', mlStatus: 'FIRE' });
+    const gameEval = evaluateNHLGameMarkets({ marketDecisions, game_id: 'TEST-GAME-001' });
+
+    const mlPlay = gameEval.official_plays.find((r) => r.market_type === 'ML');
+    const totalLean = gameEval.leans.find((r) => r.market_type === 'TOTAL');
+
+    expect(mlPlay).toBeDefined();
+    expect(mlPlay.status).toBe('QUALIFIED_OFFICIAL');
+    expect(totalLean).toBeDefined();
+    expect(totalLean.status).toBe('QUALIFIED_LEAN');
+  });
+
+  test('choosePrimaryDisplayMarket returns ML (higher tier) without removing TOTAL from gameEval', () => {
+    const marketDecisions = buildDecisions({ totalStatus: 'WATCH', mlStatus: 'FIRE' });
+    const gameEval = evaluateNHLGameMarkets({ marketDecisions, game_id: 'TEST-GAME-002' });
+
+    const primary = choosePrimaryDisplayMarket(gameEval);
+
+    expect(primary).toBeDefined();
+    expect(primary.market_type).toBe('ML');
+    // gameEval must still contain both
+    expect(gameEval.official_plays.length).toBe(1);
+    expect(gameEval.leans.length).toBe(1);
   });
 });

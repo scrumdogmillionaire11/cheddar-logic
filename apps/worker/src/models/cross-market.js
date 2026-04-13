@@ -15,6 +15,11 @@ const { analyzePaceSynergy } = require('./nba-pace-synergy');
 const { resolveGoalieComposite } = require('./nhl-pace-model');
 const { compareProjection } = require('../../../../packages/odds/src/market_evaluator.js');
 const { computeResidual } = require('./residual-projection');
+const {
+  evaluateSingleMarket,
+  finalizeGameMarketEvaluation,
+  logRejectedMarkets,
+} = require('@cheddar-logic/models/src/market-eval');
 
 const ENABLE_WELCOME_HOME = process.env.ENABLE_WELCOME_HOME === 'true';
 
@@ -1324,6 +1329,87 @@ function selectExpressionChoice(decisions) {
 }
 
 /**
+ * Adapter: convert a market decision object (from computeNHLMarketDecisions) to
+ * the driver card shape expected by evaluateSingleMarket.
+ */
+function adaptDecisionToCard(decision, marketToken) {
+  if (!decision) return null;
+  const status = String(decision.status || 'PASS').toUpperCase();
+  const evThresholdPassed = status === 'FIRE' || status === 'WATCH';
+  return {
+    market: marketToken.toLowerCase(),
+    status,
+    classification: status === 'FIRE' ? 'BASE' : status === 'WATCH' ? 'LEAN' : 'PASS',
+    ev_threshold_passed: evThresholdPassed,
+    missing_inputs: [],
+    reason_codes: Array.isArray(decision.reason_codes) ? decision.reason_codes : [],
+    confidence: typeof decision.score === 'number' ? decision.score : null,
+    edge: decision.edge ?? null,
+    p_fair: decision.p_fair ?? null,
+    p_implied: decision.p_implied ?? null,
+    _decision: decision, // preserve original for card building
+  };
+}
+
+/**
+ * Evaluate all NHL game markets independently.
+ * Returns a GameMarketEvaluation — every market in official_plays, leans, or rejected.
+ *
+ * @param {{ marketDecisions: object, game_id: string }} params
+ * @returns {GameMarketEvaluation}
+ */
+function evaluateNHLGameMarkets({ marketDecisions, game_id }) {
+  const markets = [
+    { token: 'TOTAL', key: Market.TOTAL },
+    { token: 'SPREAD', key: Market.SPREAD },
+    { token: 'ML', key: Market.ML },
+  ];
+
+  const cards = markets
+    .map(({ token, key }) => adaptDecisionToCard(marketDecisions?.[key], token))
+    .filter(Boolean);
+
+  const evalCtx = { game_id, sport: 'NHL' };
+  const market_results = cards.map((card) => {
+    const result = evaluateSingleMarket(card, evalCtx);
+    result._sourceDecision = card._decision;
+    return result;
+  });
+
+  const gameEval = finalizeGameMarketEvaluation({
+    game_id,
+    sport: 'NHL',
+    market_results,
+  });
+  logRejectedMarkets(gameEval.rejected);
+  return gameEval;
+}
+
+/**
+ * Choose a primary display market from a GameMarketEvaluation for single-tile UIs.
+ * Pure ranking — does NOT remove other qualified markets.
+ *
+ * @param {GameMarketEvaluation} gameEval
+ * @returns {MarketEvalResult | null}
+ */
+function choosePrimaryDisplayMarket(gameEval) {
+  const candidates = [...gameEval.official_plays, ...gameEval.leans];
+  if (candidates.length === 0) return null;
+
+  return candidates.sort((a, b) => {
+    // Primary: official > lean
+    const tierA = a.status === 'QUALIFIED_OFFICIAL' ? 2 : 1;
+    const tierB = b.status === 'QUALIFIED_OFFICIAL' ? 2 : 1;
+    if (tierB !== tierA) return tierB - tierA;
+    // Secondary: edge
+    const edgeA = a.model_edge ?? -Infinity;
+    const edgeB = b.model_edge ?? -Infinity;
+    if (edgeB !== edgeA) return edgeB - edgeA;
+    return 0;
+  })[0];
+}
+
+/**
  * WI-0382: Returns true if either goalie state is UNKNOWN or CONFLICTING,
  * blocking totals computation. EXPECTED does NOT trigger escalation.
  * Null-safe: null/undefined inputs return false.
@@ -1393,4 +1479,6 @@ module.exports = {
   goalieUncertaintyBlocks,
   computeTotalBias,
   buildMarketPayload,
+  evaluateNHLGameMarkets,
+  choosePrimaryDisplayMarket,
 };

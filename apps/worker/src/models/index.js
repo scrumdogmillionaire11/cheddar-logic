@@ -37,6 +37,8 @@ const {
   selectExpressionChoice,
   computeTotalBias,
   buildMarketPayload,
+  evaluateNHLGameMarkets,
+  choosePrimaryDisplayMarket,
 } = require('./cross-market');
 const { predictNHLGame } = require('./nhl-pace-model');
 const { resolveGoalieState } = require('./nhl-goalie-state');
@@ -2054,6 +2056,8 @@ module.exports = {
   selectExpressionChoice,
   computeTotalBias,
   buildMarketPayload,
+  evaluateNHLGameMarkets,
+  choosePrimaryDisplayMarket,
   generateCard,
   buildMarketCallCard,
   extractNhlDriverDataQualityContext,

@@ -627,3 +627,101 @@ describe('run_nhl_model job', () => {
     });
   });
 });
+
+describe('generateNHLMarketCallCards independent evaluation (IME-01-04)', () => {
+  function buildOdds() {
+    return {
+      game_time_utc: '2026-04-20T00:00:00.000Z',
+      home_team: 'BOS',
+      away_team: 'TOR',
+      h2h_home: -130,
+      h2h_away: 115,
+      spread_home: -1.5,
+      spread_away: 1.5,
+      spread_price_home: -110,
+      spread_price_away: -110,
+      total: 6.5,
+      total_price_over: -112,
+      total_price_under: -108,
+      captured_at: '2026-04-19T18:00:00.000Z',
+    };
+  }
+
+  function buildDecisionWithTotal(mlStatus = 'FIRE', totalStatus = 'WATCH') {
+    return {
+      TOTAL: {
+        status: totalStatus,
+        best_candidate: { side: 'OVER', line: 6.5 },
+        edge: 0.03,
+        edge_points: 0.4,
+        p_fair: 0.53,
+        p_implied: 0.50,
+        score: 0.62,
+        net: 0.62,
+        conflict: 0.1,
+        coverage: 0.75,
+        reasoning: 'Totals edge',
+        projection: { projected_total: 6.9 },
+      },
+      SPREAD: {
+        status: 'PASS',
+        best_candidate: { side: 'HOME', line: -1.5 },
+        edge: 0.0,
+        score: 0.1,
+        net: 0.1,
+        conflict: 0.1,
+        coverage: 0.4,
+        reasoning: 'No spread edge',
+        projection: { projected_margin: 0.5 },
+      },
+      ML: {
+        status: mlStatus,
+        best_candidate: { side: 'HOME', price: -130 },
+        edge: 0.045,
+        p_fair: 0.56,
+        p_implied: 0.515,
+        score: 0.70,
+        net: 0.70,
+        conflict: 0.07,
+        coverage: 0.79,
+        reasoning: 'Home side carries edge.',
+        projection: { projected_margin: 0.9, win_prob_home: 0.56 },
+      },
+    };
+  }
+
+  test('ML card emitted when ML=FIRE even if TOTAL=WATCH ranks higher as primary display', () => {
+    const { evaluateNHLGameMarkets, choosePrimaryDisplayMarket } = require('../../models');
+    const marketDecisions = buildDecisionWithTotal('FIRE', 'WATCH');
+    const gameEval = evaluateNHLGameMarkets({ marketDecisions, game_id: 'TEST-001' });
+    const primaryDisplayMarket = choosePrimaryDisplayMarket(gameEval);
+
+    const cards = generateNHLMarketCallCards('TEST-001', marketDecisions, buildOdds(), {
+      useOrchestratedMarket: false,
+      gameEval,
+      primaryDisplayMarket,
+    });
+
+    const cardTypes = cards.map((c) => c.cardType);
+    expect(cardTypes).toContain('nhl-moneyline-call');
+    expect(cardTypes).toContain('nhl-totals-call');
+  });
+
+  test('all PASS decisions → no cards generated', () => {
+    const { evaluateNHLGameMarkets, choosePrimaryDisplayMarket } = require('../../models');
+    const marketDecisions = buildDecisionWithTotal('PASS', 'PASS');
+    // also set SPREAD to PASS (already default)
+    const gameEval = evaluateNHLGameMarkets({ marketDecisions, game_id: 'TEST-002' });
+    const primaryDisplayMarket = choosePrimaryDisplayMarket(gameEval);
+
+    const cards = generateNHLMarketCallCards('TEST-002', marketDecisions, buildOdds(), {
+      useOrchestratedMarket: false,
+      gameEval,
+      primaryDisplayMarket,
+    });
+
+    expect(cards).toHaveLength(0);
+    expect(gameEval.official_plays).toHaveLength(0);
+    expect(gameEval.leans).toHaveLength(0);
+  });
+});

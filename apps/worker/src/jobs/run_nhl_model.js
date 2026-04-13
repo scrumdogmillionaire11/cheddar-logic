@@ -57,6 +57,8 @@ const {
   determineTier,
   buildMarketCallCard,
   extractNhlDriverDataQualityContext,
+  evaluateNHLGameMarkets,
+  choosePrimaryDisplayMarket,
 } = require('../models');
 const { assessProjectionInputs } = require('../models/projections');
 const {
@@ -77,6 +79,10 @@ const {
   applyUiActionFields,
   applyDecisionVeto,
 } = require('../utils/decision-publisher');
+const { 
+  assertNoSilentMarketDrop,
+  logRejectedMarkets,
+} = require('@cheddar-logic/models/src/market-eval');
 const { evaluateExecution } = require('./execution-gate');
 const {
   normalizeRawDataPayload,
@@ -1394,6 +1400,8 @@ function generateNHLMarketCallCards(
     awayGoalieState = null,
     useOrchestratedMarket = USE_ORCHESTRATED_MARKET,
     withoutOddsMode = false,
+    gameEval = null,
+    primaryDisplayMarket = null,
   } = {},
 ) {
   const now = new Date().toISOString();
@@ -1427,9 +1435,13 @@ function generateNHLMarketCallCards(
   // TOTAL decision → nhl-totals-call
   const totalDecision = marketDecisions?.TOTAL;
   const _totalProjection = totalDecision?.projection?.projected_total ?? null;
+  // IME: use independent evaluation result for this market
+  const totalQualified = gameEval
+    ? gameEval.official_plays.concat(gameEval.leans).find((r) => r.market_type === 'TOTAL')
+    : null;
   if (
     totalDecision &&
-    (!chosenCardType || chosenCardType === 'nhl-totals-call') &&
+    (gameEval ? Boolean(totalQualified) : (!chosenCardType || chosenCardType === 'nhl-totals-call')) &&
     (
       (totalDecision.status === 'FIRE' || totalDecision.status === 'WATCH') ||
       // Without Odds Mode: emit lean whenever projection is available regardless of edge-based status
@@ -1603,6 +1615,8 @@ function generateNHLMarketCallCards(
         disclaimer:
           'Analysis provided for educational purposes. Not a recommendation.',
         generated_at: now,
+        primary_display_market: primaryDisplayMarket?.market_type ?? null,
+        is_primary_display: primaryDisplayMarket?.candidate_id === `${gameId}::total`,
       };
 
       cards.push(
@@ -1621,9 +1635,13 @@ function generateNHLMarketCallCards(
 
   // SPREAD decision → nhl-spread-call
   const spreadDecision = marketDecisions?.SPREAD;
+  // IME: use independent evaluation result for this market
+  const spreadQualified = gameEval
+    ? gameEval.official_plays.concat(gameEval.leans).find((r) => r.market_type === 'SPREAD' || r.market_type === 'PUCKLINE')
+    : null;
   if (
     spreadDecision &&
-    (!chosenCardType || chosenCardType === 'nhl-spread-call') &&
+    (gameEval ? Boolean(spreadQualified) : (!chosenCardType || chosenCardType === 'nhl-spread-call')) &&
     (spreadDecision.status === 'FIRE' || spreadDecision.status === 'WATCH')
   ) {
     const confidence = CONFIDENCE_MAP[spreadDecision.status];
@@ -1783,6 +1801,8 @@ function generateNHLMarketCallCards(
         disclaimer:
           'Analysis provided for educational purposes. Not a recommendation.',
         generated_at: now,
+        primary_display_market: primaryDisplayMarket?.market_type ?? null,
+        is_primary_display: primaryDisplayMarket?.candidate_id === `${gameId}::spread`,
       };
 
       cards.push(
@@ -1801,9 +1821,13 @@ function generateNHLMarketCallCards(
 
   // MONEYLINE decision → nhl-moneyline-call
   const moneylineDecision = marketDecisions?.ML;
+  // IME: use independent evaluation result for this market
+  const mlQualified = gameEval
+    ? gameEval.official_plays.concat(gameEval.leans).find((r) => r.market_type === 'MONEYLINE' || r.market_type === 'ML' || r.market_type === 'H2H')
+    : null;
   if (
     moneylineDecision &&
-    (!chosenCardType || chosenCardType === 'nhl-moneyline-call') &&
+    (gameEval ? Boolean(mlQualified) : (!chosenCardType || chosenCardType === 'nhl-moneyline-call')) &&
     (
       (moneylineDecision.status === 'FIRE' || moneylineDecision.status === 'WATCH') ||
       // Without Odds Mode: emit lean for any directional signal regardless of edge-based status
@@ -1971,6 +1995,8 @@ function generateNHLMarketCallCards(
         disclaimer:
           'Analysis provided for educational purposes. Not a recommendation.',
         generated_at: now,
+        primary_display_market: primaryDisplayMarket?.market_type ?? null,
+        is_primary_display: primaryDisplayMarket?.candidate_id === `${gameId}::ml`,
       };
 
       cards.push(
@@ -2309,6 +2335,11 @@ async function runNHLModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
 
           const expressionChoice = selectExpressionChoice(marketDecisions);
 
+          // IME-01-04: Independent market evaluation
+          const gameEval = evaluateNHLGameMarkets({ marketDecisions, game_id: gameId });
+          assertNoSilentMarketDrop(gameEval);
+          const primaryDisplayMarket = choosePrimaryDisplayMarket(gameEval);
+
           // WI-0503: Dual-run observation log — records selector decisions per game
           // without changing served card output. Parse with:
           //   grep '\[DUAL_RUN\]' apps/worker/logs/scheduler.log | jq .
@@ -2460,6 +2491,8 @@ async function runNHLModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
               homeGoalieState: canonicalGoalieState?.home,
               awayGoalieState: canonicalGoalieState?.away,
               withoutOddsMode,
+              gameEval,
+              primaryDisplayMarket,
             },
           );
           // WI-0817: call card deletes are deferred into the per-game write transaction below.
