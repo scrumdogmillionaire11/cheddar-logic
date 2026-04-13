@@ -355,10 +355,12 @@ describe('settleProjections — nhl-player-blk actual_result shape', () => {
 
 describe('settleProjections — mlb-pitcher-k actual_result shape', () => {
   let originalFetch;
+  let metadataUpdates;
 
   beforeEach(() => {
     jest.clearAllMocks();
     originalFetch = global.fetch;
+    metadataUpdates = [];
   });
 
   afterEach(() => {
@@ -374,8 +376,14 @@ describe('settleProjections — mlb-pitcher-k actual_result shape', () => {
     const mockCard = makeCard('mlb-pitcher-k', playerId, 'mlb-test-game');
     getUnsettledProjectionCards.mockReturnValue([mockCard]);
     getDatabase.mockReturnValue({
-      prepare: jest.fn().mockReturnValue({
-        get: jest.fn().mockReturnValue({ game_pk: 745398 }),
+      prepare: jest.fn((sql) => {
+        if (sql.includes('FROM mlb_game_pk_map')) {
+          return { get: jest.fn().mockReturnValue({ game_pk: 745398 }) };
+        }
+        return {
+          get: jest.fn().mockReturnValue(null),
+          run: jest.fn(),
+        };
       }),
     });
 
@@ -398,12 +406,28 @@ describe('settleProjections — mlb-pitcher-k actual_result shape', () => {
     expect(result.settled).toBe(1);
   });
 
-  test('skips when gamePk not found in mlb_game_pk_map', async () => {
+  test('writes terminal projection_settlement metadata when gamePk not found in mlb_game_pk_map', async () => {
     const playerId = '543135';
     getUnsettledProjectionCards.mockReturnValue([makeCard('mlb-pitcher-k', playerId)]);
     getDatabase.mockReturnValue({
-      prepare: jest.fn().mockReturnValue({
-        get: jest.fn().mockReturnValue(null), // no gamePk row
+      prepare: jest.fn((sql) => {
+        if (sql.includes('FROM mlb_game_pk_map')) {
+          return { get: jest.fn().mockReturnValue(null) };
+        }
+        if (sql.includes('FROM card_results')) {
+          return {
+            get: jest.fn().mockReturnValue({ id: 'result-1', metadata: '{}' }),
+          };
+        }
+        if (sql.includes('UPDATE card_results')) {
+          return {
+            run: jest.fn((metadataJson, id) => {
+              metadataUpdates.push({ id, metadata: JSON.parse(metadataJson) });
+              return { changes: 1 };
+            }),
+          };
+        }
+        return { get: jest.fn().mockReturnValue(null), run: jest.fn() };
       }),
     });
 
@@ -411,6 +435,15 @@ describe('settleProjections — mlb-pitcher-k actual_result shape', () => {
 
     expect(result.success).toBe(true);
     expect(setProjectionActualResult).not.toHaveBeenCalled();
+    expect(metadataUpdates).toHaveLength(1);
+    expect(metadataUpdates[0]).toMatchObject({
+      id: 'result-1',
+      metadata: {
+        projection_settlement: expect.objectContaining({
+          code: 'PROJECTION_SETTLEMENT_NO_GAME_PK',
+        }),
+      },
+    });
     expect(result.skipped).toBeGreaterThanOrEqual(1);
   });
 
@@ -435,12 +468,28 @@ describe('settleProjections — mlb-pitcher-k actual_result shape', () => {
     expect(result.skipped).toBeGreaterThanOrEqual(1);
   });
 
-  test('skips when pitcher_id not found in boxscore', async () => {
+  test('writes terminal projection_settlement metadata when pitcher_id not found in boxscore', async () => {
     const playerId = '999999';
     getUnsettledProjectionCards.mockReturnValue([makeCard('mlb-pitcher-k', playerId)]);
     getDatabase.mockReturnValue({
-      prepare: jest.fn().mockReturnValue({
-        get: jest.fn().mockReturnValue({ game_pk: 745398 }),
+      prepare: jest.fn((sql) => {
+        if (sql.includes('FROM mlb_game_pk_map')) {
+          return { get: jest.fn().mockReturnValue({ game_pk: 745398 }) };
+        }
+        if (sql.includes('FROM card_results')) {
+          return {
+            get: jest.fn().mockReturnValue({ id: 'result-2', metadata: '{}' }),
+          };
+        }
+        if (sql.includes('UPDATE card_results')) {
+          return {
+            run: jest.fn((metadataJson, id) => {
+              metadataUpdates.push({ id, metadata: JSON.parse(metadataJson) });
+              return { changes: 1 };
+            }),
+          };
+        }
+        return { get: jest.fn().mockReturnValue(null), run: jest.fn() };
       }),
     });
 
@@ -456,6 +505,15 @@ describe('settleProjections — mlb-pitcher-k actual_result shape', () => {
     const result = await settleProjections({ dryRun: false });
 
     expect(setProjectionActualResult).not.toHaveBeenCalled();
+    expect(metadataUpdates).toHaveLength(1);
+    expect(metadataUpdates[0]).toMatchObject({
+      id: 'result-2',
+      metadata: {
+        projection_settlement: expect.objectContaining({
+          code: 'PROJECTION_SETTLEMENT_NO_PLAYER_MATCH',
+        }),
+      },
+    });
     expect(result.skipped).toBeGreaterThanOrEqual(1);
   });
 });

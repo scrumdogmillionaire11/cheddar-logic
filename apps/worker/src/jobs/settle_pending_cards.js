@@ -53,7 +53,11 @@ function toUpperToken(value) {
 }
 
 function resolveDecisionBasisForSettlement(payloadData) {
-  const explicit = toUpperToken(payloadData?.decision_basis_meta?.decision_basis);
+  const explicit = toUpperToken(
+    payloadData?.decision_basis_meta?.decision_basis ??
+      payloadData?.basis ??
+      payloadData?.decision_basis,
+  );
   if (explicit === 'PROJECTION_ONLY' || explicit === 'ODDS_BACKED') {
     return explicit;
   }
@@ -102,7 +106,10 @@ function buildClvEntryFromPendingCard({ pendingCard, payloadData, lockedMarket }
     sport: pendingCard.sport || null,
     marketType: lockedMarket.marketType || null,
     propType:
-      payloadData?.prop_type || payloadData?.recommended_bet_type || null,
+      payloadData?.prop_type ||
+      (payloadData?.canonical_market_key === 'pitcher_strikeouts'
+        ? 'strikeouts'
+        : payloadData?.recommended_bet_type || null),
     selection: lockedMarket.selection || null,
     line: Number.isFinite(lockedMarket.line) ? lockedMarket.line : null,
     oddsAtPick,
@@ -260,17 +267,34 @@ function buildClvSettlementPayload({
   period = null,
   oddsAtPick,
   snapshotCache = new Map(),
+  propType = null,
+  playerName = null,
+  line = null,
 }) {
   const pickOdds = Number(oddsAtPick);
   if (!Number.isFinite(pickOdds)) return null;
 
-  const snapshot = getLatestClosingOddsSnapshot(db, gameId, snapshotCache);
-  const closingOdds = resolveClosingOddsFromSnapshot({
-    snapshot,
-    marketType,
-    selection,
-    period,
-  });
+  const normalizedMarketType = toUpperToken(marketType);
+  let closingOdds = null;
+  if (normalizedMarketType === 'PROP') {
+    closingOdds = resolveMlbPitcherKClosingOdds({
+      db,
+      gameId,
+      playerName,
+      selection,
+      line,
+      period,
+      propType,
+    });
+  } else {
+    const snapshot = getLatestClosingOddsSnapshot(db, gameId, snapshotCache);
+    closingOdds = resolveClosingOddsFromSnapshot({
+      snapshot,
+      marketType,
+      selection,
+      period,
+    });
+  }
   if (!Number.isFinite(closingOdds)) return null;
 
   const closingProbability = americanOddsToImpliedProbability(closingOdds);
@@ -308,7 +332,9 @@ function reconcileOpenClvEntries(db, settledAt = new Date().toISOString()) {
         clv.card_id,
         clv.game_id,
         clv.market_type,
+        clv.prop_type,
         clv.selection,
+        clv.line,
         clv.odds_at_pick,
         cr.market_key,
         cr.metadata,
@@ -343,6 +369,12 @@ function reconcileOpenClvEntries(db, settledAt = new Date().toISOString()) {
       period,
       oddsAtPick: row.odds_at_pick,
       snapshotCache,
+      propType: row.prop_type || payloadData?.prop_type || null,
+      playerName:
+        payloadData?.play?.player_name ??
+        payloadData?.player_name ??
+        null,
+      line: Number.isFinite(Number(row.line)) ? Number(row.line) : null,
     });
 
     if (!clvSettlement) {
@@ -575,6 +607,258 @@ function parseJsonObject(value) {
   }
 }
 
+function hasTableColumn(db, tableName, columnName) {
+  if (!db || !tableName || !columnName) return false;
+  try {
+    const columns = db.prepare(`PRAGMA table_info(${tableName})`).all();
+    return columns.some(
+      (column) =>
+        String(column?.name || '').trim().toLowerCase() ===
+        String(columnName).trim().toLowerCase(),
+    );
+  } catch {
+    return false;
+  }
+}
+
+function isMlbPitcherKRow(row, payloadData = null) {
+  const cardType = String(row?.card_type || '').trim().toLowerCase();
+  if (cardType === 'mlb-pitcher-k') return true;
+
+  const payload =
+    payloadData && typeof payloadData === 'object' ? payloadData : null;
+  const canonicalMarketKey = String(payload?.canonical_market_key || '')
+    .trim()
+    .toLowerCase();
+  if (canonicalMarketKey === 'pitcher_strikeouts') return true;
+
+  const market = String(payload?.market || payload?.market_key || '')
+    .trim()
+    .toLowerCase();
+  return market.includes('pitcher_strikeouts');
+}
+
+function resolvePitcherKProjectionSettlement(cardResultMetadata) {
+  const projectionSettlement =
+    cardResultMetadata?.projection_settlement &&
+    typeof cardResultMetadata.projection_settlement === 'object'
+      ? cardResultMetadata.projection_settlement
+      : null;
+  if (!projectionSettlement) return null;
+
+  const code = String(projectionSettlement.code || '').trim();
+  if (!code) return null;
+  return {
+    code,
+    message:
+      String(projectionSettlement.message || '').trim() ||
+      'Pitcher-K projection settlement ended in a terminal capture failure',
+    final: projectionSettlement.final === true,
+  };
+}
+
+function resolveMlbPitcherKActualValue(actualResultData) {
+  const actualStrikeouts = Number(actualResultData?.pitcher_ks);
+  return Number.isFinite(actualStrikeouts) ? actualStrikeouts : null;
+}
+
+function resolveMlbPitcherKClosingOdds({
+  db,
+  gameId,
+  playerName,
+  selection,
+  line,
+  period = 'FULL_GAME',
+  propType = 'strikeouts',
+}) {
+  const normalizedGameId = String(gameId || '').trim();
+  const normalizedPlayerName = String(playerName || '').trim();
+  const normalizedSelection = toUpperToken(selection);
+  const normalizedLine = Number(line);
+  const normalizedPeriod =
+    normalizeSettlementPeriod(period) === '1P' ? 'first_period' : 'full_game';
+  const normalizedPropType = String(propType || 'strikeouts').trim().toLowerCase();
+
+  if (
+    !normalizedGameId ||
+    !normalizedPlayerName ||
+    !Number.isFinite(normalizedLine) ||
+    (normalizedSelection !== 'OVER' && normalizedSelection !== 'UNDER')
+  ) {
+    return null;
+  }
+
+  const row =
+    db
+      .prepare(
+        `
+        SELECT over_price, under_price
+        FROM player_prop_lines
+        WHERE sport = 'mlb'
+          AND game_id = ?
+          AND LOWER(player_name) = LOWER(?)
+          AND prop_type = ?
+          AND period = ?
+          AND line = ?
+        ORDER BY
+          CASE bookmaker
+            WHEN 'draftkings' THEN 1
+            WHEN 'fanduel' THEN 2
+            WHEN 'betmgm' THEN 3
+            ELSE 4
+          END ASC,
+          datetime(COALESCE(fetched_at, '1970-01-01T00:00:00Z')) DESC,
+          id DESC
+        LIMIT 1
+      `,
+      )
+      .get(
+        normalizedGameId,
+        normalizedPlayerName,
+        normalizedPropType,
+        normalizedPeriod,
+        normalizedLine,
+      ) || null;
+
+  const rawOdds =
+    normalizedSelection === 'OVER' ? row?.over_price : row?.under_price;
+  const closingOdds = Number(rawOdds);
+  return Number.isFinite(closingOdds) ? closingOdds : null;
+}
+
+function gradeMlbPitcherKMarket({ selection, line, actualStrikeouts }) {
+  if (!Number.isFinite(actualStrikeouts)) {
+    throw createMarketError(
+      'MISSING_PITCHER_KS_VALUE',
+      'Missing pitcher strikeout total required for settlement',
+      { actualStrikeouts },
+    );
+  }
+  if (!Number.isFinite(line)) {
+    throw createMarketError(
+      'MISSING_MARKET_LINE',
+      'Pitcher-K settlement requires a finite line',
+      { line },
+    );
+  }
+
+  if (actualStrikeouts > line) return selection === 'OVER' ? 'win' : 'loss';
+  if (actualStrikeouts < line) return selection === 'UNDER' ? 'win' : 'loss';
+  return 'push';
+}
+
+function resolveMlbPitcherKSettlementContext(
+  row,
+  payloadData,
+  cardResultMetadata,
+  actualResultData,
+) {
+  const projectionSettlement = resolvePitcherKProjectionSettlement(
+    cardResultMetadata,
+  );
+  if (
+    projectionSettlement &&
+    (
+      projectionSettlement.code === 'PROJECTION_SETTLEMENT_NO_GAME_PK' ||
+      projectionSettlement.code === 'PROJECTION_SETTLEMENT_NO_PLAYER_MATCH'
+    )
+  ) {
+    throw createMarketError(
+      projectionSettlement.code,
+      projectionSettlement.message,
+      {
+        cardId: row?.card_id,
+        gameId: row?.game_id,
+      },
+    );
+  }
+
+  const decisionBasis = resolveDecisionBasisForSettlement(payloadData);
+  const actualStrikeouts = resolveMlbPitcherKActualValue(actualResultData);
+
+  if (decisionBasis === 'PROJECTION_ONLY') {
+    if (Number.isFinite(actualStrikeouts)) {
+      throw createMarketError(
+        'PROJECTION_ONLY_NOT_GRADEABLE',
+        'Projection-only pitcher-K rows are factual-tracking only and cannot be graded',
+        {
+          cardId: row?.card_id,
+          gameId: row?.game_id,
+          actualStrikeouts,
+        },
+      );
+    }
+    return null;
+  }
+
+  if (!Number.isFinite(actualStrikeouts)) {
+    return null;
+  }
+
+  const rawSelection =
+    payloadData?.selection?.side ??
+    payloadData?.prop_decision?.lean_side ??
+    payloadData?.direction ??
+    null;
+  const selection = toUpperToken(rawSelection);
+  if (selection !== 'OVER' && selection !== 'UNDER') {
+    throw createMarketError(
+      'INVALID_PROP_SELECTION',
+      `Card ${row?.card_id} missing valid pitcher-K selection`,
+      { cardId: row?.card_id, selection: rawSelection },
+    );
+  }
+
+  const rawLine =
+    payloadData?.line ??
+    payloadData?.prop_decision?.line ??
+    payloadData?.pitcher_k_line_contract?.line ??
+    null;
+  const line = parseLine(rawLine);
+  if (!Number.isFinite(line)) {
+    throw createMarketError(
+      'MISSING_MARKET_LINE',
+      `Card ${row?.card_id} missing pitcher-K line`,
+      { cardId: row?.card_id, line: rawLine },
+    );
+  }
+
+  const playerId = String(payloadData?.player_id || '').trim();
+  const playerName = String(payloadData?.player_name || '').trim();
+  if (!playerId && !playerName) {
+    throw createMarketError(
+      'MISSING_PLAYER_IDENTITY',
+      `Card ${row?.card_id} missing pitcher id/name for settlement`,
+      { cardId: row?.card_id, gameId: row?.game_id },
+    );
+  }
+
+  const lockedPrice = parseLockedPrice(
+    row?.locked_price ??
+      payloadData?.price ??
+      (selection === 'OVER'
+        ? payloadData?.over_price
+        : payloadData?.under_price),
+  );
+
+  return {
+    actualStrikeouts,
+    lockedMarket: {
+      marketKey:
+        row?.market_key ||
+        `${row?.game_id || 'unknown'}:PROP_STRIKEOUTS:FULL_GAME:${selection}:${line}`,
+      marketType: 'PROP',
+      propType: 'strikeouts',
+      period: 'FULL_GAME',
+      selection,
+      line,
+      lockedPrice,
+      playerId,
+      playerName,
+    },
+  };
+}
+
 // F5 card types are projection-only: they grade against F5 innings totals,
 // not full-game scores. settle_pending_cards must not touch them.
 const F5_CARD_TYPE_PREFIX = 'mlb-f5';
@@ -617,6 +901,10 @@ function isProjectionAuditOnlyBlkRow(row) {
 function resolveNonActionableFinalReason(payloadData, row) {
   // F5 market cards are projection-only and must remain pending for settle_mlb_f5.
   if (isProjectionOnlyF5Row(row, payloadData)) {
+    return null;
+  }
+
+  if (isMlbPitcherKRow(row, payloadData)) {
     return null;
   }
 
@@ -2008,6 +2296,11 @@ async function settlePendingCards({
       // --- Step 1: Settle pending card_results ---
 
       // Join pending card_results with final game_results and display ledger
+      const hasCardPayloadActualResult = hasTableColumn(
+        db,
+        'card_payloads',
+        'actual_result',
+      );
       const pendingStmt = db.prepare(`
         SELECT
           cr.id AS result_id,
@@ -2025,27 +2318,34 @@ async function settlePendingCards({
           cdl.displayed_at,
           cdl.api_endpoint,
           cp.payload_data,
+          ${hasCardPayloadActualResult ? 'cp.actual_result' : 'NULL AS actual_result'},
           cp.first_seen_price,
           gr.final_score_home,
           gr.final_score_away,
           gr.metadata AS game_result_metadata
         FROM card_results cr
-        INNER JOIN card_display_log cdl ON cr.card_id = cdl.pick_id
+        LEFT JOIN card_display_log cdl ON cr.card_id = cdl.pick_id
         INNER JOIN game_results gr ON cr.game_id = gr.game_id
         LEFT JOIN card_payloads cp ON cr.card_id = cp.id
         WHERE cr.status = 'pending'
           AND (
-            cr.market_key IS NOT NULL
-            OR (
-              UPPER(COALESCE(cr.sport, cp.sport, '')) = 'NHL'
-              AND LOWER(
-                COALESCE(
-                  json_extract(cp.payload_data, '$.play.prop_type'),
-                  json_extract(cp.payload_data, '$.prop_type'),
-                  ''
+            (
+              cdl.pick_id IS NOT NULL
+              AND (
+                cr.market_key IS NOT NULL
+                OR (
+                  UPPER(COALESCE(cr.sport, cp.sport, '')) = 'NHL'
+                  AND LOWER(
+                    COALESCE(
+                      json_extract(cp.payload_data, '$.play.prop_type'),
+                      json_extract(cp.payload_data, '$.prop_type'),
+                      ''
+                    )
+                  ) = 'shots_on_goal'
                 )
-              ) = 'shots_on_goal'
+              )
             )
+            OR LOWER(COALESCE(cr.card_type, cp.card_type, '')) = 'mlb-pitcher-k'
           )
           AND gr.status = 'final'
       `);
@@ -2138,6 +2438,8 @@ async function settlePendingCards({
         }
         const cardResultMetadata =
           parseJsonObject(pendingCard.metadata) || {};
+        const actualResultData =
+          parseJsonObject(pendingCard.actual_result) || {};
         const gameResultMetadata =
           parseJsonObject(pendingCard.game_result_metadata) || {};
         const period = extractSettlementPeriod({
@@ -2158,6 +2460,7 @@ async function settlePendingCards({
         const awayScore = Number(pendingCard.final_score_away);
         const firstPeriodScores = readFirstPeriodScores(gameResultMetadata);
         const isNhlShotsCard = isNhlShotsOnGoalCard(pendingCard, payloadData);
+        const isMlbPitcherK = isMlbPitcherKRow(pendingCard, payloadData);
 
         if (isProjectionAuditOnlyBlkRow(pendingCard)) {
           // Auto-close with explicit market-specific reason — grading not supported for nhl-player-blk
@@ -2212,6 +2515,36 @@ async function settlePendingCards({
               selection: lockedMarket.selection,
               line: lockedMarket.line,
               actualShots,
+            });
+          } else if (isMlbPitcherK) {
+            const pitcherKContext = resolveMlbPitcherKSettlementContext(
+              pendingCard,
+              payloadData,
+              cardResultMetadata,
+              actualResultData,
+            );
+            if (!pitcherKContext) {
+              cardsSkipped++;
+              console.log(
+                `[SettleCards] Leaving pitcher-K row pending for card ${pendingCard.card_id}: awaiting actual_result or terminal projection_settlement metadata`,
+              );
+              continue;
+            }
+
+            lockedMarket = pitcherKContext.lockedMarket;
+            const clvEntry = buildClvEntryFromPendingCard({
+              pendingCard,
+              payloadData,
+              lockedMarket,
+            });
+            if (clvEntry) {
+              recordClvEntry(clvEntry);
+              clvTracked = true;
+            }
+            result = gradeMlbPitcherKMarket({
+              selection: lockedMarket.selection,
+              line: lockedMarket.line,
+              actualStrikeouts: pitcherKContext.actualStrikeouts,
             });
           } else {
             lockedMarket = assertLockedMarketContext(
@@ -2297,6 +2630,9 @@ async function settlePendingCards({
                 period: lockedMarket.period,
                 oddsAtPick: lockedMarket.lockedPrice,
                 snapshotCache: clvSnapshotCache,
+                propType: lockedMarket.propType ?? payloadData?.prop_type ?? null,
+                playerName: lockedMarket.playerName ?? payloadData?.player_name ?? null,
+                line: lockedMarket.line,
               });
               if (clvSettlement) {
                 settleClvEntry(
@@ -2350,6 +2686,10 @@ async function settlePendingCards({
               metadata = {};
             }
           }
+          metadata = deriveAndMergePeriodToken({
+            existingMeta: metadata,
+            token: period,
+          });
           metadata.settlement_error = {
             code: errorCode,
             message: settlementErr.message,
@@ -2388,6 +2728,9 @@ async function settlePendingCards({
                 period: lockedMarket.period,
                 oddsAtPick: lockedMarket.lockedPrice,
                 snapshotCache: clvSnapshotCache,
+                propType: lockedMarket.propType ?? payloadData?.prop_type ?? null,
+                playerName: lockedMarket.playerName ?? payloadData?.player_name ?? null,
+                line: lockedMarket.line,
               });
               if (clvSettlement) {
                 settleClvEntry(
@@ -2613,6 +2956,8 @@ module.exports = {
     americanOddsToImpliedProbability,
     deriveAndMergePeriodToken,
     extractSettlementPeriod,
+    gradeMlbPitcherKMarket,
+    isMlbPitcherKRow,
     normalizeSettlementPeriod,
     getSettlementCoverageDiagnostics,
     getLatestClosingOddsSnapshot,
@@ -2622,6 +2967,10 @@ module.exports = {
     buildClvSettlementPayload,
     isClvEligiblePayload,
     isNhlShotsOnGoalCard,
+    resolveMlbPitcherKActualValue,
+    resolveMlbPitcherKClosingOdds,
+    resolveMlbPitcherKSettlementContext,
+    resolvePitcherKProjectionSettlement,
     readFirstPeriodScores,
     reconcileOpenClvEntries,
     resolveNhlShotsSettlementContext,

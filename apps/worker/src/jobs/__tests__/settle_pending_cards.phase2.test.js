@@ -116,6 +116,12 @@ describe('Settlement contract (post-legacy)', () => {
         },
       }),
     ).toBe(false);
+
+    expect(
+      __private.resolveDecisionBasisForSettlement({
+        basis: 'PROJECTION_ONLY',
+      }),
+    ).toBe('PROJECTION_ONLY');
   });
 
   test('CLV guard treats legacy payloads as odds-backed', () => {
@@ -250,6 +256,33 @@ describe('Settlement contract (post-legacy)', () => {
     ).toBeNull();
   });
 
+  test('resolves pitcher-K closing odds from player_prop_lines on matching player and line', () => {
+    const db = {
+      prepare: jest.fn(() => ({
+        get: jest.fn(() => ({
+          over_price: -105,
+          under_price: -121,
+        })),
+      })),
+    };
+
+    expect(
+      __private.buildClvSettlementPayload({
+        db,
+        gameId: 'mlb-game-1',
+        marketType: 'PROP',
+        selection: 'UNDER',
+        period: 'FULL_GAME',
+        oddsAtPick: -110,
+        playerName: 'Gerrit Cole',
+        line: 6.5,
+      }),
+    ).toMatchObject({
+      closingOdds: -121,
+      clvPct: expect.any(Number),
+    });
+  });
+
   // ---- Phase 2: market_period_token persistence ----
 
   test('normalizeSettlementPeriod returns 1P for a 1P card_type', () => {
@@ -340,6 +373,121 @@ describe('Settlement contract (post-legacy)', () => {
     expect(__private.shouldEnableDisplayBackfill(false)).toBe(false);
     expect(__private.shouldEnableDisplayBackfill(true)).toBe(false);
     expect(__private.shouldEnableDisplayBackfill(null)).toBe(false);
+  });
+});
+
+describe('MLB pitcher-K settlement contract', () => {
+  test('identifies mlb-pitcher-k rows without relying on market_key', () => {
+    expect(
+      __private.isMlbPitcherKRow(
+        { card_type: 'mlb-pitcher-k' },
+        {},
+      ),
+    ).toBe(true);
+    expect(
+      __private.isMlbPitcherKRow(
+        { card_type: 'mlb-moneyline' },
+        { canonical_market_key: 'pitcher_strikeouts' },
+      ),
+    ).toBe(true);
+  });
+
+  test('grades pitcher-K over/under selections deterministically', () => {
+    expect(
+      __private.gradeMlbPitcherKMarket({
+        selection: 'OVER',
+        line: 6.5,
+        actualStrikeouts: 8,
+      }),
+    ).toBe('win');
+    expect(
+      __private.gradeMlbPitcherKMarket({
+        selection: 'UNDER',
+        line: 6.5,
+        actualStrikeouts: 8,
+      }),
+    ).toBe('loss');
+    expect(
+      __private.gradeMlbPitcherKMarket({
+        selection: 'UNDER',
+        line: 6.0,
+        actualStrikeouts: 6,
+      }),
+    ).toBe('push');
+  });
+
+  test('projection-only pitcher-K rows with actual_result throw PROJECTION_ONLY_NOT_GRADEABLE', () => {
+    expect(() =>
+      __private.resolveMlbPitcherKSettlementContext(
+        { card_id: 'card-1', game_id: 'game-1', card_type: 'mlb-pitcher-k' },
+        {
+          basis: 'PROJECTION_ONLY',
+          player_id: '123',
+          player_name: 'Pitcher Example',
+        },
+        {},
+        { pitcher_ks: 7 },
+      ),
+    ).toThrow(/PROJECTION_ONLY_NOT_GRADEABLE|Projection-only pitcher-K rows/);
+  });
+
+  test('odds-backed pitcher-K rows resolve gradeable settlement context from payload contract', () => {
+    expect(
+      __private.resolveMlbPitcherKSettlementContext(
+        {
+          card_id: 'card-2',
+          game_id: 'game-2',
+          card_type: 'mlb-pitcher-k',
+          locked_price: null,
+          market_key: null,
+        },
+        {
+          basis: 'ODDS_BACKED',
+          player_id: '456',
+          player_name: 'Pitcher Example',
+          selection: { side: 'UNDER' },
+          line: 6.5,
+          price: -118,
+          prop_type: 'strikeouts',
+        },
+        {},
+        { pitcher_ks: 5 },
+      ),
+    ).toMatchObject({
+      actualStrikeouts: 5,
+      lockedMarket: {
+        marketType: 'PROP',
+        propType: 'strikeouts',
+        selection: 'UNDER',
+        line: 6.5,
+        lockedPrice: -118,
+        period: 'FULL_GAME',
+        playerId: '456',
+        playerName: 'Pitcher Example',
+      },
+    });
+  });
+
+  test('terminal projection settlement metadata is surfaced as deterministic error codes', () => {
+    expect(() =>
+      __private.resolveMlbPitcherKSettlementContext(
+        { card_id: 'card-3', game_id: 'game-3', card_type: 'mlb-pitcher-k' },
+        {
+          basis: 'ODDS_BACKED',
+          player_id: '789',
+          player_name: 'Pitcher Example',
+          selection: { side: 'UNDER' },
+          line: 6.5,
+        },
+        {
+          projection_settlement: {
+            code: 'PROJECTION_SETTLEMENT_NO_PLAYER_MATCH',
+            message: 'Pitcher missing from finalized MLB boxscore',
+          },
+        },
+        {},
+      ),
+    ).toThrow(/PROJECTION_SETTLEMENT_NO_PLAYER_MATCH|Pitcher missing from finalized MLB boxscore/);
   });
 });
 

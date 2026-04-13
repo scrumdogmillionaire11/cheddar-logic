@@ -43,6 +43,7 @@ const {
   applyMlbProjectionOnlyGuards,
   buildMlbPipelineState,
   buildPitcherKLineContract,
+  buildMlbPitcherKPayloadFields,
   resolvePitcherKPayloadIdentity,
   computeSyntheticLineF5Driver,
 } = require('../run_mlb_model');
@@ -1197,6 +1198,98 @@ describe('resolvePitcherKPayloadIdentity', () => {
     ).toEqual({
       playerId: null,
       playerName: 'New York Yankees SP',
+    });
+  });
+});
+
+describe('buildMlbPitcherKPayloadFields', () => {
+  test('projection-only branch keeps no-odds markers and strips gradeable line contract fields', () => {
+    const payload = buildMlbPitcherKPayloadFields({
+      driver: {
+        basis: 'PROJECTION_ONLY',
+        prediction: 'PASS',
+        card_verdict: 'PASS',
+        projection: { k_mean: 6.2 },
+        prop_decision: { verdict: 'PASS', lean_side: null },
+      },
+      pitcherPlayerId: '592450',
+      pitcherPlayerName: 'Gerrit Cole',
+    });
+
+    expect(payload.selectionSide).toBe('PASS');
+    expect(payload.line).toBeNull();
+    expect(payload.titleSuffix).toBe(' [PROJECTION_ONLY]');
+    expect(payload.payloadFields).toMatchObject({
+      player_id: '592450',
+      player_name: 'Gerrit Cole',
+      prop_type: 'strikeouts',
+      basis: 'PROJECTION_ONLY',
+      tags: ['no_odds_mode'],
+      line: null,
+      price: null,
+      line_source: null,
+      over_price: null,
+      under_price: null,
+      pitcher_k_line_contract: null,
+    });
+  });
+
+  test('odds-backed branch preserves under contract fields and uses market side for selection', () => {
+    const payload = buildMlbPitcherKPayloadFields({
+      driver: {
+        basis: 'ODDS_BACKED',
+        prediction: 'WATCH',
+        direction: 'UNDER',
+        line: 6.5,
+        under_price: -118,
+        over_price: -102,
+        line_source: 'draftkings',
+        best_line_bookmaker: 'draftkings',
+        line_fetched_at: '2026-04-12T18:00:00Z',
+        odds_freshness: 'FRESH',
+        card_verdict: 'WATCH',
+        prop_decision: {
+          verdict: 'WATCH',
+          lean_side: 'UNDER',
+          selected_market: {
+            line: 6.5,
+            under_price: -118,
+            over_price: -102,
+            bookmaker: 'draftkings',
+            line_source: 'draftkings',
+          },
+        },
+        pitcher_k_result: {
+          selected_market: {
+            line: 6.5,
+            under_price: -118,
+            over_price: -102,
+            bookmaker: 'draftkings',
+            line_source: 'draftkings',
+          },
+        },
+      },
+      pitcherPlayerId: '592450',
+      pitcherPlayerName: 'Gerrit Cole',
+    });
+
+    expect(payload.selectionSide).toBe('UNDER');
+    expect(payload.line).toBe(6.5);
+    expect(payload.titleSuffix).toBe('');
+    expect(payload.payloadFields.tags).toBeUndefined();
+    expect(payload.payloadFields).toMatchObject({
+      basis: 'ODDS_BACKED',
+      line: 6.5,
+      price: -118,
+      line_source: 'draftkings',
+      over_price: -102,
+      under_price: -118,
+      best_line_bookmaker: 'draftkings',
+      pitcher_k_line_contract: expect.objectContaining({
+        line: 6.5,
+        bookmaker: 'draftkings',
+        line_source: 'draftkings',
+      }),
     });
   });
 });

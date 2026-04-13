@@ -19,6 +19,58 @@ const { fetchNhlSettlementSnapshot, resolveNhlFullGamePlayerShots } = require('.
 const { fetchF5Total } = require('./settle_mlb_f5');
 
 const JOB_NAME = 'settle_projections';
+const PITCHER_K_PROJECTION_SETTLEMENT_CODES = Object.freeze({
+  NO_GAME_PK: 'PROJECTION_SETTLEMENT_NO_GAME_PK',
+  NO_PLAYER_MATCH: 'PROJECTION_SETTLEMENT_NO_PLAYER_MATCH',
+});
+
+function parseJsonObject(value) {
+  if (!value) return {};
+  if (typeof value === 'object') return value;
+  if (typeof value !== 'string') return {};
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function setProjectionSettlementMetadata(db, cardId, { code, message }) {
+  const row = db
+    .prepare(
+      `
+      SELECT id, metadata
+      FROM card_results
+      WHERE card_id = ?
+        AND status = 'pending'
+      ORDER BY id DESC
+      LIMIT 1
+    `,
+    )
+    .get(cardId);
+
+  if (!row?.id) return false;
+
+  const metadata = parseJsonObject(row.metadata);
+  metadata.projection_settlement = {
+    code,
+    message,
+    final: true,
+    at: new Date().toISOString(),
+  };
+
+  db.prepare(
+    `
+    UPDATE card_results
+    SET metadata = ?
+    WHERE id = ?
+      AND status = 'pending'
+  `,
+  ).run(JSON.stringify(metadata), row.id);
+
+  return true;
+}
 
 /**
  * Resolve the NHL Gamecenter ID from the game_id_map table or by treating
@@ -125,6 +177,13 @@ async function settleProjections({ jobKey = null, dryRun = false } = {}) {
 
       let settled = 0;
       let skipped = 0;
+      const pitcherKTelemetry = {
+        captured: 0,
+        no_game_pk: 0,
+        no_player_match: 0,
+        not_final: 0,
+        fetch_failed: 0,
+      };
 
       for (const card of unsettled) {
         try {
@@ -446,9 +505,16 @@ async function settleProjections({ jobKey = null, dryRun = false } = {}) {
               : null;
 
             if (!pkRow?.game_pk) {
+              if (!dryRun) {
+                setProjectionSettlementMetadata(db, card.card_id, {
+                  code: PITCHER_K_PROJECTION_SETTLEMENT_CODES.NO_GAME_PK,
+                  message: 'Missing mlb_game_pk_map entry for finalized pitcher-K settlement',
+                });
+              }
               console.warn(
                 `  [${JOB_NAME}] mlb ${card.game_id}: no gamePk in mlb_game_pk_map for key=${gamePkKey ?? `(missing date/teams)`}`,
               );
+              pitcherKTelemetry.no_game_pk++;
               skipped++;
               continue;
             }
@@ -456,7 +522,14 @@ async function settleProjections({ jobKey = null, dryRun = false } = {}) {
             const ksResult = await fetchMlbPitcherKs(pkRow.game_pk);
 
             if (!ksResult.available) {
-              // Game may not yet be final — skip silently
+              if (ksResult.reason === 'game_not_final') {
+                pitcherKTelemetry.not_final++;
+              } else {
+                pitcherKTelemetry.fetch_failed++;
+                console.warn(
+                  `  [${JOB_NAME}] mlb-pitcher-k ${card.game_id}: fetch unavailable (${ksResult.reason || 'unknown'})`,
+                );
+              }
               skipped++;
               continue;
             }
@@ -464,9 +537,16 @@ async function settleProjections({ jobKey = null, dryRun = false } = {}) {
             const playerId = String(payload.player_id);
             const pitcher_ks = ksResult.ksByPlayerId[playerId];
             if (pitcher_ks === undefined) {
+              if (!dryRun) {
+                setProjectionSettlementMetadata(db, card.card_id, {
+                  code: PITCHER_K_PROJECTION_SETTLEMENT_CODES.NO_PLAYER_MATCH,
+                  message: `Pitcher ${playerId} missing from finalized MLB boxscore strikeout totals`,
+                });
+              }
               console.warn(
                 `  [${JOB_NAME}] mlb-pitcher-k ${card.game_id} player=${playerId}: not found in boxscore`,
               );
+              pitcherKTelemetry.no_player_match++;
               skipped++;
               continue;
             }
@@ -477,6 +557,7 @@ async function settleProjections({ jobKey = null, dryRun = false } = {}) {
             console.log(
               `  [${JOB_NAME}] mlb-pitcher-k ${card.game_id} player=${playerId}: pitcher_ks=${pitcher_ks}`,
             );
+            pitcherKTelemetry.captured++;
             settled++;
             continue;
           }
@@ -489,9 +570,24 @@ async function settleProjections({ jobKey = null, dryRun = false } = {}) {
         }
       }
 
-      if (!dryRun) markJobRunSuccess(jobRunId, { settled, skipped });
+      if (!dryRun) {
+        markJobRunSuccess(jobRunId, {
+          settled,
+          skipped,
+          pitcher_k: pitcherKTelemetry,
+        });
+      }
+      console.log(
+        `[${JOB_NAME}] pitcher_k=${JSON.stringify(pitcherKTelemetry)}`,
+      );
       console.log(`[${JOB_NAME}] settled=${settled} skipped=${skipped}`);
-      return { success: true, jobRunId, settled, skipped };
+      return {
+        success: true,
+        jobRunId,
+        settled,
+        skipped,
+        pitcher_k: pitcherKTelemetry,
+      };
     } catch (err) {
       if (!dryRun && jobInserted) {
         try {

@@ -868,6 +868,91 @@ function computePitcherKPropDisplayState(verdict) {
   return 'PROJECTION_ONLY';
 }
 
+function resolvePitcherKSelectionSide(driver = {}) {
+  const candidate = String(
+    driver.direction ??
+      driver.prop_decision?.lean_side ??
+      driver.prediction ??
+      '',
+  )
+    .trim()
+    .toUpperCase();
+
+  if (candidate === 'OVER' || candidate === 'UNDER') return candidate;
+  return String(driver.prediction || '').trim().toUpperCase();
+}
+
+function resolvePitcherKSelectedPrice(driver = {}, selectionSide = null) {
+  if (selectionSide === 'OVER') return toFiniteNumber(driver.over_price);
+  if (selectionSide === 'UNDER') return toFiniteNumber(driver.under_price);
+  return null;
+}
+
+function buildMlbPitcherKPayloadFields({
+  driver = {},
+  pitcherPlayerId = null,
+  pitcherPlayerName = 'SP',
+  projected = null,
+} = {}) {
+  const basis = driver.basis === 'ODDS_BACKED' ? 'ODDS_BACKED' : 'PROJECTION_ONLY';
+  const selectionSide = resolvePitcherKSelectionSide(driver);
+  const lineContract =
+    basis === 'ODDS_BACKED'
+      ? buildPitcherKLineContract(
+          driver.pitcher_k_result?.selected_market ??
+            driver.prop_decision?.selected_market ??
+            null,
+        )
+      : null;
+  const line =
+    basis === 'ODDS_BACKED'
+      ? pickFirstFinite(driver.line, lineContract?.line)
+      : null;
+  const price =
+    basis === 'ODDS_BACKED'
+      ? resolvePitcherKSelectedPrice(driver, selectionSide)
+      : null;
+
+  return {
+    selectionSide,
+    line,
+    titleSuffix: basis === 'PROJECTION_ONLY' ? ' [PROJECTION_ONLY]' : '',
+    payloadFields: {
+      player_id: pitcherPlayerId,
+      player_name: pitcherPlayerName,
+      prop_type: 'strikeouts',
+      canonical_market_key: 'pitcher_strikeouts',
+      basis,
+      ...(basis === 'PROJECTION_ONLY' ? { tags: ['no_odds_mode'] } : {}),
+      projection:
+        driver.projection && typeof driver.projection === 'object'
+          ? driver.projection
+          : projected !== null
+            ? { k_mean: projected }
+            : null,
+      prop_display_state: computePitcherKPropDisplayState(
+        driver.prop_decision?.verdict ?? driver.card_verdict,
+      ),
+      prop_decision: driver.prop_decision ?? null,
+      pitcher_k_result: driver.pitcher_k_result ?? null,
+      line_source: basis === 'ODDS_BACKED' ? driver.line_source ?? null : null,
+      over_price: basis === 'ODDS_BACKED' ? driver.over_price ?? null : null,
+      under_price: basis === 'ODDS_BACKED' ? driver.under_price ?? null : null,
+      best_line_bookmaker:
+        basis === 'ODDS_BACKED' ? driver.best_line_bookmaker ?? null : null,
+      margin: basis === 'ODDS_BACKED' ? driver.margin ?? null : null,
+      line_fetched_at:
+        basis === 'ODDS_BACKED' ? driver.line_fetched_at ?? null : null,
+      odds_freshness:
+        basis === 'ODDS_BACKED' ? driver.odds_freshness ?? null : null,
+      block_publish_reason: driver.block_publish_reason ?? null,
+      pitcher_k_line_contract: lineContract,
+      line,
+      price,
+    },
+  };
+}
+
 function resolvePitcherKPayloadIdentity(driver = {}, pitcherTeam = null) {
   return {
     playerId: driver.player_id != null ? String(driver.player_id) : null,
@@ -2330,6 +2415,14 @@ async function runMLBModel({
                     : null);
             const { playerId: pitcherPlayerId, playerName: pitcherPlayerName } =
               resolvePitcherKPayloadIdentity(driver, pitcherTeam);
+            const pitcherKPayloadConfig = isPitcherK
+              ? buildMlbPitcherKPayloadFields({
+                  driver,
+                  pitcherPlayerId,
+                  pitcherPlayerName,
+                  projected,
+                })
+              : null;
 
             const tier = isPitcherK
               ? (driver.card_verdict === 'PLAY'
@@ -2356,9 +2449,9 @@ async function runMLBModel({
               classification: driver.classification ?? (driver.ev_threshold_passed ? 'BASE' : 'PASS'),
               prediction: driver.prediction,
               selection: {
-                side: driver.prediction,
+                side: pitcherKPayloadConfig?.selectionSide ?? driver.prediction,
               },
-              line,
+              line: pitcherKPayloadConfig?.line ?? line,
               model_status: driver.model_status ?? 'MODEL_OK',
               confidence: driver.confidence,
               tier,
@@ -2435,31 +2528,7 @@ async function runMLBModel({
                       primary_game_market: false,
                     }
                 : isPitcherK
-                  ? {
-                      player_id: pitcherPlayerId,
-                      player_name: pitcherPlayerName,
-                      canonical_market_key: 'pitcher_strikeouts',
-                      basis: driver.basis || 'PROJECTION_ONLY',
-                      tags: ['no_odds_mode'],
-                      projection:
-                        driver.projection && typeof driver.projection === 'object'
-                          ? driver.projection
-                          : (projected !== null ? { k_mean: projected } : null),
-                      prop_display_state: computePitcherKPropDisplayState(
-                        driver.prop_decision?.verdict ?? driver.card_verdict,
-                      ),
-                      prop_decision: driver.prop_decision ?? null,
-                      pitcher_k_result: driver.pitcher_k_result ?? null,
-                      // Odds-backed enrichment (null in PROJECTION_ONLY)
-                      line_source: driver.line_source ?? null,
-                      over_price: driver.over_price ?? null,
-                      under_price: driver.under_price ?? null,
-                      best_line_bookmaker: driver.best_line_bookmaker ?? null,
-                      margin: driver.margin ?? null,
-                      line_fetched_at: driver.line_fetched_at ?? null,
-                      odds_freshness: driver.odds_freshness ?? null,
-                      block_publish_reason: driver.block_publish_reason ?? null,
-                    }
+                  ? pitcherKPayloadConfig.payloadFields
                   : {
                       player_name: pitcherTeam ? `${pitcherTeam} SP` : 'SP',
                       canonical_market_key: 'pitcher_strikeouts',
@@ -2522,7 +2591,7 @@ async function runMLBModel({
                 : isFullGameML
                   ? `Full Game ML ${driver.prediction}: ${gameOddsSnapshot?.away_team ?? '?'} @ ${gameOddsSnapshot?.home_team ?? '?'}`
                 : isPitcherK
-                  ? `${pitcherTeam ?? '?'} SP Ks ${driver.prediction} [PROJECTION_ONLY]`
+                  ? `${pitcherTeam ?? '?'} SP Ks ${pitcherKPayloadConfig?.selectionSide ?? driver.prediction}${pitcherKPayloadConfig?.titleSuffix ?? ''}`
                   : `${pitcherTeam ?? '?'} SP Strikeouts ${driver.prediction}`;
 
             const cardId = `card-mlb-${cardType}-${gameId}-${uuidV4().slice(0, 8)}`;
@@ -2757,6 +2826,7 @@ module.exports = {
   resolvePitcherKsMode,
   resolveMlbPitcherPropRolloutState,
   resolvePitcherKPayloadIdentity,
+  buildMlbPitcherKPayloadFields,
   isTimestampFresh,
   filterSnapshotsByGameIds,
   evaluatePitcherPropPublishability,
