@@ -408,11 +408,11 @@ describe('projectFullGameML (WI-0873)', () => {
   });
 
   test('AC5: symmetric matchup yields win_prob_home between 0.49 and 0.51', () => {
-    // Same pitcher on both sides with same offense → near-equal run projections
+    // Same pitcher/offense still gets a modest home-field tilt in close games.
     const result = projectFullGameML(homePitcher, homePitcher, -110, -110, cleanContext);
     expect(result).not.toBeNull();
-    expect(result.projected_win_prob_home).toBeGreaterThan(0.49);
-    expect(result.projected_win_prob_home).toBeLessThan(0.51);
+    expect(result.projected_win_prob_home).toBeGreaterThan(0.5);
+    expect(result.projected_win_prob_home).toBeLessThan(0.57);
   });
 
   test('AC3: two-sided de-vig — win_prob_home is a valid probability and edge is numeric', () => {
@@ -460,6 +460,69 @@ describe('projectFullGameML (WI-0873)', () => {
     expect(['HOME', 'AWAY', 'PASS']).toContain(mlCard.prediction);
     expect(typeof mlCard.confidence).toBe('number');
     expect(mlCard.drivers[0].type).toBe('mlb-full-game-ml');
+  });
+
+  test('taxed bullpen changes FG ML more than F5 ML in the same matchup', () => {
+    const baseContext = {
+      ...cleanContext,
+      home_bullpen_era: 4.1,
+      away_bullpen_era: 4.1,
+    };
+    const taxedContext = {
+      ...cleanContext,
+      home_bullpen_era: 3.4,
+      away_bullpen_era: 6.1,
+    };
+
+    const fgBase = projectFullGameML(homePitcher, awayPitcher, -110, -110, baseContext);
+    const fgTaxed = projectFullGameML(homePitcher, awayPitcher, -110, -110, taxedContext);
+    const f5Base = projectF5ML(homePitcher, awayPitcher, -110, -110, avgOffense, avgOffense, cleanContext);
+    const f5Taxed = projectF5ML(homePitcher, awayPitcher, -110, -110, avgOffense, avgOffense, cleanContext);
+
+    const fgShift = Math.abs(fgTaxed.projected_win_prob_home - fgBase.projected_win_prob_home);
+    const f5Shift = Math.abs(f5Taxed.projected_win_prob_home - f5Base.projected_win_prob_home);
+
+    expect(fgShift).toBeGreaterThan(f5Shift);
+  });
+
+  test('tiny run-gap ML edges are passed with explicit support guardrails', () => {
+    const nearCoinflip = projectFullGameML(homePitcher, homePitcher, 170, -200, {
+      ...cleanContext,
+      home_bullpen_era: 4.3,
+      away_bullpen_era: 4.3,
+    });
+
+    expect(nearCoinflip.side).toBe('PASS');
+    expect(nearCoinflip.reason_codes).toEqual(
+      expect.arrayContaining([
+        'PASS_RUN_DIFF_TOO_SMALL',
+        'PASS_WEAK_DRIVER_SUPPORT',
+      ]),
+    );
+  });
+
+  test('high-variance context lowers confidence for close-run edges', () => {
+    const lowVariance = projectFullGameML(homePitcher, awayPitcher, -110, -110, {
+      ...cleanContext,
+      wind_mph: 4,
+      roof: 'CLOSED',
+      lineup_confirmed_home: true,
+      lineup_confirmed_away: true,
+      home_bullpen_era: 4.2,
+      away_bullpen_era: 4.2,
+    });
+    const highVariance = projectFullGameML(homePitcher, awayPitcher, -110, -110, {
+      ...cleanContext,
+      wind_mph: 24,
+      roof: 'OPEN',
+      lineup_confirmed_home: false,
+      lineup_confirmed_away: false,
+      home_bullpen_era: 3.1,
+      away_bullpen_era: 6.2,
+    });
+
+    expect(highVariance.confidence).toBeLessThan(lowVariance.confidence);
+    expect(highVariance.run_diff_variance).toBeGreaterThan(lowVariance.run_diff_variance);
   });
 });
 

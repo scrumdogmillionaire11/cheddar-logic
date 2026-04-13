@@ -154,4 +154,46 @@ function makeBaseGame(overrides = {}) {
   );
 }
 
+{
+  const weakSupportEdgeSanityPass = makeBaseGame({
+    id: 'game-mlb-full-game-ml-edge-sanity-pass',
+    gameId: 'game-mlb-full-game-ml-edge-sanity-pass',
+    plays: [
+      {
+        source_card_id: 'card-mlb-full-game-ml-edge-sanity-pass',
+        cardType: 'mlb-full-game-ml',
+        cardTitle: 'Full Game ML AWAY: NEW YORK METS @ LOS ANGELES DODGERS',
+        prediction: 'AWAY',
+        confidence: 0.6,
+        tier: 'BEST',
+        reasoning:
+          'FullGameML: homeProj=3.86 awayProj=4.74 runDiff=-0.87 var=3.89 pWin(H)=35.1% implH=59.3% implA=40.7% edgeH=-24.2pp edgeA=+24.2pp support=2 conf=6/10',
+        evPassed: false,
+        edge: 0.242,
+        kind: 'PLAY',
+        market_type: 'MONEYLINE',
+        selection: { side: 'AWAY' },
+        price: 140,
+        status: 'PASS',
+        classification: 'PASS',
+        action: 'PASS',
+        pass_reason_code: 'PASS_DRIVER_SUPPORT_WEAK',
+        reason_codes: [
+          'PASS_DRIVER_SUPPORT_WEAK',
+          'DOWNGRADED_EDGE_SANITY_NON_TOTAL',
+        ],
+        execution_status: 'BLOCKED',
+        tags: [],
+      },
+    ],
+  });
+
+  const transformed = transformGames([weakSupportEdgeSanityPass]);
+  assert.strictEqual(
+    transformed.length,
+    0,
+    'non-total PASS rows downgraded by edge sanity and weak driver support should be excluded from game-line cards',
+  );
+}
+
 console.log('✅ MLB game-line transform regressions passed');
