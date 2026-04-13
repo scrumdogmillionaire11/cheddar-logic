@@ -362,10 +362,7 @@ describe('post_discord_cards helpers', () => {
     expect(snapshot.sectionCounts.official).toBe(1);
     expect(snapshot.sectionCounts.lean).toBe(0);
     expect(snapshot.messages[0]).toContain('🟢 PLAY');
-    // Conviction label still rendered in card body, subordinate to PLAY status
-    expect(snapshot.messages[0]).toContain('Conviction: Play-Grade Edge');
-    // Section headers for lean tiers must NOT appear
-    expect(snapshot.messages[0]).not.toContain('🟠 Play-Grade Edge');
+    expect(snapshot.messages[0]).not.toContain('Play-Grade Edge');
   });
 
   test('buildDiscordSnapshot promotes NHL total UNDER 6.5 to PLAY section at edge >= 1.5 (was: strong label)', () => {
@@ -391,8 +388,7 @@ describe('post_discord_cards helpers', () => {
     expect(snapshot.sectionCounts.official).toBe(1);
     expect(snapshot.sectionCounts.lean).toBe(0);
     expect(snapshot.messages[0]).toContain('🟢 PLAY');
-    expect(snapshot.messages[0]).toContain('Conviction: Strong Play Edge');
-    expect(snapshot.messages[0]).not.toContain('🔴 Strong Play Edge');
+    expect(snapshot.messages[0]).not.toContain('Strong Play Edge');
   });
 
   test('buildDiscordSnapshot does not print @ null when price is missing', () => {

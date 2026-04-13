@@ -28,12 +28,6 @@ const NHL_TOTAL_CONVICTION_LABELS = {
   SLIGHT_EDGE: 'Slight Edge',
   NO_EDGE: 'Slight Edge',
 };
-const NHL_TOTAL_LEAN_HEADERS = {
-  STRONG_PLAY: '🔴 Strong Play Edge',
-  PLAY_GRADE: '🟠 Play-Grade Edge',
-  SLIGHT_EDGE: '🟡 Slight Edge',
-  NO_EDGE: '🟡 Slight Edge',
-};
 const ET_TIME_FORMATTER = new Intl.DateTimeFormat('en-US', {
   timeZone: 'America/New_York',
   hour: 'numeric',
@@ -534,16 +528,7 @@ function getNhlTotalConvictionTier(card) {
 }
 
 function resolveLeanSectionTitle(cards) {
-  const rank = { NO_EDGE: 0, SLIGHT_EDGE: 1, PLAY_GRADE: 2, STRONG_PLAY: 3 };
-  let strongest = 'NO_EDGE';
-
-  for (const card of cards) {
-    const tier = getNhlTotalConvictionTier(card);
-    if (!tier) continue;
-    if (rank[tier] > rank[strongest]) strongest = tier;
-  }
-
-  return NHL_TOTAL_LEAN_HEADERS[strongest] || '🟡 Slight Edge';
+  return cards.length > 0 ? '🟡 Slight Edge' : '🟡 Slight Edge';
 }
 
 function cardMatchesWebhookFilters(card, bucket) {
@@ -748,10 +733,6 @@ function renderDecisionLine(card, bucket) {
   const metricsLine2 = metricParts2.join(' | ');
 
   const lines = [`${market} | ${priced}`];
-  const nhlConvictionTier = getNhlTotalConvictionTier(card);
-  if (nhlConvictionTier) {
-    lines.push(`Conviction: ${NHL_TOTAL_CONVICTION_LABELS[nhlConvictionTier]}`);
-  }
   if (metricsLine2) lines.push(metricsLine2);
   if (why)     lines.push(`Why: ${why}`);
   const w = payload?.price_staleness_warning;
