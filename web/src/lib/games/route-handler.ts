@@ -549,6 +549,10 @@ const TRUE_PLAY_AUTHORITY_SOURCE = 'CARD_PAYLOADS_DECISION_V2' as const;
 const TRUE_PLAY_AUTHORITY_VERSION = 'ADR-0003' as const;
 const TRUE_PLAY_AUTHORITY_RATIONALE =
   'status_rank>edge_delta_pct>support_score>created_at>source_card_id';
+type DropReasonMeta = {
+  drop_reason_code: string;
+  drop_reason_layer: string;
+};
 
 function resolveLiveOfficialStatus(play: Play): 'PLAY' | 'LEAN' | 'PASS' {
   const explicit = play.decision_v2?.official_status;
@@ -1163,6 +1167,168 @@ function normalizeExecutionStatusToken(
   if (normalized === 'PROJECTION_ONLY') return 'PROJECTION_ONLY';
   if (normalized === 'BLOCKED') return 'BLOCKED';
   return undefined;
+}
+
+function normalizeReasonCodeToken(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const normalized = value.trim().toUpperCase();
+  return normalized.length > 0 ? normalized : null;
+}
+
+function normalizeDropReasonMeta(value: unknown): DropReasonMeta | null {
+  const raw = toObject(value);
+  const code = normalizeReasonCodeToken(raw?.drop_reason_code);
+  const layer =
+    typeof raw?.drop_reason_layer === 'string'
+      ? raw.drop_reason_layer.trim()
+      : '';
+
+  if (!code || layer.length === 0) {
+    return null;
+  }
+
+  return {
+    drop_reason_code: code,
+    drop_reason_layer: layer,
+  };
+}
+
+function resolveDerivedDropReason({
+  executionGate,
+  decisionV2,
+  passReasonCode,
+}: {
+  executionGate: Record<string, unknown> | null;
+  decisionV2: Play['decision_v2'] | undefined;
+  passReasonCode: string | null;
+}): DropReasonMeta | null {
+  const explicitDropReason = normalizeDropReasonMeta(executionGate?.drop_reason);
+  if (explicitDropReason) return explicitDropReason;
+
+  const watchdogReasonCode =
+    Array.isArray(decisionV2?.watchdog_reason_codes) &&
+    decisionV2.watchdog_reason_codes.length > 0
+      ? normalizeReasonCodeToken(decisionV2.watchdog_reason_codes[0])
+      : null;
+  if (decisionV2?.watchdog_status === 'BLOCKED' && watchdogReasonCode) {
+    return {
+      drop_reason_code: watchdogReasonCode,
+      drop_reason_layer: 'decision_watchdog',
+    };
+  }
+
+  const priceReasonCode =
+    Array.isArray(decisionV2?.price_reason_codes) &&
+    decisionV2.price_reason_codes.length > 0
+      ? decisionV2.price_reason_codes
+          .map((value) => normalizeReasonCodeToken(value))
+          .find((value) => value != null && value !== 'EDGE_CLEAR') ?? null
+      : null;
+  if (
+    (decisionV2?.official_status === 'PASS' ||
+      decisionV2?.official_status === 'LEAN') &&
+    priceReasonCode
+  ) {
+    return {
+      drop_reason_code: priceReasonCode,
+      drop_reason_layer: 'decision_price',
+    };
+  }
+
+  const normalizedPassReasonCode = normalizeReasonCodeToken(passReasonCode);
+  if (normalizedPassReasonCode) {
+    return {
+      drop_reason_code: normalizedPassReasonCode,
+      drop_reason_layer: 'publish_pass_reason',
+    };
+  }
+
+  const primaryReasonCode = normalizeReasonCodeToken(decisionV2?.primary_reason_code);
+  if (
+    (decisionV2?.official_status === 'PASS' ||
+      decisionV2?.official_status === 'LEAN') &&
+    primaryReasonCode
+  ) {
+    return {
+      drop_reason_code: primaryReasonCode,
+      drop_reason_layer: 'decision_primary',
+    };
+  }
+
+  return null;
+}
+
+function resolveExecutionGateDebug({
+  rawExecutionGate,
+  decisionV2,
+  passReasonCode,
+}: {
+  rawExecutionGate: Record<string, unknown> | null;
+  decisionV2: Play['decision_v2'] | undefined;
+  passReasonCode: string | null;
+}): Play['execution_gate'] | null {
+  const blockedBy = Array.isArray(rawExecutionGate?.blocked_by)
+    ? Array.from(
+        new Set(
+          rawExecutionGate.blocked_by
+            .map((value) => normalizeReasonCodeToken(value))
+            .filter((value): value is string => value !== null),
+        ),
+      )
+    : [];
+  const dropReason = resolveDerivedDropReason({
+    executionGate: rawExecutionGate,
+    decisionV2,
+    passReasonCode,
+  });
+
+  if (!rawExecutionGate && blockedBy.length === 0 && !dropReason) {
+    return null;
+  }
+
+  return {
+    ...(rawExecutionGate ?? {}),
+    blocked_by: blockedBy.length > 0 ? blockedBy : undefined,
+    drop_reason: dropReason,
+  };
+}
+
+function collectPlayReasonCodes({
+  payloadReasonCodes,
+  payloadPlayReasonCodes,
+  driverReasonCodes,
+  v2GuardFlags,
+  decisionV2,
+  passReasonCode,
+  executionGate,
+  pipelineBlockingReasonCodes,
+}: {
+  payloadReasonCodes: unknown[];
+  payloadPlayReasonCodes: unknown[];
+  driverReasonCodes: unknown[];
+  v2GuardFlags: unknown[];
+  decisionV2: Play['decision_v2'] | undefined;
+  passReasonCode: string | null;
+  executionGate: Play['execution_gate'] | null;
+  pipelineBlockingReasonCodes: unknown[];
+}): string[] {
+  const combinedReasonCodes = [
+    ...payloadReasonCodes,
+    ...payloadPlayReasonCodes,
+    ...driverReasonCodes,
+    ...v2GuardFlags,
+    ...(decisionV2?.watchdog_reason_codes ?? []),
+    ...(decisionV2?.price_reason_codes ?? []),
+    decisionV2?.primary_reason_code,
+    passReasonCode,
+    ...(executionGate?.blocked_by ?? []),
+    executionGate?.drop_reason?.drop_reason_code,
+    ...pipelineBlockingReasonCodes,
+  ]
+    .map((value) => normalizeReasonCodeToken(value))
+    .filter((value): value is string => value !== null);
+
+  return Array.from(new Set(combinedReasonCodes));
 }
 
 function isProjectionOnlyPlayPayload(play: Play): boolean {
@@ -1796,8 +1962,8 @@ export async function GET(request: NextRequest) {
     const seenMlbPitcherKPlayKeys = new Set<string>();
     const injuredNhlPlayerIds = new Set<string>();
     const injuredNhlPlayerNames = new Set<string>();
-    // Collect drop reasons from card payloads for dev-mode diagnostics
-    const parsedDropReasons: Array<{ drop_reason_code: string; drop_reason_layer: string }> = [];
+    // Collect normalized drop reasons for dev-mode diagnostics.
+    const parsedDropReasons: DropReasonMeta[] = [];
 
     try {
       const availabilityRows = db
@@ -1964,24 +2130,6 @@ export async function GET(request: NextRequest) {
           continue;
         }
 
-        // Collect execution_gate.drop_reason for dev-mode diagnostics aggregation
-        const payloadExecGate = payload.execution_gate != null && typeof payload.execution_gate === 'object'
-          ? (payload.execution_gate as Record<string, unknown>)
-          : null;
-        const payloadDropReason = payloadExecGate?.drop_reason != null && typeof payloadExecGate.drop_reason === 'object'
-          ? (payloadExecGate.drop_reason as Record<string, unknown>)
-          : null;
-        if (
-          payloadDropReason &&
-          typeof payloadDropReason.drop_reason_code === 'string' &&
-          typeof payloadDropReason.drop_reason_layer === 'string'
-        ) {
-          parsedDropReasons.push({
-            drop_reason_code: payloadDropReason.drop_reason_code,
-            drop_reason_layer: payloadDropReason.drop_reason_layer,
-          });
-        }
-
         const driverInputs =
           payload.driver !== null &&
           typeof payload.driver === 'object' &&
@@ -1994,6 +2142,7 @@ export async function GET(request: NextRequest) {
 
         const payloadPlay = toObject(payload.play);
         const payloadPlayObj = toObject(payloadPlay);
+        const payloadPipelineState = toObject(payload.pipeline_state);
         const payloadMarketContext =
           toObject((payload as Record<string, unknown>).market_context) ??
           toObject(payloadPlayObj?.market_context);
@@ -2152,6 +2301,19 @@ export async function GET(request: NextRequest) {
             payloadPlay?.execution_status,
           ),
         );
+        const normalizedPassReasonCode = normalizePassReasonCode(
+          payload.pass_reason_code ??
+            payload.pass_reason ??
+            payloadPlay?.pass_reason_code ??
+            payloadPlay?.pass_reason,
+        );
+        const normalizedExecutionGate = resolveExecutionGateDebug({
+          rawExecutionGate:
+            toObject((payload as Record<string, unknown>).execution_gate) ??
+            toObject(payloadPlay?.execution_gate),
+          decisionV2: normalizedDecisionV2,
+          passReasonCode: normalizedPassReasonCode,
+        });
         const normalizedMu = firstNumber(
           (payload as Record<string, unknown>).mu,
           payloadPlay?.mu,
@@ -2554,21 +2716,31 @@ export async function GET(request: NextRequest) {
           const v2 = toObject(dec?.v2);
           return Array.isArray(v2?.flags) ? (v2.flags as unknown[]) : [];
         })();
-        const combinedReasonCodes = [
-          ...(Array.isArray(payload.reason_codes) ? payload.reason_codes : []),
-          ...(Array.isArray(payloadPlay?.reason_codes)
+        const combinedReasonCodes = collectPlayReasonCodes({
+          payloadReasonCodes: Array.isArray(payload.reason_codes)
+            ? payload.reason_codes
+            : [],
+          payloadPlayReasonCodes: Array.isArray(payloadPlay?.reason_codes)
             ? payloadPlay.reason_codes
-            : []),
-          ...(Array.isArray(driverInputs?.reason_codes)
+            : [],
+          driverReasonCodes: Array.isArray(driverInputs?.reason_codes)
             ? driverInputs.reason_codes
-            : []),
-          ...v2GuardFlags,
-        ].map((value) => String(value));
+            : [],
+          v2GuardFlags,
+          decisionV2: normalizedDecisionV2,
+          passReasonCode: normalizedPassReasonCode,
+          executionGate: normalizedExecutionGate,
+          pipelineBlockingReasonCodes: Array.isArray(
+            payloadPipelineState?.blocking_reason_codes,
+          )
+            ? payloadPipelineState.blocking_reason_codes
+            : [],
+        });
         const combinedTags = [
           ...(Array.isArray(payload.tags) ? payload.tags : []),
           ...(Array.isArray(payloadPlay?.tags) ? payloadPlay.tags : []),
         ].map((value) => String(value));
-        const dedupedReasonCodes = Array.from(new Set(combinedReasonCodes));
+        const dedupedReasonCodes = combinedReasonCodes;
         const dedupedTags = Array.from(new Set(combinedTags));
 
         const resolvedActionBase: Play['action'] | undefined =
@@ -2783,13 +2955,7 @@ export async function GET(request: NextRequest) {
           // Canonical decision fields (preferred over legacy status field)
           classification: resolvedClassification,
           action: resolvedAction,
-          pass_reason_code:
-            normalizePassReasonCode(
-              payload.pass_reason_code ??
-                payload.pass_reason ??
-                payloadPlay?.pass_reason_code ??
-                payloadPlay?.pass_reason,
-            ),
+          pass_reason_code: normalizedPassReasonCode,
           one_p_model_call: onePModelCall,
           one_p_bet_status: onePBetStatus,
           goalie_home_name: normalizedGoalieHomeName ?? null,
@@ -2983,6 +3149,7 @@ export async function GET(request: NextRequest) {
           market_bookmaker: normalizedMarketBookmaker,
           basis: normalizedDecisionBasis,
           execution_status: normalizedExecutionStatus,
+          execution_gate: normalizedExecutionGate,
           prop_display_state: normalizedPropDisplayState,
           prop_decision: normalizedPropDecision,
           consistency:
@@ -3042,6 +3209,10 @@ export async function GET(request: NextRequest) {
         const isProjectionSurfaceCardType =
           cardRow.card_type === 'nhl-pace-1p' || cardRow.card_type === 'mlb-f5';
         const isPropMarket = play.market_type === 'PROP';
+
+        if (play.execution_gate?.drop_reason) {
+          parsedDropReasons.push(play.execution_gate.drop_reason);
+        }
 
         if (isProjectionOnlyPlayPayload(play) && !isPropMarket && !isProjectionSurfaceCardType) {
           continue;
@@ -3456,7 +3627,7 @@ export async function GET(request: NextRequest) {
       .sort((a, b) => b.count - a.count);
     // Build drop_summary for dev-mode diagnostics: group by drop_reason_code, count, record layer
     const buildDropSummary = (
-      dropReasons: Array<{ drop_reason_code: string; drop_reason_layer: string }>,
+      dropReasons: DropReasonMeta[],
     ): Array<{ drop_reason_code: string; drop_reason_layer: string; count: number }> => {
       const countMap = new Map<string, { drop_reason_layer: string; count: number }>();
       for (const dr of dropReasons) {

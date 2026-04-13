@@ -262,6 +262,38 @@ describe('run_nba_model job', () => {
     });
   });
 
+  test('execution gate tags projection-only NBA cards with explicit early-exit reason metadata', () => {
+    const card = {
+      payloadData: {
+        execution_status: 'PROJECTION_ONLY',
+        model_status: 'MODEL_OK',
+        status: 'WATCH',
+        action: 'HOLD',
+        classification: 'LEAN',
+        pass_reason_code: 'PROJECTION_ONLY_EXCLUSION',
+        reason_codes: ['PROJECTION_ONLY_EXCLUSION'],
+      },
+    };
+    const nowMs = new Date(baseOdds.captured_at).getTime() + 90_000;
+
+    const result = applyExecutionGateToNbaCard(card, {
+      oddsSnapshot: baseOdds,
+      nowMs,
+    });
+
+    expect(result.evaluated).toBe(false);
+    expect(result.blocked).toBe(false);
+    expect(card.payloadData.execution_gate).toMatchObject({
+      evaluated: false,
+      blocked_by: ['PROJECTION_ONLY_EXCLUSION'],
+      snapshot_age_ms: 90_000,
+      drop_reason: {
+        drop_reason_code: 'PROJECTION_ONLY_EXCLUSION',
+        drop_reason_layer: 'worker_gate',
+      },
+    });
+  });
+
   test('extracts and logs unique NBA ESPN null metrics teams', () => {
     const entries = extractNbaEspnNullMetricTeams({
       homeTeam: 'Boston Celtics',
