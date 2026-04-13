@@ -206,6 +206,139 @@ describe('post_discord_cards helpers', () => {
     expect(snapshot.messages[0]).not.toContain('⚪ PASS');
   });
 
+  test('buildDiscordSnapshot keeps 1P OVER/UNDER direction when selection object is empty', () => {
+    const cards = [
+      makeCard({
+        id: 'pace-1p-empty-selection',
+        sport: 'nhl',
+        cardType: 'nhl-pace-1p',
+        payloadData: {
+          action: 'LEAN',
+          kind: 'PLAY',
+          market_type: 'TOTAL',
+          period: '1P',
+          selection: {},
+          one_p_model_call: 'NHL_1P_OVER_PLAY',
+          line: 1.5,
+          edge: 0.7,
+          model_projection: 2.0,
+          price: -108,
+          projection_only: false,
+        },
+      }),
+    ];
+
+    const snapshot = buildDiscordSnapshot({ cards, now: new Date('2026-03-20T14:00:00.000Z') });
+
+    expect(snapshot.messages[0]).toContain('1P | OVER 1.5 (-108)');
+    expect(snapshot.messages[0]).not.toContain('1P | 1.5');
+  });
+
+  test('buildDiscordSnapshot can restrict webhook output to official buckets only via env', () => {
+    const originalBuckets = process.env.DISCORD_CARD_WEBHOOK_BUCKETS;
+    process.env.DISCORD_CARD_WEBHOOK_BUCKETS = 'play';
+
+    try {
+      const cards = [
+        makeCard({
+          id: 'official-only',
+          matchup: 'Boston Bruins @ New York Rangers',
+          payloadData: {
+            action: 'FIRE',
+            kind: 'PLAY',
+            market_type: 'MONEYLINE',
+            selection: { side: 'HOME' },
+            price: -115,
+            projection_only: false,
+          },
+        }),
+        makeCard({
+          id: 'lean-filtered-out',
+          matchup: 'Dallas Stars @ Toronto Maple Leafs',
+          payloadData: {
+            action: 'LEAN',
+            kind: 'PLAY',
+            market_type: 'TOTAL',
+            selection: { side: 'OVER' },
+            line: 5.5,
+            edge: 0.7,
+            model_projection: 6.2,
+            price: -110,
+            projection_only: false,
+          },
+        }),
+      ];
+
+      const snapshot = buildDiscordSnapshot({ cards, now: new Date('2026-03-20T14:00:00.000Z') });
+
+      expect(snapshot.totalGames).toBe(1);
+      expect(snapshot.sectionCounts.official).toBe(1);
+      expect(snapshot.sectionCounts.lean).toBe(0);
+      expect(snapshot.messages[0]).toContain('🟢 PLAY');
+      expect(snapshot.messages[0]).not.toContain('🟡 Slight Edge');
+    } finally {
+      if (originalBuckets !== undefined) process.env.DISCORD_CARD_WEBHOOK_BUCKETS = originalBuckets;
+      else delete process.env.DISCORD_CARD_WEBHOOK_BUCKETS;
+    }
+  });
+
+  test('buildDiscordSnapshot can restrict webhook output by market via env', () => {
+    const originalMarkets = process.env.DISCORD_CARD_WEBHOOK_MARKETS;
+    process.env.DISCORD_CARD_WEBHOOK_MARKETS = '1p';
+
+    try {
+      const cards = [
+        makeCard({
+          id: 'allowed-1p',
+          matchup: 'Washington Capitals @ Columbus Blue Jackets',
+          sport: 'nhl',
+          cardType: 'nhl-pace-1p',
+          payloadData: {
+            action: 'LEAN',
+            kind: 'PLAY',
+            market_type: 'TOTAL',
+            period: '1P',
+            selection: { side: 'UNDER' },
+            line: 1.5,
+            edge: 0.8,
+            model_projection: 1.1,
+            price: -112,
+            projection_only: false,
+          },
+        }),
+        makeCard({
+          id: 'filtered-total',
+          matchup: 'New Jersey Devils @ Boston Bruins',
+          sport: 'nhl',
+          cardType: 'nhl-totals-call',
+          payloadData: {
+            action: 'FIRE',
+            kind: 'PLAY',
+            market_type: 'TOTAL',
+            selection: { side: 'UNDER' },
+            line: 5.5,
+            edge: -1.4,
+            model_projection: 4.2,
+            price: -105,
+            projection_only: false,
+          },
+        }),
+      ];
+
+      const snapshot = buildDiscordSnapshot({ cards, now: new Date('2026-03-20T14:00:00.000Z') });
+
+      expect(snapshot.totalGames).toBe(1);
+      expect(snapshot.totalCards).toBe(2);
+      expect(snapshot.sectionCounts.lean).toBe(1);
+      expect(snapshot.sectionCounts.official).toBe(0);
+      expect(snapshot.messages[0]).toContain('1P | UNDER 1.5 (-112)');
+      expect(snapshot.messages[0]).not.toContain('TOTAL | UNDER 5.5 (-105)');
+    } finally {
+      if (originalMarkets !== undefined) process.env.DISCORD_CARD_WEBHOOK_MARKETS = originalMarkets;
+      else delete process.env.DISCORD_CARD_WEBHOOK_MARKETS;
+    }
+  });
+
   test('buildDiscordSnapshot promotes NHL total to PLAY section at edge >= 1.0 (was: play-grade label)', () => {
     const cards = [
       makeCard({

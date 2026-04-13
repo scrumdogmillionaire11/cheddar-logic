@@ -59,6 +59,25 @@ function compactToken(value) {
   return String(value || '').trim();
 }
 
+function parseCsvTokens(value, normalizer = normalizeToken) {
+  const raw = String(value || '').trim();
+  if (!raw) return null;
+  const tokens = raw
+    .split(',')
+    .map((token) => normalizer(token))
+    .filter(Boolean);
+  return tokens.length > 0 ? new Set(tokens) : null;
+}
+
+function normalizeWebhookBucketToken(value) {
+  const token = normalizeToken(value);
+  if (!token) return '';
+  if (['PLAY', 'PLAYS', 'OFFICIAL', 'FIRE', 'BASE'].includes(token)) return 'official';
+  if (['LEAN', 'LEANS', 'WATCH', 'WATCHES', 'SLIGHT_EDGE', 'SLIGHT EDGE'].includes(token)) return 'lean';
+  if (['PASS', 'PASS_BLOCKED', 'BLOCKED'].includes(token)) return 'pass_blocked';
+  return token.toLowerCase();
+}
+
 // Prevents [object Object] leaking into Discord output
 function safeScalar(val) {
   if (val === null || val === undefined) return null;
@@ -527,6 +546,22 @@ function resolveLeanSectionTitle(cards) {
   return NHL_TOTAL_LEAN_HEADERS[strongest] || '🟡 Slight Edge';
 }
 
+function cardMatchesWebhookFilters(card, bucket) {
+  const allowedBuckets = parseCsvTokens(
+    process.env.DISCORD_CARD_WEBHOOK_BUCKETS,
+    normalizeWebhookBucketToken,
+  );
+  if (allowedBuckets && !allowedBuckets.has(bucket)) return false;
+
+  const allowedSports = parseCsvTokens(process.env.DISCORD_CARD_WEBHOOK_SPORTS);
+  if (allowedSports && !allowedSports.has(normalizeToken(card?.sport))) return false;
+
+  const allowedMarkets = parseCsvTokens(process.env.DISCORD_CARD_WEBHOOK_MARKETS);
+  if (allowedMarkets && !allowedMarkets.has(normalizeToken(normalizeMarketTag(card)))) return false;
+
+  return true;
+}
+
 function normalizeMarketTag(card) {
   const payload = card?.payloadData || {};
   const cardType = String(card?.cardType || '').toLowerCase();
@@ -551,9 +586,20 @@ function selectionSummary(card) {
   const payload = card?.payloadData || {};
   const selection = payload?.selection;
   if (selection && typeof selection === 'object') {
-    return compactToken(selection.team || selection.side || selection.player || selection.name || '');
+    const derived = compactToken(
+      selection.team ||
+        selection.side ||
+        selection.player ||
+        selection.name ||
+        selection.direction ||
+        payload?.selection_type ||
+        payload?.recommended_direction ||
+        payload?.play?.selection ||
+        '',
+    );
+    if (derived) return derived;
   }
-  if (selection) return compactToken(selection);
+  if (selection && typeof selection !== 'object') return compactToken(selection);
 
   // Fallback for 1P / pace cards: extract direction from one_p_model_call
   // e.g. "NHL_1P_OVER_1.5" or "NHL_1P_UNDER_PLAY"
@@ -900,12 +946,18 @@ function buildDiscordSnapshot({ now = new Date(), cards = [] } = {}) {
 
   for (const gameCards of gameEntries) {
     const seed        = gameCards[0] || {};
-    const official    = gameCards.filter((c) => classifyDecisionBucket(c) === 'official');
+    const official    = gameCards.filter(
+      (c) => classifyDecisionBucket(c) === 'official' && cardMatchesWebhookFilters(c, 'official'),
+    );
     // Apply LEAN threshold — drop sub-threshold edge leans before rendering
     const leans       = gameCards
       .filter((c) => classifyDecisionBucket(c) === 'lean')
+      .filter((c) => cardMatchesWebhookFilters(c, 'lean'))
       .filter(passesLeanThreshold);
-    const passBlocked = gameCards.filter((c) => classifyDecisionBucket(c) === 'pass_blocked');
+    const passBlocked = gameCards.filter(
+      (c) =>
+        classifyDecisionBucket(c) === 'pass_blocked' && cardMatchesWebhookFilters(c, 'pass_blocked'),
+    );
 
     sectionCounts.official    += official.length;
     sectionCounts.lean        += leans.length;
