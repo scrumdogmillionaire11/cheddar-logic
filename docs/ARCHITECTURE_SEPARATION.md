@@ -257,13 +257,10 @@ SETTLEMENT_HOURLY_BOUNDARY_MINUTES=5
 
 The `resolveDatabasePath()` function in [`packages/data/src/db-path.js`](packages/data/src/db-path.js) applies this cascade:
 
-1. `RECORD_DATABASE_PATH` (explicit, highest priority)
-2. `CHEDDAR_DB_PATH` (canonical preferred)
-3. `DATABASE_PATH` (legacy support)
-4. `DATABASE_URL` (sqlite: URLs)
-5. `CHEDDAR_DATA_DIR/cheddar.db` (directory + default filename)
-6. Production fallbacks: `/opt/data/cheddar.db`, `/opt/cheddar-logic/packages/data/cheddar.db`
-7. Hardcoded default: `/packages/data/cheddar.db` (relative to workspace)
+1. `CHEDDAR_DB_PATH` (canonical preferred)
+2. `DATABASE_URL` (sqlite: URLs)
+3. `CHEDDAR_DATA_DIR/cheddar.db` (directory + default filename)
+4. Hardcoded default: `/packages/data/cheddar.db` (relative to workspace; dev only)
 
 **Key:** Always set `CHEDDAR_DB_PATH` in production `.env.production` to avoid ambiguity.
 

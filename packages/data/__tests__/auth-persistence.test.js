@@ -36,7 +36,7 @@ describe('Auth Persistence Regression Tests', () => {
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'auth-persist-test-'));
     dbPath = path.join(tempDir, 'test.db');
     delete process.env.CHEDDAR_DB_PATH;
-    process.env.DATABASE_PATH = dbPath;
+    process.env.CHEDDAR_DB_PATH = dbPath;
     
     
     // Run migrations

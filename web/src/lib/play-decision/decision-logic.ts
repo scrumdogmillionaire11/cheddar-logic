@@ -422,26 +422,3 @@ function getThresholdsForMarket(market: MarketType) {
   return threshMap[market];
 }
 
-/**
- * Convert classification + action to legacy status for UI migration
- * Deprecated: Only for backward compatibility
- */
-export function classificationToLegacyStatus(
-  classification: Classification,
-  action: Action,
-): 'FIRE' | 'WATCH' | 'PASS' {
-  // PASS classification always → PASS status
-  if (classification === 'PASS') {
-    return 'PASS';
-  }
-
-  // Otherwise, use action
-  if (action === 'FIRE') {
-    return 'FIRE';
-  }
-  if (action === 'HOLD') {
-    return 'WATCH';
-  }
-
-  return 'PASS';
-}

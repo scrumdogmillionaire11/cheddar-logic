@@ -2421,6 +2421,69 @@ describe('multi-market insertion (IME-01-03)', () => {
     errorSpy.mockRestore();
   });
 
+  test('active MLB odds config does not mark full-game cards as without-odds', async () => {
+    const gameDriverCards = [
+      {
+        market: 'full_game_total',
+        prediction: 'OVER',
+        confidence: 0.82,
+        ev_threshold_passed: true,
+        status: 'FIRE',
+        action: 'FIRE',
+        classification: 'BASE',
+        reasoning: 'Full-game total qualifies with live odds',
+        reason_codes: [],
+        missing_inputs: [],
+        projection_source: 'FULL_MODEL',
+        projection: { projected_total: 8.6 },
+        drivers: [{ projected: 8.6, edge: 0.9 }],
+      },
+      {
+        market: 'full_game_ml',
+        prediction: 'HOME',
+        confidence: 0.75,
+        ev_threshold_passed: true,
+        status: 'WATCH',
+        action: 'WATCH',
+        classification: 'LEAN',
+        reasoning: 'Full-game moneyline is lean-only',
+        reason_codes: [],
+        missing_inputs: [],
+        projection_source: 'FULL_MODEL',
+        drivers: [{ edge: 0.12, win_prob_home: 0.56 }],
+      },
+    ];
+    const logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+    const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    const infoSpy = jest.spyOn(console, 'info').mockImplementation(() => {});
+    const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+
+    const { result, dataMocks } = await runImeScenario({ gameDriverCards });
+
+    expect(result.success).toBe(true);
+    expect(
+      logSpy.mock.calls.some(([line]) =>
+        String(line).includes('MLB odds disabled in config'),
+      ),
+    ).toBe(false);
+
+    const fullGameCalls = dataMocks.insertCardPayload.mock.calls.filter(
+      ([card]) =>
+        card.cardType === 'mlb-full-game' ||
+        card.cardType === 'mlb-full-game-ml',
+    );
+    expect(fullGameCalls).toHaveLength(2);
+    fullGameCalls.forEach(([card]) => {
+      expect(card.payloadData.without_odds_mode).toBeUndefined();
+      expect(card.payloadData.tags).toBeUndefined();
+    });
+
+    logSpy.mockRestore();
+    warnSpy.mockRestore();
+    infoSpy.mockRestore();
+    errorSpy.mockRestore();
+  });
+
   test('no qualifying driver cards → SKIP_MARKET_NO_EDGE logs explicitly and inserts zero cards', async () => {
     const gameDriverCards = [
       {
@@ -2466,5 +2529,125 @@ describe('multi-market insertion (IME-01-03)', () => {
     warnSpy.mockRestore();
     infoSpy.mockRestore();
     errorSpy.mockRestore();
+  });
+});
+
+describe('runMLBModel without-odds mode selection', () => {
+  afterEach(() => {
+    jest.resetModules();
+    jest.clearAllMocks();
+    delete process.env.ENABLE_WITHOUT_ODDS_MODE;
+  });
+
+  test('does not emit the legacy config-disabled projection-only log when withoutOddsMode=false', async () => {
+    jest.resetModules();
+    const consoleSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+
+    jest.doMock('@cheddar-logic/data', () => ({
+      withDb: jest.fn(async (fn) => fn()),
+      shouldRunJobKey: jest.fn(() => true),
+      insertJobRun: jest.fn(),
+      markJobRunSuccess: jest.fn(),
+      markJobRunFailure: jest.fn(),
+      setCurrentRunId: jest.fn(),
+      getOddsWithUpcomingGames: jest.fn(() => []),
+      getUpcomingGamesAsSyntheticSnapshots: jest.fn(() => []),
+      getDatabase: jest.fn(() => ({
+        prepare: jest.fn(() => ({
+          get: jest.fn(() => null),
+          all: jest.fn(() => []),
+          run: jest.fn(),
+        })),
+      })),
+      computeMLBLeagueAverages: jest.fn(() => ({
+        source: 'mock',
+        n: 0,
+        kPct: 0.22,
+        xfip: 4.1,
+        bbPct: 0.08,
+      })),
+    }));
+    jest.doMock('@cheddar-logic/odds/src/config', () => ({
+      SPORTS_CONFIG: { MLB: { active: true } },
+    }));
+    jest.doMock('@cheddar-logic/adapters', () => ({
+      f5LineFetcher: { fetchF5LineFromVsin: jest.fn(async () => null) },
+    }));
+    jest.doMock('../../models', () => ({
+      getModel: jest.fn(() => ({ name: 'mock-mlb-model' })),
+      computeMLBDriverCards: jest.fn(() => []),
+      computePitcherKDriverCards: jest.fn(() => []),
+    }));
+    jest.doMock('../../models/mlb-model', () => {
+      const actual = jest.requireActual('../../models/mlb-model');
+      return {
+        ...actual,
+        setLeagueConstants: jest.fn(),
+      };
+    });
+    jest.doMock('../../utils/calibration', () => ({
+      applyCalibration: jest.fn((probability) => ({
+        calibratedProb: probability,
+        calibrationSource: 'mock',
+      })),
+    }));
+    jest.doMock('../../models/feature-time-guard', () => ({
+      assertFeatureTimeliness: jest.fn(() => ({
+        ok: true,
+        violations: [],
+      })),
+    }));
+    jest.doMock('../execution-gate', () => ({
+      evaluateExecution: jest.fn(() => ({
+        shouldBet: false,
+        netEdge: 0,
+        blocked_by: [],
+        reason: null,
+        drop_reason: null,
+      })),
+    }));
+    jest.doMock('@cheddar-logic/models', () => ({
+      buildRecommendationFromPrediction: jest.fn(() => ({ tier: 'mock' })),
+      buildMatchup: jest.fn((home, away) => `${away} @ ${home}`),
+      formatStartTimeLocal: jest.fn(() => 'mock-local-time'),
+      formatCountdown: jest.fn(() => 'mock-countdown'),
+      buildMarketFromOdds: jest.fn(() => null),
+      buildPipelineState: jest.fn((state) => state),
+      WATCHDOG_REASONS: { MARKET_UNAVAILABLE: 'MARKET_UNAVAILABLE' },
+      PRICE_REASONS: { MARKET_PRICE_MISSING: 'MARKET_PRICE_MISSING' },
+    }));
+    jest.doMock('@cheddar-logic/models/src/edge-calculator', () => ({
+      computeSigmaFromHistory: jest.fn(() => ({
+        sigma_source: 'fallback',
+        games_sampled: 0,
+      })),
+      kellyStake: jest.fn(() => ({
+        kelly_fraction: 0.01,
+        kelly_units: 0.25,
+      })),
+    }));
+
+    let runMLBModel;
+    jest.isolateModules(() => {
+      ({ runMLBModel } = require('../run_mlb_model'));
+    });
+
+    await runMLBModel({ dryRun: true, withoutOddsMode: false });
+
+    expect(consoleSpy).not.toHaveBeenCalledWith(
+      '[MLBModel] WITHOUT_ODDS_MODE: MLB odds disabled in config — running projection-only',
+    );
+
+    consoleSpy.mockRestore();
+    jest.dontMock('@cheddar-logic/data');
+    jest.dontMock('@cheddar-logic/odds/src/config');
+    jest.dontMock('@cheddar-logic/adapters');
+    jest.dontMock('../../models');
+    jest.dontMock('../../models/mlb-model');
+    jest.dontMock('../../utils/calibration');
+    jest.dontMock('../../models/feature-time-guard');
+    jest.dontMock('../execution-gate');
+    jest.dontMock('@cheddar-logic/models');
+    jest.dontMock('@cheddar-logic/models/src/edge-calculator');
   });
 });

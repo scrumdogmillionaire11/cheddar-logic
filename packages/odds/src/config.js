@@ -9,11 +9,11 @@
  * Canonical featured-market budget — MUST stay focused on sport-level markets:
  *   NBA  (main job): totals + spreads                        = 2 tokens
  *   NHL  (main job): totals + h2h                            = 2 tokens
- *   MLB  (schedule baseline): h2h                            = 1 token
- *   ──────────────────────────────────────────────────────── = 5 tokens
+ *   MLB  (main job): totals + h2h                            = 2 tokens
+ *   ──────────────────────────────────────────────────────── = 6 tokens
  *
  * Per-event / alternate-period markets are intentionally excluded here.
- * NHL 1P, NHL props, MLB F5, and MLB pitcher-K now run projection-only and
+ * NHL 1P, NHL props, MLB F5, and MLB pitcher-K remain projection-only and
  * must not re-enter the shared odds fetch surface without a dedicated WI.
  *
  * US Bookmakers:
@@ -62,11 +62,12 @@ const SPORTS_CONFIG = {
   },
 
   MLB: {
-    active: false, // April 2026: disabled — no odds-backed MLB model. F5 and pitcher-K are projection-only.
-    // Re-enable when MLB odds lanes are wired to a live model. Game seeding handled by pull_espn_games_direct.
+    active: true,
+    // Active MLB game-line scope is full-game h2h + totals.
+    // MLB F5 and pitcher-K remain projection-only exceptions.
     season: { start: '03-20', end: '11-01' },
-    markets: ['h2h'],
-    tokensPerFetch: 1,
+    markets: ['h2h', 'totals'],
+    tokensPerFetch: 2,
     defaultTTL: 180, // Shorter — SP confirmations move lines faster
     pregameTTL: 20, // Tighter pregame window for weather/lineup
     sharpWindowTTL: 0,
@@ -79,7 +80,7 @@ const SPORTS_CONFIG = {
       'espnbet',
       'fliff',
     ],
-    notes: 'Projection-only MLB lanes keep schedule seeding via featured-market fetch only',
+    notes: 'Active MLB game lines use featured-market fetch; F5 and pitcher-K remain projection-only',
   },
 
   NFL: {

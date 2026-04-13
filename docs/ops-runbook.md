@@ -41,7 +41,7 @@ ssh babycheeses11@100.71.1.87
 - `RECORD_DATABASE_PATH` (mid-era variable)
 - `DATABASE_URL` (SQLite URL format, no longer supported)
 
-Setting multiple path variables causes `DB_PATH_CONFLICT` error. These are actively unset by `scripts/start-scheduler.sh` and removed by `scripts/consolidate-record-db.sh`.
+`DATABASE_PATH` and `RECORD_DATABASE_PATH` are no longer recognized by the resolver. `DATABASE_URL` is only supported for `sqlite:///...` paths.
 
 **Single-Writer Contract (ADR-0002):**
 
@@ -444,6 +444,24 @@ Active Betting Record families covered by parity mapping in this WI:
 Everything else remains projection-only or excluded from Betting Record pending a
 future work item with explicit worker capability and policy changes. That
 includes props, `MLB_F5_*`, and `NHL_1P_TOTAL`.
+
+### MLB game-line operating mode
+
+MLB full-game total and MLB full-game moneyline are active odds-backed lanes.
+
+Featured MLB odds scope:
+
+- `h2h`
+- `totals`
+
+Projection-only MLB exceptions remain:
+
+- `MLB_F5_*`
+- `MLB_PITCHER_K`
+
+If MLB is intentionally returned to projection-only mode in the future, do it
+with an explicit config or policy change rather than assuming inactive default
+behavior in scheduler or health-check code.
 
 ### Settlement contract details (totals + P/L)
 

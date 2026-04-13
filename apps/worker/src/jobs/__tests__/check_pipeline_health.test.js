@@ -35,6 +35,8 @@ const {
   buildHealthAlertMessage,
   checkCardsFreshness,
   checkOddsFreshness,
+  checkMlbF5MarketAvailability,
+  checkMlbSeedFreshness,
   checkPipelineHealth,
 } = require('../check_pipeline_health');
 
@@ -333,6 +335,64 @@ describe('checkOddsFreshness', () => {
     expect(result.ok).toBe(false);
     expect(result.reason).toContain('1/1 games within T-2h have stale odds');
     expect(result.reason).toContain('duplicate game_id rows ignored');
+  });
+});
+
+// ===========================================================================
+describe('MLB health checks', () => {
+  afterEach(() => {
+    delete process.env.ENABLE_WITHOUT_ODDS_MODE;
+  });
+
+  test('fails MLB market availability when full-game totals are missing', () => {
+    const now = DateTime.utc();
+    const upcomingGames = [
+      {
+        game_id: 'mlb-001',
+        sport: 'MLB',
+        away_team: 'Boston Red Sox',
+        home_team: 'New York Yankees',
+        game_time_utc: now.plus({ minutes: 45 }).toISO(),
+      },
+    ];
+    const latestOddsByGame = {
+      'mlb-001': {
+        captured_at: now.minus({ minutes: 5 }).toISO(),
+      },
+    };
+
+    getDatabase.mockReturnValue(makeDb({ upcomingGames, latestOddsByGame }));
+    const mockBuildAvailability = require('../run_mlb_model').buildMlbMarketAvailability;
+    mockBuildAvailability.mockReturnValueOnce({
+      f5_line_ok: true,
+      full_game_total_ok: false,
+      expect_f5_ml: false,
+      f5_ml_ok: true,
+    });
+
+    const result = checkMlbF5MarketAvailability();
+
+    expect(result.ok).toBe(false);
+    expect(result.missing_full_game_total_count).toBe(1);
+    expect(result.reason).toContain('missing full-game totals');
+    expect(result.reason).not.toContain('informational');
+  });
+
+  test('skips MLB seed freshness in live-odds mode by default', () => {
+    const result = checkMlbSeedFreshness(75);
+
+    expect(result.ok).toBe(true);
+    expect(result.reason).toBe('MLB live-odds mode active - seed freshness check skipped');
+  });
+
+  test('checks ESPN seed freshness when global without-odds mode is enabled', () => {
+    process.env.ENABLE_WITHOUT_ODDS_MODE = 'true';
+    getDatabase.mockReturnValue(makeDb({ scheduleCount: 2 }));
+
+    const result = checkMlbSeedFreshness(75);
+
+    expect(result.ok).toBe(false);
+    expect(result.reason).toContain('pull_espn_games_direct has NOT run successfully');
   });
 });
 

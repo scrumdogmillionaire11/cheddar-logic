@@ -93,9 +93,10 @@ Validate production DB:
 sqlite3 /opt/data/cheddar-prod.db "SELECT name FROM sqlite_master WHERE type='table' AND name='card_payloads';"
 ```
 
-**Legacy compatibility** (deprecated in production):
+**Legacy compatibility**:
 
-- `RECORD_DATABASE_PATH`, `DATABASE_PATH`, `DATABASE_URL`: Supported for backward compatibility in local dev, but **must be removed from production config**. Setting multiple path variables causes a `DB_PATH_CONFLICT` error.
+- `RECORD_DATABASE_PATH` and `DATABASE_PATH` are no longer recognized by the DB path resolver.
+- `DATABASE_URL` remains supported only for `sqlite:///...` paths.
 
 
 

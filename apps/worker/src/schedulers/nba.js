@@ -40,8 +40,8 @@ function computeNbaDueJobs(nowEt, {
   pullOddsHourly,
   ENABLE_WITHOUT_ODDS_MODE,
 }) {
-  const ENABLE_NBA_MODEL = process.env.ENABLE_NBA_MODEL !== 'false';
-  const ENABLE_NBA_PLAYER_AVAILABILITY_SYNC = process.env.ENABLE_NBA_PLAYER_AVAILABILITY_SYNC !== 'false';
+  const ENABLE_NBA_MODEL = isFeatureEnabled('nba', 'model');
+  const ENABLE_NBA_PLAYER_AVAILABILITY_SYNC = isFeatureEnabled('nba', 'player-availability-sync');
 
   if (!ENABLE_NBA_MODEL && !ENABLE_NBA_PLAYER_AVAILABILITY_SYNC) return [];
 

@@ -24,8 +24,6 @@ describe('db-path resolver - Production scenarios', () => {
         env: {
           NODE_ENV: 'development',
           CHEDDAR_DB_PATH: '/tmp/cheddar-logic/cheddar.db',
-          // DATABASE_PATH is NOT set
-          RECORD_DATABASE_PATH: '',
           DATABASE_URL: '',
         },
       });
@@ -35,18 +33,18 @@ describe('db-path resolver - Production scenarios', () => {
       expect(resolved.isExplicitFile).toBe(true);
     });
 
-    test('dev correctly rejects conflicting CHEDDAR_DB_PATH + DATABASE_PATH', () => {
-      // This is the bug we're preventing
-      expect(() =>
-        resolveDatabasePath({
-          cwd,
-          env: {
-            NODE_ENV: 'development',
-            CHEDDAR_DB_PATH: '/tmp/cheddar-logic/cheddar.db',
-            DATABASE_PATH: '/Users/ajcolubiale/projects/cheddar-logic/packages/data/cheddar.db',
-          },
-        })
-      ).toThrow('Conflicting explicit DB paths detected');
+    test('dev ignores legacy DATABASE_PATH when CHEDDAR_DB_PATH is set', () => {
+      const resolved = resolveDatabasePath({
+        cwd,
+        env: {
+          NODE_ENV: 'development',
+          CHEDDAR_DB_PATH: '/tmp/cheddar-logic/cheddar.db',
+          DATABASE_PATH: '/Users/ajcolubiale/projects/cheddar-logic/packages/data/cheddar.db',
+        },
+      });
+
+      expect(resolved.dbPath).toBe('/tmp/cheddar-logic/cheddar.db');
+      expect(resolved.source).toBe('CHEDDAR_DB_PATH');
     });
 
     test('dev fallback to DEFAULT when no explicit path is set', () => {
@@ -55,8 +53,6 @@ describe('db-path resolver - Production scenarios', () => {
         env: {
           NODE_ENV: 'development',
           CHEDDAR_DB_PATH: '',
-          DATABASE_PATH: '',
-          RECORD_DATABASE_PATH: '',
           DATABASE_URL: '',
         },
       });
@@ -73,8 +69,6 @@ describe('db-path resolver - Production scenarios', () => {
         env: {
           NODE_ENV: 'staging',
           CHEDDAR_DB_PATH: '/var/lib/cheddar/staging/cheddar.db',
-          RECORD_DATABASE_PATH: '',
-          DATABASE_PATH: '',
           DATABASE_URL: '',
         },
       });
@@ -83,17 +77,18 @@ describe('db-path resolver - Production scenarios', () => {
       expect(resolved.source).toBe('CHEDDAR_DB_PATH');
     });
 
-    test('staging rejects DATABASE_PATH when CHEDDAR_DB_PATH is set', () => {
-      expect(() =>
-        resolveDatabasePath({
-          cwd,
-          env: {
-            NODE_ENV: 'staging',
-            CHEDDAR_DB_PATH: '/var/lib/cheddar/staging/cheddar.db',
-            DATABASE_PATH: '/var/lib/legacy/cheddar.db',
-          },
-        })
-      ).toThrow('Conflicting explicit DB paths detected');
+    test('staging ignores DATABASE_PATH when CHEDDAR_DB_PATH is set', () => {
+      const resolved = resolveDatabasePath({
+        cwd,
+        env: {
+          NODE_ENV: 'staging',
+          CHEDDAR_DB_PATH: '/var/lib/cheddar/staging/cheddar.db',
+          DATABASE_PATH: '/var/lib/legacy/cheddar.db',
+        },
+      });
+
+      expect(resolved.dbPath).toBe('/var/lib/cheddar/staging/cheddar.db');
+      expect(resolved.source).toBe('CHEDDAR_DB_PATH');
     });
   });
 
@@ -105,7 +100,6 @@ describe('db-path resolver - Production scenarios', () => {
           NODE_ENV: 'production',
           DATABASE_URL: 'sqlite:////opt/cheddar-logic/cheddar.db',
           CHEDDAR_DB_PATH: '',
-          RECORD_DATABASE_PATH: '',
         },
       });
 
@@ -124,8 +118,6 @@ describe('db-path resolver - Production scenarios', () => {
             NODE_ENV: 'production',
             DATABASE_URL: 'postgresql://user:pass@prod.example.com:5432/cheddar',
             CHEDDAR_DB_PATH: '',
-            RECORD_DATABASE_PATH: '',
-            DATABASE_PATH: '',
           },
         })
       ).toThrow('Production requires CHEDDAR_DB_PATH to be set explicitly');
@@ -144,20 +136,18 @@ describe('db-path resolver - Production scenarios', () => {
       ).toThrow('Conflicting explicit DB paths detected');
     });
 
-    test('production with legacy RECORD_DATABASE_PATH fallback', () => {
-      const resolved = resolveDatabasePath({
-        cwd,
-        env: {
-          NODE_ENV: 'production',
-          RECORD_DATABASE_PATH: '/var/lib/cheddar/records.db',
-          CHEDDAR_DB_PATH: '',
-          DATABASE_PATH: '',
-          DATABASE_URL: '',
-        },
-      });
-
-      expect(resolved.dbPath).toBe('/var/lib/cheddar/records.db');
-      expect(resolved.source).toBe('RECORD_DATABASE_PATH');
+    test('production ignores RECORD_DATABASE_PATH when CHEDDAR_DB_PATH is absent', () => {
+      expect(() =>
+        resolveDatabasePath({
+          cwd,
+          env: {
+            NODE_ENV: 'production',
+            RECORD_DATABASE_PATH: '/var/lib/cheddar/records.db',
+            CHEDDAR_DB_PATH: '',
+            DATABASE_URL: '',
+          },
+        })
+      ).toThrow('Production requires CHEDDAR_DB_PATH to be set explicitly');
     });
   });
 
@@ -173,8 +163,6 @@ describe('db-path resolver - Production scenarios', () => {
             NODE_ENV: 'production',
             DATABASE_URL: 'postgresql://railway:abc123@localhost:5432/cheddar',
             CHEDDAR_DB_PATH: '',
-            RECORD_DATABASE_PATH: '',
-            DATABASE_PATH: '',
           },
         })
       ).toThrow('Production requires CHEDDAR_DB_PATH to be set explicitly');
@@ -196,8 +184,6 @@ describe('db-path resolver - Production scenarios', () => {
             NODE_ENV: 'production',
             CHEDDAR_DATA_DIR: '/tmp/cheddar-data',
             CHEDDAR_DB_PATH: '',
-            DATABASE_PATH: '',
-            RECORD_DATABASE_PATH: '',
             DATABASE_URL: '',
           },
         })
@@ -212,8 +198,6 @@ describe('db-path resolver - Production scenarios', () => {
           NODE_ENV: 'production',
           CHEDDAR_DB_PATH: '/tmp/cheddar-data/cheddar-prod.db',
           CHEDDAR_DATA_DIR: '',
-          DATABASE_PATH: '',
-          RECORD_DATABASE_PATH: '',
           DATABASE_URL: '',
         },
       });
@@ -225,35 +209,31 @@ describe('db-path resolver - Production scenarios', () => {
   });
 
   describe('Migration scenarios (from legacy DATABASE_PATH)', () => {
-    test('legacy app with only DATABASE_PATH should still work', () => {
+    test('legacy app with only DATABASE_PATH falls back to DEFAULT in development', () => {
       const resolved = resolveDatabasePath({
         cwd,
         env: {
+          NODE_ENV: 'development',
           DATABASE_PATH: '/opt/legacy/cheddar.db',
           CHEDDAR_DB_PATH: '',
-          RECORD_DATABASE_PATH: '',
           DATABASE_URL: '',
         },
       });
 
-      expect(resolved.dbPath).toBe('/opt/legacy/cheddar.db');
-      expect(resolved.source).toBe('DATABASE_PATH');
+      expect(resolved.source).toBe('DEFAULT');
     });
 
-    test('migration: setting both CHEDDAR_DB_PATH and DATABASE_PATH is an error', () => {
-      // During migration, if both paths are set, throw an error
-      // This prevents the "web/.env.local vs CLI env var" bug
-      expect(() =>
-        resolveDatabasePath({
-          cwd,
-          env: {
-            // New preferred path
-            CHEDDAR_DB_PATH: '/new/path/cheddar.db',
-            // Old legacy path (conflict!)
-            DATABASE_PATH: '/old/path/cheddar.db',
-          },
-        })
-      ).toThrow('Conflicting explicit DB paths detected');
+    test('migration: CHEDDAR_DB_PATH wins over DATABASE_PATH', () => {
+      const resolved = resolveDatabasePath({
+        cwd,
+        env: {
+          CHEDDAR_DB_PATH: '/new/path/cheddar.db',
+          DATABASE_PATH: '/old/path/cheddar.db',
+        },
+      });
+
+      expect(resolved.dbPath).toBe('/new/path/cheddar.db');
+      expect(resolved.source).toBe('CHEDDAR_DB_PATH');
     });
   });
 
@@ -263,8 +243,7 @@ describe('db-path resolver - Production scenarios', () => {
         cwd,
         env: {
           CHEDDAR_DB_PATH: '/actual/path.db',
-          DATABASE_PATH: '', // Empty should not be treated as "set"
-          RECORD_DATABASE_PATH: '',
+          DATABASE_PATH: '',
           DATABASE_URL: '',
         },
       });
@@ -278,8 +257,7 @@ describe('db-path resolver - Production scenarios', () => {
         cwd,
         env: {
           CHEDDAR_DB_PATH: '/actual/path.db',
-          DATABASE_PATH: '   ', // Whitespace should not be treated as "set"
-          RECORD_DATABASE_PATH: '\t',
+          DATABASE_PATH: '   ',
           DATABASE_URL: '\n',
         },
       });

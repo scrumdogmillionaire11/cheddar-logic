@@ -168,9 +168,7 @@ function checkOddsFreshness() {
   const startUtc = nowUtc;
   const endUtc = nowUtc.plus({ hours: 6 });
 
-  // Only check sports whose odds are actively fetched. Sports with active:false
-  // (e.g. MLB in projection-only periods) will never have fresh odds snapshots
-  // and would always inflate the stale count spuriously.
+  // Only check sports whose odds are actively fetched.
   const activeSports = Object.entries(ODDS_SPORTS_CONFIG)
     .filter(([, cfg]) => cfg.active)
     .map(([sport]) => sport.toLowerCase());
@@ -424,10 +422,10 @@ function getLatestOddsSnapshot(db, gameId) {
  * gametime so their absence at that point is expected, not a pipeline failure.
  */
 function checkMlbF5MarketAvailability({ expectF5Ml = false } = {}) {
-  // When MLB odds are disabled (projection-only period), F5 market data will
-  // never be present in odds_snapshots — the check would always fail spuriously.
+  // In true without-odds mode, F5 market data will never be present in
+  // odds_snapshots and the check would fail spuriously.
   if (!ODDS_SPORTS_CONFIG.MLB.active) {
-    const skipReason = 'MLB odds disabled (projection-only) — F5 market check skipped';
+    const skipReason = 'MLB odds inactive — F5 market check skipped';
     writePipelineHealth('mlb', 'f5_market_availability', 'ok', skipReason);
     return {
       ok: true,
@@ -516,7 +514,7 @@ function checkMlbF5MarketAvailability({ expectF5Ml = false } = {}) {
 
   if (missingFullGameTotal.length > 0) {
     reasonParts.push(
-      `${missingFullGameTotal.length} missing full-game totals (informational)`,
+      `${missingFullGameTotal.length}/${upcomingGames.length} MLB games within T-6h missing full-game totals`,
     );
   }
   if (expectedF5MlCount > 0) {
@@ -526,14 +524,14 @@ function checkMlbF5MarketAvailability({ expectF5Ml = false } = {}) {
   }
 
   const reason = reasonParts.join('; ');
-  if (missingF5Total.length > 0) {
+  if (missingF5Total.length > 0 || missingFullGameTotal.length > 0) {
     writePipelineHealth('mlb', 'f5_market_availability', 'failed', reason);
   } else if (upcomingGames.length > 0) {
     writePipelineHealth('mlb', 'f5_market_availability', 'ok', reason);
   }
 
   return {
-    ok: missingF5Total.length === 0,
+    ok: missingF5Total.length === 0 && missingFullGameTotal.length === 0,
     reason,
     games_checked: upcomingGames.length,
     missing_f5_total_count: missingF5Total.length,
@@ -580,8 +578,10 @@ function checkSettlementBacklog() {
 }
 
 function checkMlbSeedFreshness(maxAgeMinutes = SEED_FRESHNESS_MAX_AGE_MINUTES) {
-  if (ODDS_SPORTS_CONFIG.MLB.active) {
-    const reason = 'MLB odds active - seed freshness check skipped';
+  const mlbWithoutOddsMode = !ODDS_SPORTS_CONFIG.MLB.active || process.env.ENABLE_WITHOUT_ODDS_MODE === 'true';
+
+  if (!mlbWithoutOddsMode) {
+    const reason = 'MLB live-odds mode active - seed freshness check skipped';
     writePipelineHealth('mlb', 'seed_freshness', 'ok', reason);
     return { ok: true, reason };
   }

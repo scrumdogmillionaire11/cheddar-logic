@@ -54,9 +54,6 @@ const { assertNoSilentMarketDrop, logRejectedMarkets } = require('@cheddar-logic
 // in the 2026 season, computeSigmaFromHistory replaces MLB_SIGMA_DEFAULT constants.
 const edgeCalculator = require('@cheddar-logic/models/src/edge-calculator');
 
-// Auto-detect projection-only period: when MLB odds are disabled in config,
-// always run in without-odds mode regardless of what the caller passes.
-const { SPORTS_CONFIG: ODDS_SPORTS_CONFIG } = require('@cheddar-logic/odds/src/config');
 const MIN_MLB_GAMES_FOR_RECAL = parseInt(process.env.MIN_MLB_GAMES_FOR_RECAL || '20', 10);
 
 // Pitcher K runtime mode: ODDS_BACKED when player_prop_lines has a recent
@@ -1866,13 +1863,6 @@ async function runMLBModel({
   withoutOddsMode = process.env.ENABLE_WITHOUT_ODDS_MODE === 'true',
   gameIds = null,
 } = {}) {
-  // When MLB odds are disabled in config (projection-only period), force without-odds
-  // mode regardless of what the scheduler or caller passes. Self-heals when
-  // ODDS_SPORTS_CONFIG.MLB.active is flipped back to true on May 1.
-  if (!ODDS_SPORTS_CONFIG.MLB.active) {
-    withoutOddsMode = true;
-  }
-
   const jobRunId = `job-mlb-model-${new Date().toISOString().split('.')[0]}-${uuidV4().slice(0, 8)}`;
 
   console.log(`[MLBModel] Starting job run: ${jobRunId}`);
@@ -1881,7 +1871,7 @@ async function runMLBModel({
   }
   console.log(`[MLBModel] Time: ${new Date().toISOString()}`);
   if (withoutOddsMode) {
-    console.log('[MLBModel] WITHOUT_ODDS_MODE: MLB odds disabled in config — running projection-only');
+    console.log('[MLBModel] WITHOUT_ODDS_MODE=true — projection-floor lines, PROJECTION_ONLY cards, no settlement');
   }
 
   return withDb(async () => {

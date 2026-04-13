@@ -49,10 +49,10 @@ function computeNhlDueJobs(nowEt, {
   pullOddsHourly,
   ENABLE_WITHOUT_ODDS_MODE,
 }) {
-  const ENABLE_NHL_MODEL = process.env.ENABLE_NHL_MODEL !== 'false';
-  const ENABLE_NHL_PLAYER_AVAILABILITY_SYNC = process.env.ENABLE_NHL_PLAYER_AVAILABILITY_SYNC !== 'false';
-  const ENABLE_NHL_GOALIE_STARTERS = process.env.ENABLE_NHL_GOALIE_STARTERS !== 'false';
-  const ENABLE_NHL_SOG_PLAYER_SYNC = process.env.ENABLE_NHL_SOG_PLAYER_SYNC === 'true';
+  const ENABLE_NHL_MODEL = isFeatureEnabled('nhl', 'model');
+  const ENABLE_NHL_PLAYER_AVAILABILITY_SYNC = isFeatureEnabled('nhl', 'player-availability-sync');
+  const ENABLE_NHL_GOALIE_STARTERS = isFeatureEnabled('nhl', 'goalie-starters');
+  const ENABLE_NHL_SOG_PLAYER_SYNC = isFeatureEnabled('nhl', 'sog-sync');
 
   if (
     !ENABLE_NHL_MODEL &&

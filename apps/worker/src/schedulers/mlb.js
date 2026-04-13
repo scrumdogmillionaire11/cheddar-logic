@@ -4,7 +4,7 @@
  * MLB Sub-Scheduler
  *
  * Handles MLB job registrations including:
- * - ESPN-direct game seeding (2B) — when MLB odds are disabled but model is enabled
+ * - ESPN-direct game seeding only for true without-odds mode fallback
  * - MLB model at fixed (09:00, 12:00 ET) and T-minus windows
  *
  * Interface:
@@ -23,7 +23,6 @@ const {
 
 const { runMLBModel } = require('../jobs/run_mlb_model');
 const { pullEspnGamesDirect } = require('../jobs/pull_espn_games_direct');
-const { SPORTS_CONFIG: ODDS_SPORTS_CONFIG } = require('@cheddar-logic/odds/src/config');
 
 /**
  * Compute due MLB jobs for this tick
@@ -42,23 +41,20 @@ function computeMlbDueJobs(nowEt, {
   ENABLE_WITHOUT_ODDS_MODE,
   ODDS_SPORTS_CONFIG,
 }) {
-  const ENABLE_MLB_MODEL = process.env.ENABLE_MLB_MODEL !== 'false';
+  const ENABLE_MLB_MODEL = isFeatureEnabled('mlb', 'model');
   const ODDS_FETCH_START_HOUR = Number(process.env.ODDS_FETCH_START_HOUR ?? 9);
 
   if (!ENABLE_MLB_MODEL) return [];
 
-  // When MLB odds are inactive (projection-only period), the model runs without
-  // live odds — seeded via ESPN-direct. Mark jobs accordingly so the scheduler
-  // gate checks pull_espn_games_direct freshness instead of pull_odds_hourly.
-  const mlbWithoutOddsMode = !ODDS_SPORTS_CONFIG.MLB.active || ENABLE_WITHOUT_ODDS_MODE;
+  // MLB runs odds-backed by default. ESPN-direct seeding is only used for the
+  // true global without-odds fallback mode.
+  const mlbWithoutOddsMode = ENABLE_WITHOUT_ODDS_MODE;
 
   const jobs = [];
 
   // ========== MLB ESPN-DIRECT SEEDING (2B) ==========
-  // When MLB odds are disabled in config (projection-only period) but the model is enabled,
-  // use pull_espn_games_direct to seed MLB game records so runMLBModel can find them.
-  // This is independent of the global ENABLE_WITHOUT_ODDS_MODE — NBA/NHL still use live odds.
-  if (!ENABLE_WITHOUT_ODDS_MODE && !ODDS_SPORTS_CONFIG.MLB.active) {
+  // Only used in true without-odds mode so MLB model runs can still find games.
+  if (ENABLE_WITHOUT_ODDS_MODE) {
     const isQuietHours = nowEt.hour < ODDS_FETCH_START_HOUR;
     if (!isQuietHours) {
       const jobKey = keyEspnGamesDirect(nowEt);
@@ -67,7 +63,7 @@ function computeMlbDueJobs(nowEt, {
         jobKey,
         execute: pullEspnGamesDirect,
         args: { jobKey, dryRun },
-        reason: 'MLB ESPN-direct game seeding (MLB odds inactive, projection-only)',
+        reason: 'MLB ESPN-direct game seeding (without-odds fallback)',
       });
     }
   }

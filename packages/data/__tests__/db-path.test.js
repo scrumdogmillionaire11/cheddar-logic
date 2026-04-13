@@ -9,8 +9,6 @@ describe('db-path resolver', () => {
       cwd,
       env: {
         CHEDDAR_DB_PATH: './shared/record.db',
-        RECORD_DATABASE_PATH: './shared/record.db',
-        DATABASE_PATH: './shared/record.db',
       },
     });
 
@@ -18,12 +16,11 @@ describe('db-path resolver', () => {
     expect(resolved.source).toBe('CHEDDAR_DB_PATH');
   });
 
-  test('respects CHEDDAR_DB_PATH priority over DATABASE_PATH when same value', () => {
+  test('respects CHEDDAR_DB_PATH when set', () => {
     const resolved = resolveDatabasePath({
       cwd,
       env: {
         CHEDDAR_DB_PATH: './data/main.db',
-        DATABASE_PATH: './data/main.db',
       },
     });
 
@@ -31,26 +28,13 @@ describe('db-path resolver', () => {
     expect(resolved.source).toBe('CHEDDAR_DB_PATH');
   });
 
-  test('falls back to RECORD_DATABASE_PATH when CHEDDAR_DB_PATH is not set', () => {
-    const resolved = resolveDatabasePath({
-      cwd,
-      env: {
-        RECORD_DATABASE_PATH: './shared/record.db',
-      },
-    });
-
-    expect(resolved.dbPath).toBe(path.resolve(cwd, 'shared/record.db'));
-    expect(resolved.source).toBe('RECORD_DATABASE_PATH');
-  });
-
   test('throws on conflicting explicit DB paths', () => {
     expect(() =>
       resolveDatabasePath({
         cwd,
         env: {
-          RECORD_DATABASE_PATH: '/tmp/shared.db',
           CHEDDAR_DB_PATH: '/tmp/a.db',
-          DATABASE_PATH: '/tmp/b.db',
+          DATABASE_URL: 'sqlite:////tmp/b.db',
         },
       })
     ).toThrow('Conflicting explicit DB paths');
