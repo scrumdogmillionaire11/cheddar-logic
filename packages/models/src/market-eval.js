@@ -118,8 +118,8 @@ function evaluateSingleMarket(card, ctx) {
     });
     
     if (isProjectionFloor && hasOnlyMarketOddsMissing) {
-      // Projection-floor cards are allowed with missing market odds
-      return buildResult(card, safeCtx, 'ELIGIBLE_CAP_EXCEEDED', [REASON_CODES.EDGE_BELOW_THRESHOLD], { inputs_ok: true });
+      // Projection-floor cards are allowed with missing market odds — select as lean
+      return buildResult(card, safeCtx, 'QUALIFIED_LEAN', [], { official_tier: 'LEAN' });
     }
     
     const codes = card.missing_inputs.map((name) => {
