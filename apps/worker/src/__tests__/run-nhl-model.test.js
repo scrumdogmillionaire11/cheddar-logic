@@ -27,6 +27,21 @@ function buildOddsSnapshot(overrides = {}) {
   };
 }
 
+// Descriptor that computeNHLDriverCards returns
+function buildDriverDescriptor(overrides = {}) {
+  return {
+    cardType: overrides.cardType || 'nhl-base-projection',
+    prediction: overrides.prediction || 'HOME',
+    confidence: overrides.confidence ?? 0.60,
+    tier: overrides.tier || 'BEST',
+    market_type: overrides.market_type || 'TOTAL',
+    line: overrides.line ?? 6.5,
+    price: overrides.price ?? -110,
+    ...overrides,
+  };
+}
+
+// Full card that generateCard returns
 function buildFakeDriverCard(gameId = 'nhl-game-001', descriptor = {}) {
   return {
     cardType: descriptor.cardType || 'nhl-base-projection',
@@ -90,7 +105,7 @@ function buildFakeDriverCard(gameId = 'nhl-game-001', descriptor = {}) {
 
 function loadRunNHLModel({
   oddsSnapshots = [buildOddsSnapshot()],
-  driverCards = [buildFakeDriverCard()],
+  driverDescriptors = [buildDriverDescriptor()],
   syntheticSnapshots = [],
   shouldRunJobKey = true,
   validationResult = { success: true, errors: [] },
@@ -150,7 +165,9 @@ function loadRunNHLModel({
     fetchMoneyPuckSnapshot: jest.fn(async () => null),
   }));
 
-  const computeNHLDriverCardsMock = jest.fn(() => driverCards);
+  // computeNHLDriverCards returns DESCRIPTORS, not full cards
+  const computeNHLDriverCardsMock = jest.fn(() => driverDescriptors);
+  
   const generateCardMock = jest.fn((opts) =>
     generateCardImpl
       ? generateCardImpl(opts)
@@ -361,20 +378,19 @@ describe('runNHLModel', () => {
       },
     };
     const descriptors = [
-      {
+      buildDriverDescriptor({
         cardType: 'nhl-pace-totals',
-        cardTitle: 'NHL Total: OVER 5.78 vs Line 5.5',
         prediction: 'OVER',
         confidence: 0.64,
         tier: 'BEST',
         market_type: 'TOTAL',
         price: -110,
         auditContext: { paceResult },
-      },
+      }),
     ];
 
     const { runNHLModel, mocks } = loadRunNHLModel({
-      driverCards: descriptors,
+      driverDescriptors: descriptors,
     });
 
     await runNHLModel();
