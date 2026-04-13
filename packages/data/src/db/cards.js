@@ -250,12 +250,6 @@ function resolveOfficialPlayStatus(payloadData) {
     return officialStatus;
   }
 
-  // Legacy fallback for payloads that predate decision_v2.
-  const legacyStatus = toUpperToken(payloadData?.status);
-  if (legacyStatus === 'FIRE') return 'PLAY';
-  if (legacyStatus === 'WATCH') return 'LEAN';
-  if (legacyStatus === 'PASS') return 'PASS';
-
   return '';
 }
 
