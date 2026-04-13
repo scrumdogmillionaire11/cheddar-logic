@@ -486,7 +486,8 @@ function buildMlbMarketAvailability(oddsSnapshot, { expectF5Ml = false, withoutO
   if (expectF5Ml && !f5MlOk) {
     blockingReasonCodes.push(MLB_PIPELINE_REASON_CODES.F5_ML_UNAVAILABLE);
   }
-  if (!fullGameTotalOk) {
+  // Only block entire game if NO market lines available at all
+  if (!effectiveF5LineOk && !fullGameTotalOk) {
     blockingReasonCodes.push(WATCHDOG_REASONS.MARKET_UNAVAILABLE);
   }
 
