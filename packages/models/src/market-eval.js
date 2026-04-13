@@ -27,6 +27,7 @@ const REASON_CODES = Object.freeze({
   EV_BELOW_THRESHOLD: 'EV_BELOW_THRESHOLD',
   DUPLICATE_MARKET_SUPPRESSED: 'DUPLICATE_MARKET_SUPPRESSED',
   DISPLAY_RANKED_BELOW_PRIMARY: 'DISPLAY_RANKED_BELOW_PRIMARY',
+  UNCLASSIFIED_MARKET_STATE: 'UNCLASSIFIED_MARKET_STATE',
 });
 
 // ---------------------------------------------------------------------------
@@ -91,6 +92,21 @@ function evaluateSingleMarket(card, ctx) {
     );
   }
 
+  // --- Malformed driver card (missing terminal inputs entirely) ---
+  if (
+    card.ev_threshold_passed == null &&
+    typeof card.status === 'undefined' &&
+    typeof card.classification === 'undefined'
+  ) {
+    return buildResult(
+      card,
+      safeCtx,
+      'REJECTED_INPUTS',
+      [REASON_CODES.UNCLASSIFIED_MARKET_STATE],
+      { inputs_ok: false },
+    );
+  }
+
   // --- Missing inputs gate ---
   if (Array.isArray(card.missing_inputs) && card.missing_inputs.length > 0) {
     const codes = card.missing_inputs.map((name) => {
@@ -137,7 +153,7 @@ function evaluateSingleMarket(card, ctx) {
     card,
     safeCtx,
     'REJECTED_THRESHOLD',
-    ['UNCLASSIFIED_MARKET_STATE'],
+    [REASON_CODES.UNCLASSIFIED_MARKET_STATE],
     { official_tier: 'PASS' },
   );
 }

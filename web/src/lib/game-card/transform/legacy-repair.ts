@@ -3,9 +3,10 @@
  * Extracted from game-card/transform.ts (WI-0622)
  */
 
-import type { Sport, CanonicalMarketType, ExpressionStatus } from '../../types';
+import type { CanonicalMarketType, ExpressionStatus } from '../../types';
 import type { DecisionV2 } from '../../types';
 import { resolvePlayDisplayDecision } from '../decision';
+import { getSportCardTypeContract as getSharedSportCardTypeContract } from '../../games/market-inference';
 
 // NOTE: ApiPlay is redefined here as a local interface to avoid circular imports.
 // It must stay structurally compatible with the ApiPlay interface in transform/index.ts.
@@ -96,62 +97,6 @@ interface ApiPlay {
   decision_v2?: DecisionV2;
 }
 
-export const ACTIVE_SPORT_CARD_TYPE_CONTRACT: Record<
-  string,
-  { playProducerCardTypes: Set<string>; evidenceOnlyCardTypes: Set<string> }
-> = {
-  NBA: {
-    playProducerCardTypes: new Set([
-      'nba-totals-call',
-      'nba-spread-call',
-    ]),
-    evidenceOnlyCardTypes: new Set([
-      'nba-base-projection',
-      'nba-total-projection',
-      'nba-rest-advantage',
-      'nba-matchup-style',
-      'nba-blowout-risk',
-      'nba-travel',
-      'nba-lineup',
-      'welcome-home',
-      'welcome-home-v2', // alias: backward compat with existing DB rows
-    ]),
-  },
-  NHL: {
-    playProducerCardTypes: new Set([
-      'nhl-totals-call',
-      'nhl-spread-call',
-      'nhl-moneyline-call',
-      'nhl-pace-totals',
-      'nhl-pace-1p',
-    ]),
-    evidenceOnlyCardTypes: new Set([
-      'nhl-base-projection',
-      'nhl-rest-advantage',
-      'nhl-goalie',
-      'nhl-goalie-certainty',
-      'nhl-model-output',
-      'nhl-shot-environment',
-      'welcome-home',
-      'welcome-home-v2', // alias: backward compat with existing DB rows
-    ]),
-  },
-};
-
-function _normalizeSport(sport: unknown): Sport {
-  if (typeof sport !== 'string') return 'UNKNOWN';
-  const sportUpper = sport.toUpperCase();
-  if (
-    sportUpper === 'NHL' ||
-    sportUpper === 'NBA' ||
-    sportUpper === 'MLB' ||
-    sportUpper === 'NFL'
-  ) {
-    return sportUpper as Sport;
-  }
-  return 'UNKNOWN';
-}
-
 export function normalizeCardType(cardType: string): string {
   return cardType.trim().toLowerCase();
 }
@@ -162,7 +107,7 @@ export function getSportCardTypeContract(
   | { playProducerCardTypes: Set<string>; evidenceOnlyCardTypes: Set<string> }
   | undefined {
   if (!sport) return undefined;
-  return ACTIVE_SPORT_CARD_TYPE_CONTRACT[_normalizeSport(sport)];
+  return getSharedSportCardTypeContract(sport);
 }
 
 export function isPlayItem(play: ApiPlay, sport?: string): boolean {

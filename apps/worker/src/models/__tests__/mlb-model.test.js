@@ -7,6 +7,7 @@ const {
   projectFullGameTotal,
   projectFullGameML,
   computeMLBDriverCards,
+  evaluateMlbGameMarkets,
   resolveOffenseComposite,
   resolveMLBModelSignal,
 } = require('../mlb-model');
@@ -582,5 +583,97 @@ describe('resolveMLBModelSignal (WI-0874)', () => {
     const result = resolveMLBModelSignal(game);
     // f5_total cards always return null (total edge not used for ML win prob)
     expect(result).toBeNull();
+  });
+});
+
+describe('evaluateMlbGameMarkets (IME-01)', () => {
+  let consoleInfoSpy;
+
+  beforeEach(() => {
+    consoleInfoSpy = jest.spyOn(console, 'info').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    consoleInfoSpy.mockRestore();
+  });
+
+  test('evaluates all generated MLB game markets and returns multiple qualified results', () => {
+    const fireMlCard = {
+      market: 'full_game_ml',
+      ev_threshold_passed: true,
+      status: 'FIRE',
+      classification: 'BASE',
+      reason_codes: [],
+      missing_inputs: [],
+      confidence: 0.7,
+    };
+    const fireF5Card = {
+      ...fireMlCard,
+      market: 'f5_total',
+      confidence: 0.68,
+    };
+
+    const result = evaluateMlbGameMarkets(
+      [fireMlCard, fireF5Card],
+      { game_id: 'g1' },
+    );
+
+    expect(result.status).toBe('HAS_OFFICIAL_PLAYS');
+    expect(result.official_plays).toHaveLength(2);
+    expect(result.official_plays.map((item) => item.market_type)).toEqual(
+      expect.arrayContaining(['FULL_GAME_ML', 'F5_TOTAL']),
+    );
+    expect(result.rejected).toHaveLength(0);
+  });
+
+  test('returns FULL_GAME_ML as official when F5_TOTAL exists but only ML qualifies', () => {
+    const passF5Card = {
+      market: 'f5_total',
+      ev_threshold_passed: false,
+      status: 'PASS',
+      classification: 'PASS',
+      reason_codes: [],
+      missing_inputs: [],
+    };
+    const fireMlCard = {
+      market: 'full_game_ml',
+      ev_threshold_passed: true,
+      status: 'FIRE',
+      classification: 'BASE',
+      reason_codes: [],
+      missing_inputs: [],
+      confidence: 0.7,
+    };
+
+    const result = evaluateMlbGameMarkets(
+      [passF5Card, fireMlCard],
+      { game_id: 'g1' },
+    );
+
+    expect(result.official_plays).toHaveLength(1);
+    expect(result.official_plays[0].market_type).toBe('FULL_GAME_ML');
+    expect(result.rejected).toHaveLength(1);
+    expect(result.rejected[0].market_type).toBe('F5_TOTAL');
+  });
+
+  test('marks non-qualified MLB markets as REJECTED_THRESHOLD with reason codes', () => {
+    const rejectedCard = {
+      market: 'f5_total',
+      ev_threshold_passed: false,
+      status: 'PASS',
+      classification: 'PASS',
+      reason_codes: [],
+      missing_inputs: [],
+    };
+
+    const result = evaluateMlbGameMarkets(
+      [rejectedCard],
+      { game_id: 'g1' },
+    );
+
+    expect(result.status).toBe('SKIP_MARKET_NO_EDGE');
+    expect(result.rejected).toHaveLength(1);
+    expect(result.rejected[0].status).toBe('REJECTED_THRESHOLD');
+    expect(result.rejected[0].reason_codes).toContain('EDGE_BELOW_THRESHOLD');
   });
 });

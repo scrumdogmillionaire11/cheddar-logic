@@ -29,6 +29,14 @@ const titleInferenceSource = fs.readFileSync(
   path.resolve(repoRoot, 'web/src/lib/game-card/transform/title-inference.ts'),
   'utf8',
 );
+const legacyRepairSource = fs.readFileSync(
+  path.resolve(repoRoot, 'web/src/lib/game-card/transform/legacy-repair.ts'),
+  'utf8',
+);
+const marketInferenceSource = fs.readFileSync(
+  path.resolve(repoRoot, 'web/src/lib/games/market-inference.ts'),
+  'utf8',
+);
 
 console.log('🧪 Transform market contract source tests');
 
@@ -58,13 +66,28 @@ assert(
 
 assert(
   source.includes('const action = getSourcePlayAction(play);') &&
-    source.includes('const sourceAction = getSourcePlayAction(sourcePlay);'),
+    source.includes('const sourceAction =') &&
+    source.includes('getSourcePlayAction(sourcePlay)'),
   'transform wave-1 action selection should resolve through shared play action helper',
 );
 
 assert(
   source.includes("canonical === 'FIRST_PERIOD'"),
   'transform should preserve FIRST_PERIOD market handling for 1P totals cards',
+);
+
+assert(
+  legacyRepairSource.includes('getSportCardTypeContract as getSharedSportCardTypeContract') &&
+    legacyRepairSource.includes('return getSharedSportCardTypeContract(sport);'),
+  'transform legacy-repair should consume the shared sport card-type contract from market-inference',
+);
+
+assert(
+  marketInferenceSource.includes("normalized === 'mlb-full-game-ml'") &&
+    marketInferenceSource.includes("return 'MONEYLINE';") &&
+    marketInferenceSource.includes("normalized === 'mlb-full-game'") &&
+    marketInferenceSource.includes("return 'TOTAL';"),
+  'shared market inference should map MLB full-game card types to canonical MONEYLINE/TOTAL markets',
 );
 
 assert(

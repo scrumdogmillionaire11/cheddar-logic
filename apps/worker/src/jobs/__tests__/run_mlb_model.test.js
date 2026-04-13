@@ -2203,3 +2203,268 @@ describe('WI-0877: computeSyntheticLineF5Driver', () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// IME-01-03: runMLBModel multi-market insertion
+// ---------------------------------------------------------------------------
+
+describe('multi-market insertion (IME-01-03)', () => {
+  const GAME_ID = 'mlb-2026-ime-test-001';
+  const BASE_SNAPSHOT = {
+    id: 'odds-ime-001',
+    game_id: GAME_ID,
+    home_team: 'New York Yankees',
+    away_team: 'Boston Red Sox',
+    game_time_utc: '2026-04-13T23:05:00Z',
+    captured_at: '2026-04-13T19:00:00Z',
+    total_f5: 4.5,
+    total_price_over_f5: -110,
+    total_price_under_f5: -110,
+    h2h_home: -128,
+    h2h_away: 108,
+    raw_data: { mlb: {} },
+  };
+
+  function buildImeDataMocks(snapshot = BASE_SNAPSHOT) {
+    const insertCardPayload = jest.fn();
+    const insertModelOutput = jest.fn();
+    const prepareModelAndCardWrite = jest.fn();
+    const markJobRunSuccess = jest.fn();
+
+    return {
+      getDatabase: jest.fn(() => ({
+        prepare: jest.fn(() => ({
+          get: jest.fn(() => null),
+          all: jest.fn(() => []),
+        })),
+      })),
+      insertJobRun: jest.fn(),
+      markJobRunSuccess,
+      markJobRunFailure: jest.fn(),
+      setCurrentRunId: jest.fn(),
+      getOddsSnapshots: jest.fn(() => []),
+      getOddsWithUpcomingGames: jest.fn(() => [snapshot]),
+      getUpcomingGamesAsSyntheticSnapshots: jest.fn(() => []),
+      getLatestOdds: jest.fn(() => null),
+      insertModelOutput,
+      insertCardPayload,
+      prepareModelAndCardWrite,
+      runPerGameWriteTransaction: jest.fn((fn) => fn()),
+      validateCardPayload: jest.fn(() => ({ success: true, errors: [] })),
+      shouldRunJobKey: jest.fn(() => true),
+      withDb: jest.fn(async (fn) => fn()),
+      computeMLBLeagueAverages: jest.fn(() => ({
+        source: 'mock',
+        n: 1,
+        kPct: 0.22,
+        xfip: 4.1,
+        bbPct: 0.08,
+      })),
+    };
+  }
+
+  async function runImeScenario({ gameDriverCards, snapshot = BASE_SNAPSHOT } = {}) {
+    jest.resetModules();
+
+    const dataMocks = buildImeDataMocks(snapshot);
+
+    jest.doMock('@cheddar-logic/data', () => dataMocks);
+    jest.doMock('@cheddar-logic/adapters', () => ({
+      f5LineFetcher: {
+        fetchF5LineFromVsin: jest.fn(async () => null),
+      },
+    }));
+    jest.doMock('@cheddar-logic/odds/src/config', () => ({
+      SPORTS_CONFIG: { MLB: { active: true } },
+    }));
+    jest.doMock('@cheddar-logic/models', () => ({
+      buildRecommendationFromPrediction: jest.fn(() => ({ tier: 'mock' })),
+      buildMatchup: jest.fn((home, away) => `${away} @ ${home}`),
+      formatStartTimeLocal: jest.fn(() => 'mock-local-time'),
+      formatCountdown: jest.fn(() => 'mock-countdown'),
+      buildMarketFromOdds: jest.fn(() => null),
+      buildPipelineState: jest.fn((state) => state),
+      WATCHDOG_REASONS: { MARKET_UNAVAILABLE: 'MARKET_UNAVAILABLE' },
+      PRICE_REASONS: { MARKET_PRICE_MISSING: 'MARKET_PRICE_MISSING' },
+    }));
+    jest.doMock('@cheddar-logic/models/src/edge-calculator', () => ({
+      computeSigmaFromHistory: jest.fn(() => ({
+        sigma_source: 'fallback',
+        games_sampled: 0,
+      })),
+      kellyStake: jest.fn(() => ({
+        kelly_fraction: 0.01,
+        kelly_units: 0.25,
+      })),
+    }));
+    jest.doMock('../../models', () => ({
+      getModel: jest.fn(() => ({ name: 'mock-mlb-model' })),
+      computeMLBDriverCards: jest.fn(() => gameDriverCards),
+      computePitcherKDriverCards: jest.fn(() => []),
+    }));
+    jest.doMock('../../models/mlb-model', () => {
+      const actual = jest.requireActual('../../models/mlb-model');
+      return {
+        ...actual,
+        projectF5ML: jest.fn(() => null),
+        projectTeamF5RunsAgainstStarter: jest.fn(() => ({
+          f5_runs: null,
+          degraded_inputs: [],
+        })),
+        setLeagueConstants: jest.fn(),
+      };
+    });
+    jest.doMock('../execution-gate', () => ({
+      evaluateExecution: jest.fn(() => ({
+        shouldBet: true,
+        netEdge: 0.18,
+        blocked_by: [],
+        reason: null,
+        drop_reason: null,
+      })),
+    }));
+    jest.doMock('../../utils/calibration', () => ({
+      applyCalibration: jest.fn((probability) => ({
+        calibratedProb: probability,
+        calibrationSource: 'mock',
+      })),
+    }));
+    jest.doMock('../../models/feature-time-guard', () => ({
+      assertFeatureTimeliness: jest.fn(() => ({
+        ok: true,
+        violations: [],
+      })),
+    }));
+
+    let runMLBModel;
+    jest.isolateModules(() => {
+      ({ runMLBModel } = require('../run_mlb_model'));
+    });
+
+    const result = await runMLBModel({ expectF5Ml: false });
+
+    jest.dontMock('@cheddar-logic/data');
+    jest.dontMock('@cheddar-logic/adapters');
+    jest.dontMock('@cheddar-logic/odds/src/config');
+    jest.dontMock('@cheddar-logic/models');
+    jest.dontMock('@cheddar-logic/models/src/edge-calculator');
+    jest.dontMock('../../models');
+    jest.dontMock('../../models/mlb-model');
+    jest.dontMock('../execution-gate');
+    jest.dontMock('../../utils/calibration');
+    jest.dontMock('../../models/feature-time-guard');
+
+    return { result, dataMocks };
+  }
+
+  afterEach(() => {
+    jest.resetModules();
+    jest.clearAllMocks();
+  });
+
+  test('official play plus lean → both card_payloads are inserted and lean stays LEAN', async () => {
+    const gameDriverCards = [
+      {
+        market: 'f5_total',
+        prediction: 'OVER',
+        confidence: 0.85,
+        ev_threshold_passed: true,
+        status: 'FIRE',
+        action: 'FIRE',
+        classification: 'BASE',
+        reasoning: 'F5 edge qualifies',
+        reason_codes: [],
+        missing_inputs: [],
+        projection: { projected_total: 5.6 },
+        drivers: [{ projected: 5.6, edge: 1.1 }],
+      },
+      {
+        market: 'full_game_ml',
+        prediction: 'HOME',
+        confidence: 0.74,
+        ev_threshold_passed: true,
+        status: 'WATCH',
+        action: 'WATCH',
+        classification: 'LEAN',
+        reasoning: 'Full-game moneyline is lean-only',
+        reason_codes: [],
+        missing_inputs: [],
+        drivers: [{ edge: 0.14, win_prob_home: 0.57 }],
+      },
+    ];
+    const logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+    const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    const infoSpy = jest.spyOn(console, 'info').mockImplementation(() => {});
+    const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+
+    const { result, dataMocks } = await runImeScenario({ gameDriverCards });
+
+    expect(result.success).toBe(true);
+    expect(result.cardsGenerated).toBe(2);
+    expect(dataMocks.insertCardPayload).toHaveBeenCalledTimes(2);
+    expect(
+      dataMocks.insertCardPayload.mock.calls.map(([card]) => card.cardType),
+    ).toEqual(expect.arrayContaining(['mlb-f5', 'mlb-full-game-ml']));
+    expect(
+      dataMocks.insertCardPayload.mock.calls.map(([card]) => card.payloadData.classification),
+    ).toEqual(expect.arrayContaining(['BASE', 'LEAN']));
+    expect(dataMocks.prepareModelAndCardWrite).toHaveBeenCalledWith(
+      GAME_ID,
+      'mlb-model-v1',
+      'mlb-full-game-ml',
+      expect.objectContaining({ runId: expect.any(String) }),
+    );
+
+    logSpy.mockRestore();
+    warnSpy.mockRestore();
+    infoSpy.mockRestore();
+    errorSpy.mockRestore();
+  });
+
+  test('no qualifying driver cards → SKIP_MARKET_NO_EDGE logs explicitly and inserts zero cards', async () => {
+    const gameDriverCards = [
+      {
+        market: 'f5_total',
+        prediction: 'OVER',
+        confidence: 0.41,
+        ev_threshold_passed: false,
+        status: 'PASS',
+        action: 'PASS',
+        classification: 'PASS',
+        reasoning: 'No edge on F5 total',
+        reason_codes: ['PASS_NO_EDGE'],
+        missing_inputs: [],
+      },
+      {
+        market: 'full_game_ml',
+        prediction: 'HOME',
+        confidence: 0.39,
+        ev_threshold_passed: false,
+        status: 'PASS',
+        action: 'PASS',
+        classification: 'PASS',
+        reasoning: 'No edge on full-game moneyline',
+        reason_codes: ['PASS_NO_EDGE'],
+        missing_inputs: [],
+      },
+    ];
+    const logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+    const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    const infoSpy = jest.spyOn(console, 'info').mockImplementation(() => {});
+    const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+
+    const { result, dataMocks } = await runImeScenario({ gameDriverCards });
+
+    expect(result.success).toBe(true);
+    expect(result.cardsGenerated).toBe(0);
+    expect(dataMocks.insertCardPayload).not.toHaveBeenCalled();
+    expect(
+      logSpy.mock.calls.some(([line]) => String(line).includes('SKIP_MARKET_NO_EDGE')),
+    ).toBe(true);
+
+    logSpy.mockRestore();
+    warnSpy.mockRestore();
+    infoSpy.mockRestore();
+    errorSpy.mockRestore();
+  });
+});

@@ -12,6 +12,12 @@ import {
 test('legacy-repair smoke', () => {
   assert.ok(getSportCardTypeContract('NHL'));
   assert.equal(
+    getSportCardTypeContract('NHL')?.playProducerCardTypes.has(
+      'nhl-player-shots',
+    ),
+    true,
+  );
+  assert.equal(
     isPlayItem(
       {
         cardType: 'nhl-totals-call',
@@ -48,6 +54,18 @@ test('legacy-repair smoke', () => {
   assert.equal(
     getSourcePlayAction({ action: 'FIRE', cardType: 'x', cardTitle: 'x', prediction: 'HOME', confidence: 1, tier: 'BEST', reasoning: 'x', evPassed: true, driverKey: 'x' }),
     'FIRE',
+  );
+  assert.equal(
+    getSportCardTypeContract('MLB')?.playProducerCardTypes.has(
+      'mlb-full-game',
+    ),
+    true,
+  );
+  assert.equal(
+    getSportCardTypeContract('MLB')?.playProducerCardTypes.has(
+      'mlb-full-game-ml',
+    ),
+    true,
   );
   assert.equal(resolveSourceModelProb({ model_prob: 0.62 } as never), 0.62);
 });

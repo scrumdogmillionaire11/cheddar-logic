@@ -40,6 +40,15 @@ describe('evaluateSingleMarket: null card', () => {
     expect(result.inputs_ok).toBe(false);
     expect(result.candidate_id).toBe('game-001::unknown');
   });
+
+  test('returns REJECTED_INPUTS for malformed cards with no status or threshold fields', () => {
+    const result = evaluateSingleMarket(buildCard(), DEFAULT_CTX);
+    expect(result.status).toBe('REJECTED_INPUTS');
+    expect(result.reason_codes).toContain(
+      REASON_CODES.UNCLASSIFIED_MARKET_STATE,
+    );
+    expect(result.inputs_ok).toBe(false);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -232,5 +241,23 @@ describe('finalizeGameMarketEvaluation: all REJECTED_INPUTS → SKIP_GAME_INPUT_
     expect(game.official_plays).toHaveLength(0);
     expect(game.leans).toHaveLength(0);
     expect(game.rejected).toHaveLength(2);
+  });
+});
+
+describe('evaluateSingleMarket: fallback reason code source', () => {
+  test('uses REASON_CODES for unclassified market states', () => {
+    const result = evaluateSingleMarket(
+      buildCard({
+        status: 'UNKNOWN_STATE',
+        classification: 'UNKNOWN_STATE',
+        ev_threshold_passed: true,
+      }),
+      DEFAULT_CTX,
+    );
+
+    expect(result.status).toBe('REJECTED_THRESHOLD');
+    expect(result.reason_codes).toEqual([
+      REASON_CODES.UNCLASSIFIED_MARKET_STATE,
+    ]);
   });
 });

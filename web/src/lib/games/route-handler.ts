@@ -111,6 +111,7 @@ import {
   extractShotsFromRecentGames,
 } from '@/lib/games/normalizers';
 import {
+  ACTIVE_SPORT_CARD_TYPE_CONTRACT,
   inferMarketFromCardType,
   applyCardTypeKindContract,
   isCanonicalTotalsCallPlay,
@@ -641,12 +642,6 @@ interface IngestFailureRow {
   last_seen: string;
 }
 
-type MarketType = NonNullable<Play['market_type']>;
-type SportCardTypeContract = {
-  playProducerCardTypes: Set<string>;
-  evidenceOnlyCardTypes: Set<string>;
-  expectedPlayableMarkets: Set<MarketType>;
-};
 type ApiGamesResponseMode = 'full' | 'degraded_base_games' | 'stale_cache';
 type GamesTimeoutStage =
   | 'db_ready'
@@ -1059,65 +1054,6 @@ export function buildGamesTimeoutFallbackPayload(params: {
     },
   };
 }
-
-const ACTIVE_SPORT_CARD_TYPE_CONTRACT: Record<string, SportCardTypeContract> = {
-  NBA: {
-    playProducerCardTypes: new Set([
-      'nba-totals-call',
-      'nba-spread-call',
-    ]),
-    evidenceOnlyCardTypes: new Set([
-      'nba-base-projection',
-      'nba-total-projection',
-      'nba-rest-advantage',
-      'nba-matchup-style',
-      'nba-blowout-risk',
-      'nba-travel',
-      'nba-lineup',
-      'welcome-home',
-      'welcome-home-v2', // alias: backward compat with existing DB rows
-      // Legacy evidence alias retained for compatibility with historical rows.
-      'nba-model-output',
-    ]),
-    expectedPlayableMarkets: new Set<MarketType>(['SPREAD', 'TOTAL']),
-  },
-  NHL: {
-    playProducerCardTypes: new Set([
-      'nhl-totals-call',
-      'nhl-spread-call',
-      'nhl-moneyline-call',
-      'nhl-pace-totals',
-      'nhl-pace-1p',
-      'nhl-player-shots',
-      'nhl-player-shots-1p',
-      'nhl-player-blk',
-    ]),
-    evidenceOnlyCardTypes: new Set([
-      'nhl-base-projection',
-      'nhl-rest-advantage',
-      'nhl-goalie',
-      'nhl-goalie-certainty',
-      'nhl-model-output',
-      'nhl-shot-environment',
-      'welcome-home',
-      'welcome-home-v2', // alias: backward compat with existing DB rows
-      // Legacy welcome-home alias retained for compatibility with historical rows.
-      'nhl-welcome-home',
-    ]),
-    expectedPlayableMarkets: new Set<MarketType>([
-      'MONEYLINE',
-      'SPREAD',
-      'TOTAL',
-      'FIRST_PERIOD',
-      'PROP',
-    ]),
-  },
-  MLB: {
-    playProducerCardTypes: new Set(['mlb-strikeout', 'mlb-f5', 'mlb-pitcher-k']),
-    evidenceOnlyCardTypes: new Set(['mlb-model-output']),
-    expectedPlayableMarkets: new Set<MarketType>(['PROP', 'FIRST_5_INNINGS']),
-  },
-};
 
 function emitTotalProjectionDriftWarnings(
   games: Array<{ gameId: string; sport: string; plays: Play[] }>,
@@ -3202,12 +3138,16 @@ export async function GET(request: NextRequest) {
         };
 
         // PROP plays (nhl-player-shots, mlb-pitcher-k) and designated projection-surface
-        // card types (nhl-pace-1p, mlb-f5) must pass through even when PROJECTION_ONLY.
+        // card types (nhl-pace-1p, mlb-f5, mlb-full-game, mlb-full-game-ml)
+        // must pass through even when PROJECTION_ONLY.
         // - PROP plays are shown in the Player Props tab with propVerdict='PROJECTION'
-        // - nhl-pace-1p / mlb-f5 are the sole data source for the Game Props tab
+        // - these card types are the sole source for Game Props surfaces in degraded windows
         // Filtering them here means those tabs are permanently empty.
         const isProjectionSurfaceCardType =
-          cardRow.card_type === 'nhl-pace-1p' || cardRow.card_type === 'mlb-f5';
+          cardRow.card_type === 'nhl-pace-1p' ||
+          cardRow.card_type === 'mlb-f5' ||
+          cardRow.card_type === 'mlb-full-game' ||
+          cardRow.card_type === 'mlb-full-game-ml';
         const isPropMarket = play.market_type === 'PROP';
 
         if (play.execution_gate?.drop_reason) {
