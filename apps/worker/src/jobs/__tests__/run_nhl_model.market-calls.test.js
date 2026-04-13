@@ -6,6 +6,8 @@ const {
   attachNhlDriverContextToRawData,
   buildDualRunRecord,
   applyExecutionGateToNhlCard,
+  deriveNhlUncertaintyHoldReasonCodes,
+  applyNhlUncertaintyHold,
   isHardProjectionInputBlock,
 } = require('../run_nhl_model');
 const { validateCardPayload } = require('@cheddar-logic/data');
@@ -737,6 +739,55 @@ describe('run_nhl_model market call generation', () => {
           missing_inputs: ['home_avg_goals_for', 'away_avg_goals_for'],
         }),
       ).toBe(false);
+    });
+  });
+
+  describe('uncertainty HOLD gating (WI-0932)', () => {
+    test('derives goalie and injury HOLD reason codes deterministically', () => {
+      const reasonCodes = deriveNhlUncertaintyHoldReasonCodes({
+        homeGoalieState: { starter_state: 'UNKNOWN' },
+        awayGoalieState: { starter_state: 'CONFIRMED' },
+        availabilityGate: {
+          missingFlags: ['key_player_out'],
+          uncertainFlags: ['key_player_uncertain'],
+        },
+      });
+
+      expect(reasonCodes).toEqual([
+        'GATE_GOALIE_UNCONFIRMED',
+        'BLOCK_INJURY_RISK',
+      ]);
+    });
+
+    test('applies HOLD-equivalent payload state without converting to PASS', () => {
+      const card = {
+        payloadData: {
+          action: 'FIRE',
+          status: 'FIRE',
+          classification: 'BASE',
+          execution_status: 'EXECUTABLE',
+          reason_codes: ['EDGE_CLEAR'],
+          pass_reason_code: null,
+          decision_v2: {
+            official_status: 'PLAY',
+            watchdog_status: 'OK',
+            watchdog_reason_codes: [],
+          },
+        },
+      };
+
+      const changed = applyNhlUncertaintyHold(card, ['GATE_GOALIE_UNCONFIRMED']);
+
+      expect(changed).toBe(true);
+      expect(card.payloadData.action).toBe('HOLD');
+      expect(card.payloadData.status).toBe('WATCH');
+      expect(card.payloadData.classification).toBe('LEAN');
+      expect(card.payloadData.pass_reason_code).toBeNull();
+      expect(card.payloadData.gate_reason).toBe('GATE_GOALIE_UNCONFIRMED');
+      expect(card.payloadData.reason_codes).toContain('GATE_GOALIE_UNCONFIRMED');
+      expect(card.payloadData.decision_v2.official_status).toBe('LEAN');
+      expect(card.payloadData.decision_v2.watchdog_status).toBe('CAUTION');
+      expect(card.payloadData.decision_v2.watchdog_reason_codes).toContain('GOALIE_UNCONFIRMED');
     });
   });
 });

@@ -28,7 +28,13 @@ const WATCHDOG_REASONS = {
   // WI-0383: goalie identity uncertainty reason codes
   GOALIE_UNCONFIRMED: 'GOALIE_UNCONFIRMED',
   GOALIE_CONFLICTING: 'GOALIE_CONFLICTING',
+  INJURY_UNCERTAIN: 'INJURY_UNCERTAIN',
 };
+const HOLD_EQUIVALENT_WATCHDOG_REASONS = new Set([
+  WATCHDOG_REASONS.GOALIE_UNCONFIRMED,
+  WATCHDOG_REASONS.GOALIE_CONFLICTING,
+  WATCHDOG_REASONS.INJURY_UNCERTAIN,
+]);
 
 const PRICE_REASONS = {
   EDGE_CLEAR: 'EDGE_CLEAR',
@@ -872,13 +878,20 @@ function getHeavyFavoritePlayEdgeMultiplier(price) {
 function hasHardInvalidationReason({
   watchdogStatus,
   priceReasonCodes = [],
+  watchdogReasonCodes = [],
 }) {
-  if (watchdogStatus === 'BLOCKED') return true;
+  if (watchdogStatus === 'BLOCKED') {
+    const hasNonHoldBlockingReason = watchdogReasonCodes.some(
+      (code) => !HOLD_EQUIVALENT_WATCHDOG_REASONS.has(code),
+    );
+    if (hasNonHoldBlockingReason) return true;
+  }
   return priceReasonCodes.some((code) => HARD_INVALIDATION_PRICE_REASONS.has(code));
 }
 
 function computeOfficialStatus({
   watchdogStatus,
+  watchdogReasonCodes = [],
   sharpPriceStatus,
   supportScore,
   edgePct,
@@ -889,7 +902,12 @@ function computeOfficialStatus({
 }) {
   const thresholds = getThresholdProfile(marketType, sport, sigmaSource);
 
-  if (watchdogStatus === 'BLOCKED') return 'PASS';
+  if (watchdogStatus === 'BLOCKED') {
+    const hasNonHoldBlockingReason = watchdogReasonCodes.some(
+      (code) => !HOLD_EQUIVALENT_WATCHDOG_REASONS.has(code),
+    );
+    return hasNonHoldBlockingReason ? 'PASS' : 'LEAN';
+  }
   if (sharpPriceStatus === 'PENDING_VERIFICATION') return 'PASS';
   if (sharpPriceStatus === 'UNPRICED' || sharpPriceStatus === 'COTTAGE') {
     return 'PASS';
@@ -1086,6 +1104,23 @@ function computeWatchdog(payload, context = {}) {
     watchdogReasonCodes.push(WATCHDOG_REASONS.CONSISTENCY_MISSING);
   }
 
+  const payloadReasonTokens = uniqueReasonCodes(
+    payload?.gate_reason,
+    payload?.blocked_reason_code,
+    payload?.reason_codes,
+  )
+    .map((code) => String(code).toUpperCase())
+    .filter(Boolean);
+  if (payloadReasonTokens.includes('GATE_GOALIE_UNCONFIRMED')) {
+    watchdogReasonCodes.push(WATCHDOG_REASONS.GOALIE_UNCONFIRMED);
+  }
+  if (payloadReasonTokens.includes('GOALIE_CONFLICTING')) {
+    watchdogReasonCodes.push(WATCHDOG_REASONS.GOALIE_CONFLICTING);
+  }
+  if (payloadReasonTokens.includes('BLOCK_INJURY_RISK')) {
+    watchdogReasonCodes.push(WATCHDOG_REASONS.INJURY_UNCERTAIN);
+  }
+
   const capturedAt =
     asString(payload?.odds_context?.captured_at) ||
     asString(context?.oddsSnapshot?.captured_at) ||
@@ -1130,6 +1165,7 @@ function computeWatchdog(payload, context = {}) {
       code === WATCHDOG_REASONS.CONSISTENCY_MISSING ||
       code === WATCHDOG_REASONS.PARSE_FAILURE ||
       code === WATCHDOG_REASONS.MARKET_UNAVAILABLE ||
+      HOLD_EQUIVALENT_WATCHDOG_REASONS.has(code) ||
       code === WATCHDOG_REASONS.STALE_MARKET_INPUT ||
       (code === WATCHDOG_REASONS.STALE_SNAPSHOT &&
         staleMinutes !== null &&
@@ -1143,11 +1179,11 @@ function computeWatchdog(payload, context = {}) {
     watchdogReasonCodes.push(WATCHDOG_REASONS.STALE_SNAPSHOT);
   }
 
-  const uniqueReasonCodes = Array.from(new Set(watchdogReasonCodes));
+  const uniqueWatchdogReasonCodes = Array.from(new Set(watchdogReasonCodes));
 
   return {
     watchdog_status: watchdogStatus,
-    watchdog_reason_codes: uniqueReasonCodes,
+    watchdog_reason_codes: uniqueWatchdogReasonCodes,
     missing_data: {
       missing_fields: missingFields,
       source_attempts: sourceAttempts,
@@ -1437,6 +1473,7 @@ function buildDecisionV2(payload, context = {}) {
 
     const computedOfficialStatus = computeOfficialStatus({
       watchdogStatus: watchdog.watchdog_status,
+      watchdogReasonCodes: watchdog.watchdog_reason_codes,
       sharpPriceStatus: priceDecision.sharp_price_status,
       supportScore: support_score,
       edgePct: edge_pct,
@@ -1516,6 +1553,7 @@ function buildDecisionV2(payload, context = {}) {
       edge_pct < heavyFavoritePlayEdgeMin &&
       !hasHardInvalidationReason({
         watchdogStatus: watchdog.watchdog_status,
+        watchdogReasonCodes: watchdog.watchdog_reason_codes,
         priceReasonCodes: finalPriceReasonCodes,
       });
     if (heavyFavoriteGateFailed) {

@@ -875,6 +875,86 @@ function buildNhlGoalieCertaintyPair(paceResult) {
   return `${home}/${away}`;
 }
 
+function deriveNhlUncertaintyHoldReasonCodes({
+  homeGoalieState,
+  awayGoalieState,
+  availabilityGate,
+}) {
+  const reasons = [];
+  const homeStarterState = String(homeGoalieState?.starter_state || '').toUpperCase();
+  const awayStarterState = String(awayGoalieState?.starter_state || '').toUpperCase();
+  const availabilityMissing = Array.isArray(availabilityGate?.missingFlags)
+    ? availabilityGate.missingFlags
+    : [];
+  const availabilityUncertain = Array.isArray(availabilityGate?.uncertainFlags)
+    ? availabilityGate.uncertainFlags
+    : [];
+
+  if (
+    homeStarterState === 'UNKNOWN' ||
+    homeStarterState === 'CONFLICTING' ||
+    awayStarterState === 'UNKNOWN' ||
+    awayStarterState === 'CONFLICTING'
+  ) {
+    reasons.push('GATE_GOALIE_UNCONFIRMED');
+  }
+
+  if (
+    availabilityMissing.includes('key_player_out') ||
+    availabilityUncertain.includes('key_player_uncertain')
+  ) {
+    reasons.push('BLOCK_INJURY_RISK');
+  }
+
+  return Array.from(new Set(reasons));
+}
+
+function applyNhlUncertaintyHold(card, reasonCodes = []) {
+  if (!card?.payloadData || !Array.isArray(reasonCodes) || reasonCodes.length === 0) {
+    return false;
+  }
+
+  const payload = card.payloadData;
+  const existingReasonCodes = Array.isArray(payload.reason_codes)
+    ? payload.reason_codes
+    : [];
+  const mergedReasonCodes = Array.from(
+    new Set([...existingReasonCodes, ...reasonCodes]),
+  );
+  const primaryReason = reasonCodes[0] || null;
+
+  payload.action = 'HOLD';
+  payload.status = 'WATCH';
+  payload.classification = 'LEAN';
+  payload.execution_status = 'BLOCKED';
+  payload.pass_reason_code = null;
+  payload.blocked_reason_code = primaryReason;
+  payload.gate_reason = primaryReason;
+  payload.reason_codes = mergedReasonCodes;
+
+  if (payload.decision_v2 && typeof payload.decision_v2 === 'object') {
+    const currentWatchdogReasons = Array.isArray(payload.decision_v2.watchdog_reason_codes)
+      ? payload.decision_v2.watchdog_reason_codes
+      : [];
+    const mappedWatchdogReasons = reasonCodes
+      .map((code) => {
+        if (code === 'GATE_GOALIE_UNCONFIRMED') return 'GOALIE_UNCONFIRMED';
+        if (code === 'BLOCK_INJURY_RISK') return 'INJURY_UNCERTAIN';
+        return null;
+      })
+      .filter(Boolean);
+
+    payload.decision_v2.official_status = 'LEAN';
+    payload.decision_v2.primary_reason_code = primaryReason;
+    payload.decision_v2.watchdog_status = 'CAUTION';
+    payload.decision_v2.watchdog_reason_codes = Array.from(
+      new Set([...currentWatchdogReasons, ...mappedWatchdogReasons]),
+    );
+  }
+
+  return true;
+}
+
 function applyNhlGoalieExecutionStatusGuard(card, paceResult) {
   if (!isNhlSnapshotCard(card) || !card?.payloadData || !paceResult) return;
   if (!hasUnknownGoalie(paceResult)) return;
@@ -2287,6 +2367,16 @@ async function runNHLModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
               { gameTimeUtc: oddsSnapshot.game_time_utc },
             ),
           };
+          const uncertaintyHoldReasonCodes = deriveNhlUncertaintyHoldReasonCodes({
+            homeGoalieState: canonicalGoalieState?.home,
+            awayGoalieState: canonicalGoalieState?.away,
+            availabilityGate,
+          });
+          if (uncertaintyHoldReasonCodes.length > 0) {
+            console.log(
+              `  [hold-gate] ${gameId}: ${uncertaintyHoldReasonCodes.join(', ')}`,
+            );
+          }
 
           // WI-0827: Stamp goalie available_at into raw_data.feature_timestamps so
           // assertFeatureTimeliness can detect future-leakage on homeGoalieCertainty /
@@ -2485,6 +2575,7 @@ async function runNHLModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
               nhlPaceAuditContext?.paceResult,
             );
             applyUiActionFields(card.payloadData, { oddsSnapshot });
+            applyNhlUncertaintyHold(card, uncertaintyHoldReasonCodes);
             attachNhlExecutionEnvelope(card, { projectionReady: true });
             attachNhlSnapshotAuditFields(card, {
               paceResult: nhlPaceAuditContext?.paceResult,
@@ -2568,6 +2659,7 @@ async function runNHLModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
                 card.payloadData.decision_v2.official_status = 'LEAN';
               }
             }
+            applyNhlUncertaintyHold(card, uncertaintyHoldReasonCodes);
             const executionGateOutcome = applyExecutionGateToNhlCard(card, {
               oddsSnapshot,
             });
@@ -2854,6 +2946,8 @@ module.exports = {
   attachNhlDriverContextToRawData,
   buildDualRunRecord,
   applyExecutionGateToNhlCard,
+  deriveNhlUncertaintyHoldReasonCodes,
+  applyNhlUncertaintyHold,
   applyNoBetGuard,
   applyPlayoffSigmaMultiplier,
   isHardProjectionInputBlock,
