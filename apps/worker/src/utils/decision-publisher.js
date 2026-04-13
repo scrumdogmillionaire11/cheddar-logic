@@ -313,6 +313,46 @@ function finalizeDecisionFields(payload, context = {}) {
     return payload;
   }
 
+  const canonical1PDecision = payload?.nhl_1p_decision;
+  if (canonical1PDecision && typeof canonical1PDecision === 'object') {
+    const surfacedStatus = String(canonical1PDecision?.surfaced_status || '').toUpperCase();
+    if (surfacedStatus === 'PLAY') {
+      payload.classification = 'BASE';
+      payload.action = 'FIRE';
+      payload.status = 'FIRE';
+      payload.pass_reason_code = null;
+      payload.reason_codes = [];
+    } else if (surfacedStatus === 'SLIGHT EDGE') {
+      payload.classification = 'LEAN';
+      payload.action = 'HOLD';
+      payload.status = 'WATCH';
+      payload.pass_reason_code = null;
+      payload.reason_codes = [];
+    } else if (surfacedStatus === 'PASS') {
+      const reason =
+        canonical1PDecision?.surfaced_reason_code ||
+        payload.pass_reason_code ||
+        payload.decision_v2?.primary_reason_code ||
+        'FIRST_PERIOD_EXECUTION_BLOCKED';
+      payload.classification = 'PASS';
+      payload.action = 'PASS';
+      payload.status = 'PASS';
+      payload.pass_reason_code = reason;
+      payload.reason_codes = normalizeStrictReasonCodes([reason]);
+    }
+    payload.decision_v2 = {
+      ...(payload.decision_v2 && typeof payload.decision_v2 === 'object' ? payload.decision_v2 : {}),
+      official_status:
+        surfacedStatus === 'PLAY' ? 'PLAY' : surfacedStatus === 'SLIGHT EDGE' ? 'LEAN' : 'PASS',
+      primary_reason_code:
+        canonical1PDecision?.surfaced_reason_code || payload.decision_v2?.primary_reason_code || null,
+      pipeline_version: payload.decision_v2?.pipeline_version || 'v2',
+    };
+    payload.execution_status = resolveExecutionStatus(payload);
+    syncSelectionCompatibilityFields(payload);
+    return payload;
+  }
+
   syncSelectionCompatibilityFields(payload);
 
   if (payload.official_eligible === false) {

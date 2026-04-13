@@ -2,6 +2,7 @@
 
 require('dotenv').config();
 const { v4: uuidV4 } = require('uuid');
+const { DateTime } = require('luxon');
 
 const {
   insertJobRun,
@@ -486,6 +487,14 @@ function classifyDecisionBucket(card) {
   }
 
   const payload = card?.payloadData || {};
+  const canonical1PDecision = payload?.nhl_1p_decision;
+  if (normalizeMarketTag(card) === '1P' && canonical1PDecision && typeof canonical1PDecision === 'object') {
+    const surfacedStatus = normalizeToken(canonical1PDecision?.surfaced_status);
+    if (surfacedStatus === 'PLAY') return 'official';
+    if (surfacedStatus === 'SLIGHT EDGE') return 'lean';
+    if (surfacedStatus === 'PASS') return 'pass_blocked';
+  }
+
   const action = normalizeToken(payload?.action || payload?.status);
   const classification = normalizeToken(payload?.classification);
   const reasons = [
@@ -509,7 +518,9 @@ function classifyDecisionBucket(card) {
   // while still carrying a directional model call (e.g. BEST_OVER/LEAN_UNDER).
   // In Discord, surface those as actionable from prediction tier.
   const isOnePeriod = normalizeMarketTag(card) === '1P';
-  const hasNoProjectionPass = reasons.some((token) => token.includes('FIRST_PERIOD_NO_PROJECTION'));
+  const hasNoProjectionPass = reasons.some(
+    (token) => token.includes('FIRST_PERIOD_NO_PROJECTION') || token.includes('FIRST_PERIOD_PRICE_UNAVAILABLE'),
+  );
   const predictionToken = normalizeToken(payload?.prediction || payload?.one_p_model_call);
   const hasDirectionalPrediction =
     predictionToken &&
@@ -594,6 +605,8 @@ function normalizeMarketTag(card) {
 
 function selectionSummary(card) {
   const payload = card?.payloadData || {};
+  const canonical1PSide = normalizeSelectionSide(payload?.nhl_1p_decision?.projection?.side);
+  if (canonical1PSide) return canonical1PSide;
   const selection = payload?.selection;
 
   const sideFromPayload =
@@ -863,7 +876,11 @@ async function sendDiscordMessages({ webhookUrl, messages, fetchImpl = fetch }) 
   return sent.length;
 }
 
-function fetchCardsForSnapshot({ maxRows = DEFAULT_MAX_ROWS } = {}) {
+function fetchCardsForSnapshot({ maxRows = DEFAULT_MAX_ROWS, now = new Date() } = {}) {
+  const nowEt = DateTime.fromJSDate(now).setZone('America/New_York');
+  const dayStartUtc = nowEt.startOf('day').toUTC().toISO();
+  const dayEndUtc = nowEt.plus({ days: 1 }).startOf('day').toUTC().toISO();
+
   const db = getDatabase();
   const rows = db
     .prepare(
@@ -893,7 +910,8 @@ function fetchCardsForSnapshot({ maxRows = DEFAULT_MAX_ROWS } = {}) {
         WHERE LOWER(cp.sport) != 'fpl'
           AND LOWER(cp.card_type) != 'potd-call'
           AND g.game_time_utc IS NOT NULL
-          AND datetime(g.game_time_utc) > datetime('now')
+          AND datetime(g.game_time_utc) >= datetime(?)
+          AND datetime(g.game_time_utc) < datetime(?)
           AND NOT EXISTS (
             SELECT 1 FROM card_results cr
             WHERE cr.game_id = cp.game_id AND cr.status = 'settled'
@@ -905,7 +923,7 @@ function fetchCardsForSnapshot({ maxRows = DEFAULT_MAX_ROWS } = {}) {
       LIMIT ?
     `,
     )
-    .all(Math.max(1, Number(maxRows) || DEFAULT_MAX_ROWS));
+    .all(dayStartUtc, dayEndUtc, Math.max(1, Number(maxRows) || DEFAULT_MAX_ROWS));
 
   return rows.map((row) => {
     const matchup =
@@ -1049,7 +1067,7 @@ function resolveWebhookUrlForSport(sport) {
   return String(process.env.DISCORD_CARD_WEBHOOK_URL || '').trim();
 }
 
-async function postDiscordCards({ jobKey = null, dryRun = false } = {}) {
+async function postDiscordCards({ jobKey = null, dryRun = false, now = new Date() } = {}) {
   const enabled = process.env.ENABLE_DISCORD_CARD_WEBHOOKS === 'true';
   const fallbackUrl = String(process.env.DISCORD_CARD_WEBHOOK_URL || '').trim();
   const charLimit = Number(process.env.DISCORD_CARD_WEBHOOK_CHAR_LIMIT || DEFAULT_CHAR_LIMIT);
@@ -1086,8 +1104,8 @@ async function postDiscordCards({ jobKey = null, dryRun = false } = {}) {
       return { success: true, skipped: true, reason: 'idempotent_skip', jobKey };
     }
 
-    const cards = fetchCardsForSnapshot({ maxRows });
-    const snapshot = buildDiscordSnapshot({ cards, now: new Date() });
+    const cards = fetchCardsForSnapshot({ maxRows, now });
+    const snapshot = buildDiscordSnapshot({ cards, now });
 
     // Group chunks by sport so each sport can route to its own webhook channel.
     // Sports with no dedicated URL fall back to DISCORD_CARD_WEBHOOK_URL.

@@ -317,6 +317,7 @@ function DateFilter({
       <input
         type="date"
         value={date}
+        max={new Date().toISOString().slice(0, 10)}
         onChange={(e) => onChange(e.target.value)}
         className="rounded border border-white/20 bg-white/5 px-2 py-1 text-sm text-cloud focus:border-white/40 focus:outline-none"
       />
@@ -335,11 +336,9 @@ function DateFilter({
 // ── Main Page ──────────────────────────────────────────────────────────────
 
 export default function PropsFeedClient() {
-  const today = new Date().toISOString().slice(0, 10);
-
-  const [shotsDate, setShotsDate] = useState(today);
-  const [blkDate, setBlkDate] = useState(today);
-  const [ksDate, setKsDate] = useState(today);
+  const [shotsDate, setShotsDate] = useState('');
+  const [blkDate, setBlkDate] = useState('');
+  const [ksDate, setKsDate] = useState('');
 
   const [shotsRows, setShotsRows] = useState<PlayerShotRow[]>([]);
   const [blkRows, setBlkRows] = useState<PlayerBlkRow[]>([]);

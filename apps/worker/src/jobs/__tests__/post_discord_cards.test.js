@@ -322,7 +322,7 @@ describe('post_discord_cards helpers', () => {
     expect(snapshot.messages[0]).not.toContain('1P | 1.5');
   });
 
-  test('buildDiscordSnapshot keeps directional 1P cards when pass reason is FIRST_PERIOD_NO_PROJECTION', () => {
+  test('buildDiscordSnapshot keeps directional 1P cards when projection exists but 1P price is unavailable', () => {
     const cards = [
       makeCard({
         id: 'pace-1p-no-proj-directional',
@@ -338,7 +338,22 @@ describe('post_discord_cards helpers', () => {
           selection: { side: 'OVER' },
           line: 1.5,
           price: null,
-          pass_reason_code: 'FIRST_PERIOD_NO_PROJECTION',
+          pass_reason_code: 'FIRST_PERIOD_PRICE_UNAVAILABLE',
+          nhl_1p_decision: {
+            projection: {
+              exists: true,
+              side: 'OVER',
+              model_label: 'BEST_OVER',
+            },
+            execution: {
+              market_available: true,
+              price_available: false,
+              is_executable: false,
+              execution_reason: 'PRICE_UNAVAILABLE',
+            },
+            surfaced_status: 'SLIGHT EDGE',
+            surfaced_reason_code: 'FIRST_PERIOD_PRICE_UNAVAILABLE',
+          },
           projection_only: false,
         },
       }),
@@ -347,8 +362,8 @@ describe('post_discord_cards helpers', () => {
     const snapshot = buildDiscordSnapshot({ cards, now: new Date('2026-03-20T14:00:00.000Z') });
 
     expect(snapshot.totalGames).toBe(1);
-    expect(snapshot.sectionCounts.official).toBe(1);
-    expect(snapshot.messages[0]).toContain('🟢 PLAY');
+    expect(snapshot.sectionCounts.lean).toBe(1);
+    expect(snapshot.messages[0]).toContain('🟡 Slight Edge');
     expect(snapshot.messages[0]).toContain('1P | OVER 1.5');
   });
 
@@ -1033,7 +1048,7 @@ describe('postDiscordCards integration', () => {
       'game-1',
       'Boston Bruins',
       'Toronto Maple Leafs',
-      '2035-04-10T00:00:00.000Z',
+      '2035-04-10T20:00:00.000Z',
     );
     db.prepare(
       `INSERT INTO card_payloads (id, game_id, sport, card_type, card_title, created_at, payload_data)
@@ -1064,7 +1079,10 @@ describe('postDiscordCards integration', () => {
     );
     db.close();
 
-    const result = await postDiscordCards({ dryRun: true });
+    const result = await postDiscordCards({
+      dryRun: true,
+      now: new Date('2035-04-10T12:00:00.000Z'),
+    });
     expect(result.success).toBe(true);
     expect(result.totalCards).toBe(1);
   });

@@ -1310,6 +1310,95 @@ function deriveOnePeriodSelection(payloadData) {
   return null;
 }
 
+function deriveOnePeriodModelLabel(payloadData) {
+  const token = String(
+    payloadData?.prediction || payloadData?.one_p_model_call || payloadData?.classification || '',
+  )
+    .trim()
+    .toUpperCase();
+  if (!token) return null;
+  if (token.includes('PASS')) return 'PASS';
+
+  const side = token.includes('OVER') ? 'OVER' : token.includes('UNDER') ? 'UNDER' : null;
+  if (!side) return null;
+  if (token.includes('BEST')) return `BEST_${side}`;
+  if (token.includes('PLAY')) return `PLAY_${side}`;
+  if (token.includes('LEAN')) return `LEAN_${side}`;
+  return `LEAN_${side}`;
+}
+
+function buildNhl1PDecision({ payload, selection, line, sidePrice, oddsSnapshot, isPlayable }) {
+  const modelLabel = deriveOnePeriodModelLabel(payload);
+  const projectedTotal = toFiniteNumber(
+    payload?.model_projection ??
+      payload?.projection?.total ??
+      payload?.projection?.projected_total ??
+      payload?.driver?.inputs?.predicted_1p_total,
+  );
+  const marketAvailable = toFiniteNumber(oddsSnapshot?.total_1p) !== null;
+  const priceAvailable = sidePrice !== null;
+  const directionExists = selection === 'OVER' || selection === 'UNDER';
+  const projectionExists =
+    projectedTotal !== null ||
+    directionExists ||
+    (modelLabel !== null && modelLabel !== 'PASS');
+
+  let executionReason = null;
+  if (!marketAvailable) executionReason = 'MARKET_UNAVAILABLE';
+  else if (!priceAvailable) executionReason = 'PRICE_UNAVAILABLE';
+  else if (!isPlayable) executionReason = 'INTEGRITY_BLOCK';
+
+  let surfacedStatus = 'PASS';
+  let surfacedReasonCode = null;
+  if (!projectionExists) {
+    surfacedStatus = 'PASS';
+    surfacedReasonCode = 'FIRST_PERIOD_NO_PROJECTION';
+  } else if (!directionExists) {
+    surfacedStatus = 'PASS';
+    surfacedReasonCode = 'FIRST_PERIOD_DIRECTION_UNRESOLVED';
+  } else if (isPlayable && (modelLabel?.startsWith('BEST_') || modelLabel?.startsWith('PLAY_'))) {
+    surfacedStatus = 'PLAY';
+  } else if (modelLabel === 'PASS') {
+    surfacedStatus = 'PASS';
+    surfacedReasonCode = 'SUPPORT_BELOW_LEAN_THRESHOLD';
+  } else {
+    surfacedStatus = 'SLIGHT EDGE';
+    if (!isPlayable) {
+      surfacedReasonCode =
+        executionReason === 'PRICE_UNAVAILABLE'
+          ? 'FIRST_PERIOD_PRICE_UNAVAILABLE'
+          : executionReason === 'MARKET_UNAVAILABLE'
+            ? 'FIRST_PERIOD_MARKET_UNAVAILABLE'
+            : 'FIRST_PERIOD_EXECUTION_BLOCKED';
+    }
+  }
+
+  return {
+    projection: {
+      exists: projectionExists,
+      total: projectedTotal,
+      line: toFiniteNumber(line),
+      side: directionExists ? selection : null,
+      model_label: modelLabel,
+      confidence: modelLabel?.startsWith('BEST_')
+        ? 'HIGH'
+        : modelLabel?.startsWith('PLAY_')
+          ? 'MEDIUM'
+          : modelLabel?.startsWith('LEAN_')
+            ? 'LOW'
+            : null,
+    },
+    execution: {
+      market_available: marketAvailable,
+      price_available: priceAvailable,
+      is_executable: Boolean(isPlayable),
+      execution_reason: executionReason,
+    },
+    surfaced_status: surfacedStatus,
+    surfaced_reason_code: surfacedReasonCode,
+  };
+}
+
 function applyNhlSettlementMarketContext(card, oddsSnapshot, sigma1pGatePassed = true) {
   if (!card?.payloadData || typeof card.payloadData !== 'object') return;
   const payload = card.payloadData;
@@ -1384,18 +1473,49 @@ function applyNhlSettlementMarketContext(card, oddsSnapshot, sigma1pGatePassed =
       'SIGMA_1P_INSUFFICIENT_HISTORY',
     ];
   }
-  // When demoted to EVIDENCE, set an explicit no-edge pass_reason_code so the
-  // transform layer classifies this as a healthy no-play (quality='OK') rather
-  // than a fetch failure (quality='DEGRADED'). Without this, nhl-pace-1p EVIDENCE
-  // cards produce 'fetch_failure:play_producer_no_output' → Degraded badge on board.
-  if (!isPlayable && !payload.pass_reason_code) {
-    payload.pass_reason_code =
-      sidePrice === null
-        ? 'FIRST_PERIOD_NO_PROJECTION' // 1P price unavailable in odds feed
-        : 'SUPPORT_BELOW_LEAN_THRESHOLD'; // model PASS — no edge
-    // Sync reason_codes so EVIDENCE cards don't carry stale accumulated codes (AUDIT-FIX-06)
-    payload.reason_codes = [payload.pass_reason_code].filter(Boolean);
+  const nhl1PDecision = buildNhl1PDecision({
+    payload,
+    selection,
+    line,
+    sidePrice,
+    oddsSnapshot,
+    isPlayable,
+  });
+  payload.nhl_1p_decision = nhl1PDecision;
+
+  if (nhl1PDecision.surfaced_status === 'PLAY') {
+    payload.action = 'FIRE';
+    payload.status = 'FIRE';
+    payload.classification = 'BASE';
+    payload.pass_reason_code = null;
+  } else if (nhl1PDecision.surfaced_status === 'SLIGHT EDGE') {
+    payload.action = 'HOLD';
+    payload.status = 'WATCH';
+    payload.classification = 'LEAN';
+    payload.pass_reason_code = null;
+  } else {
+    payload.action = 'PASS';
+    payload.status = 'PASS';
+    payload.classification = 'PASS';
+    payload.pass_reason_code = nhl1PDecision.surfaced_reason_code || payload.pass_reason_code || null;
   }
+
+  if (nhl1PDecision.surfaced_reason_code) {
+    payload.reason_codes = [nhl1PDecision.surfaced_reason_code].filter(Boolean);
+  } else if (Array.isArray(payload.reason_codes)) {
+    payload.reason_codes = payload.reason_codes.filter(Boolean);
+  }
+
+  payload.decision_v2 = {
+    ...(payload.decision_v2 && typeof payload.decision_v2 === 'object' ? payload.decision_v2 : {}),
+    official_status:
+      nhl1PDecision.surfaced_status === 'PLAY'
+        ? 'PLAY'
+        : nhl1PDecision.surfaced_status === 'SLIGHT EDGE'
+          ? 'LEAN'
+          : 'PASS',
+    primary_reason_code: nhl1PDecision.surfaced_reason_code || payload.decision_v2?.primary_reason_code || null,
+  };
   payload.selection =
     selection !== null
       ? {

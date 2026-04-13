@@ -568,6 +568,61 @@ describe('run_nhl_model market call generation', () => {
     expect(card.payloadData.selection).toEqual({ side: 'OVER' });
     expect(card.payloadData.price).toBeNull();
     expect(card.payloadData.kind).toBe('EVIDENCE');
+    expect(card.payloadData.nhl_1p_decision).toMatchObject({
+      projection: {
+        exists: true,
+        side: 'OVER',
+      },
+      execution: {
+        market_available: true,
+        price_available: false,
+        is_executable: false,
+        execution_reason: 'PRICE_UNAVAILABLE',
+      },
+      surfaced_status: 'SLIGHT EDGE',
+      surfaced_reason_code: 'FIRST_PERIOD_PRICE_UNAVAILABLE',
+    });
+    expect(card.payloadData.pass_reason_code).toBeNull();
+    expect(card.payloadData.action).toBe('HOLD');
+    expect(card.payloadData.status).toBe('WATCH');
+  });
+
+  test('marks true no-projection 1P payloads as PASS with FIRST_PERIOD_NO_PROJECTION', () => {
+    const oddsSnapshot = {
+      ...buildBaseOddsSnapshot(),
+      total_1p: null,
+      total_1p_price_over: null,
+      total_1p_price_under: null,
+    };
+
+    const card = {
+      cardType: 'nhl-pace-1p',
+      payloadData: {
+        status: 'WATCH',
+        classification: 'PASS',
+        prediction: 'PASS',
+        selection: null,
+        driver: { inputs: {} },
+      },
+    };
+
+    applyNhlSettlementMarketContext(card, oddsSnapshot);
+
+    expect(card.payloadData.nhl_1p_decision).toMatchObject({
+      projection: {
+        exists: false,
+        side: null,
+      },
+      execution: {
+        market_available: false,
+        price_available: false,
+        is_executable: false,
+      },
+      surfaced_status: 'PASS',
+      surfaced_reason_code: 'FIRST_PERIOD_NO_PROJECTION',
+    });
+    expect(card.payloadData.pass_reason_code).toBe('FIRST_PERIOD_NO_PROJECTION');
+    expect(card.payloadData.action).toBe('PASS');
   });
 
   test('adds NHL driver context metadata with sourced special-teams and shot fields', () => {
