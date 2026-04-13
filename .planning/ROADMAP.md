@@ -144,3 +144,23 @@ Plans:
 
 Plans:
 - [ ] WI-0911-01-PLAN.md — Lock `nhl-player-blk` as projection-audit-only, add market-specific closeout reason metadata, and harden settlement tests (Wave 1)
+
+---
+
+### Phase: discord-3layer — 3-Layer Discord Architecture
+
+**Goal**: Collapse the Discord webhook pipeline from 9 inference layers to 3. Every card payload is stamped with canonical `webhook_bucket`, `webhook_eligible`, `webhook_display_side`, `webhook_lean_eligible`, and `webhook_reason_code` fields at publish time (Layer A). The Discord formatter reads these fields directly with no threshold math, no sport-specific bucket logic, and no model imports (Layer B). Transport handles chunking and routing only (Layer C — already clean).
+
+**Requirements:** [DISCORD-LAYER-01, DISCORD-LAYER-02, DISCORD-LAYER-03, DISCORD-LAYER-04, DISCORD-LAYER-05]
+
+- `DISCORD-LAYER-01`: `computeWebhookFields(payload)` exported from `decision-publisher.js`; called in `publishDecisionForCard()` for all card kinds
+- `DISCORD-LAYER-02`: NHL total bucket derived from `payload.nhl_totals_status.status` (already stamped by model runner) — no re-computation in Discord
+- `DISCORD-LAYER-03`: NHL 1P bucket derived from `payload.nhl_1p_decision.surfaced_status` — no re-computation in Discord
+- `DISCORD-LAYER-04`: `classifyNhlTotalsBucketStatus()` deleted from `post_discord_cards.js`; `classifyNhlTotalsStatus` import removed
+- `DISCORD-LAYER-05`: Four Discord functions (`classifyDecisionBucket`, `isDisplayableWebhookCard`, `selectionSummary`, `passesLeanThreshold`) read canonical `webhook_*` fields first; legacy fallbacks preserved for pre-deploy payloads
+
+**Plans:** 2 plans in 2 waves
+
+Plans:
+- [ ] discord-3layer-01-PLAN.md — Layer A: Publisher stamps webhook_bucket/eligible/display_side/lean_eligible/reason_code on every card (Wave 1)
+- [ ] discord-3layer-02-PLAN.md — Layer B: Discord reads canonical webhook fields; deletes classifyNhlTotalsBucketStatus (Wave 2)
