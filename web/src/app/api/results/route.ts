@@ -17,6 +17,7 @@ import {
   deriveModelFamily,
   deriveModelVersion,
   PROJECTION_TRACKING_CARD_TYPES,
+  shouldTrackInResults,
 } from './projection-metrics';
 
 const ALLOWED_SPORTS = ['NHL', 'NBA', 'NCAAM', 'MLB', 'NFL'] as const;
@@ -805,6 +806,10 @@ export async function GET(request: NextRequest) {
     for (const row of actionableSourceStmt.iterate(
       ...ids,
     ) as Iterable<ActionableSourceRow>) {
+      if (!shouldTrackInResults(row.card_type)) {
+        continue;
+      }
+
       const parsed = safeJsonParse(row.payload_data);
       const payload = parsed.data as Record<string, unknown> | null;
       if (deriveResultCardMode(payload, row.card_type) !== 'ODDS_BACKED') {
@@ -1000,6 +1005,10 @@ export async function GET(request: NextRequest) {
       : [];
 
     const ledgerRows = ledger.flatMap((row) => {
+      if (!shouldTrackInResults(row.card_type)) {
+        return [];
+      }
+
       const parsed = safeJsonParse(row.payload_data);
       const payload = parsed.data as Record<string, unknown> | null;
       if (deriveResultCardMode(payload, row.card_type) !== 'ODDS_BACKED') {

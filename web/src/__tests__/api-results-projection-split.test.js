@@ -2,7 +2,9 @@ import assert from 'node:assert/strict';
 
 import {
   buildProjectionSummaries,
+  deriveCardFamily,
   deriveResultCardMode,
+  shouldTrackInResults,
 } from '../app/api/results/projection-metrics.ts';
 
 function buildNhlShotsProjectionRow() {
@@ -82,6 +84,46 @@ function run() {
     }),
     'PROJECTION_ONLY',
     'projection-floor line source must infer PROJECTION_ONLY',
+  );
+  assert.strictEqual(
+    deriveCardFamily('NHL', 'nhl-moneyline-call'),
+    'NHL_ML',
+    'nhl-moneyline-call must resolve to NHL_ML',
+  );
+  assert.strictEqual(
+    deriveCardFamily('MLB', 'mlb-full-game'),
+    'MLB_TOTAL',
+    'mlb-full-game must resolve to MLB_TOTAL',
+  );
+  assert.strictEqual(
+    deriveCardFamily('MLB', 'mlb-full-game-ml'),
+    'MLB_ML',
+    'mlb-full-game-ml must resolve to MLB_ML',
+  );
+  assert.strictEqual(
+    deriveCardFamily('MLB', 'mlb-totals-call'),
+    'MLB_TOTAL',
+    'legacy mlb-totals-call alias must remain mapped',
+  );
+  assert.strictEqual(
+    deriveCardFamily('NHL', 'nhl-ml-call'),
+    'NHL_ML',
+    'legacy nhl-ml-call alias must remain mapped',
+  );
+  assert.strictEqual(
+    deriveCardFamily('MLB', 'mlb-ml-call'),
+    'MLB_ML',
+    'legacy mlb-ml-call alias must remain mapped',
+  );
+  assert.strictEqual(
+    shouldTrackInResults('potd-call'),
+    false,
+    'potd-call must be excluded from /results tracking',
+  );
+  assert.strictEqual(
+    shouldTrackInResults('nhl-moneyline-call'),
+    true,
+    'non-POTD odds-backed cards must remain tracked in /results',
   );
 
   const summaries = buildProjectionSummaries([

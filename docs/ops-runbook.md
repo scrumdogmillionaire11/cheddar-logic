@@ -424,6 +424,27 @@ Expected relationships:
 - For the same recent window, `displayed_last_2h = pending_displayed + settled_displayed_last_2h`.
 - `/api/results` remains display-log scoped (no phantom rows outside `card_display_log`).
 
+### `/results` Betting Record visibility gates (WI-0922)
+
+Use these rules when validating whether a market should appear in `/results`
+**Betting Record**:
+
+- The card must have been displayed and written to `card_display_log`.
+- A matching `card_results` row must exist.
+- `card_results.status` must be `settled`.
+- `deriveResultCardMode()` must classify the row as `ODDS_BACKED`.
+- `/api/results` must recognize the family for the settled `card_type`.
+
+Active Betting Record families covered by parity mapping in this WI:
+
+- `NBA`: full-game total, spread
+- `NHL`: full-game total, full-game moneyline
+- `MLB`: full-game total, full-game moneyline
+
+Everything else remains projection-only or excluded from Betting Record pending a
+future work item with explicit worker capability and policy changes. That
+includes props, `MLB_F5_*`, and `NHL_1P_TOTAL`.
+
 ### Settlement contract details (totals + P/L)
 
 - Canonical P/L formula:

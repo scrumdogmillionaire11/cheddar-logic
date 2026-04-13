@@ -59,6 +59,14 @@ export const PROJECTION_TRACKING_CARD_TYPES: readonly string[] = [
   'nhl-player-blk',
 ] as const;
 
+const RESULTS_EXCLUDED_CARD_TYPES = new Set(['potd-call']);
+
+export function shouldTrackInResults(cardType: string | null | undefined): boolean {
+  const normalized = String(cardType || '').trim().toLowerCase();
+  if (!normalized) return true;
+  return !RESULTS_EXCLUDED_CARD_TYPES.has(normalized);
+}
+
 const PROJECTION_LINE_SOURCES = new Set([
   'projection_floor',
   'synthetic',
@@ -408,6 +416,7 @@ const CARD_FAMILY_MAP: Record<string, string> = {
   'nhl-puckline': 'NHL_SPREAD',
   // NHL moneyline
   'nhl-ml-call': 'NHL_ML',
+  'nhl-moneyline-call': 'NHL_ML',
   'nhl-moneyline': 'NHL_ML',
   // NHL player shots
   'nhl-player-shots': 'NHL_PLAYER_SHOTS',
@@ -427,10 +436,12 @@ const CARD_FAMILY_MAP: Record<string, string> = {
   'mlb-pitcher-k': 'MLB_PITCHER_K',
   // MLB full-game totals
   'mlb-totals-call': 'MLB_TOTAL',
+  'mlb-full-game': 'MLB_TOTAL',
   // MLB spread
   'mlb-spread-call': 'MLB_SPREAD',
   // MLB moneyline
   'mlb-ml-call': 'MLB_ML',
+  'mlb-full-game-ml': 'MLB_ML',
 };
 
 const MODEL_FAMILY_LABELS: Record<string, string> = {
