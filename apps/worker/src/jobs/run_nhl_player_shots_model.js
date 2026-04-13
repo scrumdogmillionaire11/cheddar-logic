@@ -9,7 +9,7 @@
  *   1 = failure
  */
 
-require('dotenv').config();
+require('dotenv').config({ path: require('path').resolve(__dirname, '../../../../.env') });
 const { v4: uuidV4 } = require('uuid');
 const {
   getDatabase,

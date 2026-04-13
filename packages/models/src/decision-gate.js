@@ -148,7 +148,13 @@ function isRecommendationPayload(payload) {
     payload.market_type,
     payload.recommended_bet_type,
   );
-  if (market === 'unknown' || market === 'prop') return false;
+  const period = normalizePeriod(payload);
+  const isOddsEligibleGameline =
+    period === 'full_game' &&
+    (market === 'moneyline' || market === 'spread' || market === 'total');
+
+  // Global policy: recommendation gating only applies to odds-backed gamelines.
+  if (!isOddsEligibleGameline) return false;
 
   const side = payload.selection?.side || payload.prediction;
   const hasValidSide =
@@ -158,12 +164,7 @@ function isRecommendationPayload(payload) {
   const hasPrice = Number.isFinite(payload.price);
   if (!hasPrice) return false;
 
-  if (
-    market === 'total' ||
-    market === 'team_total' ||
-    market === 'spread' ||
-    market === 'puckline'
-  ) {
+  if (market === 'total' || market === 'spread') {
     return Number.isFinite(payload.line);
   }
 
