@@ -3304,7 +3304,7 @@ export async function GET(request: NextRequest) {
         // wave-1 path for them so they aren't silently dropped.
         const isPropPlay = play.market_type === 'PROP';
 
-        if (wave1Eligible && !isPropPlay) {
+        if (wave1Eligible && !isPropPlay && !isProjectionSurfaceCardType) {
           // Wave-1 rows MUST have decision_v2 from worker - skip if missing
           if (!play.decision_v2) {
             incrementStageCounter(

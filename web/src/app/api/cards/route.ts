@@ -392,7 +392,7 @@ export async function GET(request: NextRequest) {
     // Exclude FPL and NCAAM cards
     baseWhere.push("LOWER(cp.sport) != 'fpl'");
     baseWhere.push("LOWER(cp.sport) != 'ncaam'");
-    baseWhere.push(buildBettingSurfacePayloadPredicate('cp.payload_data'));
+    baseWhere.push(`(LOWER(cp.card_type) = 'nhl-pace-1p' OR ${buildBettingSurfacePayloadPredicate('cp.payload_data')})`);
     baseWhere.push(`NOT EXISTS (
       SELECT 1
       FROM card_results cr
@@ -475,7 +475,7 @@ export async function GET(request: NextRequest) {
     const response = rows.flatMap((card) => {
       const parsed = safeJsonParse(card.payload_data);
       const normalizedPayload = normalizePayloadMeta(parsed.data);
-      if (!parsed.error && !isBettingSurfacePayload(normalizedPayload)) {
+      if (!parsed.error && card.card_type !== 'nhl-pace-1p' && !isBettingSurfacePayload(normalizedPayload)) {
         return [];
       }
       return [{

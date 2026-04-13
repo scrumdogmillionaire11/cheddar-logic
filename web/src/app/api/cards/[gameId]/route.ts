@@ -361,7 +361,7 @@ export async function GET(
     // Exclude FPL cards - they are served from cheddar-fpl-sage backend
     baseWhere.push("sport != 'FPL'");
     baseWhere.push(
-      buildBettingSurfacePayloadPredicate('card_payloads.payload_data'),
+      `(LOWER(card_type) = 'nhl-pace-1p' OR ${buildBettingSurfacePayloadPredicate('card_payloads.payload_data')})`,
     );
     baseWhere.push(`NOT EXISTS (
       SELECT 1
@@ -441,7 +441,7 @@ export async function GET(
     const response = cards.flatMap((card) => {
       const parsed = safeJsonParse(card.payload_data);
       const normalizedPayload = normalizePayloadMeta(parsed.data);
-      if (!parsed.error && !isBettingSurfacePayload(normalizedPayload)) {
+      if (!parsed.error && card.card_type !== 'nhl-pace-1p' && !isBettingSurfacePayload(normalizedPayload)) {
         return [];
       }
       return [{
