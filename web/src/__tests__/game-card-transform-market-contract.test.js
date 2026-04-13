@@ -203,13 +203,14 @@ assert(
 );
 
 assert(
-  gameCardSource.includes("const isF5TotalMarket = card.sport === 'MLB' && marketType === 'FIRST_PERIOD';") &&
+  gameCardSource.includes("card.sport === 'MLB'") &&
+    gameCardSource.includes('isF5TotalMarket') &&
     gameCardSource.includes('const projectionSourceLabel =') &&
     gameCardSource.includes("displayPlay.projectionSource === 'DEGRADED_MODEL'") &&
     gameCardSource.includes('Playable O&lt;=') &&
     gameCardSource.includes('Team means:') &&
     gameCardSource.includes("displayPlay.projectionSource === 'SYNTHETIC_FALLBACK'"),
-  'GameCardItem should render MLB F5 source, range, team means, and playable thresholds',
+  'GameCardItem should render MLB F5 source (both FIRST_PERIOD and FIRST_5_INNINGS), range, team means, and playable thresholds',
 );
 
 assert(

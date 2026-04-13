@@ -106,6 +106,18 @@ const SPORTS_CONFIG = {
 /**
  * Get list of currently active sports based on their active flag and season dates
  */
+/**
+ * Determine whether a sport is in-season for a given mmdd string.
+ * Within-year seasons (e.g. MLB 03-20 to 11-01): start <= end → use AND.
+ * Wrap-around seasons (e.g. NHL 10-01 to 04-30): start > end  → use OR.
+ */
+function checkInSeason(cfg, mmdd) {
+  const isWrapAround = cfg.season.start > cfg.season.end;
+  return isWrapAround
+    ? mmdd >= cfg.season.start || mmdd <= cfg.season.end
+    : mmdd >= cfg.season.start && mmdd <= cfg.season.end;
+}
+
 function getActiveSports() {
   const today = new Date();
   const mmdd = `${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
@@ -113,10 +125,7 @@ function getActiveSports() {
   return Object.entries(SPORTS_CONFIG)
     .filter(([_, cfg]) => {
       if (!cfg.active) return false;
-
-      // Simple date range check (doesn't handle year boundaries perfectly, but works for season logic)
-      const inSeason = mmdd >= cfg.season.start || mmdd <= cfg.season.end;
-      return inSeason;
+      return checkInSeason(cfg, mmdd);
     })
     .map(([sport]) => sport);
 }
@@ -148,7 +157,7 @@ function isInSeason(sport) {
   const today = new Date();
   const mmdd = `${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
 
-  return mmdd >= cfg.season.start || mmdd <= cfg.season.end;
+  return checkInSeason(cfg, mmdd);
 }
 
 module.exports = {
