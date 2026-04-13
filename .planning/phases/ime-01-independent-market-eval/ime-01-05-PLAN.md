@@ -15,7 +15,6 @@ must_haves:
     - "docs/market_evaluation_contract.md exists and documents: MarketEvalResult shape, GameMarketEvaluation shape, all REASON_CODES, assertNoSilentMarketDrop contract, forbidden cross-market behaviors"
     - "The doc includes smoke test scenarios from the spec: MLB multi-qualify, NHL TOTAL+ML, empty-edge game"
     - "packages/models/src/market-eval.js is updated to export VALID_STATUSES and VALID_MARKET_TYPES as frozen arrays for consumer validation"
-    - "packages/models/package.json exports include market-eval under the package exports map"
   artifacts:
     - path: "docs/market_evaluation_contract.md"
       provides: "Canonical contract doc for MarketEvalResult, GameMarketEvaluation, REASON_CODES, forbidden behaviors"

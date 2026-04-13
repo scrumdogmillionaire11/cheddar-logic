@@ -3,6 +3,7 @@
  */
 
 import { normalizeMarketType, normalizeSport } from './normalizers';
+import type { SportCardTypeContract } from './market-inference';
 
 type MarketType =
   | 'MONEYLINE'
@@ -92,15 +93,9 @@ export function registerGameWithPlayableMarket(
   marketMap.get(normalizedMarket)!.add(gameId);
 }
 
-export interface SportCardTypeContractWithMarkets {
-  playProducerCardTypes: Set<string>;
-  evidenceOnlyCardTypes: Set<string>;
-  expectedPlayableMarkets: Set<MarketType>;
-}
-
 export function buildPlayableMarketFamilyDiagnostics(
   counters: StageCounters,
-  activeContract: Record<string, SportCardTypeContractWithMarkets>,
+  activeContract: Record<string, SportCardTypeContract>,
 ): {
   expected_playable_markets: Record<string, MarketType[]>;
   emitted_playable_markets: Record<string, string[]>;

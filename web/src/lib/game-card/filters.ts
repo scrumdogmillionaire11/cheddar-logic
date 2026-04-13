@@ -100,7 +100,7 @@ export interface GameModeFilters extends CommonFilters {
   // Market type
   markets: Market[];
   onlyGamesWithPicks: boolean;
-  hasClearPlay: boolean; // play.market != 'NONE'
+  hasClearPlay: boolean; // requires canonical actionable play call
   requireTotalProjection: boolean;
   onlyWelcomeHome?: boolean;
 
@@ -244,19 +244,6 @@ function filterByOddsFreshness(
 }
 
 /**
- * Normalize market string to canonical format
- */
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-function normalizeMarket(m?: string): string {
-  if (!m) return 'INFO';
-  const upper = m.toUpperCase();
-  if (upper === 'ML' || upper === 'H2H') return 'MONEYLINE';
-  if (upper === 'PUCKLINE') return 'SPREAD';
-  if (upper === 'TEAM_TOTAL') return 'TOTAL';
-  return upper;
-}
-
-/**
  * Map canonical market type to legacy Market enum for comparison
  */
 function canonicalToLegacyMarket(canonical?: string): Market | null {
@@ -264,14 +251,21 @@ function canonicalToLegacyMarket(canonical?: string): Market | null {
   const upper = canonical.toUpperCase();
   if (upper === 'MONEYLINE' || upper === 'ML') return 'ML';
   if (upper === 'SPREAD' || upper === 'PUCKLINE') return 'SPREAD';
-  if (upper === 'TOTAL' || upper === 'TEAM_TOTAL' || upper === 'FIRST_PERIOD') return 'TOTAL';
+  if (
+    upper === 'TOTAL' ||
+    upper === 'TEAM_TOTAL' ||
+    upper === 'FIRST_PERIOD' ||
+    upper === 'FIRST_5_INNINGS'
+  ) {
+    return 'TOTAL';
+  }
   if (upper === 'INFO') return null; // INFO items don't count as bettable markets
   return 'UNKNOWN';
 }
 
 /**
- * Filter by market availability
- * Checks both canonical market_type and legacy market fields
+ * Filter by market availability.
+ * Canonical market_type is the only authoritative source.
  *
  * Special rule for Full Slate (when PASS is included):
  * - Allow PASS plays through even if their market doesn't match the filter
@@ -296,18 +290,7 @@ function filterByMarketAvailability(
     return true;
   }
 
-  // Fallback to legacy play.market
-  const playMarket = card.play?.market;
-  if (
-    playMarket &&
-    playMarket !== 'NONE' &&
-    filters.markets.includes(playMarket)
-  ) {
-    return true;
-  }
-
-  // Check drivers as final fallback
-  return card.drivers.some((d) => filters.markets.includes(d.market));
+  return false;
 }
 
 function filterByPropAvailability(card: GameCard): boolean {
@@ -315,8 +298,8 @@ function filterByPropAvailability(card: GameCard): boolean {
   if (!play) return false;
   if (play.market_type !== 'PROP') return false;
 
-  const selectionSide = play.selection?.side ?? play.side;
-  const hasSelection = Boolean(selectionSide) && selectionSide !== 'NEUTRAL';
+  const selectionSide = play.selection?.side;
+  const hasSelection = Boolean(selectionSide) && selectionSide !== 'NONE';
   const hasLineOrPrice =
     typeof play.line === 'number' || typeof play.price === 'number';
 
@@ -486,7 +469,16 @@ function hasActionablePlayCall(card: GameCard): boolean {
   if (play.action === 'PASS' || play.classification === 'PASS') return false;
   if (play.decision_v2?.official_status === 'PASS') return false;
 
-  if (play.market === 'NONE' || play.pick === 'NO PLAY') return false;
+  const canonicalMarket = canonicalToLegacyMarket(play.market_type);
+  if (!canonicalMarket) return false;
+
+  const selectionSide = play.selection?.side;
+  if (
+    !selectionSide ||
+    selectionSide === 'NONE'
+  ) {
+    return false;
+  }
 
   // v2 action takes precedence — if the resolved display action is PASS,
   // the card is not actionable regardless of what official_status says.
@@ -542,8 +534,7 @@ function filterByTotalProjection(
   if (!card.play) return false;
 
   const canonicalMarket = canonicalToLegacyMarket(card.play.market_type);
-  const isTotalMarket =
-    canonicalMarket === 'TOTAL' || card.play.market === 'TOTAL';
+  const isTotalMarket = canonicalMarket === 'TOTAL';
   if (!isTotalMarket) return false;
 
   const projectedTotal =

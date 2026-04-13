@@ -2,6 +2,10 @@
 
 const { classifyModelStatus, buildNoBetResult, DEGRADED_CONSTRAINTS } = require('./input-gate');
 const { buildModelOutput } = require('./model-output');
+const {
+  evaluateSingleMarket,
+  finalizeGameMarketEvaluation,
+} = require('@cheddar-logic/models/src/market-eval');
 const scoreEngine = require('../utils/score-engine');
 
 /**
@@ -14,7 +18,7 @@ const scoreEngine = require('../utils/score-engine');
  *   projectF5Total(homePitcher, awayPitcher, context) → raw F5 projection
  *   projectF5TotalCard(home, away, f5Line)            → F5 card with thresholds
  *   computeMLBDriverCards(gameId, oddsSnapshot)       → F5-only game market candidates
- *   selectMlbGameMarket(gameId, oddsSnapshot, cards)  → deterministic MLB selector result
+ *   evaluateMlbGameMarkets(cards, ctx)               → deterministic MLB market evaluation
  */
 
 const MLB_F5_EDGE_THRESHOLD = 0.5;
@@ -1331,48 +1335,24 @@ function roundScore(value) {
 }
 
 /**
- * MLB currently has one configured game market: F5 total.
- * This helper keeps selector behavior explicit and stable before additional
- * MLB game markets arrive in later work items.
+ * Evaluate all MLB game market driver cards independently.
+ * Replaces the old winner-take-all selectMlbGameMarket().
  *
- * @param {string} gameId
- * @param {object} oddsSnapshot
- * @param {Array<object>} driverCards
- * @returns {object}
+ * @param {Array} driverCards - cards from computeMLBDriverCards()
+ * @param {{ game_id: string }} ctx
+ * @returns {GameMarketEvaluation}
  */
-function selectMlbGameMarket(gameId, oddsSnapshot, driverCards = []) {
-  const f5Card = driverCards.find((card) => card.market === 'f5_total') ?? null;
-  const chosen_market = 'F5_TOTAL';
-  const why_this_market = 'Rule 1: only configured MLB game market';
-  const rejected = {};
-
-  if (!f5Card) {
-    rejected.F5_TOTAL = 'NO_F5_LINE';
-  }
-
-  return {
-    game_id: gameId,
-    matchup: `${oddsSnapshot?.away_team ?? 'unknown'} @ ${oddsSnapshot?.home_team ?? 'unknown'}`,
-    chosen_market,
-    why_this_market,
-    markets: f5Card
-      ? [
-          {
-            market: 'F5_TOTAL',
-            status: f5Card.ev_threshold_passed ? 'FIRE' : 'PASS',
-            prediction: f5Card.prediction,
-            score: roundScore(f5Card.confidence),
-            edge: f5Card.drivers?.[0]?.edge ?? null,
-            projected: f5Card.drivers?.[0]?.projected ?? null,
-            projection_source: f5Card.projection_source ?? null,
-            status_cap: f5Card.status_cap ?? null,
-            pass_reason_code: f5Card.pass_reason_code ?? null,
-          },
-        ]
-      : [],
-    rejected,
-    selected_driver: f5Card,
-  };
+function evaluateMlbGameMarkets(driverCards, ctx) {
+  const evalCtx = { game_id: ctx.game_id, sport: 'MLB' };
+  const market_results = (Array.isArray(driverCards) ? driverCards : []).map(
+    (card) => evaluateSingleMarket(card, evalCtx),
+  );
+  const gameEval = finalizeGameMarketEvaluation({
+    game_id: ctx.game_id,
+    sport: 'MLB',
+    market_results,
+  });
+  return gameEval;
 }
 
 // ============================================================
@@ -3050,7 +3030,7 @@ module.exports = {
   projectF5TotalCard,
   projectF5ML,
   computeMLBDriverCards,
-  selectMlbGameMarket,
+  evaluateMlbGameMarkets,
   computePitcherStatsAsOf,
   // Sharp Cheddar K pipeline
   scorePitcherK,

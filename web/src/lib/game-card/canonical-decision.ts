@@ -53,7 +53,7 @@ export function computeCanonicalDecision(play: {
   price?: number;
   pick?: string;
   status?: ExpressionStatus;
-  market?: string;
+  decision_v2?: { official_status?: 'PLAY' | 'LEAN' | 'PASS' };
   tier?: string;
   confidence?: number;
   valueStatus?: string;
@@ -63,6 +63,7 @@ export function computeCanonicalDecision(play: {
   // 1. DECISION: Resolve from canonical action precedence (action -> legacy status)
   const resolvedAction = resolvePlayDisplayDecision({
     action: play.action,
+    decision_v2: play.decision_v2,
     status: play.status,
   }).action;
   let decision: Decision = 'PASS';
@@ -72,20 +73,25 @@ export function computeCanonicalDecision(play: {
     decision = 'HOLD';
   }
 
-  // 2. MARKET & BET: Canonical market from market_type, fallback to market
+  // 2. MARKET & BET: Canonical market from market_type only
   let market: CanonicalMarket = 'NONE';
-  if (play.market_type === 'MONEYLINE' || play.market === 'ML') {
+  if (play.market_type === 'MONEYLINE') {
     market = 'MONEYLINE';
-  } else if (play.market_type === 'SPREAD' || play.market === 'SPREAD') {
+  } else if (play.market_type === 'SPREAD' || play.market_type === 'PUCKLINE') {
     market = 'SPREAD';
-  } else if (play.market_type === 'TOTAL' || play.market === 'TOTAL') {
+  } else if (
+    play.market_type === 'TOTAL' ||
+    play.market_type === 'TEAM_TOTAL' ||
+    play.market_type === 'FIRST_PERIOD' ||
+    play.market_type === 'FIRST_5_INNINGS'
+  ) {
     market = 'TOTAL';
   }
 
   // Build bet object (null if PASS)
   let bet: Bet | null = null;
   if (decision !== 'PASS' && market !== 'NONE') {
-    const selection = (play.selection?.side || play.selection?.side) as
+    const selection = (play.selection?.side || null) as
       | 'HOME'
       | 'AWAY'
       | 'OVER'
@@ -189,7 +195,7 @@ export function computeCanonicalDecision(play: {
     value,
     contractViolations: violations,
     decidedAt: new Date().toISOString(),
-    source: play.action ? 'model' : 'expression-legacy',
+    source: play.action || play.decision_v2 ? 'model' : 'fallback',
   };
 }
 

@@ -22,6 +22,10 @@ function buildDriver(overrides = {}) {
 
 function buildPlay(overrides = {}) {
   return {
+    market_type: 'MONEYLINE',
+    selection: {
+      side: 'HOME',
+    },
     status: 'FIRE',
     market: 'ML',
     pick: 'Home ML -110',

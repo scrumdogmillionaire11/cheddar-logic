@@ -11,6 +11,30 @@ const routeSource = fs.readFileSync(
   path.resolve('web/src/lib/games/route-handler.ts'),
   'utf8',
 );
+const marketInferenceSource = fs.readFileSync(
+  path.resolve('web/src/lib/games/market-inference.ts'),
+  'utf8',
+);
+
+assert(
+  routeSource.includes('ACTIVE_SPORT_CARD_TYPE_CONTRACT') &&
+    routeSource.includes("from '@/lib/games/market-inference'"),
+  'Expected /api/games route to consume ACTIVE_SPORT_CARD_TYPE_CONTRACT from market-inference as the canonical source',
+);
+
+assert(
+  !routeSource.includes('const ACTIVE_SPORT_CARD_TYPE_CONTRACT: Record<string, SportCardTypeContract>'),
+  'Expected /api/games route to avoid defining a duplicate local card type contract',
+);
+
+assert(
+  marketInferenceSource.includes("'mlb-full-game'") &&
+    marketInferenceSource.includes("'mlb-full-game-ml'") &&
+    marketInferenceSource.includes("expectedPlayableMarkets: new Set<MarketType>([") &&
+    marketInferenceSource.includes("'MONEYLINE'") &&
+    marketInferenceSource.includes("'TOTAL'"),
+  'Expected canonical MLB contract to include mlb-full-game / mlb-full-game-ml and full-game playable market pathways',
+);
 
 const requiredFields = [
   'verdict',
@@ -65,8 +89,9 @@ assert(
 );
 
 assert(
-  routeSource.includes("'nhl-player-blk'"),
-  'Expected /api/games route to include nhl-player-blk in the NHL prop contract path',
+  routeSource.includes("'nhl-player-blk'") ||
+    marketInferenceSource.includes("'nhl-player-blk'"),
+  'Expected NHL prop contract path to include nhl-player-blk in canonical route or shared contract source',
 );
 
 assert(

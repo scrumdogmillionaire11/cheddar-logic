@@ -281,6 +281,10 @@ export interface CanonicalPlay {
  * these thresholds.
  *
  * See: web/src/lib/game-card/transform/index.ts NON_CANONICAL_RENDER_FALLBACK
+ *
+ * Migration note:
+ *  - Web filtering/rendering should treat canonical payload fields as authoritative
+ *    and avoid market/status inference from legacy text or driver-only heuristics.
  */
 export const THRESHOLDS = {
   // TOTAL (NBA + NHL)

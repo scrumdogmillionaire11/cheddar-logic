@@ -46,7 +46,8 @@ const { fetchF5LineFromVsin } = require('@cheddar-logic/adapters').f5LineFetcher
 
 // Import pluggable inference layer
 const { getModel, computeMLBDriverCards, computePitcherKDriverCards } = require('../models');
-const { selectMlbGameMarket, projectF5ML, projectTeamF5RunsAgainstStarter, setLeagueConstants } = require('../models/mlb-model');
+const { evaluateMlbGameMarkets, projectF5ML, projectTeamF5RunsAgainstStarter, setLeagueConstants } = require('../models/mlb-model');
+const { assertNoSilentMarketDrop, logRejectedMarkets } = require('@cheddar-logic/models/src/market-eval');
 
 // WI-0648: Empirical sigma recalibration gate
 // Threshold: once a team has accumulated >= MIN_MLB_GAMES_FOR_RECAL settled games
@@ -2145,15 +2146,21 @@ async function runMLBModel({
             }
           }
           pitcherPropSummary[gameId] = gamePitcherSummary;
-          const gameSelection = selectMlbGameMarket(
-            gameId,
-            gameOddsSnapshot,
-            gameDriverCards,
-          );
+          const gameEval = evaluateMlbGameMarkets(gameDriverCards, { game_id: gameId });
+          assertNoSilentMarketDrop(gameEval);
+          logRejectedMarkets(gameEval.rejected);
           const dualRunRecord = buildMlbDualRunRecord(
             gameId,
             gameOddsSnapshot,
-            gameSelection,
+            {
+              chosen_market: gameEval.status,
+              why_this_market: `evaluateMlbGameMarkets: ${gameEval.status}`,
+              markets: gameEval.market_results.map((r) => ({ market: r.market_type, status: r.status })),
+              rejected: gameEval.rejected.reduce((acc, r) => {
+                acc[r.market_type] = (r.reason_codes || []).join(',');
+                return acc;
+              }, {}),
+            },
           );
           console.log(`[MLB_DUAL_RUN] ${JSON.stringify(dualRunRecord)}`);
           const f5TotalContextForFloor = resolveMlbF5TotalContext(gameOddsSnapshot);
@@ -2219,7 +2226,38 @@ async function runMLBModel({
             console.log(`[MLBModel] NO_F5_ML_LINE: ${gameId} — ml_f5 price absent, F5 ML card blocked`);
           }
 
-          const selectedGameDriver = gameSelection.selected_driver;
+          // Short-circuit: no qualified markets for this game
+          if (
+            gameEval.status === 'SKIP_MARKET_NO_EDGE' ||
+            gameEval.status === 'SKIP_GAME_INPUT_FAILURE'
+          ) {
+            console.log(
+              `  ⏭️  ${gameId}: ${gameEval.status} — ${gameEval.rejected
+                .flatMap((r) => r.reason_codes)
+                .filter((v, i, a) => a.indexOf(v) === i)
+                .join(', ') || 'no reason codes'}`,
+            );
+            gamePipelineStates[gameId] = buildMlbPipelineState({
+              oddsSnapshot: gameOddsSnapshot,
+              marketAvailability,
+              projectionReady: gameEval.status !== 'SKIP_GAME_INPUT_FAILURE',
+              driversReady: false,
+              pricingReady: false,
+              cardReady: false,
+              executionEnvelopes: [],
+            });
+            continue;
+          }
+
+          // Recover qualified driver cards from evaluateMlbGameMarkets results
+          const qualifiedDrivers = [
+            ...gameEval.official_plays,
+            ...gameEval.leans,
+          ].map((evalResult) => {
+            return gameDriverCards.find(
+              (c) => `${gameId}::${c.market ?? 'unknown'}` === evalResult.candidate_id,
+            );
+          }).filter(Boolean);
 
           // WI-0877: Try full-model synthetic-line edge driver first.
           // Falls back to SYNTHETIC_FALLBACK PASS when offense profiles are absent or
@@ -2271,17 +2309,15 @@ async function runMLBModel({
             ? null
             : 'ODDS_SNAPSHOT_MISSING';
           const candidateDrivers = [
-            ...(selectedGameDriver
-              ? [{
-                  driver: selectedGameDriver,
-                  executionEnvelope: deriveMlbExecutionEnvelope({
-                    driver: selectedGameDriver,
-                    pricingStatus: gamePricingStatus,
-                    pricingReason: gamePricingReason,
-                    pricingCapturedAt: gameOddsSnapshot?.captured_at ?? null,
-                  }),
-                }]
-              : []),
+            ...qualifiedDrivers.map((driver) => ({
+              driver,
+              executionEnvelope: deriveMlbExecutionEnvelope({
+                driver,
+                pricingStatus: gamePricingStatus,
+                pricingReason: gamePricingReason,
+                pricingCapturedAt: gameOddsSnapshot?.captured_at ?? null,
+              }),
+            })),
             ...pitcherKDriverCards
               .filter((driver) => driver.execution_envelope)
               .map((driver) => ({
@@ -2299,19 +2335,7 @@ async function runMLBModel({
                   }),
                 }]
               : []),
-            // Full-game total and ML from computeMLBDriverCards — odds-backed
-            ...gameDriverCards
-              .filter((d) => (d.market === 'full_game_total' || d.market === 'full_game_ml') && d.ev_threshold_passed)
-              .map((d) => ({
-                driver: d,
-                executionEnvelope: deriveMlbExecutionEnvelope({
-                  driver: d,
-                  pricingStatus: gamePricingStatus,
-                  pricingReason: gamePricingReason,
-                  pricingCapturedAt: gameOddsSnapshot?.captured_at ?? null,
-                }),
-              })),
-            ...(projectionFloorDriver
+...(projectionFloorDriver
               ? [{
                   driver: projectionFloorDriver,
                   executionEnvelope: deriveMlbExecutionEnvelope({
@@ -2484,8 +2508,8 @@ async function runMLBModel({
                     recommended_bet_type: 'total',
                     odds_context: buildMlbF5OddsContext(gameOddsSnapshot),
                     primary_game_market: true,
-                    chosen_market: gameSelection.chosen_market,
-                    why_this_market: gameSelection.why_this_market,
+                    chosen_market: gameEval.status,
+                    why_this_market: `evaluateMlbGameMarkets: ${gameEval.status}`,
                   }
                 : isF5ML
                   ? {

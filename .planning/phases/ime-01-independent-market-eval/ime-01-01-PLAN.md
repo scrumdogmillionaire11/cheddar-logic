@@ -7,7 +7,6 @@ depends_on: []
 files_modified:
   - packages/models/src/market-eval.js
   - packages/models/src/market-eval.test.js
-  - packages/models/package.json
 autonomous: true
 requirements: [IME-CONTRACT-01]
 

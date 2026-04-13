@@ -139,6 +139,12 @@ export function inferMarketFromCardType(cardType: string): MarketType | undefine
   ) {
     return 'PROP';
   }
+  if (normalized === 'mlb-full-game-ml') {
+    return 'MONEYLINE';
+  }
+  if (normalized === 'mlb-full-game') {
+    return 'TOTAL';
+  }
   if (normalized === 'mlb-f5') {
     return 'FIRST_5_INNINGS';
   }
@@ -149,6 +155,83 @@ export interface SportCardTypeContract {
   playProducerCardTypes: Set<string>;
   evidenceOnlyCardTypes: Set<string>;
   expectedPlayableMarkets: Set<MarketType>;
+}
+
+export const ACTIVE_SPORT_CARD_TYPE_CONTRACT: Record<string, SportCardTypeContract> = {
+  NBA: {
+    playProducerCardTypes: new Set([
+      'nba-totals-call',
+      'nba-spread-call',
+    ]),
+    evidenceOnlyCardTypes: new Set([
+      'nba-base-projection',
+      'nba-total-projection',
+      'nba-rest-advantage',
+      'nba-matchup-style',
+      'nba-blowout-risk',
+      'nba-travel',
+      'nba-lineup',
+      'welcome-home',
+      'welcome-home-v2',
+      'nba-model-output',
+    ]),
+    expectedPlayableMarkets: new Set<MarketType>(['SPREAD', 'TOTAL']),
+  },
+  NHL: {
+    playProducerCardTypes: new Set([
+      'nhl-totals-call',
+      'nhl-spread-call',
+      'nhl-moneyline-call',
+      'nhl-pace-totals',
+      'nhl-pace-1p',
+      'nhl-player-shots',
+      'nhl-player-shots-1p',
+      'nhl-player-blk',
+    ]),
+    evidenceOnlyCardTypes: new Set([
+      'nhl-base-projection',
+      'nhl-rest-advantage',
+      'nhl-goalie',
+      'nhl-goalie-certainty',
+      'nhl-model-output',
+      'nhl-shot-environment',
+      'welcome-home',
+      'welcome-home-v2',
+      'nhl-welcome-home',
+    ]),
+    expectedPlayableMarkets: new Set<MarketType>([
+      'MONEYLINE',
+      'SPREAD',
+      'TOTAL',
+      'FIRST_PERIOD',
+      'PROP',
+    ]),
+  },
+  MLB: {
+    playProducerCardTypes: new Set([
+      'mlb-strikeout',
+      'mlb-f5',
+      'mlb-pitcher-k',
+      'mlb-full-game',
+      'mlb-full-game-ml',
+    ]),
+    evidenceOnlyCardTypes: new Set(['mlb-model-output']),
+    // FULL_GAME pathways are represented as canonical TOTAL and MONEYLINE markets.
+    expectedPlayableMarkets: new Set<MarketType>([
+      'PROP',
+      'FIRST_5_INNINGS',
+      'TOTAL',
+      'MONEYLINE',
+    ]),
+  },
+};
+
+export function getSportCardTypeContract(
+  sport?: unknown,
+): SportCardTypeContract | undefined {
+  const normalizedSport = normalizeSport(sport);
+  if (!normalizedSport) return undefined;
+  return ACTIVE_SPORT_CARD_TYPE_CONTRACT[normalizedSport];
 }
 
 export function applyCardTypeKindContract(

@@ -22,6 +22,10 @@ function buildDriver(overrides = {}) {
 
 function buildPlay(overrides = {}) {
   return {
+    market_type: 'SPREAD',
+    selection: {
+      side: 'HOME',
+    },
     status: 'FIRE',
     action: 'FIRE',
     classification: 'BASE',
@@ -95,7 +99,7 @@ const playMarketMatchResult = applyFilters(
 assert.deepStrictEqual(
   playMarketMatchResult.map((card) => card.id),
   ['play-market-match'],
-  'play.market match should include card even when drivers do not match market',
+  'play.market_type match should include card even when drivers do not match market',
 );
 
 const fallbackNonMatch = buildCard('fallback-non-match', {
@@ -123,8 +127,8 @@ const fallbackResult = applyFilters(
 );
 assert.deepStrictEqual(
   fallbackResult.map((card) => card.id).sort(),
-  ['fallback-missing', 'fallback-non-match'],
-  'when play market is missing or non-match, matching driver market should include card',
+  [],
+  'cards without canonical matching market_type should be excluded even if legacy fields/drivers suggest a match',
 );
 
 console.log('✅ Play-first filter runtime tests passed');
