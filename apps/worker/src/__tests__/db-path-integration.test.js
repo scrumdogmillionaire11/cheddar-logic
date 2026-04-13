@@ -72,20 +72,19 @@ describe('Integration: Worker + Web database path alignment', () => {
   });
 
   describe('regression: old bug should not reoccur', () => {
-    test('previous bug: web/.env.local DATABASE_PATH vs CHEDDAR_DB_PATH conflict', () => {
-      // This is the EXACT error that occurred:
-      // CHEDDAR_DB_PATH=/tmp/cheddar-logic/cheddar.db (from CLI)
-      // DATABASE_PATH=/Users/ajcolubiale/projects/cheddar-logic/packages/data/cheddar.db (from web/.env.local)
+    test('previous bug: DATABASE_PATH is no longer a recognized env var (WI-0928)', () => {
+      // DATABASE_PATH was removed as a recognized path source in WI-0928.
+      // CHEDDAR_DB_PATH is now the sole canonical source of truth.
+      // Setting DATABASE_PATH alongside CHEDDAR_DB_PATH is now a no-op — no conflict.
 
-      const buggyEnv = {
+      const env = {
         CHEDDAR_DB_PATH: tmpDbPath,
         DATABASE_PATH: path.join(unixHomeDir, 'packages/data/cheddar.db'),
       };
 
-      // This SHOULD throw now because we detect the conflict
-      expect(() => resolveDatabasePath({ env: buggyEnv })).toThrow(
-        'Conflicting explicit DB paths detected',
-      );
+      const resolved = resolveDatabasePath({ env });
+      expect(resolved.dbPath).toBe(tmpDbPath);
+      expect(resolved.source).toBe('CHEDDAR_DB_PATH');
     });
 
     test('fix: web startup ONLY uses CHEDDAR_DB_PATH', () => {
@@ -118,14 +117,15 @@ describe('Integration: Worker + Web database path alignment', () => {
       expect(resolved.isExplicitFile).toBe(true);
     });
 
-    test('incorrect startup would set both paths', () => {
-      // If someone sets both, we catch it
-      const badStartupEnv = {
+    test('conflict is still caught when CHEDDAR_DB_PATH and DATABASE_URL differ', () => {
+      // DATABASE_PATH is no longer recognized (WI-0928), but DATABASE_URL still is.
+      // Conflict detection still works for supported sources.
+      const conflictEnv = {
         CHEDDAR_DB_PATH: tmpDbPath,
-        DATABASE_PATH: '/other/db/path.db',
+        DATABASE_URL: 'sqlite:////other/db/path.db',
       };
 
-      expect(() => resolveDatabasePath({ env: badStartupEnv })).toThrow(
+      expect(() => resolveDatabasePath({ env: conflictEnv })).toThrow(
         'Conflicting explicit DB paths detected',
       );
     });
@@ -189,16 +189,18 @@ describe('Integration: Worker + Web database path alignment', () => {
       );
     });
 
-    test('Setting multiple paths with different values always errors', () => {
+    test('RECORD_DATABASE_PATH and DATABASE_PATH are no longer recognized (WI-0928)', () => {
+      // Both legacy vars removed in WI-0928. Only CHEDDAR_DB_PATH and DATABASE_URL are recognized.
+      // Passing them has no effect — CHEDDAR_DB_PATH wins cleanly.
       const env = {
         RECORD_DATABASE_PATH: '/record-path.db',
         CHEDDAR_DB_PATH: '/cheddar-path.db',
         DATABASE_PATH: '/database-path.db',
       };
 
-      expect(() => resolveDatabasePath({ env })).toThrow(
-        'Conflicting explicit DB paths detected',
-      );
+      const resolved = resolveDatabasePath({ env });
+      expect(resolved.dbPath).toBe('/cheddar-path.db');
+      expect(resolved.source).toBe('CHEDDAR_DB_PATH');
     });
 
     test('Setting multiple paths to SAME value is still an error', () => {
