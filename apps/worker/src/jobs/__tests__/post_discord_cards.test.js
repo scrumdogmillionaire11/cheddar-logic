@@ -322,6 +322,36 @@ describe('post_discord_cards helpers', () => {
     expect(snapshot.messages[0]).not.toContain('1P | 1.5');
   });
 
+  test('buildDiscordSnapshot keeps directional 1P cards when pass reason is FIRST_PERIOD_NO_PROJECTION', () => {
+    const cards = [
+      makeCard({
+        id: 'pace-1p-no-proj-directional',
+        sport: 'nhl',
+        cardType: 'nhl-pace-1p',
+        payloadData: {
+          action: 'PASS',
+          status: 'PASS',
+          kind: 'PLAY',
+          market_type: 'FIRST_PERIOD',
+          period: '1P',
+          prediction: 'BEST_OVER',
+          selection: { side: 'OVER' },
+          line: 1.5,
+          price: null,
+          pass_reason_code: 'FIRST_PERIOD_NO_PROJECTION',
+          projection_only: false,
+        },
+      }),
+    ];
+
+    const snapshot = buildDiscordSnapshot({ cards, now: new Date('2026-03-20T14:00:00.000Z') });
+
+    expect(snapshot.totalGames).toBe(1);
+    expect(snapshot.sectionCounts.official).toBe(1);
+    expect(snapshot.messages[0]).toContain('🟢 PLAY');
+    expect(snapshot.messages[0]).toContain('1P | OVER 1.5');
+  });
+
   test('buildDiscordSnapshot can restrict webhook output to official buckets only via env', () => {
     const originalBuckets = process.env.DISCORD_CARD_WEBHOOK_BUCKETS;
     process.env.DISCORD_CARD_WEBHOOK_BUCKETS = 'play';

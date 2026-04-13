@@ -8,6 +8,9 @@ const ALLOWED_QUERY_PARAMS: Record<string, Set<string>> = {
   '/api/cards': new Set(['gameId', 'sport', 'card_type', 'game_id', 'include_expired', 'dedupe', 'limit', 'offset', 'lifecycle']),
   '/api/cards/[gameId]': new Set(['cardType', 'card_type', 'dedupe', 'limit', 'offset', 'lifecycle']),
   '/api/props': new Set(['gameId', 'limit', 'offset']),
+  '/api/props/player-shots': new Set(['limit', 'date']),
+  '/api/props/player-blk': new Set(['limit', 'date']),
+  '/api/props/pitcher-ks': new Set(['limit', 'date']),
   '/api/auth/token': new Set(['role', 'subscription', 'email', 'userId']),
   '/api/results': new Set([
     'limit',

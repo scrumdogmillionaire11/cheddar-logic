@@ -505,6 +505,22 @@ function classifyDecisionBucket(card) {
     classification.includes('GATE') ||
     reasons.some((token) => token.includes('BLOCK') || token.includes('GATE'));
 
+  // 1P cards can be marked PASS when live 1P price lanes are unavailable,
+  // while still carrying a directional model call (e.g. BEST_OVER/LEAN_UNDER).
+  // In Discord, surface those as actionable from prediction tier.
+  const isOnePeriod = normalizeMarketTag(card) === '1P';
+  const hasNoProjectionPass = reasons.some((token) => token.includes('FIRST_PERIOD_NO_PROJECTION'));
+  const predictionToken = normalizeToken(payload?.prediction || payload?.one_p_model_call);
+  const hasDirectionalPrediction =
+    predictionToken &&
+    !predictionToken.includes('PASS') &&
+    (predictionToken.includes('OVER') || predictionToken.includes('UNDER'));
+  if (isOnePeriod && hasNoProjectionPass && hasDirectionalPrediction) {
+    if (predictionToken.includes('BEST') || predictionToken.includes('PLAY')) return 'official';
+    if (predictionToken.includes('LEAN') || predictionToken.includes('WATCH') || predictionToken.includes('HOLD')) return 'lean';
+    return 'lean';
+  }
+
   if (hasPass || hasBlocked) return 'pass_blocked';
   if (action === 'FIRE' || classification === 'BASE') return 'official';
   if (['WATCH', 'LEAN', 'HOLD'].includes(action) || classification === 'LEAN') return 'lean';
