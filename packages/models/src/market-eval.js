@@ -109,16 +109,12 @@ function evaluateSingleMarket(card, ctx) {
 
   // --- Missing inputs gate ---
   if (Array.isArray(card.missing_inputs) && card.missing_inputs.length > 0) {
-    // Allow projection-floor cards to pass even with market odds missing (WI-0919)
-    // Projection-only scenarios intentionally have no market line; this is correct
-    const isProjectionFloor = card.projection_floor === true || card.without_odds_mode === true;
-    const hasOnlyMarketOddsMissing = card.missing_inputs.every((name) => {
-      const n = String(name).toLowerCase();
-      return n.includes('odds') || n.includes('price') || n.includes('market');
-    });
+    // Allow projection-only cards to pass even with missing inputs (WI-0919)
+    // Projection-only scenarios intentionally use degraded inputs when full model unavailable
+    const isProjectionOnly = card.projection_floor === true || card.without_odds_mode === true;
     
-    if (isProjectionFloor && hasOnlyMarketOddsMissing) {
-      // Projection-floor cards are allowed with missing market odds — select as lean
+    if (isProjectionOnly) {
+      // Projection-only cards allowed through — they'll use SYNTHETIC_FALLBACK or degraded inputs
       return buildResult(card, safeCtx, 'QUALIFIED_LEAN', [], { official_tier: 'LEAN' });
     }
     
