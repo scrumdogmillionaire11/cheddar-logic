@@ -3537,6 +3537,13 @@ async function runNHLPlayerShotsModel() {
                   usingRealLine: blkUsingRealLine,
                   edgePct: computeEdgePct(blkProjection.blk_mu, blkMarket.line),
                 });
+                // nhl-player-blk is projection-audit-only — grading is never attempted.
+                // settle_pending_cards reads this field to auto-close with PROJECTION_AUDIT_ONLY_BLK.
+                payloadDataBlk.settlement_policy = {
+                  grading_eligible: false,
+                  reason: 'PROJECTION_AUDIT_ONLY',
+                  market: 'player_blocked_shots',
+                };
 
                 const blkCard = {
                   id: blkCardId,
@@ -3689,6 +3696,11 @@ async function runNHLPlayerShotsModel() {
                       usingRealLine: true,
                       edgePct: computeEdgePct(blkProjection.blk_mu, extraLine),
                     });
+                    extraPayload.settlement_policy = {
+                      grading_eligible: false,
+                      reason: 'PROJECTION_AUDIT_ONLY',
+                      market: 'player_blocked_shots',
+                    };
                     const extraCardId = `nhl-player-blk-${player.player_id}-${resolvedGameId}-${uuidV4().slice(0, 8)}`;
                     const extraCard = {
                       id: extraCardId,
