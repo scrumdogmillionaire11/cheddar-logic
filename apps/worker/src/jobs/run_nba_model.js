@@ -1831,7 +1831,7 @@ async function runNBAModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
           });
           let _calStmtNba = null;
           try {
-            _calStmtNba = db.prepare(
+            _calStmtNba = getDatabase().prepare(
               'SELECT breakpoints_json FROM calibration_models WHERE sport = ? AND market_type = ?',
             );
           } catch (_e) {

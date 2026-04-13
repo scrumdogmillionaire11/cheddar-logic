@@ -784,7 +784,6 @@ function predictNHLGame(opts) {
       modifier_cap_applied: modifierCapApplied,
     },
     adjustments,
-    confidence,
     // WI-0830: pace signal from scoreEngine (metadata only)
     paceSignalScore: Math.round(paceSignalScore * 1000) / 1000,
   });

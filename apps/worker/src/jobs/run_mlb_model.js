@@ -2741,7 +2741,7 @@ async function runMLBModel({
               if (Number.isFinite(pd.p_fair)) {
                 let breakpoints = null;
                 try {
-                  const calRow = db.prepare(
+                  const calRow = getDatabase().prepare(
                     'SELECT breakpoints_json FROM calibration_models WHERE sport = ? AND market_type = ?',
                   ).get('MLB', 'MLB_F5_TOTAL');
                   breakpoints = calRow ? JSON.parse(calRow.breakpoints_json) : null;

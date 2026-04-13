@@ -728,13 +728,18 @@ export async function GET(request: NextRequest) {
     // betting ledger path.
     const projTrackingPlaceholders = PROJECTION_TRACKING_CARD_TYPES.map(() => '?').join(',');
     const projTrackingSportFilter = buildSportFilter(sport, 'cr.sport');
+    const projectionActualSelect = (
+      db.prepare('PRAGMA table_info(card_payloads)').all() as Array<{ name: string }>
+    ).some((row) => row.name === 'actual_result')
+      ? 'cp.actual_result AS actual_result'
+      : 'NULL AS actual_result';
     const projectionTrackingStmt = db.prepare(
       `
       SELECT
         cr.sport,
         cr.card_type,
         cp.payload_data,
-        cp.actual_result,
+        ${projectionActualSelect},
         gr.metadata AS game_result_metadata
       FROM card_results cr
       LEFT JOIN card_payloads cp ON cp.id = cr.card_id

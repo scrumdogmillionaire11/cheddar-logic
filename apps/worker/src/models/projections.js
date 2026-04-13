@@ -501,8 +501,6 @@ function projectNBACanonical(
     homeProjected: Math.round(homeProjected * 10) / 10,
     awayProjected: Math.round(awayProjected * 10) / 10,
     projectedTotal: Math.round(projectedTotal * 10) / 10,
-    // WI-0829: expose fairLine for residual projection layer
-    fairLine: Math.round(projectedTotal * 10) / 10,
     expectedPace: Math.round(expectedPace * 10) / 10,
     adjustedPace: Math.round(adjustedPace * 10) / 10,
     paceAdjustment,

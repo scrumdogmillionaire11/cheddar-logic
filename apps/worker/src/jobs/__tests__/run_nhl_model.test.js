@@ -109,8 +109,8 @@ async function queryDb(fn) {
 
 describe('run_nhl_model job', () => {
   beforeAll(async () => {
-    process.env.DATABASE_PATH = TEST_DB_PATH;
-    process.env.CHEDDAR_DB_PATH = '';
+    process.env.CHEDDAR_DB_PATH = TEST_DB_PATH;
+    delete process.env.DATABASE_PATH;
     // Remove test DB if exists
     if (fs.existsSync(TEST_DB_PATH)) {
       fs.unlinkSync(TEST_DB_PATH);
@@ -121,7 +121,7 @@ describe('run_nhl_model job', () => {
 
     // Run odds job first to populate test data
     try {
-      execSync(`DATABASE_PATH=${TEST_DB_PATH} npm run job:pull-odds`, {
+      execSync(`CHEDDAR_DB_PATH=${TEST_DB_PATH} npm run job:pull-odds`, {
         cwd: path.resolve(__dirname, '../../..'),
 
         stdio: 'pipe',
@@ -144,7 +144,7 @@ describe('run_nhl_model job', () => {
   test('job executes successfully with exit code 0', () => {
     try {
       const result = execSync(
-        `CHEDDAR_DB_PATH= DATABASE_PATH=${TEST_DB_PATH} npm run job:run-nhl-model`,
+        `CHEDDAR_DB_PATH=${TEST_DB_PATH} npm run job:run-nhl-model`,
         {
           cwd: path.resolve(__dirname, '../../..'),
 
@@ -354,6 +354,7 @@ describe('run_nhl_model job', () => {
         SELECT 
           id, game_id, sport, model_name, confidence, output_data
         FROM model_outputs
+        WHERE sport = 'NHL'
         LIMIT 100
       `);
       return stmt.all();
@@ -385,6 +386,7 @@ describe('run_nhl_model job', () => {
         SELECT 
           id, game_id, sport, card_type, card_title, payload_data, created_at, expires_at
         FROM card_payloads
+        WHERE sport = 'nhl'
         LIMIT 100
       `);
       return stmt.all();
@@ -439,8 +441,8 @@ describe('run_nhl_model job', () => {
     const results = await queryDb((db) => {
       const stmt = db.prepare(`
         SELECT
-          (SELECT COUNT(*) FROM card_payloads) AS cards,
-          (SELECT COUNT(*) FROM card_results) AS results
+          (SELECT COUNT(*) FROM card_payloads WHERE sport = 'nhl') AS cards,
+          (SELECT COUNT(*) FROM card_results WHERE sport = 'nhl') AS results
       `);
       return stmt.get();
     });
@@ -452,6 +454,7 @@ describe('run_nhl_model job', () => {
         const stmt = db.prepare(`
           SELECT card_id, sport, status, recommended_bet_type
           FROM card_results
+          WHERE sport = 'nhl'
           LIMIT 50
         `);
         return stmt.all();
@@ -474,6 +477,7 @@ describe('run_nhl_model job', () => {
         FROM card_payloads cp
         LEFT JOIN games g ON cp.game_id = g.game_id
         WHERE cp.expires_at IS NOT NULL
+          AND cp.sport = 'nhl'
         LIMIT 100
       `);
       return stmt.all();

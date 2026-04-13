@@ -2751,7 +2751,7 @@ async function runNHLModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
           });
           let _calStmt = null;
           try {
-            _calStmt = db.prepare(
+            _calStmt = getDatabase().prepare(
               'SELECT breakpoints_json FROM calibration_models WHERE sport = ? AND market_type = ?',
             );
           } catch (_e) {
