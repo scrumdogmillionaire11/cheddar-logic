@@ -252,12 +252,8 @@ function round3(value) {
  * @param {number|null} opts.awayGoalieSavePct
  * @param {number|null} opts.homeGoalieGsax
  * @param {number|null} opts.awayGoalieGsax
- * @param {boolean}     opts.homeGoalieConfirmed - @deprecated use homeGoalieState
- * @param {boolean}     opts.awayGoalieConfirmed - @deprecated use awayGoalieState
- * @param {'CONFIRMED'|'EXPECTED'|'UNKNOWN'|null} opts.homeGoalieCertainty
- * @param {'CONFIRMED'|'EXPECTED'|'UNKNOWN'|null} opts.awayGoalieCertainty
- * @param {object|null} opts.homeGoalieState
- * @param {object|null} opts.awayGoalieState
+ * @param {object|null} opts.homeGoalieState - Canonical goalie starter state (required)
+ * @param {object|null} opts.awayGoalieState - Canonical goalie starter state (required)
  * @param {boolean}     opts.homeB2B         - home team on back-to-back
  * @param {boolean}     opts.awayB2B
  * @param {number|null} opts.restDaysHome    - days since last game (3+ = extended rest)
@@ -293,12 +289,6 @@ function predictNHLGame(opts) {
     awayGoalieSavePct = null,
     homeGoalieGsax = null,
     awayGoalieGsax = null,
-    // Legacy (deprecated — do not read in NHL totals path after WI-0383)
-    // @deprecated use homeGoalieState instead
-    homeGoalieConfirmed = false,
-    awayGoalieConfirmed = false,
-    homeGoalieCertainty = null,
-    awayGoalieCertainty = null,
     homeGoalieState = null,
     awayGoalieState = null,
     homeB2B = false,
@@ -336,10 +326,10 @@ function predictNHLGame(opts) {
   const adjustments = { home: {}, away: {} };
   const homeCertainty = resolvedHomeGoalieState
     ? certaintyFromStarterState(resolvedHomeGoalieState.starter_state)
-    : normalizeGoalieCertainty(homeGoalieCertainty, homeGoalieConfirmed);
+    : 'UNKNOWN';
   const awayCertainty = resolvedAwayGoalieState
     ? certaintyFromStarterState(resolvedAwayGoalieState.starter_state)
-    : normalizeGoalieCertainty(awayGoalieCertainty, awayGoalieConfirmed);
+    : 'UNKNOWN';
   const homeAdjustmentTrust = resolvedHomeGoalieState
     ? resolvedHomeGoalieState.adjustment_trust
     : adjustmentTrustFromCertainty(homeCertainty);
@@ -781,8 +771,6 @@ function predictNHLGame(opts) {
     expectedTotal,
     expected1pTotal,
     first_period_model,
-    homeGoalieConfirmed: homeCertainty === 'CONFIRMED',
-    awayGoalieConfirmed: awayCertainty === 'CONFIRMED',
     homeGoalieCertainty: homeCertainty,
     awayGoalieCertainty: awayCertainty,
     homeAdjustmentTrust,

@@ -31,6 +31,37 @@ const REASON_CODES = Object.freeze({
 });
 
 // ---------------------------------------------------------------------------
+// VALID_STATUSES — all nine terminal state values for consumer validation
+// ---------------------------------------------------------------------------
+const VALID_STATUSES = Object.freeze([
+  'QUALIFIED_OFFICIAL',
+  'QUALIFIED_LEAN',
+  'REJECTED_INPUTS',
+  'REJECTED_CONSISTENCY',
+  'REJECTED_WATCHDOG',
+  'REJECTED_THRESHOLD',
+  'REJECTED_SELECTOR',
+  'REJECTED_DUPLICATE',
+  'REJECTED_MARKET_POLICY',
+]);
+
+// ---------------------------------------------------------------------------
+// VALID_MARKET_TYPES — all supported normalised market type tokens
+// ---------------------------------------------------------------------------
+const VALID_MARKET_TYPES = Object.freeze([
+  'F5_ML',
+  'F5_TOTAL',
+  'FULL_GAME_ML',
+  'FULL_GAME_TOTAL',
+  'PUCKLINE',
+  'SPREAD',
+  'TOTAL',
+  'MONEYLINE',
+  'FIRST_PERIOD',
+  'UNKNOWN',
+]);
+
+// ---------------------------------------------------------------------------
 // Market type normalisation
 // ---------------------------------------------------------------------------
 const MARKET_TYPE_MAP = {
@@ -171,6 +202,19 @@ function evaluateSingleMarket(card, ctx) {
 // assertNoSilentMarketDrop(gameEval) — throws on unbalanced partition
 // ---------------------------------------------------------------------------
 function assertNoSilentMarketDrop(gameEval) {
+  // Terminal-state + shape invariants (checked first so error is actionable)
+  for (const r of gameEval.market_results) {
+    if (!r.status || !VALID_STATUSES.includes(r.status)) {
+      throw new Error(
+        `MISSING_MARKET_TERMINAL_STATUS for ${r.candidate_id ?? 'unknown'}: got ${r.status}`,
+      );
+    }
+    if (!Array.isArray(r.reason_codes)) {
+      throw new Error(`MISSING_REASON_CODES_ARRAY for ${r.candidate_id ?? 'unknown'}`);
+    }
+  }
+
+  // Count invariant
   const total = gameEval.market_results.length;
   const partitioned =
     gameEval.official_plays.length + gameEval.leans.length + gameEval.rejected.length;
@@ -254,6 +298,8 @@ function logRejectedMarkets(rejected, logger) {
 // ---------------------------------------------------------------------------
 module.exports = {
   REASON_CODES,
+  VALID_STATUSES,
+  VALID_MARKET_TYPES,
   evaluateSingleMarket,
   finalizeGameMarketEvaluation,
   assertNoSilentMarketDrop,
