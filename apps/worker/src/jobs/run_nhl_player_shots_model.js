@@ -19,9 +19,9 @@ const {
   setCurrentRunId,
   insertCardPayload,
   validateCardPayload,
-  withDb,
   getPlayerPropLine,
 } = require('@cheddar-logic/data');
+const { withDbSafe } = require('../utils/with-db-safe');
 const {
   calcMu,
   calcMu1p,
@@ -1735,7 +1735,7 @@ function purgePlayerCardsForGame({ db, gameIds, playerId, playerName }) {
  * Main entry point
  */
 async function runNHLPlayerShotsModel() {
-  return withDb(async () => {
+  return withDbSafe(async () => {
     const jobRunId = `job-${JOB_NAME}-${new Date().toISOString().split('.')[0]}-${uuidV4().slice(0, 8)}`;
     const db = getDatabase();
 

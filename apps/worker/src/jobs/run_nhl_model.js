@@ -2076,7 +2076,11 @@ async function runNHLModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
       let nhlBaseSigma;
       if (_sigmaSource === 'computed') {
         console.log(`[NHL] sigma calibrated from ${_computedSigma.games_sampled} samples: ${JSON.stringify({ margin: _computedSigma.margin, total: _computedSigma.total })}`);
-        nhlBaseSigma = { margin: _computedSigma.margin, total: _computedSigma.total };
+        nhlBaseSigma = {
+          margin: _computedSigma.margin,
+          total: _computedSigma.total,
+          spread: _computedSigma.spread ?? _computedSigma.margin,
+        };
       } else {
         console.log('[NHL] insufficient history for sigma calibration — using defaults');
         nhlBaseSigma = edgeCalculator.getSigmaDefaults('NHL');
@@ -2380,15 +2384,18 @@ async function runNHLModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
           });
 
           if (driverCards.length === 0) {
+            const projectionReady = Boolean(
+              projectionGate.projection_inputs_complete,
+            );
             gamePipelineStates[gameId] = buildGamePipelineState({
               oddsSnapshot,
-              projectionReady: true,
+              projectionReady,
               driversReady: false,
               pricingReady: false,
               cardReady: false,
               blockingReasonCodes: deriveGameBlockingReasonCodes({
                 oddsSnapshot,
-                projectionReady: true,
+                projectionReady,
                 pricingReady: false,
               }),
             });

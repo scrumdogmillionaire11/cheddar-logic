@@ -388,6 +388,8 @@ describe('MLB health checks', () => {
   test('checks ESPN seed freshness when global without-odds mode is enabled', () => {
     process.env.ENABLE_WITHOUT_ODDS_MODE = 'true';
     getDatabase.mockReturnValue(makeDb({ scheduleCount: 2 }));
+    const { wasJobRecentlySuccessful } = require('@cheddar-logic/data');
+    wasJobRecentlySuccessful.mockReturnValue(false);
 
     const result = checkMlbSeedFreshness(75);
 

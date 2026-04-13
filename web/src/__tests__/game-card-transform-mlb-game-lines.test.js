@@ -107,7 +107,9 @@ function makeBaseGame(overrides = {}) {
         evPassed: false,
         driverKey: '',
         projectedTotal: null,
-        edge: null,
+        edge: 0.087,
+        p_fair: 0.476,
+        p_implied: 0.4,
         kind: 'PLAY',
         market_type: 'MONEYLINE',
         selection: { side: 'AWAY' },
@@ -134,6 +136,16 @@ function makeBaseGame(overrides = {}) {
   assert(
     !card.play.reason_codes.includes('PASS_DATA_ERROR'),
     'NO_EDGE_COMPUTED MLB moneyline passes should not be mislabeled as PASS_DATA_ERROR',
+  );
+  assert.strictEqual(
+    card.play.status,
+    'PASS',
+    'blocked MLB moneyline rows must remain PASS even when edge/fair fields are present',
+  );
+  assert.strictEqual(
+    card.play.action,
+    'PASS',
+    'blocked MLB moneyline rows must keep action PASS',
   );
   assert.strictEqual(
     card.play.transform_meta?.quality,

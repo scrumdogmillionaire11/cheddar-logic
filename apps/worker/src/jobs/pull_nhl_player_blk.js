@@ -20,10 +20,10 @@ const {
   markJobRunSuccess,
   markJobRunFailure,
   shouldRunJobKey,
-  withDb,
   upsertPlayerBlkLog,
   listTrackedPlayers,
 } = require('@cheddar-logic/data');
+const { withDbSafe } = require('../utils/with-db-safe');
 
 const JOB_NAME = 'pull_nhl_player_blk';
 const NHL_STATS_BASE = 'https://api.nhle.com/stats/rest/en/skater/realtime';
@@ -215,7 +215,7 @@ async function pullNhlPlayerBlk({ jobKey = null, dryRun = false } = {}) {
   const jobRunId = `job-${JOB_NAME}-${new Date().toISOString().split('.')[0]}-${uuidV4().slice(0, 8)}`;
   const seasonId = resolveSeasonId();
 
-  return withDb(async () => {
+  return withDbSafe(async () => {
     if (jobKey && !shouldRunJobKey(jobKey)) {
       return { success: true, skipped: true, jobRunId: null, jobKey };
     }

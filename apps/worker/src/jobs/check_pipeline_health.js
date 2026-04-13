@@ -578,7 +578,7 @@ function checkSettlementBacklog() {
 }
 
 function checkMlbSeedFreshness(maxAgeMinutes = SEED_FRESHNESS_MAX_AGE_MINUTES) {
-  const mlbWithoutOddsMode = !ODDS_SPORTS_CONFIG.MLB.active || process.env.ENABLE_WITHOUT_ODDS_MODE === 'true';
+  const mlbWithoutOddsMode = process.env.ENABLE_WITHOUT_ODDS_MODE === 'true';
 
   if (!mlbWithoutOddsMode) {
     const reason = 'MLB live-odds mode active - seed freshness check skipped';

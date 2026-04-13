@@ -1649,6 +1649,7 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
         : sourcePlay?.decision_v2?.official_status === 'PASS'
           ? 'PASS'
           : getSourcePlayAction(sourcePlay);
+  const sourceExplicitPass = sourceAction === 'PASS';
   const sourceInference =
     selectedSource?.inference ??
     (sourcePlay
@@ -2259,6 +2260,9 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
       ? decision.action
       : 'PASS';
   let finalDecision: DecisionLabel = decisionFromAction(decisionAction);
+  if (sourceExplicitPass) {
+    finalDecision = 'PASS';
+  }
   
   // WI-DECISION-FIX: Edge is the master gate
   // If edge < 1%, force PASS regardless of other signals
@@ -2267,11 +2271,14 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
     finalDecision = 'PASS';
     reasonCodesUnique.push('PASS_INSUFFICIENT_EDGE');
   } else {
-    // Only allow scoreDecision to affect decision if edge gate passes
-    if (scoreDecision === 'PASS') finalDecision = 'PASS';
-    if (scoreDecision === 'WATCH' && finalDecision === 'FIRE')
-      finalDecision = 'WATCH';
-    if (scoreDecision === 'FIRE') finalDecision = 'FIRE';
+    // Only allow scoreDecision to affect decision if edge gate passes and
+    // the source record did not already resolve to explicit PASS.
+    if (!sourceExplicitPass) {
+      if (scoreDecision === 'PASS') finalDecision = 'PASS';
+      if (scoreDecision === 'WATCH' && finalDecision === 'FIRE')
+        finalDecision = 'WATCH';
+      if (scoreDecision === 'FIRE') finalDecision = 'FIRE';
+    }
   }
   if (
     sourceAction === 'FIRE' &&
