@@ -42,7 +42,7 @@ function buildFakeDriverCard(gameId = 'nhl-game-001', descriptor = {}) {
       prediction: descriptor.prediction || 'HOME',
       confidence: descriptor.confidence ?? 0.60,
       confidence_pct: Math.round((descriptor.confidence ?? 0.60) * 100),
-      tier: descriptor.tier || 'B',
+      tier: descriptor.tier || 'BEST',
       market_type: descriptor.market_type || 'TOTAL',
       consistency: descriptor.consistency || {
         pace_tier: 'MID',
@@ -52,11 +52,37 @@ function buildFakeDriverCard(gameId = 'nhl-game-001', descriptor = {}) {
       line: descriptor.line ?? 6.5,
       price: descriptor.price ?? -110,
       pipeline_state: null,
+      home_team: descriptor.home_team || 'Boston Bruins',
+      away_team: descriptor.away_team || 'Toronto Maple Leafs',
+      recommendation: descriptor.recommendation || {
+        type: 'ML_HOME',
+        pass_reason: null,
+      },
       run_id: null,
       decision_v2: {
         sharp_price_status:
           descriptor.price == null ? 'UNPRICED' : 'PRICED',
         official_status: 'PLAY',
+      },
+      // Required by driverPayloadSchema validation
+      recommended_bet_type: descriptor.recommended_bet_type || 'total',
+      generated_at: descriptor.generated_at || '2026-04-13T15:30:00.000Z',
+      odds_context: descriptor.odds_context || {
+        h2h_home: -140,
+        h2h_away: 120,
+        spread_home: -1.5,
+        spread_away: 1.5,
+        total: 5.5,
+      },
+      driver: descriptor.driver || {
+        key: 'nhl-pace-model',
+        score: 0.64,
+        status: 'ready',
+        inputs: {
+          team_pace: 2.77,
+          opponent_pace: 3.01,
+          rest_advantage: 0,
+        },
       },
     },
   };
@@ -137,7 +163,7 @@ function loadRunNHLModel({
     computeNHLMarketDecisions: jest.fn(() => ({})),
     selectExpressionChoice: jest.fn(() => null),
     buildMarketPayload: jest.fn(() => ({})),
-    determineTier: jest.fn(() => 'B'),
+    determineTier: jest.fn(() => 'BEST'),
     buildMarketCallCard: jest.fn(() => null),
     getModel: jest.fn(),
     extractNhlDriverDataQualityContext: jest.fn(() => ({})),

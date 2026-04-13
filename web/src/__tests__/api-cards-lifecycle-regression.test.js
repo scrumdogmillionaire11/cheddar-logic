@@ -20,6 +20,18 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const REPO_ROOT = path.resolve(__dirname, '../../..');
 
+function extractCoreRunStateSports(source) {
+  const match = source.match(
+    /const CORE_RUN_STATE_SPORTS = \[([\s\S]*?)\] as const;/,
+  );
+  if (!match) return null;
+  return match[1]
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith("'"))
+    .map((line) => line.replace(/[' ,]/g, ''));
+}
+
 async function runTests() {
   console.log('🧪 Starting WI-0392: API Cards Lifecycle Parity Tests...\n');
   const testRuntime = await setupIsolatedTestDb(
@@ -314,9 +326,9 @@ async function runTests() {
       process.exit(1);
     }
 
-    // Test 5: Core run-state guards ignore non-canonical sports (e.g., nhl_props)
+    // Test 5: Cards routes keep the same core run-state sport scope
     console.log(
-      'Test 5: Source contract enforces canonical run-state sport filtering',
+      'Test 5: Source contract enforces cards list/detail run-state sport parity',
     );
     const cardsRouteSource = fs.readFileSync(
       path.join(REPO_ROOT, 'web/src/app/api/cards/route.ts'),
@@ -360,10 +372,27 @@ async function runTests() {
       process.exit(1);
     }
 
-    // Test 6: Non-canonical run_state rows (e.g., nhl_props) do not contaminate canonical run_id selection
-    console.log('Test 6: Non-canonical run_state rows (nhl_props) are excluded from core run_id selection');
+    const cardsSports = extractCoreRunStateSports(cardsRouteSource);
+    const perGameCardsSports = extractCoreRunStateSports(perGameCardsRouteSource);
+    const cardsRoutesSportParity =
+      Array.isArray(cardsSports) &&
+      Array.isArray(perGameCardsSports) &&
+      cardsSports.length > 0 &&
+      JSON.stringify(cardsSports) === JSON.stringify(perGameCardsSports);
 
-    const CANONICAL_SPORTS_SQL = "'nba', 'nhl', 'mlb', 'nfl', 'fpl'";
+    if (cardsRoutesSportParity) {
+      console.log('✓ Cards list/detail routes use the same CORE_RUN_STATE_SPORTS set\n');
+    } else {
+      console.log(
+        `✗ Cards list/detail CORE_RUN_STATE_SPORTS mismatch: list=${JSON.stringify(cardsSports)} detail=${JSON.stringify(perGameCardsSports)}\n`,
+      );
+      process.exit(1);
+    }
+
+    // Test 6: Non-canonical run_state rows (e.g., ncaam) do not contaminate canonical run_id selection
+    console.log('Test 6: Non-canonical run_state rows (ncaam) are excluded from core run_id selection');
+
+    const CANONICAL_SPORTS_SQL = "'nba', 'nhl', 'mlb', 'nfl', 'fpl', 'nhl_props'";
     const TEST_RUN_CANONICAL = 'run-test-canonical-nhl-wi0447';
     const TEST_RUN_NONCANONICAL = 'run-test-noncanonical-props-wi0447';
 
@@ -386,9 +415,9 @@ async function runTests() {
       `INSERT OR REPLACE INTO run_state (id, sport, current_run_id, updated_at) VALUES ('test-nhl-wi0447', 'nhl', ?, datetime('now'))`
     ).run(TEST_RUN_CANONICAL);
 
-    // Insert non-canonical run_state row (nhl_props — not in CORE_RUN_STATE_SPORTS)
+    // Insert non-canonical run_state row (ncaam — not in CORE_RUN_STATE_SPORTS)
     client.prepare(
-      `INSERT OR REPLACE INTO run_state (id, sport, current_run_id, updated_at) VALUES ('test-nhl-props-wi0447', 'nhl_props', ?, datetime('now'))`
+      `INSERT OR REPLACE INTO run_state (id, sport, current_run_id, updated_at) VALUES ('test-nhl-props-wi0447', 'ncaam', ?, datetime('now'))`
     ).run(TEST_RUN_NONCANONICAL);
 
     // Execute the exact canonical getActiveRunIds SQL (success tier) used by cards/games routes
@@ -412,7 +441,7 @@ async function runTests() {
     const includesNonCanonical = canonicalRunIds.includes(TEST_RUN_NONCANONICAL);
 
     if (includesCanonical && !includesNonCanonical) {
-      console.log('✓ Non-canonical nhl_props run_state row correctly excluded from core run_id selection\n');
+      console.log('✓ Non-canonical ncaam run_state row correctly excluded from core run_id selection\n');
     } else {
       console.log(
         `✗ Canonical filter failed: includesCanonical=${includesCanonical}, includesNonCanonical=${includesNonCanonical}\n`

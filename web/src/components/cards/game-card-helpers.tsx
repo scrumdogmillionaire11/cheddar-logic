@@ -352,7 +352,8 @@ export function resolveProjectedValueForMarketContext({
   if (
     marketType === 'TOTAL' ||
     marketType === 'TEAM_TOTAL' ||
-    marketType === 'FIRST_PERIOD'
+    marketType === 'FIRST_PERIOD' ||
+    marketType === 'FIRST_5_INNINGS'
   ) {
     if (typeof projectedTeamTotal === 'number') return projectedTeamTotal;
     if (typeof projectedTotal === 'number') return projectedTotal;

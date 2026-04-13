@@ -315,7 +315,9 @@ export default function GameCardItem({
     (hasMarketSpecificEdge && Math.abs(effectiveEdgePct) < 0.0005);
   const hasActionableEdge = hasMarketSpecificEdge && !isNoEdgeAtPrice;
   const marketType = displayPlay.market_type;
-  const isF5TotalMarket = card.sport === 'MLB' && marketType === 'FIRST_PERIOD';
+  const isF5TotalMarket =
+    card.sport === 'MLB' &&
+    (marketType === 'FIRST_PERIOD' || marketType === 'FIRST_5_INNINGS');
   const isSpreadLikeMarket =
     marketType === 'SPREAD' || marketType === 'PUCKLINE';
   const isTotalLikeMarket =
@@ -610,6 +612,7 @@ export default function GameCardItem({
   );
   const isProjectionOnlyCard =
     displayPlay.market_type === 'FIRST_PERIOD' ||
+    displayPlay.market_type === 'FIRST_5_INNINGS' ||
     displayPlay.market_type === 'INFO' ||
     displayPlay.market_type === 'PROP';
   const isNhlPace1p = displayPlay.cardType === 'nhl-pace-1p';

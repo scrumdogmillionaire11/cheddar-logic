@@ -352,6 +352,14 @@ export function resolveLifecycleModeFromUrlAndStorage(): LifecycleMode {
     window.sessionStorage.setItem(LIFECYCLE_SESSION_KEY, urlMode);
     return urlMode;
   }
+
+  const storedMode = parseLifecycleMode(
+    window.sessionStorage.getItem(LIFECYCLE_SESSION_KEY),
+  );
+  if (storedMode) {
+    return storedMode;
+  }
+
   return 'pregame';
 }
 

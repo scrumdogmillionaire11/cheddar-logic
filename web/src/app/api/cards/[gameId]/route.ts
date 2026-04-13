@@ -70,11 +70,11 @@ const ACTIVE_EXCLUDED_STATUSES = [
 const CORE_RUN_STATE_SPORTS = [
   'nba',
   'nhl',
-  'ncaam',
   'soccer',
   'mlb',
   'nfl',
   'fpl',
+  'nhl_props',
 ] as const;
 const CORE_RUN_STATE_SPORT_SQL = CORE_RUN_STATE_SPORTS.map(
   (sport) => `'${sport}'`,
