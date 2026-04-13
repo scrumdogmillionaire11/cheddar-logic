@@ -545,6 +545,36 @@ function isProjectionOnlyCardPlay(play: ApiPlay): boolean {
   );
 }
 
+function isRenderableGameSurfacePlay(game: GameData, play: ApiPlay): boolean {
+  return (
+    !isProjectionOnlyCardPlay(play) &&
+    isPlayItem(play, game.sport) &&
+    play.market_type !== 'PROP'
+  );
+}
+
+function isProjectionOnlyGameSurfacePlay(
+  game: GameData,
+  play: ApiPlay,
+): boolean {
+  return (
+    isProjectionOnlyCardPlay(play) &&
+    isPlayItem(play, game.sport) &&
+    play.market_type !== 'PROP'
+  );
+}
+
+function shouldExcludeProjectionOnlyGameSurface(game: GameData): boolean {
+  const hasRenderablePlay = game.plays.some((play) =>
+    isRenderableGameSurfacePlay(game, play),
+  );
+  if (hasRenderablePlay) return false;
+
+  return game.plays.some((play) =>
+    isProjectionOnlyGameSurfacePlay(game, play),
+  );
+}
+
 function playDecisionRank(play: ApiPlay): number {
   const action = getSourcePlayAction(play);
   if (action === 'FIRE') return 3;

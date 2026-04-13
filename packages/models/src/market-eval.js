@@ -1,5 +1,10 @@
 'use strict';
 
+const {
+  WATCHDOG_REASONS,
+  buildDecisionV2,
+} = require('./decision-pipeline-v2');
+
 /**
  * market-eval.js — Shared independent market evaluation contract.
  *
@@ -60,6 +65,11 @@ const VALID_MARKET_TYPES = Object.freeze([
   'FIRST_PERIOD',
   'UNKNOWN',
 ]);
+
+const KNOWN_WATCHDOG_REASON_CODES = new Set(
+  Object.values(WATCHDOG_REASONS || {}),
+);
+const DECISION_PIPELINE_LINKED = typeof buildDecisionV2 === 'function';
 
 // ---------------------------------------------------------------------------
 // Market type normalisation
@@ -158,6 +168,32 @@ function evaluateSingleMarket(card, ctx) {
       return REASON_CODES.MISSING_MARKET_ODDS;
     });
     return buildResult(card, safeCtx, 'REJECTED_INPUTS', codes, { inputs_ok: false });
+  }
+
+  // --- Watchdog gate ---
+  if (
+    Array.isArray(card.watchdog_reason_codes) &&
+    card.watchdog_reason_codes.length > 0
+  ) {
+    const watchdogCodes = card.watchdog_reason_codes
+      .map((value) => String(value))
+      .filter(Boolean);
+
+    const notes = [];
+    if (DECISION_PIPELINE_LINKED) {
+      notes.push('decision_pipeline_linked');
+    }
+    if (watchdogCodes.some((code) => KNOWN_WATCHDOG_REASON_CODES.has(code))) {
+      notes.push('watchdog_reason_recognized');
+    }
+
+    return buildResult(
+      card,
+      safeCtx,
+      'REJECTED_WATCHDOG',
+      [REASON_CODES.WATCHDOG_UNSAFE_FOR_BASE, ...watchdogCodes],
+      { watchdog_ok: false, official_tier: 'PASS', notes },
+    );
   }
 
   // --- EV threshold explicitly false ---

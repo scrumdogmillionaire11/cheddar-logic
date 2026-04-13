@@ -21,8 +21,6 @@ function buildBase(overrides = {}) {
     awayPkPct: 0.8,
     homeGoalieSavePct: 0.93,
     awayGoalieSavePct: 0.89,
-    homeGoalieConfirmed: false,
-    awayGoalieConfirmed: false,
     homeGoalieCertainty: 'UNKNOWN',
     awayGoalieCertainty: 'UNKNOWN',
     homeB2B: false,
@@ -113,44 +111,36 @@ describe('predictNHLGame goalie composite wiring (WI-0823)', () => {
 });
 
 describe('predictNHLGame trust-gated goalie adjustment (WI-0381)', () => {
-  test('FULL trust canonical path is math-identical to legacy confirmed fallback', () => {
-    const canonical = predictNHLGame(
+  test('FULL trust is deterministic for identical confirmed goalie state input', () => {
+    const first = predictNHLGame(
       buildBase({
         homeGoalieState: makeState('home', 'CONFIRMED', 'HIGH'),
         awayGoalieState: makeState('away', 'CONFIRMED', 'HIGH'),
-        homeGoalieConfirmed: false,
-        awayGoalieConfirmed: false,
-        homeGoalieCertainty: null,
-        awayGoalieCertainty: null,
       }),
     );
-    const legacy = predictNHLGame(
+    const second = predictNHLGame(
       buildBase({
-        homeGoalieState: null,
-        awayGoalieState: null,
-        homeGoalieConfirmed: true,
-        awayGoalieConfirmed: true,
-        homeGoalieCertainty: null,
-        awayGoalieCertainty: null,
+        homeGoalieState: makeState('home', 'CONFIRMED', 'HIGH'),
+        awayGoalieState: makeState('away', 'CONFIRMED', 'HIGH'),
       }),
     );
 
-    expect(canonical.homeAdjustmentTrust).toBe('FULL');
-    expect(canonical.awayAdjustmentTrust).toBe('FULL');
-    expect(legacy.homeAdjustmentTrust).toBe('FULL');
-    expect(legacy.awayAdjustmentTrust).toBe('FULL');
+    expect(first.homeAdjustmentTrust).toBe('FULL');
+    expect(first.awayAdjustmentTrust).toBe('FULL');
+    expect(second.homeAdjustmentTrust).toBe('FULL');
+    expect(second.awayAdjustmentTrust).toBe('FULL');
 
-    expect(canonical.homeExpected).toBeCloseTo(legacy.homeExpected, 6);
-    expect(canonical.awayExpected).toBeCloseTo(legacy.awayExpected, 6);
-    expect(canonical.expectedTotal).toBeCloseTo(legacy.expectedTotal, 6);
-    expect(canonical.rawTotalModel).toBeCloseTo(legacy.rawTotalModel, 6);
-    expect(canonical.regressedTotalModel).toBeCloseTo(legacy.regressedTotalModel, 6);
-    expect(canonical.adjustments.away.opponent_goalie).toBeCloseTo(
-      legacy.adjustments.away.opponent_goalie,
+    expect(first.homeExpected).toBeCloseTo(second.homeExpected, 6);
+    expect(first.awayExpected).toBeCloseTo(second.awayExpected, 6);
+    expect(first.expectedTotal).toBeCloseTo(second.expectedTotal, 6);
+    expect(first.rawTotalModel).toBeCloseTo(second.rawTotalModel, 6);
+    expect(first.regressedTotalModel).toBeCloseTo(second.regressedTotalModel, 6);
+    expect(first.adjustments.away.opponent_goalie).toBeCloseTo(
+      second.adjustments.away.opponent_goalie,
       6,
     );
-    expect(canonical.adjustments.home.opponent_goalie).toBeCloseTo(
-      legacy.adjustments.home.opponent_goalie,
+    expect(first.adjustments.home.opponent_goalie).toBeCloseTo(
+      second.adjustments.home.opponent_goalie,
       6,
     );
   });
@@ -296,10 +286,6 @@ describe('predictNHLGame trust-gated goalie adjustment (WI-0381)', () => {
         awayGoalieSavePct: null,
         homeGoalieState: null,
         awayGoalieState: null,
-        homeGoalieConfirmed: false,
-        awayGoalieConfirmed: false,
-        homeGoalieCertainty: null,
-        awayGoalieCertainty: null,
       }),
     );
     const noGoalie = predictNHLGame(
@@ -308,10 +294,6 @@ describe('predictNHLGame trust-gated goalie adjustment (WI-0381)', () => {
         awayGoalieSavePct: null,
         homeGoalieState: null,
         awayGoalieState: null,
-        homeGoalieConfirmed: false,
-        awayGoalieConfirmed: false,
-        homeGoalieCertainty: null,
-        awayGoalieCertainty: null,
       }),
     );
 
