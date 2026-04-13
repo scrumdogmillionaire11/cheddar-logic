@@ -117,6 +117,17 @@ jobs:
           script: |
             set -e
             cd /opt/cheddar-logic
+            # Recover from stale git lock files left by interrupted prior deploys.
+            # If an active git process exists in this repo, abort instead of forcing.
+            if [ -f .git/HEAD.lock ] || [ -f .git/index.lock ]; then
+              echo "Git lock file detected (.git/HEAD.lock or .git/index.lock)."
+              if pgrep -fa "git" | grep -q "/opt/cheddar-logic"; then
+                echo "ERROR: Active git process detected for /opt/cheddar-logic; refusing to clear lock files."
+                exit 1
+              fi
+              rm -f .git/HEAD.lock .git/index.lock
+              echo "Cleared stale git lock file(s)."
+            fi
             git fetch origin main
             git reset --hard origin/main
             # Guard: proxy.ts must NOT exist (it was a broken non-middleware that
