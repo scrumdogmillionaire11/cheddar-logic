@@ -368,6 +368,76 @@ function extractGamesPathBehavior(payload) {
 
 const COMPARABLE_FIELDS = ['status', 'reason_code', 'visibility_class', 'has_projection_marker'];
 
+const EXPECTED_PARITY_SNAPSHOT = {
+  schema_version: 'wi-0902-v2-cards-games-parity',
+  fixtures: [
+    {
+      fixtureId: 'parity-001-standard-play',
+      parity_status: 'MATCH',
+      field_deltas: [],
+      cards: { status: 'PLAY', reason_code: 'EDGE_CONFIRMED', visibility_class: 'visible', has_projection_marker: false },
+      games: { status: 'PLAY', reason_code: 'EDGE_CONFIRMED', visibility_class: 'visible', has_projection_marker: false },
+    },
+    {
+      fixtureId: 'parity-002-standard-lean',
+      parity_status: 'MATCH',
+      field_deltas: [],
+      cards: { status: 'LEAN', reason_code: 'LEAN_EDGE', visibility_class: 'visible', has_projection_marker: false },
+      games: { status: 'LEAN', reason_code: 'LEAN_EDGE', visibility_class: 'visible', has_projection_marker: false },
+    },
+    {
+      fixtureId: 'parity-003-projection-only',
+      parity_status: 'EXPECTED_DELTA',
+      field_deltas: ['visibility_class'],
+      cards: { status: 'PASS', reason_code: 'NO_MARKET_LINE', visibility_class: 'hidden', has_projection_marker: true },
+      games: { status: 'PASS', reason_code: 'NO_MARKET_LINE', visibility_class: 'projection_only', has_projection_marker: true },
+    },
+    {
+      fixtureId: 'parity-004-synthetic-fallback',
+      parity_status: 'EXPECTED_DELTA',
+      field_deltas: ['visibility_class'],
+      cards: { status: 'PASS', reason_code: 'SYNTHETIC_FALLBACK_GATE', visibility_class: 'hidden', has_projection_marker: true },
+      games: { status: 'PASS', reason_code: 'SYNTHETIC_FALLBACK_GATE', visibility_class: 'projection_only', has_projection_marker: true },
+    },
+    {
+      fixtureId: 'parity-005-pass-with-reason',
+      parity_status: 'MATCH',
+      field_deltas: [],
+      cards: { status: 'PASS', reason_code: 'SIGMA_INSUFFICIENT', visibility_class: 'visible', has_projection_marker: false },
+      games: { status: 'PASS', reason_code: 'SIGMA_INSUFFICIENT', visibility_class: 'visible', has_projection_marker: false },
+    },
+    {
+      fixtureId: 'parity-006-blocked',
+      parity_status: 'MATCH',
+      field_deltas: [],
+      cards: { status: 'NO_BET', reason_code: 'INPUT_GATE_BLOCK', visibility_class: 'visible', has_projection_marker: false },
+      games: { status: 'NO_BET', reason_code: 'INPUT_GATE_BLOCK', visibility_class: 'visible', has_projection_marker: false },
+    },
+    {
+      fixtureId: 'parity-007-nested-play',
+      parity_status: 'MATCH',
+      field_deltas: [],
+      cards: { status: 'PLAY', reason_code: 'EDGE_CONFIRMED', visibility_class: 'visible', has_projection_marker: false },
+      games: { status: 'PLAY', reason_code: 'EDGE_CONFIRMED', visibility_class: 'visible', has_projection_marker: false },
+    },
+    {
+      fixtureId: 'parity-008-projection-floor',
+      parity_status: 'EXPECTED_DELTA',
+      field_deltas: ['visibility_class', 'has_projection_marker'],
+      cards: { status: 'PASS', reason_code: 'PROJECTION_FLOOR_GATE', visibility_class: 'hidden', has_projection_marker: false },
+      games: { status: 'PASS', reason_code: 'PROJECTION_FLOOR_GATE', visibility_class: 'projection_only', has_projection_marker: true },
+    },
+  ],
+  summary: {
+    total_fixtures: 8,
+    match: 5,
+    expected_delta: 3,
+    unexpected_delta: 0,
+    cards_visibility: { visible: 5, hidden: 3, projection_only: 0 },
+    games_visibility: { visible: 5, hidden: 0, projection_only: 3 },
+  },
+};
+
 /**
  * Compute a parity diff object from two behavioral field snapshots.
  * @param {string} gameId
@@ -805,4 +875,65 @@ console.log(`  MATCH: ${paritySummary.filter(d => d.parity_status === 'MATCH').l
 console.log(`  EXPECTED_DELTA: ${paritySummary.filter(d => d.parity_status === 'EXPECTED_DELTA').length}`);
 console.log(`  UNEXPECTED_DELTA: ${paritySummary.filter(d => d.parity_status === 'UNEXPECTED_DELTA').length}`);
 console.log('');
+// ---------------------------------------------------------------------------
+// Task 4: Snapshot current /cards + /games parity behavior
+// ---------------------------------------------------------------------------
+
+console.log('── Task 4: Snapshot contract assertions ──\n');
+
+const runtimeSnapshotFixtures = paritySummary.map((diff) => ({
+  fixtureId: diff.fixtureId,
+  parity_status: diff.parity_status,
+  field_deltas: [...diff.field_deltas],
+  cards: {
+    status: diff.cards.status,
+    reason_code: diff.cards.reason_code,
+    visibility_class: diff.cards.visibility_class,
+    has_projection_marker: diff.cards.has_projection_marker,
+  },
+  games: {
+    status: diff.games.status,
+    reason_code: diff.games.reason_code,
+    visibility_class: diff.games.visibility_class,
+    has_projection_marker: diff.games.has_projection_marker,
+  },
+}));
+
+const summaryCounts = {
+  total_fixtures: paritySummary.length,
+  match: paritySummary.filter((diff) => diff.parity_status === 'MATCH').length,
+  expected_delta: paritySummary.filter(
+    (diff) => diff.parity_status === 'EXPECTED_DELTA',
+  ).length,
+  unexpected_delta: paritySummary.filter(
+    (diff) => diff.parity_status === 'UNEXPECTED_DELTA',
+  ).length,
+};
+
+const countVisibility = (source) => ({
+  visible: source.filter((entry) => entry.visibility_class === 'visible').length,
+  hidden: source.filter((entry) => entry.visibility_class === 'hidden').length,
+  projection_only: source.filter(
+    (entry) => entry.visibility_class === 'projection_only',
+  ).length,
+});
+
+const runtimeSnapshot = {
+  schema_version: 'wi-0902-v2-cards-games-parity',
+  fixtures: runtimeSnapshotFixtures,
+  summary: {
+    ...summaryCounts,
+    cards_visibility: countVisibility(runtimeSnapshotFixtures.map((entry) => entry.cards)),
+    games_visibility: countVisibility(runtimeSnapshotFixtures.map((entry) => entry.games)),
+  },
+};
+
+assert.deepEqual(
+  runtimeSnapshot,
+  EXPECTED_PARITY_SNAPSHOT,
+  'Snapshot mismatch: /cards and /games parity contract drifted; review fixture-level deltas before shipping.',
+);
+
+console.log('  ✓ Snapshot lock matches expected /cards parity behavior\n');
+
 console.log('✅ WI-0902 API endpoint parity fixtures test passed');

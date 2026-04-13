@@ -131,6 +131,21 @@ function applyDecisionVeto(cardOrDecision, vetoReason) {
 }
 
 function resolveExecutionStatus(payload) {
+  const market = normalizeMarketType(
+    payload?.market_type,
+    payload?.recommended_bet_type,
+  );
+  const period = normalizePeriod(payload);
+  const isOddsEligibleGameline =
+    period === 'full_game' &&
+    (market === 'moneyline' || market === 'spread' || market === 'total');
+
+  // Global policy: only full-game gamelines are odds-backed.
+  // Props and game-props must remain projection-only regardless of odds presence.
+  if (!isOddsEligibleGameline) {
+    return 'PROJECTION_ONLY';
+  }
+
   const explicitStatus = String(payload?.execution_status || '').toUpperCase();
   const sharpPriceStatus = String(
     payload?.decision_v2?.sharp_price_status || '',

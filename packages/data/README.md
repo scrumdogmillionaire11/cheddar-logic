@@ -31,9 +31,9 @@ This creates the SQLite database at `$CHEDDAR_DB_PATH` (or `packages/data/chedda
 sqlite3 "$CHEDDAR_DB_PATH" "SELECT COUNT(*) FROM card_payloads;"
 ```
 
-The `card_payloads` table identifies the production database (contains historical card decisions). Legacy vars (`DATABASE_PATH`, `RECORD_DATABASE_PATH`, `DATABASE_URL`) must be removed from production config.
+The `card_payloads` table identifies the production database (contains historical card decisions). Set `CHEDDAR_DB_PATH` explicitly in production config.
 
-`CHEDDAR_DB_PATH` is the canonical database path. Avoid setting `DATABASE_PATH`, `RECORD_DATABASE_PATH`, or `DATABASE_URL` to prevent conflicts.
+`CHEDDAR_DB_PATH` is the canonical database path. `DATABASE_PATH` and `RECORD_DATABASE_PATH` are no longer read by the resolver.
 
 ## Schema
 
@@ -303,8 +303,6 @@ The client uses SQLite with a singleton connection.
 **Environment variables:**
 
 - `CHEDDAR_DB_PATH`: Canonical SQLite DB path (single source of truth)
-- `RECORD_DATABASE_PATH`: Legacy alias for DB path (supported for compatibility)
-- `DATABASE_PATH`: Legacy alias for DB path (supported for compatibility)
 - `DATABASE_URL`: SQLite URL format (`sqlite:///...`) supported for compatibility
 - `CHEDDAR_DATA_DIR`: Fallback directory if explicit file path env vars are not set
 - `CHEDDAR_DB_AUTODISCOVER`: Optional emergency fallback (`true` enables scanning alternate DB files; default strict single-path mode)

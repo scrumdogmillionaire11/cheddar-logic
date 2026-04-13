@@ -60,6 +60,7 @@ const { pullMlbStatcast } = require('../jobs/pull_mlb_statcast');
 
 const { isFixedDue } = require('./windows');
 const { isTminusDue } = require('./utils');
+const { isFeatureEnabled } = require('@cheddar-logic/data/src/feature-flags');
 
 // ─── Config helpers ───────────────────────────────────────────────────────────
 
@@ -169,13 +170,13 @@ function computePlayerPropsDueJobs(
   nowEt,
   { games = [], dryRun = false, quotaTier = 'FULL' } = {},
 ) {
-  if (process.env.ENABLE_PLAYER_PROPS_SCHEDULER === 'false') return [];
+  if (!isFeatureEnabled('internal', 'player-props-scheduler')) return [];
 
   const nowUtc = nowEt.toUTC();
   const dateStr = nowEt.toISODate();
   const fixedTimes = getPlayerPropsFixedTimes();
-  const blkEnabled = process.env.ENABLE_NHL_BLK_INGEST !== 'false';
-  const mpBlkEnabled = blkEnabled && process.env.NHL_MONEYPUCK_BLK_ENABLED !== 'false';
+  const blkEnabled = isFeatureEnabled('nhl', 'blk-ingest');
+  const mpBlkEnabled = blkEnabled && isFeatureEnabled('nhl', 'moneypuck-blk');
   const mlbFixedRefreshAllowed = quotaTier === 'FULL' || quotaTier === 'MEDIUM';
   const jobs = [];
 

@@ -16,7 +16,11 @@ function upsertGame({ id, gameId, sport, homeTeam, awayTeam, gameTimeUtc, status
     ON CONFLICT(game_id) DO UPDATE SET
       home_team = excluded.home_team,
       away_team = excluded.away_team,
-      game_time_utc = excluded.game_time_utc,
+      game_time_utc = CASE
+        WHEN games.game_time_utc IS NULL THEN excluded.game_time_utc
+        WHEN excluded.game_time_utc LIKE '%.___Z' THEN games.game_time_utc
+        ELSE excluded.game_time_utc
+      END,
       status = excluded.status,
       updated_at = CURRENT_TIMESTAMP
   `);

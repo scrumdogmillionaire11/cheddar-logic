@@ -28,8 +28,8 @@ const {
   markJobRunSuccess,
   markJobRunFailure,
   shouldRunJobKey,
-  withDb,
 } = require('@cheddar-logic/data');
+const { withDbSafe } = require('../utils/with-db-safe');
 
 const { ingestNstBlkRates } = require('./ingest_nst_blk_rates');
 
@@ -46,7 +46,7 @@ const JOB_NAME = 'pull_nst_blk_rates';
 async function pullNstBlkRates({ jobKey = null, dryRun = false } = {}) {
   const jobRunId = `job-${JOB_NAME}-${new Date().toISOString().split('.')[0]}-${uuidV4().slice(0, 8)}`;
 
-  return withDb(async () => {
+  return withDbSafe(async () => {
     if (jobKey && !shouldRunJobKey(jobKey)) {
       console.log(`[${JOB_NAME}] Skipping — already ran for key ${jobKey}`);
       return { success: true, skipped: true, jobKey };

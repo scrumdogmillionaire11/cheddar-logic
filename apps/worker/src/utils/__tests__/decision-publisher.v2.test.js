@@ -149,6 +149,50 @@ describe('decision publisher v2 pipeline', () => {
     expect(payload.decision_v2.official_status).toBe('PLAY');
   });
 
+  test('FIRST_PERIOD cards are always projection-only even when executable is requested', () => {
+    const payload = buildWave1Payload({
+      sport: 'NHL',
+      market_type: 'FIRST_PERIOD',
+      period: '1P',
+      selection: { side: 'OVER' },
+      prediction: 'OVER',
+      line: 1.5,
+      price: -125,
+      execution_status: 'EXECUTABLE',
+      odds_context: {
+        total_1p: 1.5,
+        total_price_over_1p: -125,
+        total_price_under_1p: 105,
+      },
+    });
+
+    applyUiActionFields(payload);
+
+    expect(payload.execution_status).toBe('PROJECTION_ONLY');
+  });
+
+  test('PROP cards are always projection-only and never require odds to stay visible', () => {
+    const payload = {
+      kind: 'PLAY',
+      sport: 'NHL',
+      market_type: 'PROP',
+      recommended_bet_type: 'prop',
+      selection: { side: 'OVER' },
+      prediction: 'OVER',
+      line: null,
+      price: null,
+      tier: 'WATCH',
+      confidence: 0.62,
+      edge: null,
+      reason_codes: [],
+    };
+
+    applyUiActionFields(payload);
+
+    expect(payload.execution_status).toBe('PROJECTION_ONLY');
+    expect(payload.ui_display_status).toBe('WATCH');
+  });
+
   test('assertNoDecisionMutation throws when strict decision fields drift after publish', () => {
     const payload = buildWave1Payload({
       execution_status: 'EXECUTABLE',

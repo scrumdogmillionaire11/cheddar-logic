@@ -25,7 +25,6 @@
 const http = require('http');
 const https = require('https');
 const {
-  projectNBA,
   projectNBACanonical,
   projectNHL,
 } = require('./projections');
@@ -38,6 +37,8 @@ const {
   selectExpressionChoice,
   computeTotalBias,
   buildMarketPayload,
+  evaluateNHLGameMarkets,
+  choosePrimaryDisplayMarket,
 } = require('./cross-market');
 const { predictNHLGame } = require('./nhl-pace-model');
 const { resolveGoalieState } = require('./nhl-goalie-state');
@@ -1103,10 +1104,6 @@ function computeNHLDriverCards(gameId, oddsSnapshot, context = {}) {
       awayGoalieSavePct,
       homeGoalieGsax,
       awayGoalieGsax,
-      homeGoalieConfirmed,
-      awayGoalieConfirmed,
-      homeGoalieCertainty,
-      awayGoalieCertainty,
       homeGoalieState,
       awayGoalieState,
       homeB2B: paceRestDaysHome === 0,
@@ -1170,6 +1167,10 @@ function computeNHLDriverCards(gameId, oddsSnapshot, context = {}) {
           reasonCodes.push('PACE_TOTAL_CLAMPED_LOW');
         if (paceResult.modifierCapApplied)
           reasonCodes.push('PACE_MODIFIER_CAP_APPLIED');
+        const paceHomeGoalieConfirmed =
+          paceResult.homeGoalieCertainty === 'CONFIRMED';
+        const paceAwayGoalieConfirmed =
+          paceResult.awayGoalieCertainty === 'CONFIRMED';
 
         descriptors.push({
           cardType: 'nhl-pace-totals',
@@ -1195,10 +1196,10 @@ function computeNHLDriverCards(gameId, oddsSnapshot, context = {}) {
             regressed_total_model: paceResult.regressedTotalModel,
             market_total: marketTotal,
             edge,
-            home_goalie_confirmed: paceResult.homeGoalieConfirmed,
-            away_goalie_confirmed: paceResult.awayGoalieConfirmed,
-            home_goalie_certainty: homeGoalieCertainty,
-            away_goalie_certainty: awayGoalieCertainty,
+            home_goalie_confirmed: paceHomeGoalieConfirmed,
+            away_goalie_confirmed: paceAwayGoalieConfirmed,
+            home_goalie_certainty: paceResult.homeGoalieCertainty,
+            away_goalie_certainty: paceResult.awayGoalieCertainty,
             goalie_confidence_capped: paceResult.goalieConfidenceCapped,
             total_clamped_high: paceResult.totalClampedHigh,
             total_clamped_low: paceResult.totalClampedLow,
@@ -1306,10 +1307,10 @@ function computeNHLDriverCards(gameId, oddsSnapshot, context = {}) {
             model_expected_1p_total: paceResult.expected1pTotal,
             market_1p_total: NHL_1P_REFERENCE_TOTAL_LINE,
             edge: projectionDelta1p,
-            home_goalie_confirmed: paceResult.homeGoalieConfirmed,
-            away_goalie_confirmed: paceResult.awayGoalieConfirmed,
-            home_goalie_certainty: homeGoalieCertainty,
-            away_goalie_certainty: awayGoalieCertainty,
+            home_goalie_confirmed: paceResult.homeGoalieCertainty === 'CONFIRMED',
+            away_goalie_confirmed: paceResult.awayGoalieCertainty === 'CONFIRMED',
+            home_goalie_certainty: paceResult.homeGoalieCertainty,
+            away_goalie_certainty: paceResult.awayGoalieCertainty,
             goalie_confidence_capped: paceResult.goalieConfidenceCapped,
             fair_over_1_5_prob: firstPeriodModel.fair_over_1_5_prob ?? null,
             fair_under_1_5_prob: firstPeriodModel.fair_under_1_5_prob ?? null,
@@ -2046,10 +2047,7 @@ function getModel(sport) {
 }
 
 module.exports = {
-  getInference,
   getModel,
-  callRemoteModel,
-  mockModels,
   computeNHLDriverCards,
   computeNBADriverCards,
   determineTier,
@@ -2058,10 +2056,11 @@ module.exports = {
   selectExpressionChoice,
   computeTotalBias,
   buildMarketPayload,
+  evaluateNHLGameMarkets,
+  choosePrimaryDisplayMarket,
   generateCard,
   buildMarketCallCard,
   extractNhlDriverDataQualityContext,
-  computeSkaterInjuryFactor,
   computeSkaterDefInjuryFactor,
   computeMLBDriverCards,
   computePitcherKDriverCards,

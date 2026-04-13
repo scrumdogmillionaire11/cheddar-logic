@@ -42,6 +42,12 @@ function getRequiredMarkets(sport) {
  * @param {string} sport - Sport code
  * @returns {{marketOk: boolean, missing: array, details: object}}
  */
+function extractLegacyGameIdDate(gameId) {
+  const match = String(gameId || '').match(/^[a-z]+-(\d{4})-(\d{2})-(\d{2})-[a-z0-9-]+$/i);
+  if (!match) return null;
+  return `${match[1]}-${match[2]}-${match[3]}`;
+}
+
 function validateMarketContract(game, sport) {
   if (!game || !game.market) {
     return {
@@ -133,6 +139,23 @@ function normalizeGame(rawGame, sport) {
       `[Normalize] Skipped game ${gameId}: gameTimeUtc not valid ISO "${gameTimeUtc}"`,
     );
     return null;
+  }
+
+  // Defensive gate for legacy slug IDs that embed a date token.
+  // If the embedded date conflicts with commence_time by >48h, drop as stale/corrupt.
+  const legacyDate = extractLegacyGameIdDate(gameId);
+  if (legacyDate) {
+    const startOfUtcDay = new Date(`${legacyDate}T00:00:00Z`);
+    if (!Number.isNaN(startOfUtcDay.getTime())) {
+      const diffMs = Math.abs(gameDate.getTime() - startOfUtcDay.getTime());
+      const maxAllowedDriftMs = 48 * 60 * 60 * 1000;
+      if (diffMs > maxAllowedDriftMs) {
+        console.warn(
+          `[Normalize] Skipped game ${gameId}: commence_time (${gameTimeUtc}) mismatches embedded id date (${legacyDate})`,
+        );
+        return null;
+      }
+    }
   }
 
   // Build normalized object

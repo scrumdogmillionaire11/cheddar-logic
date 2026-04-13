@@ -32,6 +32,7 @@ const { syncNhlPlayerAvailability } = require('../jobs/sync_nhl_player_availabil
 const { pullNhlGoalieStarters } = require('../jobs/pull_nhl_goalie_starters');
 const { syncNhlSogPlayerIds } = require('../jobs/sync_nhl_sog_player_ids');
 const { pullNhlTeamStats } = require('../jobs/pull_nhl_team_stats');
+const { isFeatureEnabled } = require('@cheddar-logic/data/src/feature-flags');
 
 /**
  * Compute due NHL jobs for this tick
@@ -49,10 +50,10 @@ function computeNhlDueJobs(nowEt, {
   pullOddsHourly,
   ENABLE_WITHOUT_ODDS_MODE,
 }) {
-  const ENABLE_NHL_MODEL = process.env.ENABLE_NHL_MODEL !== 'false';
-  const ENABLE_NHL_PLAYER_AVAILABILITY_SYNC = process.env.ENABLE_NHL_PLAYER_AVAILABILITY_SYNC !== 'false';
-  const ENABLE_NHL_GOALIE_STARTERS = process.env.ENABLE_NHL_GOALIE_STARTERS !== 'false';
-  const ENABLE_NHL_SOG_PLAYER_SYNC = process.env.ENABLE_NHL_SOG_PLAYER_SYNC === 'true';
+  const ENABLE_NHL_MODEL = isFeatureEnabled('nhl', 'model');
+  const ENABLE_NHL_PLAYER_AVAILABILITY_SYNC = isFeatureEnabled('nhl', 'player-availability-sync');
+  const ENABLE_NHL_GOALIE_STARTERS = isFeatureEnabled('nhl', 'goalie-starters');
+  const ENABLE_NHL_SOG_PLAYER_SYNC = isFeatureEnabled('nhl', 'sog-sync');
 
   if (
     !ENABLE_NHL_MODEL &&

@@ -12,6 +12,7 @@ const {
   getDatabase,
   createJob,
 } = require('@cheddar-logic/data');
+const { classifyNhlTotalsStatus } = require('../models/nhl-totals-status');
 
 const JOB_NAME = 'post_discord_cards';
 const DEFAULT_CHAR_LIMIT = 1800;
@@ -20,6 +21,19 @@ const DEFAULT_MAX_ROWS = 300;
 // Leans with |edge| below this are suppressed — rounding error, not signal
 // Override with env DISCORD_MIN_LEAN_EDGE (e.g. '0.2')
 const MIN_LEAN_EDGE_ABS = Number(process.env.DISCORD_MIN_LEAN_EDGE ?? 0.15);
+
+const NHL_TOTAL_CONVICTION_LABELS = {
+  STRONG_PLAY: 'Strong Play Edge',
+  PLAY_GRADE: 'Play-Grade Edge',
+  SLIGHT_EDGE: 'Slight Edge',
+  NO_EDGE: 'Slight Edge',
+};
+const NHL_TOTAL_LEAN_HEADERS = {
+  STRONG_PLAY: '🔴 Strong Play Edge',
+  PLAY_GRADE: '🟠 Play-Grade Edge',
+  SLIGHT_EDGE: '🟡 Slight Edge',
+  NO_EDGE: '🟡 Slight Edge',
+};
 const ET_TIME_FORMATTER = new Intl.DateTimeFormat('en-US', {
   timeZone: 'America/New_York',
   hour: 'numeric',
@@ -376,7 +390,79 @@ function summarizePick(card) {
   return `${card.matchup} — ${card.cardType}${side}${lineText}${priceText}${projectionOnly}`;
 }
 
+function classifyNhlTotalsBucketStatus(card) {
+  const payload = card?.payloadData || {};
+
+  const embeddedCanonical =
+    payload?.nhl_totals_status && typeof payload.nhl_totals_status === 'object'
+      ? payload.nhl_totals_status
+      : null;
+
+  const side = normalizeToken(payload?.selection?.side || payload?.selection);
+  const marketTotal = Number(payload?.line ?? payload?.total ?? payload?.market_total);
+  const directModelTotal = Number(
+    payload?.model_projection ??
+      payload?.projected_total ??
+      payload?.projection?.total ??
+      payload?.projection?.projected_total,
+  );
+  const edge = Number(payload?.edge ?? payload?.edge_pct ?? payload?.edge_over_pp);
+  const signedEdge = Number.isFinite(edge)
+    ? side === 'UNDER'
+      ? -Math.abs(edge)
+      : side === 'OVER'
+        ? Math.abs(edge)
+        : edge
+    : NaN;
+  const inferredModelTotal =
+    Number.isFinite(marketTotal) && Number.isFinite(signedEdge)
+      ? marketTotal + signedEdge
+      : NaN;
+  const modelTotal = Number.isFinite(inferredModelTotal)
+    ? inferredModelTotal
+    : directModelTotal;
+
+  const reasonCodes = Array.isArray(payload?.reason_codes)
+    ? payload.reason_codes.map(normalizeToken)
+    : [];
+  const blockedReasonCode = normalizeToken(payload?.blocked_reason_code || '');
+  const integrityOk =
+    !blockedReasonCode.includes('EDGE_VERIFICATION_REQUIRED') &&
+    !blockedReasonCode.includes('BLOCK_STALE_DATA') &&
+    !reasonCodes.some((code) => code.includes('MIXED_BOOK') || code.includes('STALE'));
+  const goaliesConfirmed = !reasonCodes.some(
+    (code) => code.includes('GOALIE_UNCONFIRMED') || code.includes('GOALIE_CONFLICTING'),
+  );
+  const majorInjuryUncertainty = reasonCodes.some((code) => code.includes('INJURY_UNCERTAIN'));
+
+  const canonical =
+    embeddedCanonical ||
+    classifyNhlTotalsStatus({
+      side,
+      modelTotal,
+      marketTotal,
+      integrityOk,
+      goaliesConfirmedHome: goaliesConfirmed,
+      goaliesConfirmedAway: goaliesConfirmed,
+      majorInjuryUncertainty,
+      accelerantScore: payload?.accelerant_score ?? null,
+      hasRequiredInputs:
+        (side === 'OVER' || side === 'UNDER') &&
+        Number.isFinite(modelTotal) &&
+        Number.isFinite(marketTotal),
+    });
+
+  if (canonical?.status === 'PLAY') return 'official';
+  if (canonical?.status === 'SLIGHT EDGE') return 'lean';
+  return 'pass_blocked';
+}
+
 function classifyDecisionBucket(card) {
+  // NHL totals use a deterministic edge/integrity/fragility bucket policy
+  if (normalizeToken(card?.sport) === 'NHL' && normalizeMarketTag(card) === 'TOTAL') {
+    return classifyNhlTotalsBucketStatus(card);
+  }
+
   const payload = card?.payloadData || {};
   const action = normalizeToken(payload?.action || payload?.status);
   const classification = normalizeToken(payload?.classification);
@@ -401,6 +487,44 @@ function classifyDecisionBucket(card) {
   if (action === 'FIRE' || classification === 'BASE') return 'official';
   if (['WATCH', 'LEAN', 'HOLD'].includes(action) || classification === 'LEAN') return 'lean';
   return 'lean';
+}
+
+function resolveNhlTotalConvictionTierFromEdge(edgeRaw) {
+  const edge = Number(edgeRaw);
+  if (!Number.isFinite(edge)) return 'NO_EDGE';
+  const edgeAbs = Math.abs(edge);
+  if (edgeAbs >= 1.5) return 'STRONG_PLAY';
+  if (edgeAbs >= 1.0) return 'PLAY_GRADE';
+  if (edgeAbs >= 0.5) return 'SLIGHT_EDGE';
+  return 'NO_EDGE';
+}
+
+function getNhlTotalConvictionTier(card) {
+  const payload = card?.payloadData || {};
+  const isNhl = normalizeToken(card?.sport) === 'NHL';
+  if (!isNhl) return null;
+  if (normalizeMarketTag(card) !== 'TOTAL') return null;
+
+  const directTier = normalizeToken(payload?.conviction_tier || payload?.conviction?.tier);
+  if (directTier && NHL_TOTAL_CONVICTION_LABELS[directTier]) {
+    return directTier;
+  }
+
+  const rawEdge = payload?.edge ?? payload?.edge_pct ?? payload?.edge_over_pp;
+  return resolveNhlTotalConvictionTierFromEdge(rawEdge);
+}
+
+function resolveLeanSectionTitle(cards) {
+  const rank = { NO_EDGE: 0, SLIGHT_EDGE: 1, PLAY_GRADE: 2, STRONG_PLAY: 3 };
+  let strongest = 'NO_EDGE';
+
+  for (const card of cards) {
+    const tier = getNhlTotalConvictionTier(card);
+    if (!tier) continue;
+    if (rank[tier] > rank[strongest]) strongest = tier;
+  }
+
+  return NHL_TOTAL_LEAN_HEADERS[strongest] || '🟡 Slight Edge';
 }
 
 function normalizeMarketTag(card) {
@@ -578,6 +702,10 @@ function renderDecisionLine(card, bucket) {
   const metricsLine2 = metricParts2.join(' | ');
 
   const lines = [`${market} | ${priced}`];
+  const nhlConvictionTier = getNhlTotalConvictionTier(card);
+  if (nhlConvictionTier) {
+    lines.push(`Conviction: ${NHL_TOTAL_CONVICTION_LABELS[nhlConvictionTier]}`);
+  }
   if (metricsLine2) lines.push(metricsLine2);
   if (why)     lines.push(`Why: ${why}`);
   const w = payload?.price_staleness_warning;
@@ -799,7 +927,7 @@ function buildDiscordSnapshot({ now = new Date(), cards = [] } = {}) {
     const officialLines = sectionLines('🟢 PLAY', official, 'official');
     if (officialLines.length > 0) headerLines.push('', ...officialLines);
 
-    const leanLines = sectionLines('🟡 Slight Edge', leans, 'lean');
+    const leanLines = sectionLines(resolveLeanSectionTitle(leans), leans, 'lean');
     if (leanLines.length > 0) headerLines.push('', ...leanLines);
 
     // PASS block only when nothing was rendered — avoids contradicting a lean

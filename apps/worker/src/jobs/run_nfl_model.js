@@ -1,3 +1,5 @@
+'use strict';
+
 /**
  * NFL Model Runner Job
  *
@@ -135,7 +137,7 @@ function generateNFLCard(gameId, modelOutput, oddsSnapshot) {
     createdAt: now,
     expiresAt,
     payloadData,
-    modelOutputIds: null, // Will be linked after model_output is inserted
+    modelOutputIds: null,
   };
 }
 
@@ -155,7 +157,6 @@ async function runNFLModel({ jobKey = null, dryRun = false } = {}) {
   console.log(`[NFLModel] Time: ${new Date().toISOString()}`);
 
   return withDb(async () => {
-    // Check idempotency if jobKey provided
     if (jobKey && !shouldRunJobKey(jobKey)) {
       console.log(
         `[NFLModel] ⏭️  Skipping (already succeeded or running): ${jobKey}`,
@@ -163,19 +164,16 @@ async function runNFLModel({ jobKey = null, dryRun = false } = {}) {
       return { success: true, jobRunId: null, skipped: true, jobKey };
     }
 
-    // DRY_RUN mode (log only, no execution)
     if (dryRun) {
       console.log(
-        `[NFLModel] 🔍 DRY_RUN=true — would run jobKey=${jobKey || 'none'}`,
+        `[NFLModel] DRY_RUN=true - would run jobKey=${jobKey || 'none'}`,
       );
       return { success: true, jobRunId: null, dryRun: true, jobKey };
     }
     try {
-      // Start job run
       console.log('[NFLModel] Recording job start...');
       insertJobRun('run_nfl_model', jobRunId, jobKey);
 
-      // Get latest NFL odds for UPCOMING games only (prevents stale data processing)
       console.log('[NFLModel] Fetching odds for upcoming NFL games...');
       const { DateTime } = require('luxon');
       const nowUtc = DateTime.utc();
@@ -194,7 +192,6 @@ async function runNFLModel({ jobKey = null, dryRun = false } = {}) {
 
       console.log(`[NFLModel] Found ${oddsSnapshots.length} odds snapshots`);
 
-      // Group by game_id and get latest for each
       const gameOdds = {};
       oddsSnapshots.forEach((snap) => {
         if (
@@ -208,22 +205,18 @@ async function runNFLModel({ jobKey = null, dryRun = false } = {}) {
       const gameIds = Object.keys(gameOdds);
       console.log(`[NFLModel] Running inference on ${gameIds.length} games...`);
 
-      // Get model instance
       const model = getModel('NFL');
 
       let cardsGenerated = 0;
       let cardsFailed = 0;
       const errors = [];
 
-      // Process each game
       for (const gameId of gameIds) {
         try {
           const oddsSnapshot = gameOdds[gameId];
 
-          // Run inference (using pluggable model)
           const modelOutput = await model.infer(gameId, oddsSnapshot);
 
-          // Only generate card if model passed confidence threshold
           if (modelOutput.ev_threshold_passed) {
             const card = generateNFLCard(gameId, modelOutput, oddsSnapshot);
             const validation = validateCardPayload(
@@ -245,11 +238,10 @@ async function runNFLModel({ jobKey = null, dryRun = false } = {}) {
 
             if (deletedOutputs > 0 || deletedCards > 0) {
               console.log(
-                `  🔄 ${gameId}: Removed ${deletedOutputs} output(s), ${deletedCards} card(s)`,
+                `  ${gameId}: Removed ${deletedOutputs} output(s), ${deletedCards} card(s)`,
               );
             }
 
-            // Store model output
             const modelOutputId = `model-nfl-${gameId}-${uuidV4().slice(0, 8)}`;
             insertModelOutput({
               id: modelOutputId,
@@ -265,18 +257,17 @@ async function runNFLModel({ jobKey = null, dryRun = false } = {}) {
               jobRunId,
             });
 
-            // Generate and store card
             card.modelOutputIds = modelOutputId;
             attachRunId(card, jobRunId);
             insertCardPayload(card);
 
             cardsGenerated++;
             console.log(
-              `  ✅ ${gameId}: ${modelOutput.prediction} (${(modelOutput.confidence * 100).toFixed(0)}% confidence)`,
+              `  ${gameId}: ${modelOutput.prediction} (${(modelOutput.confidence * 100).toFixed(0)}% confidence)`,
             );
           } else {
             console.log(
-              `  ⏭️  ${gameId}: Abstained (confidence ${(modelOutput.confidence * 100).toFixed(0)}% below threshold)`,
+              `  ${gameId}: Abstained (confidence ${(modelOutput.confidence * 100).toFixed(0)}% below threshold)`,
             );
           }
         } catch (gameError) {
@@ -285,11 +276,10 @@ async function runNFLModel({ jobKey = null, dryRun = false } = {}) {
           }
           cardsFailed++;
           errors.push(`${gameId}: ${gameError.message}`);
-          console.error(`  ❌ ${gameId}: ${gameError.message}`);
+          console.error(`  ${gameId}: ${gameError.message}`);
         }
       }
 
-      // Mark success
       markJobRunSuccess(jobRunId);
       try {
         setCurrentRunId(jobRunId, 'nfl');
@@ -299,7 +289,7 @@ async function runNFLModel({ jobKey = null, dryRun = false } = {}) {
         );
       }
       console.log(
-        `[NFLModel] ✅ Job complete: ${cardsGenerated} cards generated, ${cardsFailed} failed`,
+        `[NFLModel] Job complete: ${cardsGenerated} cards generated, ${cardsFailed} failed`,
       );
 
       if (errors.length > 0) {
@@ -309,14 +299,14 @@ async function runNFLModel({ jobKey = null, dryRun = false } = {}) {
 
       return { success: true, jobRunId, cardsGenerated, cardsFailed, errors };
     } catch (error) {
-      console.error(`[NFLModel] ❌ Job failed:`, error.message);
+      console.error('[NFLModel] Job failed:', error.message);
       console.error(error.stack);
 
       try {
         markJobRunFailure(jobRunId, error.message);
       } catch (dbError) {
         console.error(
-          `[NFLModel] Failed to record error to DB:`,
+          '[NFLModel] Failed to record error to DB:',
           dbError.message,
         );
       }
@@ -326,7 +316,6 @@ async function runNFLModel({ jobKey = null, dryRun = false } = {}) {
   });
 }
 
-// CLI execution
 if (require.main === module) {
   runNFLModel()
     .then((result) => {

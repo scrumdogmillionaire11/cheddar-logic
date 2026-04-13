@@ -601,6 +601,111 @@ function projectF5Total(homePitcher, awayPitcher, context = {}) {
 const MLB_FULL_GAME_DEFAULT_BULLPEN_ERA = 4.3;
 const MLB_FULL_GAME_POISSON_RANGE_SCALE = 0.38;
 const MLB_FULL_GAME_EDGE_THRESHOLD = 0.5;
+const MLB_FULL_GAME_HOME_FIELD_RUNS = 0.12;
+
+function absOrZero(value) {
+  return Number.isFinite(value) ? Math.abs(value) : 0;
+}
+
+function signToken(value) {
+  if (!Number.isFinite(value) || value === 0) return 'NEUTRAL';
+  return value > 0 ? 'HOME' : 'AWAY';
+}
+
+function erfApprox(x) {
+  // Abramowitz-Stegun 7.1.26 approximation.
+  const sign = x < 0 ? -1 : 1;
+  const ax = Math.abs(x);
+  const t = 1 / (1 + 0.3275911 * ax);
+  const y = 1 - (((((1.061405429 * t - 1.453152027) * t) + 1.421413741) * t - 0.284496736) * t + 0.254829592) * t * Math.exp(-ax * ax);
+  return sign * y;
+}
+
+function normalCdf(x) {
+  return 0.5 * (1 + erfApprox(x / Math.sqrt(2)));
+}
+
+function probabilityToFairMl(probability) {
+  if (!Number.isFinite(probability) || probability <= 0 || probability >= 1) {
+    return null;
+  }
+  const fair = probability >= 0.5
+    ? -Math.round((probability / (1 - probability)) * 100)
+    : Math.round(((1 - probability) / probability) * 100);
+  return Object.is(fair, -0) ? 0 : fair;
+}
+
+function resolveOffenseEdgeSignal(homePitcher, awayPitcher, context = {}) {
+  const homeMatchup = resolveTeamSplitProfile(
+    context?.home_offense_profile ?? null,
+    awayPitcher?.handedness,
+  );
+  const awayMatchup = resolveTeamSplitProfile(
+    context?.away_offense_profile ?? null,
+    homePitcher?.handedness,
+  );
+
+  if (!homeMatchup || !awayMatchup) return 0;
+  const homeMult = resolveOffenseComposite(homeMatchup);
+  const awayMult = resolveOffenseComposite(awayMatchup);
+  return homeMult - awayMult;
+}
+
+function resolveFullGameVariance({ proj, context = {} }) {
+  const totalMean = Number.isFinite(proj?.projected_total_mean)
+    ? proj.projected_total_mean
+    : 8.6;
+  const baseVariance = Math.max(2.8, totalMean * 1.12);
+
+  const homeBullpenEra = toFiniteNumberOrNull(context?.home_bullpen_era);
+  const awayBullpenEra = toFiniteNumberOrNull(context?.away_bullpen_era);
+  const bullpenVolatility =
+    homeBullpenEra !== null && awayBullpenEra !== null
+      ? clampValue((Math.abs(homeBullpenEra - awayBullpenEra) / 3.5) * 0.2, 0, 0.2)
+      : 0.1;
+
+  const avgIso =
+    ((toFiniteNumberOrNull(context?.home_offense_profile?.iso_vs_rhp) ?? MLB_F5_DEFAULT_TEAM_ISO) +
+      (toFiniteNumberOrNull(context?.away_offense_profile?.iso_vs_rhp) ?? MLB_F5_DEFAULT_TEAM_ISO)) /
+    2;
+  const hrVarianceBoost = clampValue((avgIso - MLB_F5_DEFAULT_TEAM_ISO) * 1.4, -0.05, 0.12);
+
+  const windMph = toFiniteNumberOrNull(context?.wind_mph) ?? 0;
+  const roof = String(context?.roof || '').trim().toUpperCase();
+  const weatherVolatility = roof === 'CLOSED' || roof === 'INDOOR'
+    ? 0
+    : clampValue((Math.max(0, windMph - 10) / 20) * 0.1, 0, 0.1);
+
+  const lineupUncertainty =
+    (context?.lineup_confirmed_home === false ? 0.06 : 0) +
+    (context?.lineup_confirmed_away === false ? 0.06 : 0);
+
+  const varianceMultiplier = 1 + bullpenVolatility + hrVarianceBoost + weatherVolatility + lineupUncertainty;
+  const diffVariance = Math.max(0.45, baseVariance * varianceMultiplier * 0.36);
+
+  return {
+    game_variance: baseVariance * varianceMultiplier,
+    run_diff_variance: diffVariance,
+    variance_multiplier: varianceMultiplier,
+  };
+}
+
+function buildFullGameDriverSupport({
+  runDiff,
+  spEdge,
+  bullpenEdge,
+  offenseEdge,
+  homeFieldRuns,
+}) {
+  const support = [];
+  if (absOrZero(spEdge) >= 0.22) support.push('STARTER_EDGE');
+  if (absOrZero(bullpenEdge) >= 0.14) support.push('BULLPEN_EDGE');
+  if (absOrZero(offenseEdge) >= 0.025) support.push('OFFENSE_SPLIT_EDGE');
+  if (absOrZero(homeFieldRuns) >= 0.1 && absOrZero(runDiff) <= 0.45) {
+    support.push('HOME_FIELD_CONTEXT');
+  }
+  return support;
+}
 
 /**
  * Project late-innings (inn 6-9) run contribution for one team.
@@ -828,7 +933,6 @@ function projectF5TotalCard(homePitcher, awayPitcher, f5Line, context = {}) {
     classification: status === 'FIRE' ? 'BASE' : status === 'WATCH' ? 'LEAN' : 'PASS',
     edge,
     projected: proj.base,
-    confidence: proj.confidence,
     ev_threshold_passed: status === 'FIRE' || status === 'WATCH',
     projection_source: proj.projection_source,
     status_cap: proj.status_cap,
@@ -1036,10 +1140,28 @@ function projectFullGameML(homePitcher, awayPitcher, mlHome, mlAway, context = {
 
   const homeProj = proj.home_proj;
   const awayProj = proj.away_proj;
+  const homeFieldRuns = toFiniteNumberOrNull(context?.home_field_runs) ?? MLB_FULL_GAME_HOME_FIELD_RUNS;
   const runDiff = homeProj - awayProj;
 
-  // Coefficient 0.5 for full game (vs 0.8 for F5) — see JSDoc above
-  const winProbHome = 1 / (1 + Math.exp(-0.5 * runDiff));
+  const f5RunDiff =
+    Number.isFinite(proj.home_f5_runs) && Number.isFinite(proj.away_f5_runs)
+      ? proj.home_f5_runs - proj.away_f5_runs
+      : 0;
+  const bullpenRunDiff =
+    Number.isFinite(proj.home_late_runs) && Number.isFinite(proj.away_late_runs)
+      ? proj.home_late_runs - proj.away_late_runs
+      : 0;
+  const offenseEdge = resolveOffenseEdgeSignal(homePitcher, awayPitcher, context);
+
+  const variance = resolveFullGameVariance({ proj, context });
+  const diffMean = runDiff + homeFieldRuns;
+  const diffSigma = Math.sqrt(Math.max(variance.run_diff_variance, 0.2));
+  const winProbHome = clampValue(normalCdf(diffMean / diffSigma), 0.01, 0.99);
+  const f5WinProbHome = clampValue(
+    normalCdf((f5RunDiff + (homeFieldRuns * 0.35)) / Math.sqrt(Math.max(variance.run_diff_variance * 0.72, 0.18))),
+    0.01,
+    0.99,
+  );
 
   function mlToImplied(ml) {
     if (!Number.isFinite(ml)) return null;
@@ -1058,19 +1180,70 @@ function projectFullGameML(homePitcher, awayPitcher, mlHome, mlAway, context = {
   const LEAN_EDGE_MIN = 0.04;
   const CONFIDENCE_MIN = 6;
 
+  const driverSupport = buildFullGameDriverSupport({
+    runDiff,
+    spEdge: f5RunDiff,
+    bullpenEdge: bullpenRunDiff,
+    offenseEdge,
+    homeFieldRuns,
+  });
+  const supportCount = driverSupport.length;
+
+  const flags = [];
+  const preliminaryEdge = Math.max(homeEdge, awayEdge);
+  if (Math.abs(runDiff) < 0.22) flags.push('RUN_DIFF_SMALL');
+  if (supportCount < 2) flags.push('WEAK_DRIVER_SUPPORT');
+  if (Math.abs(preliminaryEdge) >= LEAN_EDGE_MIN && Math.abs(runDiff) < 0.3) {
+    flags.push('MATH_EDGE_WITH_THIN_RUN_SUPPORT');
+  }
+
+  const starterSide = signToken(f5RunDiff);
+  const bullpenSide = signToken(bullpenRunDiff);
+  const candidateSide = homeEdge >= awayEdge ? 'HOME' : 'AWAY';
+  const preferF5 = Math.abs(f5RunDiff) >= 0.28 && Math.abs(bullpenRunDiff) < 0.1;
+  const weakExpressionSupport = preferF5 && starterSide !== 'NEUTRAL' && candidateSide !== starterSide;
+  if (preferF5) flags.push('PREFER_F5_SP_DRIVEN');
+  if (weakExpressionSupport) flags.push('FG_EXPRESSION_MISMATCH');
+
+  const marketSanityFail =
+    Math.abs(homeEdge - awayEdge) < LEAN_EDGE_MIN &&
+    Math.abs(runDiff) < 0.24;
+  if (marketSanityFail) flags.push('MARKET_SANITY_FAIL');
+
+  let confidence = proj.confidence;
+  confidence += Math.min(2, supportCount - 1);
+  confidence -= Math.max(0, Math.round((variance.variance_multiplier - 1) * 10));
+  if (Math.abs(runDiff) < 0.3) confidence -= 1;
+  confidence = clampValue(confidence, 1, 10);
+
   let side = 'PASS';
   let edge = 0;
-  if (homeEdge >= LEAN_EDGE_MIN && proj.confidence >= CONFIDENCE_MIN) {
+  if (homeEdge >= LEAN_EDGE_MIN && confidence >= CONFIDENCE_MIN) {
     side = 'HOME';
     edge = homeEdge;
-  } else if (awayEdge >= LEAN_EDGE_MIN && proj.confidence >= CONFIDENCE_MIN) {
+  } else if (awayEdge >= LEAN_EDGE_MIN && confidence >= CONFIDENCE_MIN) {
     side = 'AWAY';
     edge = awayEdge;
+  }
+
+  const passReasons = [];
+  if (Math.abs(runDiff) < 0.22) passReasons.push('PASS_RUN_DIFF_TOO_SMALL');
+  if (supportCount < 2) passReasons.push('PASS_WEAK_DRIVER_SUPPORT');
+  if (weakExpressionSupport) passReasons.push('PASS_EXPRESSION_MISMATCH_F5_PREF');
+  if (marketSanityFail) passReasons.push('PASS_MARKET_SANITY_FAIL');
+  if (flags.includes('MATH_EDGE_WITH_THIN_RUN_SUPPORT')) {
+    passReasons.push('PASS_MATH_ONLY_EDGE');
+  }
+
+  if (side !== 'PASS' && passReasons.length > 0) {
+    side = 'PASS';
+    edge = 0;
   }
 
   const isDegraded = proj.projection_source === 'DEGRADED_MODEL';
   const reasonCodes = [
     ...(isDegraded ? ['FULL_GAME_ML_DEGRADED'] : []),
+    ...passReasons,
   ];
 
   return {
@@ -1078,16 +1251,36 @@ function projectFullGameML(homePitcher, awayPitcher, mlHome, mlAway, context = {
     prediction: side,
     edge,
     projected_win_prob_home: winProbHome,
+    projected_win_prob_away: 1 - winProbHome,
+    p_home_f5: f5WinProbHome,
+    p_away_f5: 1 - f5WinProbHome,
+    p_home_fg: winProbHome,
+    p_away_fg: 1 - winProbHome,
     projected_home_runs: homeProj,
     projected_away_runs: awayProj,
-    confidence: proj.confidence,
+    fair_ml_home: probabilityToFairMl(winProbHome),
+    fair_ml_away: probabilityToFairMl(1 - winProbHome),
+    confidence,
     projection_source: proj.projection_source,
     status_cap: proj.status_cap,
     reason_codes: reasonCodes,
+    flags,
+    driver_support: {
+      support_count: supportCount,
+      support_keys: driverSupport,
+      starter_edge_runs: f5RunDiff,
+      bullpen_edge_runs: bullpenRunDiff,
+      offense_edge_signal: offenseEdge,
+      home_field_runs: homeFieldRuns,
+      starter_side: starterSide,
+      bullpen_side: bullpenSide,
+    },
+    game_variance: variance.game_variance,
+    run_diff_variance: variance.run_diff_variance,
     degraded_inputs: proj.degraded_inputs,
     missing_inputs: proj.missing_inputs,
     ev_threshold_passed: side !== 'PASS',
-    reasoning: `FullGameML: homeProj=${homeProj.toFixed(2)} awayProj=${awayProj.toFixed(2)} runDiff=${runDiff >= 0 ? '+' : ''}${runDiff.toFixed(2)} pWin(H)=${(winProbHome * 100).toFixed(1)}% implH=${(impliedHome * 100).toFixed(1)}% implA=${(impliedAway * 100).toFixed(1)}% edgeH=${homeEdge >= 0 ? '+' : ''}${(homeEdge * 100).toFixed(1)}pp edgeA=${awayEdge >= 0 ? '+' : ''}${(awayEdge * 100).toFixed(1)}pp conf=${proj.confidence}/10`,
+    reasoning: `FullGameML: homeProj=${homeProj.toFixed(2)} awayProj=${awayProj.toFixed(2)} runDiff=${runDiff >= 0 ? '+' : ''}${runDiff.toFixed(2)} var=${variance.run_diff_variance.toFixed(2)} pWin(H)=${(winProbHome * 100).toFixed(1)}% implH=${(impliedHome * 100).toFixed(1)}% implA=${(impliedAway * 100).toFixed(1)}% edgeH=${homeEdge >= 0 ? '+' : ''}${(homeEdge * 100).toFixed(1)}pp edgeA=${awayEdge >= 0 ? '+' : ''}${(awayEdge * 100).toFixed(1)}pp support=${supportCount} conf=${confidence}/10`,
   };
 }
 
@@ -1314,12 +1507,21 @@ function computeMLBDriverCards(gameId, oddsSnapshot) {
         status_cap: mlResult.status_cap,
         pass_reason_code: !mlResult.ev_threshold_passed ? 'PASS_NO_EDGE' : null,
         reason_codes: mlResult.reason_codes,
+        flags: mlResult.flags,
+        driver_support: mlResult.driver_support,
+        fair_ml_home: mlResult.fair_ml_home,
+        fair_ml_away: mlResult.fair_ml_away,
         missing_inputs: mlResult.missing_inputs,
         drivers: [{
           type: 'mlb-full-game-ml',
           side: mlResult.side,
           edge: mlResult.edge,
           win_prob_home: mlResult.projected_win_prob_home,
+          p_home_f5: mlResult.p_home_f5,
+          p_home_fg: mlResult.p_home_fg,
+          support_count: mlResult.driver_support?.support_count ?? 0,
+          support_keys: mlResult.driver_support?.support_keys ?? [],
+          flags: mlResult.flags ?? [],
           projection_source: mlResult.projection_source,
         }],
       });
@@ -1553,6 +1755,7 @@ function calculateProjectionK(pitcher, matchup, leashTier, weather, options = {}
   const expectedIp =
     toFiniteNumberOrNull(LEASH_TIER_PARAMS[leashTier]?.expected_ip) ?? 5.0;
   const kLeashMult = getPitcherKLeashMultiplier(leashTier);
+  const veloMph = toFiniteNumberOrNull(pitcher?.season_avg_velo);
 
   if (seasonStarts < MLB_K_MIN_PROJECTION_STARTS && !allowThinSample) {
     return {
@@ -1570,11 +1773,12 @@ function calculateProjectionK(pitcher, matchup, leashTier, weather, options = {}
   }
   if (starterKPct === null) missingInputs.push('starter_k_pct');
   if (!pitcher?.handedness) missingInputs.push('starter_handedness');
-  // WI-0770: swstr_pct is a real Statcast signal — its absence is a true missing
-  // input (not a degraded proxy). When absent: flag statcast_swstr, cap at LEAN.
+  // Statcast driver inputs improve projection quality; when absent we degrade
+  // quality and project with proxies instead of suppressing output.
   if (starterSwStrPct === null) missingInputs.push('statcast_swstr');
-  // WI-0770: season_avg_velo absence is non-blocking — velo modifier simply omitted,
-  // but still flagged in missing_inputs for observability. Does not affect status_cap.
+  if (veloMph === null) missingInputs.push('statcast_velo');
+  if (starterSwStrPct === null) degradedInputs.push('starter_whiff_proxy');
+  if (veloMph === null) degradedInputs.push('starter_velo_proxy');
   missingInputs.push(...(opponentProfile.missing_inputs || []));
   if (
     opponentProfile.opp_obp === null &&
@@ -1639,16 +1843,10 @@ function calculateProjectionK(pitcher, matchup, leashTier, weather, options = {}
   const temp = weather?.temp_at_first_pitch ?? weather?.temp_f ?? 72;
   if (temp < 45) kMean *= 0.95;
 
-  // WI-0770: velocity tier modifier — only applied when season_avg_velo is present.
-  // When absent, flag statcast_velo via observabilityMissing (non-blocking: does not
-  // affect projection_source or status_cap).
-  const veloMph = toFiniteNumberOrNull(pitcher?.season_avg_velo);
   if (veloMph !== null) {
     if (veloMph >= 95) kMean *= 1.025;      // high-velo advantage: +2.5%
     else if (veloMph < 90) kMean *= 0.975; // low-velo penalty: -2.5%
     // 90–94.9: no modifier
-  } else {
-    observabilityMissing.push('statcast_velo');
   }
 
   // WI-0763: BB% adjustment derived from game log walks/batters_faced.
@@ -1714,6 +1912,10 @@ function calculateProjectionK(pitcher, matchup, leashTier, weather, options = {}
     'ceil',
   );
 
+  const hardMissingInputs = missingInputs.filter(
+    (field) => field !== 'statcast_swstr' && field !== 'statcast_velo',
+  );
+
   return {
     value: roundedMean,
     projection: roundedMean,
@@ -1728,16 +1930,16 @@ function calculateProjectionK(pitcher, matchup, leashTier, weather, options = {}
     bf_exp: Math.round(bfExp * 10) / 10,
     k_interaction: Math.round(kInteraction * 1000) / 1000,
     k_leash_mult: kLeashMult,
-    projection_source: missingInputs.length > 0
+    projection_source: hardMissingInputs.length > 0
       ? 'SYNTHETIC_FALLBACK'
-      : degradedInputs.length > 0 || projectionFlags.length > 0
+      : degradedInputs.length > 0 || projectionFlags.length > 0 || missingInputs.length > 0
         ? 'DEGRADED_MODEL'
         : 'FULL_MODEL',
-    // WI-0770: null swstr_pct caps card at LEAN — real signal absent, not proxy-filled.
-    // Only cap at LEAN when statcast_swstr is the sole blocking missing input; when other
-    // inputs are also missing the projection degrades to SYNTHETIC_FALLBACK which already
-    // implies a PASS cap (no confident signal to act on).
-    status_cap: (missingInputs.length === 1 && missingInputs.includes('statcast_swstr')) ? 'LEAN' : 'PASS',
+    // Missing swstr specifically caps confidence to LEAN when no hard inputs are missing.
+    status_cap:
+      hardMissingInputs.length === 0 && missingInputs.includes('statcast_swstr')
+        ? 'LEAN'
+        : 'PASS',
     missing_inputs: Array.from(new Set([...missingInputs, ...observabilityMissing])),
     degraded_inputs: Array.from(new Set(degradedInputs)),
     statcast_inputs: {
@@ -2590,20 +2792,18 @@ function selectPitcherKUnderMarket(strikeoutLines, pitcherName, bookmakerPriorit
  * Build pitcher-K driver cards from an odds snapshot.
  *
  * Reads raw_data.mlb.{home,away}_pitcher (populated by enrichMlbPitcherData).
- * Default mode is PROJECTION_ONLY — no market line required.
- * When mode='ODDS_BACKED', attempts to select an under market from
- * raw_data.mlb.strikeout_lines and calls scorePitcherKUnder.
+ * Pitcher-K currently emits projection-only cards (no market line required).
+ * If mode='ODDS_BACKED' is requested, the function still forces
+ * PROJECTION_ONLY output and includes MODE_FORCED reason codes.
  *
  * @param {string} gameId
  * @param {object} oddsSnapshot
  * @param {object} [options]
  * @param {'PROJECTION_ONLY'|'ODDS_BACKED'} [options.mode]
- * @param {object} [options.bookmakerPriority]  bookmaker -> priority map (required for ODDS_BACKED)
  * @returns {Array<object>}
  */
 function computePitcherKDriverCards(gameId, oddsSnapshot, options) {
   const requestedMode = (options || {}).mode || 'PROJECTION_ONLY';
-  const bookmakerPriority = (options || {}).bookmakerPriority || {};
   const mlb = parseRawMlb(oddsSnapshot);
   const cards = [];
 
@@ -2697,114 +2897,14 @@ function computePitcherKDriverCards(gameId, oddsSnapshot, options) {
       wind_in_mph: mlb.wind_mph ?? null,
       wind_direction: mlb.wind_dir ?? null,
     };
-
-    // ── ODDS_BACKED branch ─────────────────────────────────────────────────
-    if (requestedMode === 'ODDS_BACKED') {
-      // WI-0771: prefer per-pitcher k_market_lines (keyed by bookmaker) that
-      // enrichMlbPitcherData attaches from player_prop_lines. Fall back to
-      // the legacy mlb.strikeout_lines map if k_market_lines is absent.
-      const strikeoutLinesMap = pitcher.k_market_lines ?? mlb.strikeout_lines ?? {};
-      const selectedMarket = selectPitcherKUnderMarket(
-        strikeoutLinesMap,
-        playerName,
-        bookmakerPriority,
-      );
-
-      if (selectedMarket !== null) {
-        const normalizedMarket = normalizePitcherKMarketInput(selectedMarket);
-        const underResult = scorePitcherKUnder(pitcherInput, matchupInput, normalizedMarket, weatherInput);
-        const verdict = underResult.verdict ?? 'NO_PLAY';
-        const emitCard = verdict === 'PLAY' || verdict === 'WATCH';
-        // Determine prop_display_state inline
-        const propDisplayState = verdict === 'PLAY' ? 'PLAY' : verdict === 'WATCH' ? 'WATCH' : 'PROJECTION_ONLY';
-        const underReasonCodes = Array.from(new Set([
-          'ODDS_BACKED_UNDER',
-          ...(Array.isArray(underResult.flags) ? underResult.flags : []),
-        ]));
-
-        cards.push({
-          market: `pitcher_k_${role}`,
-          pitcher_team: team,
-          player_id: playerId,
-          player_name: playerName,
-          prediction: verdict,
-          status: verdict,
-          action: verdict,
-          classification: verdict,
-          confidence: 0,
-          ev_threshold_passed: emitCard,
-          emit_card: emitCard,
-          card_verdict: verdict,
-          tier: null,
-          reasoning: _buildPitcherKReasoning(underResult),
-          projection_source: 'ODDS_BACKED',
-          status_cap: verdict,
-          missing_inputs: [],
-          reason_codes: underReasonCodes,
-          pass_reason_code: null,
-          playability: null,
-          projection: null,
-          drivers: [{
-            type: 'pitcher-k',
-            projection: underResult.projection ?? null,
-            k_mean: null,
-            probability_ladder: null,
-            fair_prices: null,
-            leash_tier: null,
-            net_score: null,
-            tier: null,
-          }],
-          prop_decision: {
-            verdict,
-            lean_side: 'UNDER',
-            line: normalizedMarket?.line ?? null,
-            display_price: normalizedMarket?.under_price ?? null,
-            projection: underResult.projection ?? null,
-            k_mean: null,
-            line_delta: underResult.line_delta ?? null,
-            under_score: underResult.under_score ?? null,
-            score_components: underResult.score_components ?? null,
-            history_metrics: underResult.history_metrics ?? null,
-            current_form_metrics: underResult.current_form_metrics ?? null,
-            selected_market: underResult.selected_market ?? null,
-            flags: underResult.flags ?? null,
-            why: underResult.why ?? null,
-            probability_ladder: null,
-            fair_prices: null,
-            playability: null,
-            projection_source: 'ODDS_BACKED',
-            status_cap: verdict,
-            missing_inputs: [],
-            fair_prob: null,
-            implied_prob: null,
-            prob_edge_pp: null,
-            ev: null,
-          },
-          prop_display_state: propDisplayState,
-          pitcher_k_result: underResult,
-          basis: 'ODDS_BACKED',
-          direction: 'UNDER',
-          line: normalizedMarket?.line ?? null,
-          line_source: normalizedMarket?.line_source ?? null,
-          over_price: normalizedMarket?.over_price ?? null,
-          under_price: normalizedMarket?.under_price ?? null,
-          best_line_bookmaker: normalizedMarket?.bookmaker ?? null,
-        });
-        continue; // skip PROJECTION_ONLY path for this pitcher
-      }
-
-      // ODDS_BACKED requested but no qualifying market found — fall back to PROJECTION_ONLY
-      // and annotate with reason code.
-    }
-    // ── PROJECTION_ONLY path (default + ODDS_BACKED fallback) ──────────────
-
+    // Pitcher-K currently runs as projection-only: no line/price dependency.
     const result = scorePitcherK(
       pitcherInput,
       matchupInput,
       {},
       null,
       weatherInput,
-      { mode: requestedMode, side: 'over' },
+      { mode: 'PROJECTION_ONLY', side: 'over' },
     );
     const hasProjection =
       typeof result.projection === 'number' &&
@@ -2818,13 +2918,9 @@ function computePitcherKDriverCards(gameId, oddsSnapshot, options) {
         : []),
       ...(!hasProjection ? ['PASS_MISSING_DRIVER_INPUTS'] : []),
     ]));
-    // WI-0771: annotate that k_market_line was absent when ODDS_BACKED was requested
     const projectionOnlyMissingInputs = Array.isArray(result.missing_inputs)
       ? [...result.missing_inputs]
       : [];
-    if (requestedMode === 'ODDS_BACKED' && !projectionOnlyMissingInputs.includes('k_market_line')) {
-      projectionOnlyMissingInputs.push('k_market_line');
-    }
     const passReasonCode =
       reasonCodes.find((code) => code.startsWith('PASS_')) ??
       MLB_K_PROJECTION_ONLY_PASS_REASON;

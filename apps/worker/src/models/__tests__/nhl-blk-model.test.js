@@ -5,7 +5,7 @@
  * Phase 2 of WI-0526: blocked shots model is fully separate from SOG.
  * Different multiplier chain, different semantics, shared Poisson pricing layer.
  */
-const { projectBlkV1 } = require('../nhl-player-shots');
+const { projectBlkV1, weightedRateBlendBLK } = require('../nhl-player-shots');
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -368,6 +368,80 @@ describe('projectBlkV1 — smoke tests', () => {
     };
     const rows = parseEventPropLines(fakeOdds, 'game-001', '2026-03-20T00:00:00Z');
     expect(rows).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// weightedRateBlendBLK — L5-heavy blend (0.25 / 0.35 / 0.40)
+// ---------------------------------------------------------------------------
+describe('weightedRateBlendBLK', () => {
+  test('L5 outweighs season — higher L5 raises the blend above a higher-season baseline', () => {
+    // season=3, L10=3, L5=9 → blend biased toward L5
+    const highL5 = weightedRateBlendBLK(3, 3, 9);
+    // season=9, L10=3, L5=3 → blend biased toward season
+    const highSeason = weightedRateBlendBLK(9, 3, 3);
+    expect(highL5).toBeGreaterThan(highSeason);
+  });
+
+  test('null L5 redistributes weight to season and L10', () => {
+    const withL5 = weightedRateBlendBLK(4, 5, 6);
+    const noL5 = weightedRateBlendBLK(4, 5, null);
+    // Without L5 the blend is season/L10 only — result differs but does not throw
+    expect(typeof noL5).toBe('number');
+    expect(noL5).toBeGreaterThan(0);
+    expect(withL5).not.toEqual(noL5);
+  });
+
+  test('null L5 with high season still produces a non-zero blend', () => {
+    const result = weightedRateBlendBLK(6, 6, null);
+    expect(result).toBeCloseTo(6.0, 4); // season=0.25, L10=0.35 both at 6 → 6.0
+  });
+
+  test('all null returns 0', () => {
+    expect(weightedRateBlendBLK(null, null, null)).toBe(0);
+  });
+
+  test('established-blocker threshold with null L5 degrades to STANDARD (< 5.0 when rates are borderline)', () => {
+    // Player with season=4.5, L10=4.8, L5=null — without L5 weight the blend
+    // stays below 5.0 and should NOT earn the playoff bonus.
+    const blend = weightedRateBlendBLK(4.5, 4.8, null);
+    expect(blend).toBeLessThan(5.0); // degrades to STANDARD — no bonus
+  });
+
+  test('established-blocker threshold with null L5 still passes when season+L10 are clearly above 5.0', () => {
+    // Player with season=7, L10=7, L5=null — weight redistributes, blend stays > 5.0.
+    const blend = weightedRateBlendBLK(7, 7, null);
+    expect(blend).toBeGreaterThanOrEqual(5.0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Playoff tightening — 1.07 for established, 1.06 for standard, 1.00 off-season
+// ---------------------------------------------------------------------------
+describe('projectBlkV1 — playoff blocker bonus via playoff_tightening_factor', () => {
+  test('playoff_tightening_factor 1.07 (established) exceeds 1.06 (standard) exceeds 1.00 (regular)', () => {
+    const regular = projectBlkV1(buildInputs({ playoff_tightening_factor: 1.0 }));
+    const standard = projectBlkV1(buildInputs({ playoff_tightening_factor: 1.06 }));
+    const established = projectBlkV1(buildInputs({ playoff_tightening_factor: 1.07 }));
+    expect(established.blk_mu).toBeGreaterThan(standard.blk_mu);
+    expect(standard.blk_mu).toBeGreaterThan(regular.blk_mu);
+  });
+
+  test('LOW stability player receives no blocker bonus — 1.07 input still respected by model (runner prevents it)', () => {
+    // The runner never passes 1.07 to LOW stability players.
+    // The model itself doesn't gate on stability for the factor — it just clamps.
+    // This documents the contract: LOW gets whatever the runner passes (should be 1.06 max).
+    const lowStandard = projectBlkV1(buildInputs({ role_stability: 'LOW', playoff_tightening_factor: 1.06 }));
+    const lowBaseline = projectBlkV1(buildInputs({ role_stability: 'LOW', playoff_tightening_factor: 1.0 }));
+    expect(lowStandard.blk_mu).toBeGreaterThan(lowBaseline.blk_mu);
+  });
+
+  test('playoff_tightening_factor ceiling still enforced at 1.08', () => {
+    const at107 = projectBlkV1(buildInputs({ playoff_tightening_factor: 1.07 }));
+    const at108 = projectBlkV1(buildInputs({ playoff_tightening_factor: 1.08 }));
+    const above = projectBlkV1(buildInputs({ playoff_tightening_factor: 1.09 }));
+    expect(above.blk_mu).toBeCloseTo(at108.blk_mu, 6);
+    expect(at107.blk_mu).toBeLessThan(at108.blk_mu);
   });
 });
 

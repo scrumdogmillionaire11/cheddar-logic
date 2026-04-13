@@ -223,10 +223,16 @@ async function refreshStaleOdds({ jobKey = null, dryRun = false } = {}) {
 
       if (staleGames.length === 0) {
         console.log('[RefreshStaleOdds] ✅ No stale odds found — all fresh');
+        const staleDiagnostics = {
+          detected: 0,
+          refreshed: 0,
+          blocked: 0,
+        };
         markJobRunSuccess(jobRunId, {
           gamesChecked: 0,
           staleGames: 0,
           snapshotsInserted: 0,
+          staleDiagnostics,
         });
         return {
           success: true,
@@ -234,6 +240,7 @@ async function refreshStaleOdds({ jobKey = null, dryRun = false } = {}) {
           gamesChecked: 0,
           staleGames: 0,
           snapshotsInserted: 0,
+          staleDiagnostics,
         };
       }
 
@@ -434,16 +441,22 @@ async function refreshStaleOdds({ jobKey = null, dryRun = false } = {}) {
       }
 
       // Mark success
+      const staleDiagnostics = {
+        detected: staleGames.length,
+        refreshed: snapshotsInserted,
+        blocked: Math.max(0, staleGames.length - snapshotsInserted),
+      };
       const summary = {
         staleGames: staleGames.length,
         snapshotsInserted,
+        staleDiagnostics,
         errors: errors.length > 0 ? errors : undefined,
       };
 
       markJobRunSuccess(jobRunId, summary);
 
       console.log(
-        `[RefreshStaleOdds] ✅ Completed: ${snapshotsInserted} new snapshots inserted`,
+        `[RefreshStaleOdds] ✅ Completed: detected=${staleDiagnostics.detected} refreshed=${staleDiagnostics.refreshed} blocked=${staleDiagnostics.blocked}`,
       );
       if (errors.length > 0) {
         console.warn(

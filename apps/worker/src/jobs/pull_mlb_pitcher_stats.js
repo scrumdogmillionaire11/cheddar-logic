@@ -9,8 +9,8 @@ const {
   markJobRunSuccess,
   markJobRunFailure,
   shouldRunJobKey,
-  withDb,
 } = require('@cheddar-logic/data');
+const { withDbSafe } = require('../utils/with-db-safe');
 
 const JOB_NAME = 'pull_mlb_pitcher_stats';
 const MLB_API_BASE = 'https://statsapi.mlb.com/api/v1';
@@ -708,7 +708,7 @@ async function pullMlbPitcherStats({
 } = {}) {
   const jobRunId = `job-${JOB_NAME}-${new Date().toISOString().split('.')[0]}-${uuidV4().slice(0, 8)}`;
 
-  return withDb(async () => {
+  return withDbSafe(async () => {
     if (jobKey && !shouldRunJobKey(jobKey)) {
       console.log(`[${JOB_NAME}] Skipping (already succeeded or running): ${jobKey}`);
       return { success: true, skipped: true, jobRunId: null, jobKey };

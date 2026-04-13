@@ -108,6 +108,10 @@ function loadRunNHLModel({
   sigmaResult = { margin: 2.1, total: 5.4, sigma_source: 'computed', games_sampled: 45 },
   oddsSnapshots = [buildOddsSnapshot()],
   driverCards = null,
+  projectionGate = {
+    projection_inputs_complete: true,
+    missing_inputs: [],
+  },
 } = {}) {
   jest.resetModules();
 
@@ -165,6 +169,14 @@ function loadRunNHLModel({
     computeNHLDriverCards: computeNHLDriverCardsMock,
     generateCard: jest.fn((opts) => buildFakeDriverCard(opts.gameId, opts.descriptor)),
     computeNHLMarketDecisions: jest.fn(() => ({})),
+    evaluateNHLGameMarkets: jest.fn(({ game_id }) => ({
+      game_id,
+      market_results: [],
+      official_plays: [],
+      leans: [],
+      rejected: [],
+    })),
+    choosePrimaryDisplayMarket: jest.fn(() => null),
     selectExpressionChoice: jest.fn(() => null),
     buildMarketPayload: jest.fn(() => ({})),
     determineTier: jest.fn(() => 'B'),
@@ -174,10 +186,7 @@ function loadRunNHLModel({
   }));
 
   jest.doMock('../models/projections', () => ({
-    assessProjectionInputs: jest.fn(() => ({
-      projection_inputs_complete: true,
-      missing_inputs: [],
-    })),
+    assessProjectionInputs: jest.fn(() => projectionGate),
   }));
 
   jest.doMock('../models/nhl-goalie-state', () => ({
@@ -399,6 +408,24 @@ describe('NHL sigma calibration — WI-0773', () => {
       const [card] = mocks.insertCardPayload.mock.calls[0];
       expect(card.payloadData.raw_data).toBeDefined();
       expect(card.payloadData.raw_data.sigma_source).toBe('default');
+    });
+  });
+
+  describe('Test D: projection gate observability', () => {
+    it('keeps projection_ready=false in pipeline state when partial projection inputs and zero driver cards', async () => {
+      const { runNHLModel } = loadRunNHLModel({
+        driverCards: [],
+        projectionGate: {
+          projection_inputs_complete: false,
+          missing_inputs: ['home_avg_goals_for', 'away_avg_goals_for'],
+        },
+      });
+
+      const result = await runNHLModel();
+      const state = result.pipeline_states['nhl-sigma-game-001'];
+
+      expect(state).toBeDefined();
+      expect(state.projection_ready).toBe(false);
     });
   });
 });

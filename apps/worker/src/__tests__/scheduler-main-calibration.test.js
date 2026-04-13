@@ -57,14 +57,14 @@ function loadSchedulerModule() {
   jest.doMock('../jobs/run_clv_snapshot', () => ({ runClvSnapshot: jest.fn() }));
   jest.doMock('../jobs/run_daily_performance_report', () => ({ runDailyPerformanceReport: jest.fn() }));
   jest.doMock('../jobs/run_calibration_report', () => ({ runCalibrationReport: jest.fn() }));
-  jest.doMock('@cheddar-logic/odds/src/config', () => ({
-    SPORTS_CONFIG: {
-      NHL: { active: true },
-      NBA: { active: true },
-      MLB: { active: false },
-      NFL: { active: false },
-    },
-  }));
+    jest.doMock('@cheddar-logic/odds/src/config', () => ({
+      SPORTS_CONFIG: {
+        NHL: { active: true },
+        NBA: { active: true },
+        MLB: { active: true },
+        NFL: { active: false },
+      },
+    }));
 
   return require('../schedulers/main');
 }
@@ -149,7 +149,7 @@ describe('scheduler: run_calibration_report nightly at 04:00 ET (WI-0860)', () =
     expect(calibJob).toBeUndefined();
   });
 
-  test('MLB projection-only descriptor disables freshness gating and records projection-only metadata', () => {
+  test('MLB default scheduler descriptor uses odds-backed freshness gating', () => {
     process.env.ENABLE_MLB_MODEL = 'true';
     const scheduler = loadSchedulerModule();
 
@@ -160,22 +160,23 @@ describe('scheduler: run_calibration_report nightly at 04:00 ET (WI-0860)', () =
     const mlbJob = jobs.find((j) => j.jobName === 'run_mlb_model');
 
     expect(mlbJob).toBeDefined();
-    expect(mlbJob.requireFreshInputs).toBe(false);
-    expect(mlbJob.freshnessSourceJobs).toEqual(['pull_espn_games_direct']);
-    expect(mlbJob.runMode).toBe('PROJECTION_ONLY');
-    expect(mlbJob.withoutOddsMode).toBe(true);
+    expect(mlbJob.requireFreshInputs).toBe(true);
+    expect(mlbJob.freshnessSourceJobs).toEqual(['pull_odds_hourly']);
+    expect(mlbJob.runMode).toBe('ODDS_BACKED');
+    expect(mlbJob.withoutOddsMode).toBe(false);
   });
 
-  test('tick runs projection-only MLB even when recent seed freshness is stale', async () => {
+  test('tick blocks MLB when fresh odds are required and stale', async () => {
     jest.useFakeTimers();
     jest.setSystemTime(new Date('2026-04-10T16:00:00Z'));
+    process.env.ENABLE_ODDS_PULL = 'true';
     process.env.ENABLE_MLB_MODEL = 'true';
     const scheduler = loadSchedulerModule();
     mockWasJobRecentlySuccessful.mockReturnValue(false);
 
     await scheduler.tick();
 
-    expect(mockRunMLBModel).toHaveBeenCalled();
+    expect(mockRunMLBModel).not.toHaveBeenCalled();
   });
 
   test('tick still blocks NBA when fresh inputs are required and stale', async () => {

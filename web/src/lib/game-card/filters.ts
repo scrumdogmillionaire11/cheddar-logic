@@ -347,11 +347,17 @@ function filterByActionability(
     status = 'WATCH';
   }
 
+  const explicitPassPlay =
+    displayAction === 'PASS' ||
+    card.play?.action === 'PASS' ||
+    card.play?.classification === 'PASS' ||
+    card.play?.decision_v2?.official_status === 'PASS';
+
   // Allow expressionChoice to override a PASS display action, but never driver
   // tags: HAS_FIRE / HAS_WATCH are derived from the same pipeline that produced
   // the PASS signal — re-promoting via tags creates a self-contradiction that lets
   // PASS cards surface in the main FIRE/WATCH view.
-  if (!displayAction || displayAction === 'PASS') {
+  if ((!displayAction || displayAction === 'PASS') && !explicitPassPlay) {
     if (card.expressionChoice?.status) {
       status = card.expressionChoice.status;
     }

@@ -120,9 +120,12 @@ console.log('✓ Manual lifecycle change clears pending retry\n');
 // Test 11: Effect cleanup prevents orphaned timeouts
 console.log('Test 11: Effect cleanup prevents orphaned timeouts');
 assert(
-  source.includes(
-    'if (lifecycleRetryTimeoutRef.current) {\n        clearTimeout(lifecycleRetryTimeoutRef.current);\n        lifecycleRetryTimeoutRef.current = null;\n      }\n      clearInterval(interval);\n      document.removeEventListener(\'visibilitychange\', onVisibilityChange);',
-  ),
+  source.includes('if (initialLoadRetryTimeoutRef.current) {') &&
+    source.includes('clearTimeout(initialLoadRetryTimeoutRef.current);') &&
+    source.includes('if (lifecycleRetryTimeoutRef.current) {') &&
+    source.includes('clearTimeout(lifecycleRetryTimeoutRef.current);') &&
+    source.includes('clearInterval(interval);') &&
+    source.includes("document.removeEventListener('visibilitychange', onVisibilityChange);"),
   'effect cleanup must clear retry timeout on unmount',
 );
 console.log('✓ Cleanup removes retry timeout on unmount\n');

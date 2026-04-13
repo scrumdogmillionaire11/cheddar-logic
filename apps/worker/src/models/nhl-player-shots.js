@@ -250,6 +250,27 @@ function weightedRateBlend(season, l10, l5) {
 }
 
 /**
+ * Weighted rate blend for blocked shots — L5 outweighs season.
+ * Weights: season=0.25, L10=0.35, L5=0.40
+ * Blocks are deployment/matchup-sensitive; recent form is more predictive
+ * than season averages. Null slots are excluded and weights renormalized.
+ * @param {number|null} season
+ * @param {number|null} l10
+ * @param {number|null} l5
+ * @returns {number}
+ */
+function weightedRateBlendBLK(season, l10, l5) {
+  const values = [season, l10, l5];
+  const weights = [0.25, 0.35, 0.40];
+  const present = values
+    .map((v, i) => (v !== null && v !== undefined ? { v, w: weights[i] } : null))
+    .filter(Boolean);
+  if (present.length === 0) return 0;
+  const totalW = present.reduce((s, x) => s + x.w, 0);
+  return present.reduce((s, x) => s + (x.v * x.w) / totalW, 0);
+}
+
+/**
  * Weighted blend for PP shot rates with recency emphasis.
  * Weights: season=0.40, L10=0.35, L5=0.25 (per WI-0531 spec).
  * Null/undefined slots are excluded and remaining weights renormalized.
@@ -665,8 +686,10 @@ function projectBlkV1(inputs) {
   }
 
   // ---- Stage 1: BLK_mu ----
-  const ev_rate = weightedRateBlend(ev_blocks_season_per60, ev_blocks_l10_per60, ev_blocks_l5_per60);
-  const pk_rate = weightedRateBlend(pk_blocks_season_per60, pk_blocks_l10_per60, pk_blocks_l5_per60);
+  // BLK uses L5-heavy blend (0.25/0.35/0.40) — deployment/matchup context
+  // shifts faster than SOG, so recent form outweighs season average.
+  const ev_rate = weightedRateBlendBLK(ev_blocks_season_per60, ev_blocks_l10_per60, ev_blocks_l5_per60);
+  const pk_rate = weightedRateBlendBLK(pk_blocks_season_per60, pk_blocks_l10_per60, pk_blocks_l5_per60);
 
   const opp_attempt_factor = clamp(rawOppAttempt ?? 1.0, 0.90, 1.12);
   const dz_factor = clamp(rawDzFactor ?? 1.0, 0.95, 1.08);
@@ -811,4 +834,4 @@ function projectBlkV1(inputs) {
   };
 }
 
-module.exports = { calcMu, calcMu1p, classifyEdge, calcFairLine, calcFairLine1p, projectSogV2, projectBlkV1 };
+module.exports = { calcMu, calcMu1p, classifyEdge, calcFairLine, calcFairLine1p, projectSogV2, projectBlkV1, weightedRateBlendBLK };

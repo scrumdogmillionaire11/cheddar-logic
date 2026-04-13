@@ -71,7 +71,7 @@ describe('checkMlbF5MarketAvailability', () => {
     ({ checkMlbF5MarketAvailability } = require('../jobs/check_pipeline_health'));
   });
 
-  test('reports MLB F5 availability separately and does not fail when only full-game totals are missing', () => {
+  test('fails when full-game totals are missing even if F5 totals are present', () => {
     upcomingGames = [
       {
         game_id: 'mlb-game-001',
@@ -93,16 +93,15 @@ describe('checkMlbF5MarketAvailability', () => {
 
     const result = checkMlbF5MarketAvailability();
 
-    expect(result.ok).toBe(true);
+    expect(result.ok).toBe(false);
     expect(result.games_checked).toBe(1);
     expect(result.missing_f5_total_count).toBe(0);
     expect(result.missing_full_game_total_count).toBe(1);
-    expect(result.reason).toContain('missing full-game totals (informational)');
-    // An 'ok' row is written when F5 totals are available — the dashboard must show green state.
+    expect(result.reason).toContain('missing full-game totals');
     expect(pipelineWrites).toHaveLength(1);
     expect(pipelineWrites[0][0]).toBe('mlb');
     expect(pipelineWrites[0][1]).toBe('f5_market_availability');
-    expect(pipelineWrites[0][2]).toBe('ok');
+    expect(pipelineWrites[0][2]).toBe('failed');
   });
 
   test('fails with a distinct MLB row when F5 totals are missing', () => {
@@ -192,7 +191,7 @@ describe('checkOddsFreshness — quota-aware status downgrade', () => {
       SPORTS_CONFIG: {
         NHL: { active: true },
         NBA: { active: true },
-        MLB: { active: false },
+        MLB: { active: true },
         NFL: { active: false },
       },
     }));
@@ -300,7 +299,7 @@ describe('checkMlbSeedFreshness', () => {
       SPORTS_CONFIG: {
         NHL: { active: true },
         NBA: { active: true },
-        MLB: { active: false },
+        MLB: { active: true },
         NFL: { active: false },
       },
     }));
@@ -344,37 +343,37 @@ describe('checkMlbSeedFreshness', () => {
     ({ checkMlbSeedFreshness } = require('../jobs/check_pipeline_health'));
   });
 
-  test('writes failed when MLB games exist and ESPN-direct seed is stale', () => {
+  test('skips seed freshness when MLB odds are active', () => {
     upcomingCount = 4;
     mockWasJobRecentlySuccessful.mockReturnValue(false);
 
     const result = checkMlbSeedFreshness(75);
 
-    expect(result.ok).toBe(false);
-    expect(result.reason).toContain('pull_espn_games_direct has NOT run successfully');
+    expect(result.ok).toBe(true);
+    expect(result.reason).toContain('MLB live-odds mode active - seed freshness check skipped');
     expect(pipelineWrites[0][0]).toBe('mlb');
     expect(pipelineWrites[0][1]).toBe('seed_freshness');
-    expect(pipelineWrites[0][2]).toBe('failed');
+    expect(pipelineWrites[0][2]).toBe('ok');
   });
 
-  test('writes ok when MLB games exist and ESPN-direct seed is fresh', () => {
+  test('skips seed freshness even when ESPN-direct would be fresh', () => {
     upcomingCount = 3;
     mockWasJobRecentlySuccessful.mockReturnValue(true);
 
     const result = checkMlbSeedFreshness(75);
 
     expect(result.ok).toBe(true);
-    expect(result.reason).toContain('pull_espn_games_direct ran successfully');
+    expect(result.reason).toContain('MLB live-odds mode active - seed freshness check skipped');
     expect(pipelineWrites[0][2]).toBe('ok');
   });
 
-  test('writes ok with skipped reason when no MLB games are within T-6h', () => {
+  test('skips seed freshness regardless of upcoming MLB game count when odds are active', () => {
     upcomingCount = 0;
 
     const result = checkMlbSeedFreshness(75);
 
     expect(result.ok).toBe(true);
-    expect(result.reason).toContain('seed freshness check skipped');
+    expect(result.reason).toContain('MLB live-odds mode active - seed freshness check skipped');
     expect(pipelineWrites[0][2]).toBe('ok');
   });
 });

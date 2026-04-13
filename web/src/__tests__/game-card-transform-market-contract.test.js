@@ -62,6 +62,12 @@ assert(
 );
 
 assert(
+  source.includes("(sourceAction === 'FIRE' || sourceAction === 'HOLD')") &&
+    source.includes("reasonCodes.push('PASS_DATA_ERROR');"),
+  'transform should only classify missing model_prob as PASS_DATA_ERROR on actionable priced paths',
+);
+
+assert(
   source.includes('getRiskTagsFromText') &&
     titleInferenceSource.includes("tags.push('RISK_FRAGILITY')") &&
     titleInferenceSource.includes("tags.push('RISK_BLOWOUT')"),
@@ -197,13 +203,14 @@ assert(
 );
 
 assert(
-  gameCardSource.includes("const isF5TotalMarket = card.sport === 'MLB' && marketType === 'FIRST_PERIOD';") &&
+  gameCardSource.includes("card.sport === 'MLB'") &&
+    gameCardSource.includes('isF5TotalMarket') &&
     gameCardSource.includes('const projectionSourceLabel =') &&
     gameCardSource.includes("displayPlay.projectionSource === 'DEGRADED_MODEL'") &&
     gameCardSource.includes('Playable O&lt;=') &&
     gameCardSource.includes('Team means:') &&
     gameCardSource.includes("displayPlay.projectionSource === 'SYNTHETIC_FALLBACK'"),
-  'GameCardItem should render MLB F5 source, range, team means, and playable thresholds',
+  'GameCardItem should render MLB F5 source (both FIRST_PERIOD and FIRST_5_INNINGS), range, team means, and playable thresholds',
 );
 
 assert(

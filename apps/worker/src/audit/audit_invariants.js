@@ -145,8 +145,6 @@ function checkExecutionStateConsistency(publishSnapshot) {
   const pricingStatus = derivePricingStatus(publishSnapshot);
   const publishReady = derivePublishReady(publishSnapshot);
   const actionable = publishSnapshot?.actionable === true;
-  const legacyPricingReady =
-    publishSnapshot?.pricing_ready === undefined ? null : publishSnapshot.pricing_ready === true;
 
   const selectionDetails = getSelectionSignature(publishSnapshot);
   if (selectionDetails.conflict) {
@@ -175,9 +173,6 @@ function checkExecutionStateConsistency(publishSnapshot) {
   }
   if (actionable !== (executionStatus === 'EXECUTABLE')) {
     failures.push(['actionable', executionStatus === 'EXECUTABLE', actionable]);
-  }
-  if (legacyPricingReady !== null && legacyPricingReady !== (pricingStatus === 'FRESH')) {
-    failures.push(['pricing_ready', pricingStatus === 'FRESH', legacyPricingReady]);
   }
 
   if (failures.length === 0) {

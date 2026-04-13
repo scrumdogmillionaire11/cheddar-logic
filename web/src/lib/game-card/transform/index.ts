@@ -243,6 +243,12 @@ interface ApiPlay {
   aggregation_key?: string;
   goalie_home_name?: string | null;
   goalie_away_name?: string | null;
+  nhl_totals_status?: {
+    status?: 'PLAY' | 'SLIGHT EDGE' | 'PASS';
+    delta?: number;
+    absDelta?: number;
+    reasonCodes?: string[];
+  } | null;
   goalie_home_status?: 'CONFIRMED' | 'EXPECTED' | 'UNKNOWN' | null;
   goalie_away_status?: 'CONFIRMED' | 'EXPECTED' | 'UNKNOWN' | null;
   consistency?: {
@@ -542,6 +548,63 @@ function isProjectionOnlyCardPlay(play: ApiPlay): boolean {
     play.prop_display_state === 'PROJECTION_ONLY' ||
     (lineSource != null && PROJECTION_ONLY_LINE_SOURCES.has(lineSource)) ||
     projectionSource === 'SYNTHETIC_FALLBACK'
+  );
+}
+
+function shouldSuppressNoActionableNonTotalPass(play: ApiPlay): boolean {
+  if (play.market_type === 'TOTAL' || play.market_type === 'TEAM_TOTAL') {
+    return false;
+  }
+
+  const displayAction = resolvePlayDisplayDecision(play).action;
+  if (displayAction !== 'PASS') return false;
+
+  const reasonCodes = Array.isArray(play.reason_codes)
+    ? play.reason_codes
+    : [];
+  const hasWeakSupportPass = reasonCodes.includes('PASS_DRIVER_SUPPORT_WEAK');
+  const hasEdgeSanityNonTotal =
+    reasonCodes.includes('PASS_EDGE_SANITY_NON_TOTAL') ||
+    reasonCodes.includes('DOWNGRADED_EDGE_SANITY_NON_TOTAL');
+
+  return hasWeakSupportPass && hasEdgeSanityNonTotal;
+}
+
+function isRenderableGameSurfacePlay(game: GameData, play: ApiPlay): boolean {
+  return (
+    !isProjectionOnlyCardPlay(play) &&
+    !shouldSuppressNoActionableNonTotalPass(play) &&
+    isPlayItem(play, game.sport) &&
+    play.market_type !== 'PROP'
+  );
+}
+
+function isProjectionOnlyGameSurfacePlay(
+  game: GameData,
+  play: ApiPlay,
+): boolean {
+  return (
+    isProjectionOnlyCardPlay(play) &&
+    isPlayItem(play, game.sport) &&
+    play.market_type !== 'PROP'
+  );
+}
+
+function shouldExcludeProjectionOnlyGameSurface(game: GameData): boolean {
+  const hasRenderablePlay = game.plays.some((play) =>
+    isRenderableGameSurfacePlay(game, play),
+  );
+  if (hasRenderablePlay) return false;
+
+  const hasSuppressedNonTotalPass = game.plays.some((play) =>
+    shouldSuppressNoActionableNonTotalPass(play) &&
+    isPlayItem(play, game.sport) &&
+    play.market_type !== 'PROP',
+  );
+  if (hasSuppressedNonTotalPass) return true;
+
+  return game.plays.some((play) =>
+    isProjectionOnlyGameSurfacePlay(game, play),
   );
 }
 
@@ -947,6 +1010,7 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
   const canonicalTruePlay =
     game.true_play &&
     !isProjectionOnlyCardPlay(game.true_play) &&
+    !shouldSuppressNoActionableNonTotalPass(game.true_play) &&
     game.true_play.market_type !== 'PROP' &&
     isPlayItem(game.true_play, game.sport) &&
     (ENABLE_WELCOME_HOME || !isWelcomeHomePlay(game.true_play))
@@ -954,11 +1018,8 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
       : null;
   // Game mode must not promote player props into canonical game-line play slots.
   // Props are rendered via transformPropGames in cards props mode only.
-  const basePlayCandidates = game.plays.filter(
-    (play) =>
-      !isProjectionOnlyCardPlay(play) &&
-      isPlayItem(play, game.sport) &&
-      play.market_type !== 'PROP',
+  const basePlayCandidates = game.plays.filter((play) =>
+    isRenderableGameSurfacePlay(game, play),
   );
   const hasCanonicalInCandidates = canonicalTruePlay
     ? basePlayCandidates.some((play) => {
@@ -1622,6 +1683,7 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
         : sourcePlay?.decision_v2?.official_status === 'PASS'
           ? 'PASS'
           : getSourcePlayAction(sourcePlay);
+  const sourceExplicitPass = sourceAction === 'PASS';
   const sourceInference =
     selectedSource?.inference ??
     (sourcePlay
@@ -1934,7 +1996,11 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
       resolvedMarketType === 'SPREAD' ||
       resolvedMarketType === 'TOTAL') &&
     typeof price === 'number';
-  if (requiresModelProbForEdge && modelProb === undefined) {
+  if (
+    requiresModelProbForEdge &&
+    modelProb === undefined &&
+    (sourceAction === 'FIRE' || sourceAction === 'HOLD')
+  ) {
     reasonCodes.push('PASS_DATA_ERROR');
   }
   if (canonicalPlayableCount === 0) reasonCodes.push('PASS_NO_PRIMARY_SUPPORT');
@@ -2086,7 +2152,11 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
     };
   }
 
-  if (candidateBet && !validateCanonicalBet(candidateBet)) {
+  if (
+    candidateBet &&
+    !validateCanonicalBet(candidateBet) &&
+    (sourceAction === 'FIRE' || sourceAction === 'HOLD')
+  ) {
     reasonCodes.push('PASS_DATA_ERROR');
     candidateBet = null;
   }
@@ -2224,6 +2294,9 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
       ? decision.action
       : 'PASS';
   let finalDecision: DecisionLabel = decisionFromAction(decisionAction);
+  if (sourceExplicitPass) {
+    finalDecision = 'PASS';
+  }
   
   // WI-DECISION-FIX: Edge is the master gate
   // If edge < 1%, force PASS regardless of other signals
@@ -2232,11 +2305,14 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
     finalDecision = 'PASS';
     reasonCodesUnique.push('PASS_INSUFFICIENT_EDGE');
   } else {
-    // Only allow scoreDecision to affect decision if edge gate passes
-    if (scoreDecision === 'PASS') finalDecision = 'PASS';
-    if (scoreDecision === 'WATCH' && finalDecision === 'FIRE')
-      finalDecision = 'WATCH';
-    if (scoreDecision === 'FIRE') finalDecision = 'FIRE';
+    // Only allow scoreDecision to affect decision if edge gate passes and
+    // the source record did not already resolve to explicit PASS.
+    if (!sourceExplicitPass) {
+      if (scoreDecision === 'PASS') finalDecision = 'PASS';
+      if (scoreDecision === 'WATCH' && finalDecision === 'FIRE')
+        finalDecision = 'WATCH';
+      if (scoreDecision === 'FIRE') finalDecision = 'FIRE';
+    }
   }
   if (
     sourceAction === 'FIRE' &&
@@ -2253,6 +2329,22 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
     finalDecision = 'WATCH';
   }
   if (hardPass) finalDecision = 'PASS';
+
+  // Canonical NHL totals status must come from worker payload only.
+  const isNhlTotalsCard =
+    normalizeSport(game.sport) === 'NHL' &&
+    (sourcePlay?.cardType === 'nhl-totals-call' ||
+      resolvedMarketType === 'TOTAL');
+  const canonicalNhlTotalsStatus = sourcePlay?.nhl_totals_status?.status;
+  if (isNhlTotalsCard && canonicalNhlTotalsStatus) {
+    if (canonicalNhlTotalsStatus === 'PLAY' && !hardPass) {
+      finalDecision = 'FIRE';
+    } else if (canonicalNhlTotalsStatus === 'SLIGHT EDGE' && finalDecision !== 'PASS') {
+      finalDecision = 'WATCH';
+    } else if (canonicalNhlTotalsStatus === 'PASS') {
+      finalDecision = 'PASS';
+    }
+  }
 
   const hasBlockingGate = gates.some((gate) => gate.blocks_bet);
   let finalBet = candidateBet;
@@ -2560,7 +2652,7 @@ export function transformToGameCard(game: GameData): GameCard {
   // Convert plays to drivers and dedupe
   // Keep game-mode driver/truth calculations scoped to non-prop markets.
   const rawDrivers = game.plays
-    .filter((play) => isPlayItem(play, game.sport) && play.market_type !== 'PROP')
+    .filter((play) => isRenderableGameSurfacePlay(game, play))
     .map(playToDriver);
   const scopedRawDrivers = ENABLE_WELCOME_HOME
     ? rawDrivers
@@ -2858,7 +2950,9 @@ function assertContractInDev(cards: GameCard[]): void {
  * Transform array of GameData to GameCard[]
  */
 export function transformGames(games: GameData[]): GameCard[] {
-  const transformed = games.map(transformToGameCard);
+  const transformed = games
+    .filter((game) => !shouldExcludeProjectionOnlyGameSurface(game))
+    .map(transformToGameCard);
   const deduped = dedupeCardsByGameMarket(transformed);
   assertContractInDev(deduped);
   return deduped;
@@ -2986,6 +3080,42 @@ function normalizePropVerdict(
   }
 
   return undefined;
+}
+
+function normalizePropDedupeName(name: string | undefined): string {
+  if (!name) return '';
+  return name.trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+function buildPropRowDedupeKey(row: PropPlayRow): string {
+  const normalizedName = normalizePropDedupeName(row.playerName);
+  const identity = normalizedName || row.playerId || '';
+  return `${identity}|${row.propType}`;
+}
+
+function dedupePropPlayRows(rows: PropPlayRow[]): PropPlayRow[] {
+  const deduped: PropPlayRow[] = [];
+  const seen = new Set<string>();
+  for (const row of rows) {
+    const rowKey = buildPropRowDedupeKey(row);
+    if (seen.has(rowKey)) continue;
+    seen.add(rowKey);
+    deduped.push(row);
+  }
+  return deduped;
+}
+
+function normalizeMatchupKeyPart(value: string): string {
+  return value.trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+function buildPropGameMatchupKey(card: PropGameCard): string {
+  return [
+    card.sport,
+    card.gameTimeUtc,
+    normalizeMatchupKeyPart(card.homeTeam),
+    normalizeMatchupKeyPart(card.awayTeam),
+  ].join('|');
 }
 
 /**
@@ -3132,7 +3262,7 @@ export function transformPropGames(games: GameData[]): PropGameCard[] {
         playerId,
         playerName,
         teamAbbr: play.team_abbr ?? undefined,
-        gameId: play.game_id ?? game.gameId,
+        gameId: game.gameId,
         propType,
         line: canonicalPropLine ?? play.suggested_line ?? null,
         projection: canonicalPropProjection,
@@ -3242,8 +3372,10 @@ export function transformPropGames(games: GameData[]): PropGameCard[] {
       return (b.edge ?? 0) - (a.edge ?? 0);
     });
 
+    const dedupedPropPlayRows = dedupePropPlayRows(propPlayRows);
+
     const maxConfidence = Math.max(
-      ...propPlayRows.map((p) => p.confidence ?? 0),
+      ...dedupedPropPlayRows.map((p) => p.confidence ?? 0),
     );
 
     // Build prop game card
@@ -3260,7 +3392,7 @@ export function transformPropGames(games: GameData[]): PropGameCard[] {
           ? { home: game.odds.h2hHome, away: game.odds.h2hAway }
           : undefined,
       total: game.odds?.total ? { line: game.odds.total } : undefined,
-      propPlays: propPlayRows,
+      propPlays: dedupedPropPlayRows,
       maxConfidence,
       tags: [], // add filtering tags as needed
     };
@@ -3268,8 +3400,28 @@ export function transformPropGames(games: GameData[]): PropGameCard[] {
     propGames.push(propGameCard);
   }
 
-  // Sort games by max confidence desc
-  propGames.sort((a, b) => b.maxConfidence - a.maxConfidence);
+  const mergedByMatchup = new Map<string, PropGameCard>();
+  for (const card of propGames) {
+    const matchupKey = buildPropGameMatchupKey(card);
+    const existing = mergedByMatchup.get(matchupKey);
+    if (!existing) {
+      mergedByMatchup.set(matchupKey, card);
+      continue;
+    }
 
-  return propGames;
+    const mergedRows = dedupePropPlayRows([...existing.propPlays, ...card.propPlays]);
+    existing.propPlays = mergedRows;
+    existing.maxConfidence = Math.max(
+      existing.maxConfidence,
+      card.maxConfidence,
+      ...mergedRows.map((p) => p.confidence ?? 0),
+    );
+  }
+
+  const dedupedPropGames = Array.from(mergedByMatchup.values());
+
+  // Sort games by max confidence desc
+  dedupedPropGames.sort((a, b) => b.maxConfidence - a.maxConfidence);
+
+  return dedupedPropGames;
 }

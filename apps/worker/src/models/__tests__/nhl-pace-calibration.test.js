@@ -6,6 +6,7 @@ const {
   NHL_PACE_AUDIT_RULES,
 } = require('../nhl-pace-model');
 const { edgeCalculator } = require('@cheddar-logic/models');
+const { makeCanonicalGoalieState } = require('../nhl-goalie-state');
 
 function buildBaseOverrides(overrides = {}) {
   return {
@@ -21,8 +22,6 @@ function buildBaseOverrides(overrides = {}) {
     awayPkPct: 0.8,
     homeGoalieSavePct: null,
     awayGoalieSavePct: null,
-    homeGoalieConfirmed: false,
-    awayGoalieConfirmed: false,
     homeGoalieCertainty: 'UNKNOWN',
     awayGoalieCertainty: 'UNKNOWN',
     homeB2B: false,
@@ -31,6 +30,26 @@ function buildBaseOverrides(overrides = {}) {
     restDaysAway: 1,
     ...overrides,
   };
+}
+
+function goalieState(teamSide, starterState, adjustmentTrust) {
+  const tierConfidence = adjustmentTrust === 'FULL'
+    ? 'HIGH'
+    : adjustmentTrust === 'DEGRADED'
+      ? 'MEDIUM'
+      : 'NONE';
+
+  return makeCanonicalGoalieState({
+    game_id: 'calibration-game',
+    team_side: teamSide,
+    starter_state: starterState,
+    starter_source: 'USER_INPUT',
+    goalie_name: starterState === 'UNKNOWN' ? null : `${teamSide}-goalie`,
+    goalie_tier: starterState === 'UNKNOWN' ? 'UNKNOWN' : 'STRONG',
+    tier_confidence: starterState === 'UNKNOWN' ? 'NONE' : tierConfidence,
+    adjustment_trust: adjustmentTrust,
+    evidence_flags: [],
+  });
 }
 
 describe('NHL pace calibration rails', () => {
@@ -49,10 +68,8 @@ describe('NHL pace calibration rails', () => {
         awayPkPct: 0.71,
         homeGoalieSavePct: 0.885,
         awayGoalieSavePct: 0.884,
-        homeGoalieConfirmed: true,
-        awayGoalieConfirmed: true,
-        homeGoalieCertainty: 'CONFIRMED',
-        awayGoalieCertainty: 'CONFIRMED',
+        homeGoalieState: goalieState('home', 'CONFIRMED', 'FULL'),
+        awayGoalieState: goalieState('away', 'CONFIRMED', 'FULL'),
       }),
     );
 
@@ -86,10 +103,8 @@ describe('NHL pace calibration rails', () => {
         awayPaceFactor: 0.9,
         homeGoalieSavePct: 0.93,
         awayGoalieSavePct: 0.932,
-        homeGoalieConfirmed: true,
-        awayGoalieConfirmed: true,
-        homeGoalieCertainty: 'CONFIRMED',
-        awayGoalieCertainty: 'CONFIRMED',
+        homeGoalieState: goalieState('home', 'CONFIRMED', 'FULL'),
+        awayGoalieState: goalieState('away', 'CONFIRMED', 'FULL'),
       }),
     );
 
@@ -101,24 +116,22 @@ describe('NHL pace calibration rails', () => {
     const base = buildBaseOverrides({
       homeGoalieSavePct: 0.93,
       awayGoalieSavePct: 0.932,
-      homeGoalieConfirmed: true,
-      awayGoalieConfirmed: true,
     });
 
     const confirmed = predictNHLGame({
       ...base,
-      homeGoalieCertainty: 'CONFIRMED',
-      awayGoalieCertainty: 'CONFIRMED',
+      homeGoalieState: goalieState('home', 'CONFIRMED', 'FULL'),
+      awayGoalieState: goalieState('away', 'CONFIRMED', 'FULL'),
     });
     const expected = predictNHLGame({
       ...base,
-      homeGoalieCertainty: 'EXPECTED',
-      awayGoalieCertainty: 'EXPECTED',
+      homeGoalieState: goalieState('home', 'EXPECTED', 'DEGRADED'),
+      awayGoalieState: goalieState('away', 'EXPECTED', 'DEGRADED'),
     });
     const unknown = predictNHLGame({
       ...base,
-      homeGoalieCertainty: 'UNKNOWN',
-      awayGoalieCertainty: 'UNKNOWN',
+      homeGoalieState: goalieState('home', 'UNKNOWN', 'NEUTRALIZED'),
+      awayGoalieState: goalieState('away', 'UNKNOWN', 'NEUTRALIZED'),
     });
 
     expect(confirmed.expectedTotal).toBeLessThan(expected.expectedTotal);
@@ -130,10 +143,8 @@ describe('NHL pace calibration rails', () => {
       buildBaseOverrides({
         homeGoalieSavePct: 0.912,
         awayGoalieSavePct: 0.888,
-        homeGoalieConfirmed: true,
-        awayGoalieConfirmed: true,
-        homeGoalieCertainty: 'CONFIRMED',
-        awayGoalieCertainty: 'CONFIRMED',
+        homeGoalieState: goalieState('home', 'CONFIRMED', 'FULL'),
+        awayGoalieState: goalieState('away', 'CONFIRMED', 'FULL'),
       }),
     );
     const composite = predictNHLGame(
@@ -142,10 +153,8 @@ describe('NHL pace calibration rails', () => {
         awayGoalieSavePct: 0.888,
         homeGoalieGsax: 0.28,
         awayGoalieGsax: -0.28,
-        homeGoalieConfirmed: true,
-        awayGoalieConfirmed: true,
-        homeGoalieCertainty: 'CONFIRMED',
-        awayGoalieCertainty: 'CONFIRMED',
+        homeGoalieState: goalieState('home', 'CONFIRMED', 'FULL'),
+        awayGoalieState: goalieState('away', 'CONFIRMED', 'FULL'),
       }),
     );
 
@@ -156,36 +165,30 @@ describe('NHL pace calibration rails', () => {
     );
   });
 
-  test('treats OFFICIAL certainty token as confirmed even if legacy boolean is false', () => {
+  test('treats confirmed starter state as confirmed certainty', () => {
     const result = predictNHLGame(
       buildBaseOverrides({
         homeGoalieSavePct: 0.914,
         awayGoalieSavePct: 0.913,
-        homeGoalieConfirmed: false,
-        awayGoalieConfirmed: false,
-        homeGoalieCertainty: 'OFFICIAL',
-        awayGoalieCertainty: 'CONFIRMED',
+        homeGoalieState: goalieState('home', 'CONFIRMED', 'FULL'),
+        awayGoalieState: goalieState('away', 'CONFIRMED', 'FULL'),
       }),
     );
 
     expect(result.homeGoalieCertainty).toBe('CONFIRMED');
-    expect(result.homeGoalieConfirmed).toBe(true);
   });
 
-  test('does not allow legacy boolean to upgrade explicit EXPECTED certainty', () => {
+  test('preserves expected starter state certainty as EXPECTED', () => {
     const result = predictNHLGame(
       buildBaseOverrides({
         homeGoalieSavePct: 0.914,
         awayGoalieSavePct: 0.913,
-        homeGoalieConfirmed: true,
-        awayGoalieConfirmed: true,
-        homeGoalieCertainty: 'EXPECTED',
-        awayGoalieCertainty: 'EXPECTED',
+        homeGoalieState: goalieState('home', 'EXPECTED', 'DEGRADED'),
+        awayGoalieState: goalieState('away', 'EXPECTED', 'DEGRADED'),
       }),
     );
 
     expect(result.homeGoalieCertainty).toBe('EXPECTED');
-    expect(result.homeGoalieConfirmed).toBe(false);
   });
 
   test('caps additive modifier stack to absolute 0.70 goals', () => {
@@ -203,10 +206,8 @@ describe('NHL pace calibration rails', () => {
         awayPkPct: 0.7,
         homeGoalieSavePct: 0.885,
         awayGoalieSavePct: 0.886,
-        homeGoalieConfirmed: true,
-        awayGoalieConfirmed: true,
-        homeGoalieCertainty: 'CONFIRMED',
-        awayGoalieCertainty: 'CONFIRMED',
+        homeGoalieState: goalieState('home', 'CONFIRMED', 'FULL'),
+        awayGoalieState: goalieState('away', 'CONFIRMED', 'FULL'),
       }),
     );
 
@@ -241,10 +242,8 @@ describe('NHL 1P calibration rails', () => {
         awayPkPct: 0.9,
         homeGoalieSavePct: 0.936,
         awayGoalieSavePct: 0.935,
-        homeGoalieConfirmed: true,
-        awayGoalieConfirmed: true,
-        homeGoalieCertainty: 'CONFIRMED',
-        awayGoalieCertainty: 'CONFIRMED',
+        homeGoalieState: goalieState('home', 'CONFIRMED', 'FULL'),
+        awayGoalieState: goalieState('away', 'CONFIRMED', 'FULL'),
       }),
     );
 
@@ -273,10 +272,8 @@ describe('NHL 1P calibration rails', () => {
         awayPkPct: 0.69,
         homeGoalieSavePct: 0.884,
         awayGoalieSavePct: 0.883,
-        homeGoalieConfirmed: true,
-        awayGoalieConfirmed: true,
-        homeGoalieCertainty: 'CONFIRMED',
-        awayGoalieCertainty: 'CONFIRMED',
+        homeGoalieState: goalieState('home', 'CONFIRMED', 'FULL'),
+        awayGoalieState: goalieState('away', 'CONFIRMED', 'FULL'),
       }),
     );
 
@@ -301,10 +298,8 @@ describe('NHL 1P calibration rails', () => {
         awayPaceFactor: 1.15,
         homeGoalieSavePct: 0.902,
         awayGoalieSavePct: 0.901,
-        homeGoalieConfirmed: false,
-        awayGoalieConfirmed: true,
-        homeGoalieCertainty: 'UNKNOWN',
-        awayGoalieCertainty: 'CONFIRMED',
+        homeGoalieState: goalieState('home', 'UNKNOWN', 'NEUTRALIZED'),
+        awayGoalieState: goalieState('away', 'CONFIRMED', 'FULL'),
       }),
     );
 
@@ -322,10 +317,8 @@ describe('NHL 1P calibration rails', () => {
       buildBaseOverrides({
         homeGoalieSavePct: 0.935,
         awayGoalieSavePct: 0.936,
-        homeGoalieConfirmed: false,
-        awayGoalieConfirmed: false,
-        homeGoalieCertainty: 'UNKNOWN',
-        awayGoalieCertainty: 'UNKNOWN',
+        homeGoalieState: goalieState('home', 'UNKNOWN', 'NEUTRALIZED'),
+        awayGoalieState: goalieState('away', 'UNKNOWN', 'NEUTRALIZED'),
       }),
     );
 
@@ -351,24 +344,22 @@ describe('NHL 1P calibration rails', () => {
       awayPaceFactor: 1.07,
       homeGoalieSavePct: 0.92,
       awayGoalieSavePct: 0.918,
-      homeGoalieConfirmed: true,
-      awayGoalieConfirmed: true,
     });
 
     const confirmed = predictNHLGame({
       ...base,
-      homeGoalieCertainty: 'CONFIRMED',
-      awayGoalieCertainty: 'CONFIRMED',
+      homeGoalieState: goalieState('home', 'CONFIRMED', 'FULL'),
+      awayGoalieState: goalieState('away', 'CONFIRMED', 'FULL'),
     });
     const expected = predictNHLGame({
       ...base,
-      homeGoalieCertainty: 'EXPECTED',
-      awayGoalieCertainty: 'EXPECTED',
+      homeGoalieState: goalieState('home', 'EXPECTED', 'DEGRADED'),
+      awayGoalieState: goalieState('away', 'EXPECTED', 'DEGRADED'),
     });
     const unknown = predictNHLGame({
       ...base,
-      homeGoalieCertainty: 'UNKNOWN',
-      awayGoalieCertainty: 'UNKNOWN',
+      homeGoalieState: goalieState('home', 'UNKNOWN', 'NEUTRALIZED'),
+      awayGoalieState: goalieState('away', 'UNKNOWN', 'NEUTRALIZED'),
     });
 
     // EXPECTED multiplier should be 0.6, placing it between CONFIRMED (1.0) and UNKNOWN (0.0)

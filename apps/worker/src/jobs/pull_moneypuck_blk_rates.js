@@ -33,9 +33,9 @@ const {
   markJobRunSuccess,
   markJobRunFailure,
   shouldRunJobKey,
-  withDb,
   upsertPlayerBlkRates,
 } = require('@cheddar-logic/data');
+const { withDbSafe } = require('../utils/with-db-safe');
 
 const JOB_NAME = 'pull_moneypuck_blk_rates';
 
@@ -390,7 +390,7 @@ async function ingestMoneyPuckBlkRates({ startYear = null, now = new Date() } = 
 async function pullMoneyPuckBlkRates({ jobKey = null, dryRun = false } = {}) {
   const jobRunId = `job-${JOB_NAME}-${new Date().toISOString().split('.')[0]}-${uuidV4().slice(0, 8)}`;
 
-  return withDb(async (db) => {
+  return withDbSafe(async (db) => {
     if (jobKey && !shouldRunJobKey(jobKey)) {
       console.log(`[${JOB_NAME}] Skipping — already ran for key ${jobKey}`);
       return { success: true, skipped: true, jobKey };

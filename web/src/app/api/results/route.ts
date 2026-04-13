@@ -17,6 +17,7 @@ import {
   deriveModelFamily,
   deriveModelVersion,
   PROJECTION_TRACKING_CARD_TYPES,
+  shouldTrackInResults,
 } from './projection-metrics';
 
 const ALLOWED_SPORTS = ['NHL', 'NBA', 'NCAAM', 'MLB', 'NFL'] as const;
@@ -727,13 +728,18 @@ export async function GET(request: NextRequest) {
     // betting ledger path.
     const projTrackingPlaceholders = PROJECTION_TRACKING_CARD_TYPES.map(() => '?').join(',');
     const projTrackingSportFilter = buildSportFilter(sport, 'cr.sport');
+    const projectionActualSelect = (
+      db.prepare('PRAGMA table_info(card_payloads)').all() as Array<{ name: string }>
+    ).some((row) => row.name === 'actual_result')
+      ? 'cp.actual_result AS actual_result'
+      : 'NULL AS actual_result';
     const projectionTrackingStmt = db.prepare(
       `
       SELECT
         cr.sport,
         cr.card_type,
         cp.payload_data,
-        cp.actual_result,
+        ${projectionActualSelect},
         gr.metadata AS game_result_metadata
       FROM card_results cr
       LEFT JOIN card_payloads cp ON cp.id = cr.card_id
@@ -805,6 +811,10 @@ export async function GET(request: NextRequest) {
     for (const row of actionableSourceStmt.iterate(
       ...ids,
     ) as Iterable<ActionableSourceRow>) {
+      if (!shouldTrackInResults(row.card_type)) {
+        continue;
+      }
+
       const parsed = safeJsonParse(row.payload_data);
       const payload = parsed.data as Record<string, unknown> | null;
       if (deriveResultCardMode(payload, row.card_type) !== 'ODDS_BACKED') {
@@ -1000,6 +1010,10 @@ export async function GET(request: NextRequest) {
       : [];
 
     const ledgerRows = ledger.flatMap((row) => {
+      if (!shouldTrackInResults(row.card_type)) {
+        return [];
+      }
+
       const parsed = safeJsonParse(row.payload_data);
       const payload = parsed.data as Record<string, unknown> | null;
       if (deriveResultCardMode(payload, row.card_type) !== 'ODDS_BACKED') {

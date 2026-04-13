@@ -1,5 +1,10 @@
 'use strict';
 
+const {
+  WATCHDOG_REASONS,
+  buildDecisionV2,
+} = require('./decision-pipeline-v2');
+
 /**
  * market-eval.js — Shared independent market evaluation contract.
  *
@@ -29,6 +34,42 @@ const REASON_CODES = Object.freeze({
   DISPLAY_RANKED_BELOW_PRIMARY: 'DISPLAY_RANKED_BELOW_PRIMARY',
   UNCLASSIFIED_MARKET_STATE: 'UNCLASSIFIED_MARKET_STATE',
 });
+
+// ---------------------------------------------------------------------------
+// VALID_STATUSES — all nine terminal state values for consumer validation
+// ---------------------------------------------------------------------------
+const VALID_STATUSES = Object.freeze([
+  'QUALIFIED_OFFICIAL',
+  'QUALIFIED_LEAN',
+  'REJECTED_INPUTS',
+  'REJECTED_CONSISTENCY',
+  'REJECTED_WATCHDOG',
+  'REJECTED_THRESHOLD',
+  'REJECTED_SELECTOR',
+  'REJECTED_DUPLICATE',
+  'REJECTED_MARKET_POLICY',
+]);
+
+// ---------------------------------------------------------------------------
+// VALID_MARKET_TYPES — all supported normalised market type tokens
+// ---------------------------------------------------------------------------
+const VALID_MARKET_TYPES = Object.freeze([
+  'F5_ML',
+  'F5_TOTAL',
+  'FULL_GAME_ML',
+  'FULL_GAME_TOTAL',
+  'PUCKLINE',
+  'SPREAD',
+  'TOTAL',
+  'MONEYLINE',
+  'FIRST_PERIOD',
+  'UNKNOWN',
+]);
+
+const KNOWN_WATCHDOG_REASON_CODES = new Set(
+  Object.values(WATCHDOG_REASONS || {}),
+);
+const DECISION_PIPELINE_LINKED = typeof buildDecisionV2 === 'function';
 
 // ---------------------------------------------------------------------------
 // Market type normalisation
@@ -109,6 +150,15 @@ function evaluateSingleMarket(card, ctx) {
 
   // --- Missing inputs gate ---
   if (Array.isArray(card.missing_inputs) && card.missing_inputs.length > 0) {
+    // Allow projection-only cards to pass even with missing inputs (WI-0919)
+    // Projection-only scenarios intentionally use degraded inputs when full model unavailable
+    const isProjectionOnly = card.projection_floor === true || card.without_odds_mode === true;
+    
+    if (isProjectionOnly) {
+      // Projection-only cards allowed through — they'll use SYNTHETIC_FALLBACK or degraded inputs
+      return buildResult(card, safeCtx, 'QUALIFIED_LEAN', [], { official_tier: 'LEAN' });
+    }
+    
     const codes = card.missing_inputs.map((name) => {
       const n = String(name).toLowerCase();
       if (n.includes('pitcher') || n.includes('sp_')) return REASON_CODES.MISSING_STARTING_PITCHER;
@@ -118,6 +168,32 @@ function evaluateSingleMarket(card, ctx) {
       return REASON_CODES.MISSING_MARKET_ODDS;
     });
     return buildResult(card, safeCtx, 'REJECTED_INPUTS', codes, { inputs_ok: false });
+  }
+
+  // --- Watchdog gate ---
+  if (
+    Array.isArray(card.watchdog_reason_codes) &&
+    card.watchdog_reason_codes.length > 0
+  ) {
+    const watchdogCodes = card.watchdog_reason_codes
+      .map((value) => String(value))
+      .filter(Boolean);
+
+    const notes = [];
+    if (DECISION_PIPELINE_LINKED) {
+      notes.push('decision_pipeline_linked');
+    }
+    if (watchdogCodes.some((code) => KNOWN_WATCHDOG_REASON_CODES.has(code))) {
+      notes.push('watchdog_reason_recognized');
+    }
+
+    return buildResult(
+      card,
+      safeCtx,
+      'REJECTED_WATCHDOG',
+      [REASON_CODES.WATCHDOG_UNSAFE_FOR_BASE, ...watchdogCodes],
+      { watchdog_ok: false, official_tier: 'PASS', notes },
+    );
   }
 
   // --- EV threshold explicitly false ---
@@ -162,6 +238,19 @@ function evaluateSingleMarket(card, ctx) {
 // assertNoSilentMarketDrop(gameEval) — throws on unbalanced partition
 // ---------------------------------------------------------------------------
 function assertNoSilentMarketDrop(gameEval) {
+  // Terminal-state + shape invariants (checked first so error is actionable)
+  for (const r of gameEval.market_results) {
+    if (!r.status || !VALID_STATUSES.includes(r.status)) {
+      throw new Error(
+        `MISSING_MARKET_TERMINAL_STATUS for ${r.candidate_id ?? 'unknown'}: got ${r.status}`,
+      );
+    }
+    if (!Array.isArray(r.reason_codes)) {
+      throw new Error(`MISSING_REASON_CODES_ARRAY for ${r.candidate_id ?? 'unknown'}`);
+    }
+  }
+
+  // Count invariant
   const total = gameEval.market_results.length;
   const partitioned =
     gameEval.official_plays.length + gameEval.leans.length + gameEval.rejected.length;
@@ -245,6 +334,8 @@ function logRejectedMarkets(rejected, logger) {
 // ---------------------------------------------------------------------------
 module.exports = {
   REASON_CODES,
+  VALID_STATUSES,
+  VALID_MARKET_TYPES,
   evaluateSingleMarket,
   finalizeGameMarketEvaluation,
   assertNoSilentMarketDrop,

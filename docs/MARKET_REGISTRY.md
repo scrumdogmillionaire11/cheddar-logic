@@ -65,22 +65,24 @@ This document is the single source of truth for which markets are supported per 
 
 ## MLB
 
-**Primary game market:** F5 Total (projection-only for now)
+**Primary game markets:** Full-game Total, Full-game Moneyline
 **Primary player market:** Pitcher Strikeouts
 
 | Market | Type | Status | Notes |
 | --- | --- | --- | --- |
-| F5 Total (first 5 innings) | Game | ⚙️ | Projection-only lane; live F5 odds ingestion removed |
+| Full-game Total | Game | ✅ | Active odds-backed lane; featured-market totals feed |
+| Full-game Moneyline | Game | ✅ | Active odds-backed lane; featured-market h2h feed |
+| F5 Total (first 5 innings) | Game | ⚙️ | Projection-only lane; separate from active full-game markets |
 | Pitcher Strikeouts (home) | Player Prop | ⚙️ | Projection-only PASS lane; no paid Odds API prop pulls; free line sourcing deferred to a separate WI |
 | Pitcher Strikeouts (away) | Player Prop | ⚙️ | Same projection-only PASS posture as home side |
 | F5 Moneyline | Game | ❌ | Out of scope — not a target market |
-| Full-game Total | Game | ❌ | Not a target market — full-game pitching context degrades after 5th inning |
-| Full-game Spread / ML | Game | ❌ | Out of scope |
+| Full-game Spread | Game | ❌ | Out of scope |
 
 **Key constraints:**
 
-1. MLB F5 and pitcher-K cards are intentionally projection-only until a quota-safe featured-market strategy exists. For pitcher Ks, current runtime emits PASS-only rows with Poisson ladder + fair-price metadata and no live line.
-2. Deprecated `odds_snapshots` F5 columns remain for compatibility but are no longer populated by the shared odds fetcher.
+1. MLB full-game totals and moneyline are active odds-backed game-line lanes.
+2. MLB F5 and pitcher-K remain projection-only exceptions. For pitcher Ks, current runtime emits PASS-only rows with Poisson ladder + fair-price metadata and no live line.
+3. Deprecated `odds_snapshots` F5 columns remain for compatibility but are separate from active full-game featured-market odds.
 
 ---
 
@@ -109,6 +111,6 @@ Not a betting market. Separate pipeline. See `docs/FPL_DASHBOARD.md`.
 ## Cross-Sport Rules
 
 - **All game-level markets** must be routed through `decision-pipeline-v2.js` with edge gating before a card reaches CHEDDAR status.
-- **Projection-only exceptions are explicit.** NHL 1P, NHL player shots, MLB F5, and MLB pitcher K are currently research lanes and must not re-introduce live event-level odds fetches without a dedicated work item.
+- **Projection-only exceptions are explicit.** NHL 1P, NHL player shots, MLB F5, and MLB pitcher K are research lanes and must not re-introduce live event-level odds fetches without a dedicated work item.
 - **Player props are always additive** to game-level market selection — they never compete with game markets in the same DUAL_RUN pass.
-- **`ENABLE_WITHOUT_ODDS_MODE=true`** (dev env default) allows model runs without live odds. All cards will show `odds_ok: false` and `WATCHDOG_MARKET_UNAVAILABLE`. This is expected behaviour, not a bug.
+- **`ENABLE_WITHOUT_ODDS_MODE=true`** forces model runs without live odds. Active game-line sports, including MLB full-game total/ML, will downgrade to projection-only behavior in that mode. This is expected behaviour, not a bug.

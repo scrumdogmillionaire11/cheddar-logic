@@ -6,13 +6,17 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const routeSource = fs.readFileSync(
-  path.resolve('web/src/lib/games/route-handler.ts'),
+  path.resolve(__dirname, '../lib/games/route-handler.ts'),
   'utf8',
 );
 const marketInferenceSource = fs.readFileSync(
-  path.resolve('web/src/lib/games/market-inference.ts'),
+  path.resolve(__dirname, '../lib/games/market-inference.ts'),
   'utf8',
 );
 
@@ -34,6 +38,13 @@ assert(
     marketInferenceSource.includes("'MONEYLINE'") &&
     marketInferenceSource.includes("'TOTAL'"),
   'Expected canonical MLB contract to include mlb-full-game / mlb-full-game-ml and full-game playable market pathways',
+);
+
+assert(
+  routeSource.includes('const inferredMarketTypeFromCardType = inferMarketFromCardType(') &&
+    routeSource.includes(': inferredMarketTypeFromCardType !== undefined') &&
+    routeSource.includes('? inferredMarketTypeFromCardType'),
+  'Expected /api/games route to use inferMarketFromCardType as canonical fallback before side-based market inference',
 );
 
 const requiredFields = [

@@ -133,4 +133,30 @@ assert.deepStrictEqual(
   'including PASS status should include PASS cards',
 );
 
+const passWithExpressionChoice = buildCard('pass-with-expression-choice', {
+  play: {
+    action: 'PASS',
+    classification: 'PASS',
+    status: 'PASS',
+    decision_v2: { official_status: 'PASS' },
+  },
+  expressionChoice: {
+    status: 'WATCH',
+    chosenMarket: 'ML',
+    pick: 'Away ML +120',
+    score: 0.61,
+  },
+});
+
+const defaultWithExpressionChoiceResult = applyFilters(
+  [passWithExpressionChoice],
+  DEFAULT_GAME_FILTERS,
+  'game',
+);
+assert.deepStrictEqual(
+  ids(defaultWithExpressionChoiceResult),
+  [],
+  'explicit PASS play should not be promoted into FIRE/WATCH visibility by expressionChoice status',
+);
+
 console.log('✅ Game card filter runtime tests passed');

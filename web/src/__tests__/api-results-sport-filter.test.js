@@ -271,6 +271,7 @@ async function runTests() {
     const createdAt = new Date().toISOString();
 
     insertSettledResultFixture(client, 'NBA', 'nba', createdAt);
+    insertSettledResultFixture(client, 'MLB', 'mlb', createdAt);
     insertSettledResultFixture(client, 'NCAAM', 'ncaam', createdAt);
     await waitForResultsServer(baseUrl, serverHandle);
 
@@ -283,18 +284,18 @@ async function runTests() {
     assert.ok(defaultPayload.data, 'default response missing data');
     assert.strictEqual(
       defaultPayload.data.summary?.settledCards,
-      1,
-      'default summary should only include non-NCAAM rows',
+      2,
+      'default summary should include MLB and NBA while excluding NCAAM rows',
     );
     assert.strictEqual(
       defaultPayload.data.meta?.totalSettled,
-      1,
-      'default meta totalSettled should exclude NCAAM rows',
+      2,
+      'default meta totalSettled should include MLB and NBA while excluding NCAAM rows',
     );
     assert.strictEqual(
       defaultPayload.data.meta?.returnedCount,
-      1,
-      'default meta returnedCount should exclude NCAAM rows',
+      2,
+      'default meta returnedCount should include MLB and NBA while excluding NCAAM rows',
     );
     assert.ok(
       defaultPayload.data.segments.every(
@@ -303,11 +304,40 @@ async function runTests() {
       'default segments unexpectedly include NCAAM',
     );
     assert.deepStrictEqual(
-      defaultPayload.data.ledger.map((row) =>
-        String(row.sport || '').toUpperCase(),
+      defaultPayload.data.ledger
+        .map((row) => String(row.sport || '').toUpperCase())
+        .sort(),
+      ['MLB', 'NBA'],
+      'default ledger should return MLB and NBA fixture rows only',
+    );
+
+    const mlbPayload = await getResultsPayload(baseUrl, '?limit=50&sport=MLB');
+    assert.strictEqual(
+      mlbPayload.success,
+      true,
+      'MLB response success=false',
+    );
+    assert.ok(mlbPayload.data, 'MLB response missing data');
+    assert.strictEqual(
+      mlbPayload.data.summary?.settledCards,
+      1,
+      'sport=MLB summary should include MLB rows',
+    );
+    assert.strictEqual(
+      mlbPayload.data.filters?.sport,
+      'MLB',
+      'sport=MLB filter should be preserved in response metadata',
+    );
+    assert.deepStrictEqual(
+      mlbPayload.data.ledger.map((row) => String(row.sport || '').toUpperCase()),
+      ['MLB'],
+      'sport=MLB should return only MLB fixture rows',
+    );
+    assert.ok(
+      mlbPayload.data.segments.every(
+        (segment) => String(segment.sport || '').toUpperCase() === 'MLB',
       ),
-      ['NBA'],
-      'default ledger should only return NBA fixture row',
+      'sport=MLB segments should only contain MLB',
     );
 
     const ncaamPayload = await getResultsPayload(

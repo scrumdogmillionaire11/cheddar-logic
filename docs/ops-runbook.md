@@ -41,7 +41,7 @@ ssh babycheeses11@100.71.1.87
 - `RECORD_DATABASE_PATH` (mid-era variable)
 - `DATABASE_URL` (SQLite URL format, no longer supported)
 
-Setting multiple path variables causes `DB_PATH_CONFLICT` error. These are actively unset by `scripts/start-scheduler.sh` and removed by `scripts/consolidate-record-db.sh`.
+`DATABASE_PATH` and `RECORD_DATABASE_PATH` are no longer recognized by the resolver. `DATABASE_URL` is only supported for `sqlite:///...` paths.
 
 **Single-Writer Contract (ADR-0002):**
 
@@ -423,6 +423,45 @@ Expected relationships:
 - `final_displayed_missing_result` is always `0`.
 - For the same recent window, `displayed_last_2h = pending_displayed + settled_displayed_last_2h`.
 - `/api/results` remains display-log scoped (no phantom rows outside `card_display_log`).
+
+### `/results` Betting Record visibility gates (WI-0922)
+
+Use these rules when validating whether a market should appear in `/results`
+**Betting Record**:
+
+- The card must have been displayed and written to `card_display_log`.
+- A matching `card_results` row must exist.
+- `card_results.status` must be `settled`.
+- `deriveResultCardMode()` must classify the row as `ODDS_BACKED`.
+- `/api/results` must recognize the family for the settled `card_type`.
+
+Active Betting Record families covered by parity mapping in this WI:
+
+- `NBA`: full-game total, spread
+- `NHL`: full-game total, full-game moneyline
+- `MLB`: full-game total, full-game moneyline
+
+Everything else remains projection-only or excluded from Betting Record pending a
+future work item with explicit worker capability and policy changes. That
+includes props, `MLB_F5_*`, and `NHL_1P_TOTAL`.
+
+### MLB game-line operating mode
+
+MLB full-game total and MLB full-game moneyline are active odds-backed lanes.
+
+Featured MLB odds scope:
+
+- `h2h`
+- `totals`
+
+Projection-only MLB exceptions remain:
+
+- `MLB_F5_*`
+- `MLB_PITCHER_K`
+
+If MLB is intentionally returned to projection-only mode in the future, do it
+with an explicit config or policy change rather than assuming inactive default
+behavior in scheduler or health-check code.
 
 ### Settlement contract details (totals + P/L)
 

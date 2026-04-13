@@ -12,7 +12,7 @@ function resetEnv() {
   delete process.env.CHEDDAR_DATA_DIR;
 }
 
-describe('seed-cards DATABASE_PATH', () => {
+describe('seed-cards CHEDDAR_DB_PATH', () => {
   let tempDir;
   let dbPath;
   let altDir;
@@ -30,10 +30,9 @@ describe('seed-cards DATABASE_PATH', () => {
     fs.rmSync(tempDir, { recursive: true, force: true });
   });
 
-  test('writes card payloads to DATABASE_PATH', async () => {
-    process.env.DATABASE_PATH = dbPath;
+  test('writes card payloads to CHEDDAR_DB_PATH', async () => {
+    process.env.CHEDDAR_DB_PATH = dbPath;
     process.env.CHEDDAR_DATA_DIR = altDir;
-    process.env.CHEDDAR_DB_PATH = '';
 
     jest.resetModules();
     const {getDatabase, closeDatabase } = require('../src/db.js');

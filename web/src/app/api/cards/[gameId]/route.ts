@@ -70,11 +70,11 @@ const ACTIVE_EXCLUDED_STATUSES = [
 const CORE_RUN_STATE_SPORTS = [
   'nba',
   'nhl',
-  'ncaam',
   'soccer',
   'mlb',
   'nfl',
   'fpl',
+  'nhl_props',
 ] as const;
 const CORE_RUN_STATE_SPORT_SQL = CORE_RUN_STATE_SPORTS.map(
   (sport) => `'${sport}'`,
@@ -361,7 +361,7 @@ export async function GET(
     // Exclude FPL cards - they are served from cheddar-fpl-sage backend
     baseWhere.push("sport != 'FPL'");
     baseWhere.push(
-      buildBettingSurfacePayloadPredicate('card_payloads.payload_data'),
+      `(LOWER(card_type) = 'nhl-pace-1p' OR ${buildBettingSurfacePayloadPredicate('card_payloads.payload_data')})`,
     );
     baseWhere.push(`NOT EXISTS (
       SELECT 1
@@ -441,7 +441,7 @@ export async function GET(
     const response = cards.flatMap((card) => {
       const parsed = safeJsonParse(card.payload_data);
       const normalizedPayload = normalizePayloadMeta(parsed.data);
-      if (!parsed.error && !isBettingSurfacePayload(normalizedPayload)) {
+      if (!parsed.error && card.card_type !== 'nhl-pace-1p' && !isBettingSurfacePayload(normalizedPayload)) {
         return [];
       }
       return [{

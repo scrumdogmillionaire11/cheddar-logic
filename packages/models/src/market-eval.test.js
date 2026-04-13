@@ -52,7 +52,27 @@ describe('evaluateSingleMarket: null card', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Test 2: ev_threshold_passed=false → REJECTED_THRESHOLD + EDGE_BELOW_THRESHOLD
+// Test 2: watchdog reason codes → REJECTED_WATCHDOG
+// ---------------------------------------------------------------------------
+describe('evaluateSingleMarket: watchdog gate', () => {
+  test('returns REJECTED_WATCHDOG with WATCHDOG_UNSAFE_FOR_BASE when watchdog reasons are present', () => {
+    const card = buildCard({
+      status: 'FIRE',
+      ev_threshold_passed: true,
+      watchdog_reason_codes: ['CONSISTENCY_MISSING'],
+    });
+
+    const result = evaluateSingleMarket(card, DEFAULT_CTX);
+    expect(result.status).toBe('REJECTED_WATCHDOG');
+    expect(result.watchdog_ok).toBe(false);
+    expect(result.reason_codes).toContain(REASON_CODES.WATCHDOG_UNSAFE_FOR_BASE);
+    expect(result.reason_codes).toContain('CONSISTENCY_MISSING');
+    expect(result.official_tier).toBe('PASS');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Test 3: ev_threshold_passed=false → REJECTED_THRESHOLD + EDGE_BELOW_THRESHOLD
 // ---------------------------------------------------------------------------
 describe('evaluateSingleMarket: ev_threshold_passed=false', () => {
   test('returns REJECTED_THRESHOLD with EDGE_BELOW_THRESHOLD when ev_threshold_passed is false', () => {

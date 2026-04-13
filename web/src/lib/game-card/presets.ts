@@ -138,6 +138,17 @@ const PROPS_PRESETS: FilterPreset[] = [
     },
   },
   {
+    id: 'props_blocks',
+    name: 'Blocks Focus',
+    description: 'NHL blocked shot props only',
+    icon: '🛡️',
+    filters: {
+      ...DEFAULT_FILTERS_BY_MODE.props,
+      propStatGroups: ['BLOCKS'],
+      sortMode: 'signal_strength',
+    },
+  },
+  {
     id: 'props_strikeouts',
     name: 'Strikeouts Focus',
     description: 'MLB pitcher strikeout props only',

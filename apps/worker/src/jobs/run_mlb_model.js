@@ -54,9 +54,6 @@ const { assertNoSilentMarketDrop, logRejectedMarkets } = require('@cheddar-logic
 // in the 2026 season, computeSigmaFromHistory replaces MLB_SIGMA_DEFAULT constants.
 const edgeCalculator = require('@cheddar-logic/models/src/edge-calculator');
 
-// Auto-detect projection-only period: when MLB odds are disabled in config,
-// always run in without-odds mode regardless of what the caller passes.
-const { SPORTS_CONFIG: ODDS_SPORTS_CONFIG } = require('@cheddar-logic/odds/src/config');
 const MIN_MLB_GAMES_FOR_RECAL = parseInt(process.env.MIN_MLB_GAMES_FOR_RECAL || '20', 10);
 
 // Pitcher K runtime mode: ODDS_BACKED when player_prop_lines has a recent
@@ -86,6 +83,7 @@ const {
 const { evaluateExecution } = require('./execution-gate');
 const { applyCalibration } = require('../utils/calibration');
 const { assertFeatureTimeliness } = require('../models/feature-time-guard');
+const { pullMlbStatcast } = require('./pull_mlb_statcast');
 
 // MLB-specific watchdog vocabulary stays local to this runner so WI-0604 can
 // document the new codes without widening shared registries.
@@ -486,7 +484,8 @@ function buildMlbMarketAvailability(oddsSnapshot, { expectF5Ml = false, withoutO
   if (expectF5Ml && !f5MlOk) {
     blockingReasonCodes.push(MLB_PIPELINE_REASON_CODES.F5_ML_UNAVAILABLE);
   }
-  if (!fullGameTotalOk) {
+  // Only block entire game if NO market lines available at all
+  if (!effectiveF5LineOk && !fullGameTotalOk) {
     blockingReasonCodes.push(WATCHDOG_REASONS.MARKET_UNAVAILABLE);
   }
 
@@ -728,6 +727,49 @@ function toExecutionGatePassReasonCode(reason) {
   return normalized
     ? `PASS_EXECUTION_GATE_${normalized}`
     : 'PASS_EXECUTION_GATE_BLOCKED';
+}
+
+function americanOddsToImpliedProbability(price) {
+  if (!Number.isFinite(price) || price === 0) return null;
+  if (price > 0) {
+    return 100 / (price + 100);
+  }
+  return Math.abs(price) / (Math.abs(price) + 100);
+}
+
+function resolveMlbMoneylineExecutionInputs({
+  prediction,
+  winProbHome,
+  homePrice,
+  awayPrice,
+  rawEdge,
+}) {
+  const side = String(prediction || '').toUpperCase();
+  const selectedPrice =
+    side === 'HOME'
+      ? toFiniteNumber(homePrice)
+      : side === 'AWAY'
+        ? toFiniteNumber(awayPrice)
+        : null;
+  const pFairHome = toFiniteNumber(winProbHome);
+  const pFair =
+    pFairHome !== null
+      ? side === 'HOME'
+        ? pFairHome
+        : side === 'AWAY'
+          ? 1 - pFairHome
+          : null
+      : null;
+
+  return {
+    edge: Number.isFinite(rawEdge) ? rawEdge : null,
+    price: selectedPrice,
+    p_fair: pFair,
+    p_implied:
+      selectedPrice !== null
+        ? americanOddsToImpliedProbability(selectedPrice)
+        : null,
+  };
 }
 
 function applyExecutionGateToMlbPayload(payload, { oddsSnapshot, nowMs = Date.now() } = {}) {
@@ -972,14 +1014,27 @@ function attachRunId(card, runId) {
 }
 
 function resolvePitcherKsMode() {
-  // WI-0771: ODDS_BACKED mode is now active by default. Strikeout lines are
-  // read from player_prop_lines (populated by pull_odds_hourly) — no live
-  // API calls, no quota drain. When a line is absent the K engine falls back
-  // to PROJECTION_ONLY per-pitcher automatically.
-  // WI-0791: Respect PITCHER_KS_MODEL_MODE env override (used in tests).
+  // Pitcher-K cards currently run without odds/line integration.
+  // Keep mode projection-only unless explicitly overridden for local testing.
   const envMode = process.env.PITCHER_KS_MODEL_MODE;
   if (envMode === 'PROJECTION_ONLY' || envMode === 'ODDS_BACKED') return envMode;
-  return 'ODDS_BACKED';
+  return 'PROJECTION_ONLY';
+}
+
+function hasMissingStatcastInputsInPitcherCards(cards = []) {
+  for (const card of cards) {
+    if (!card?.market?.startsWith('pitcher_k_')) continue;
+    const missingInputs = Array.isArray(card?.prop_decision?.missing_inputs)
+      ? card.prop_decision.missing_inputs
+      : [];
+    if (
+      missingInputs.includes('statcast_swstr') ||
+      missingInputs.includes('statcast_velo')
+    ) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function resolveMlbPitcherPropRolloutState() {
@@ -1865,13 +1920,6 @@ async function runMLBModel({
   withoutOddsMode = process.env.ENABLE_WITHOUT_ODDS_MODE === 'true',
   gameIds = null,
 } = {}) {
-  // When MLB odds are disabled in config (projection-only period), force without-odds
-  // mode regardless of what the scheduler or caller passes. Self-heals when
-  // ODDS_SPORTS_CONFIG.MLB.active is flipped back to true on May 1.
-  if (!ODDS_SPORTS_CONFIG.MLB.active) {
-    withoutOddsMode = true;
-  }
-
   const jobRunId = `job-mlb-model-${new Date().toISOString().split('.')[0]}-${uuidV4().slice(0, 8)}`;
 
   console.log(`[MLBModel] Starting job run: ${jobRunId}`);
@@ -1880,7 +1928,7 @@ async function runMLBModel({
   }
   console.log(`[MLBModel] Time: ${new Date().toISOString()}`);
   if (withoutOddsMode) {
-    console.log('[MLBModel] WITHOUT_ODDS_MODE: MLB odds disabled in config — running projection-only');
+    console.log('[MLBModel] WITHOUT_ODDS_MODE=true — projection-floor lines, PROJECTION_ONLY cards, no settlement');
   }
 
   return withDb(async () => {
@@ -2018,6 +2066,7 @@ async function runMLBModel({
       const gamePipelineStates = {};
       const pitcherPropSummary = {};
       const rolloutState = resolveMlbPitcherPropRolloutState();
+      let attemptedStatcastRefresh = false;
 
       // Process each game — emit one card per qualifying driver market
       for (const gameId of gameIdList) {
@@ -2027,11 +2076,21 @@ async function runMLBModel({
             forKEngine: false,
             useF5ProjectionFloor: withoutOddsMode,
           });
-          const pitcherKOddsSnapshot = enrichMlbPitcherData(baseOddsSnapshot, {
+          let pitcherKOddsSnapshot = enrichMlbPitcherData(baseOddsSnapshot, {
             forKEngine: true,
           });
 
           const gameDriverCards = computeMLBDriverCards(gameId, gameOddsSnapshot);
+          
+          // Mark F5 cards with without_odds_mode flag when in projection-only mode (WI-0919)
+          // This allows market-eval to properly gate projection-only cards
+          if (withoutOddsMode) {
+            gameDriverCards.forEach((card) => {
+              if (card.market === 'f5_total' || card.market === 'f5_ml' || card.market === 'full_game_total') {
+                card.without_odds_mode = true;
+              }
+            });
+          }
           // K props draw from player_prop_lines — independent of F5 total line.
           // Always pass the resolved mode; per-pitcher fallback to PROJECTION_ONLY
           // happens inside computePitcherKDriverCards when no strikeout line is found.
@@ -2040,7 +2099,39 @@ async function runMLBModel({
             _kMode === 'ODDS_BACKED'
               ? { mode: _kMode, bookmakerPriority: MLB_PROP_BOOKMAKER_PRIORITY }
               : { mode: _kMode };
-          const rawPitcherKDriverCards = computePitcherKDriverCards(gameId, pitcherKOddsSnapshot, _kCallOptions);
+          let rawPitcherKDriverCards = computePitcherKDriverCards(gameId, pitcherKOddsSnapshot, _kCallOptions);
+          if (
+            !attemptedStatcastRefresh &&
+            hasMissingStatcastInputsInPitcherCards(rawPitcherKDriverCards)
+          ) {
+            attemptedStatcastRefresh = true;
+            const statcastRefreshKey = `pull_mlb_statcast:auto-refresh:${new Date().toISOString().slice(0, 10)}`;
+            try {
+              const refreshResult = await pullMlbStatcast({
+                jobKey: statcastRefreshKey,
+                dryRun: false,
+              });
+              if (refreshResult?.success) {
+                pitcherKOddsSnapshot = enrichMlbPitcherData(baseOddsSnapshot, {
+                  forKEngine: true,
+                });
+                rawPitcherKDriverCards = computePitcherKDriverCards(
+                  gameId,
+                  pitcherKOddsSnapshot,
+                  _kCallOptions,
+                );
+                console.log(
+                  `[MLBModel] [pitcher-k] Statcast refresh completed (rowsUpdated=${refreshResult.rowsUpdated ?? 0}, skipped=${Boolean(refreshResult.skipped)})`,
+                );
+              } else {
+                console.warn(
+                  `[MLBModel] [pitcher-k] Statcast refresh failed: ${refreshResult?.error || 'unknown error'}`,
+                );
+              }
+            } catch (refreshErr) {
+              console.warn(`[MLBModel] [pitcher-k] Statcast refresh error: ${refreshErr.message}`);
+            }
+          }
           const pitcherKDriverCards = rawPitcherKDriverCards.map((driver) => {
             if (!driver.market?.startsWith('pitcher_k_')) return driver;
 
@@ -2071,7 +2162,8 @@ async function runMLBModel({
                 contact_pct_vs_hand: missingInputs.includes('opponent_contact_profile') ? null : 0.76,
               };
               const _qr = classifyMlbPitcherKQuality({ starter: _starter, opponent: _opponent, leash: _leash });
-              pd.model_quality        = _qr.model_quality;
+              const _hasHardOrProxy = _qr.hardMissing.length > 0 || _qr.proxies.length > 0;
+              pd.model_quality        = _hasHardOrProxy ? _qr.model_quality : 'FULL_MODEL';
               pd.proxy_fields         = _qr.proxies;
               pd.degradation_reasons  = [..._qr.hardMissing, ..._qr.proxies];
               // WI-0770: surface statcast_inputs in prop_decision for downstream inspection
@@ -2226,29 +2318,6 @@ async function runMLBModel({
             console.log(`[MLBModel] NO_F5_ML_LINE: ${gameId} — ml_f5 price absent, F5 ML card blocked`);
           }
 
-          // Short-circuit: no qualified markets for this game
-          if (
-            gameEval.status === 'SKIP_MARKET_NO_EDGE' ||
-            gameEval.status === 'SKIP_GAME_INPUT_FAILURE'
-          ) {
-            console.log(
-              `  ⏭️  ${gameId}: ${gameEval.status} — ${gameEval.rejected
-                .flatMap((r) => r.reason_codes)
-                .filter((v, i, a) => a.indexOf(v) === i)
-                .join(', ') || 'no reason codes'}`,
-            );
-            gamePipelineStates[gameId] = buildMlbPipelineState({
-              oddsSnapshot: gameOddsSnapshot,
-              marketAvailability,
-              projectionReady: gameEval.status !== 'SKIP_GAME_INPUT_FAILURE',
-              driversReady: false,
-              pricingReady: false,
-              cardReady: false,
-              executionEnvelopes: [],
-            });
-            continue;
-          }
-
           // Recover qualified driver cards from evaluateMlbGameMarkets results
           const qualifiedDrivers = [
             ...gameEval.official_plays,
@@ -2304,6 +2373,36 @@ async function runMLBModel({
                   projection_floor_line: projectionFloorF5,
                 }
               : null;
+          const hasProjectionOnlyFallbackCandidates =
+            pitcherKDriverCards.some(
+              (driver) => driver.execution_envelope?._publish_state?.emit_allowed === true,
+            ) ||
+            projectionFloorDriver !== null;
+
+          // Short-circuit only when nothing can be emitted. Projection-only
+          // pitcher props and projection-floor F5 cards should still write.
+          if (
+            (gameEval.status === 'SKIP_MARKET_NO_EDGE' ||
+              gameEval.status === 'SKIP_GAME_INPUT_FAILURE') &&
+            !hasProjectionOnlyFallbackCandidates
+          ) {
+            console.log(
+              `  ⏭️  ${gameId}: ${gameEval.status} — ${gameEval.rejected
+                .flatMap((r) => r.reason_codes)
+                .filter((v, i, a) => a.indexOf(v) === i)
+                .join(', ') || 'no reason codes'}`,
+            );
+            gamePipelineStates[gameId] = buildMlbPipelineState({
+              oddsSnapshot: gameOddsSnapshot,
+              marketAvailability,
+              projectionReady: gameEval.status !== 'SKIP_GAME_INPUT_FAILURE',
+              driversReady: false,
+              pricingReady: false,
+              cardReady: false,
+              executionEnvelopes: [],
+            });
+            continue;
+          }
           const gamePricingStatus = gameOddsSnapshot?.captured_at ? 'FRESH' : 'MISSING';
           const gamePricingReason = gameOddsSnapshot?.captured_at
             ? null
@@ -2494,6 +2593,22 @@ async function runMLBModel({
               disclaimer: 'Analysis provided for educational purposes. Not a recommendation.',
               // Note: driver.prop_decision already carries model_quality (set by WI-0747 classifier block above)
               generated_at: now,
+              ...(isF5ML || isFullGameML
+                ? resolveMlbMoneylineExecutionInputs({
+                    prediction: driver.prediction,
+                    winProbHome:
+                      driver.drivers?.[0]?.projected_win_prob_home ??
+                      driver.drivers?.[0]?.win_prob_home ??
+                      null,
+                    homePrice: isF5ML
+                      ? driver.ml_f5_home
+                      : gameOddsSnapshot?.h2h_home,
+                    awayPrice: isF5ML
+                      ? driver.ml_f5_away
+                      : gameOddsSnapshot?.h2h_away,
+                    rawEdge: driverDetail.edge,
+                  })
+                : {}),
               // When global withoutOddsMode is active (MLB odds disabled in config), mark all cards
               // as without_odds_mode so the DB lock bypasses the price requirement.
               // projection_floor is only set when the driver itself is a synthetic floor driver.
@@ -2674,7 +2789,7 @@ async function runMLBModel({
               if (Number.isFinite(pd.p_fair)) {
                 let breakpoints = null;
                 try {
-                  const calRow = db.prepare(
+                  const calRow = getDatabase().prepare(
                     'SELECT breakpoints_json FROM calibration_models WHERE sport = ? AND market_type = ?',
                   ).get('MLB', 'MLB_F5_TOTAL');
                   breakpoints = calRow ? JSON.parse(calRow.breakpoints_json) : null;
@@ -2855,6 +2970,7 @@ module.exports = {
   filterSnapshotsByGameIds,
   evaluatePitcherPropPublishability,
   deriveMlbExecutionEnvelope,
+  resolveMlbMoneylineExecutionInputs,
   assertMlbExecutionInvariant,
   applyExecutionGateToMlbPayload,
   // Exported for WI-0596 unit tests

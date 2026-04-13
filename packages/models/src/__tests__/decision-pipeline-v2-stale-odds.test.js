@@ -81,4 +81,48 @@ describe('stale odds threshold configuration', () => {
     expect(result.watchdog_reason_codes).toContain('WATCHDOG_STALE_SNAPSHOT');
     expect(result.official_status).toBe('PASS');
   });
+
+  test('goalie uncertainty reason code produces LEAN instead of PASS', () => {
+    const result = buildDecisionV2({
+      kind: 'PLAY',
+      sport: 'NHL',
+      market_type: 'TOTAL',
+      selection: { side: 'OVER' },
+      price: -110,
+      line: 6.5,
+      model_prob: 0.58,
+      edge: 0.08,
+      reason_codes: ['GATE_GOALIE_UNCONFIRMED'],
+      driver: {
+        score: 0.71,
+        inputs: {
+          conflict: 0.12,
+          pace_tier: 'HIGH',
+          event_env: 'INDOOR',
+          event_direction_tag: 'FAVOR_OVER',
+          vol_env: 'STABLE',
+          total_bias: 'OK',
+        },
+      },
+      drivers_active: ['goalie_quality', 'pace_signal'],
+      consistency: {
+        pace_tier: 'HIGH',
+        event_env: 'INDOOR',
+        event_direction_tag: 'FAVOR_OVER',
+        vol_env: 'STABLE',
+        total_bias: 'OK',
+      },
+      odds_context: {
+        captured_at: new Date(Date.now() - 2 * 60 * 1000).toISOString(),
+        total: 6.5,
+        total_price_over: -110,
+        total_price_under: -110,
+      },
+    });
+
+    expect(result.watchdog_status).toBe('BLOCKED');
+    expect(result.watchdog_reason_codes).toContain('GOALIE_UNCONFIRMED');
+    expect(result.official_status).toBe('LEAN');
+    expect(result.primary_reason_code).toBe('GOALIE_UNCONFIRMED');
+  });
 });

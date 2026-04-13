@@ -8,10 +8,10 @@ const {
   markJobRunSuccess,
   markJobRunFailure,
   shouldRunJobKey,
-  withDb,
   upsertTrackedPlayer,
   deactivateTrackedPlayersNotInSet,
 } = require('@cheddar-logic/data');
+const { withDbSafe } = require('../utils/with-db-safe');
 
 const JOB_NAME = 'sync_nhl_blk_player_ids';
 const SPORT = 'NHL';
@@ -106,7 +106,7 @@ async function syncNhlBlkPlayerIds({
   const jobRunId = `job-${JOB_NAME}-${new Date().toISOString().split('.')[0]}-${uuidV4().slice(0, 8)}`;
   const seasonId = resolveSeasonId();
 
-  return withDb(async () => {
+  return withDbSafe(async () => {
     if (jobKey && !shouldRunJobKey(jobKey)) {
       console.log(`[${JOB_NAME}] Skipping (already succeeded or running): ${jobKey}`);
       return { success: true, skipped: true, jobRunId: null, jobKey };

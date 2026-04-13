@@ -12,7 +12,6 @@ import {
   deriveClassification,
   deriveAction,
   derivePlayDecision,
-  classificationToLegacyStatus,
 } from './decision-logic';
 import type { CanonicalPlay, WrapperContext } from '../types';
 
@@ -421,28 +420,6 @@ describe('derivePlayDecision', () => {
     expect(decision.classification).toBe('BASE');
     expect(decision.action).toBe('HOLD');
     expect(decision.why_code).toBe('WRAPPER_BLOCKS');
-  });
-});
-
-// ============================================================================
-// TESTS: LEGACY CONVERSION
-// ============================================================================
-
-describe('classificationToLegacyStatus', () => {
-  it('should convert BASE + FIRE → FIRE', () => {
-    const status = classificationToLegacyStatus('BASE', 'FIRE');
-    expect(status).toBe('FIRE');
-  });
-
-  it('should convert LEAN + HOLD → WATCH', () => {
-    const status = classificationToLegacyStatus('LEAN', 'HOLD');
-    expect(status).toBe('WATCH');
-  });
-
-  it('should convert PASS → PASS regardless of action', () => {
-    expect(classificationToLegacyStatus('PASS', 'FIRE')).toBe('PASS');
-    expect(classificationToLegacyStatus('PASS', 'HOLD')).toBe('PASS');
-    expect(classificationToLegacyStatus('PASS', 'PASS')).toBe('PASS');
   });
 });
 

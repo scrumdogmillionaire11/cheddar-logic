@@ -24,7 +24,7 @@ function makeTempDbPath() {
 
 async function setupDb() {
   const dbPath = makeTempDbPath();
-  process.env.DATABASE_PATH = dbPath;
+  process.env.CHEDDAR_DB_PATH = dbPath;
   await runMigrations();
   return { db: getDatabase(), dbPath };
 }

@@ -117,8 +117,9 @@ async function validateResultsSourceContract(assert) {
     'results route must suppress NCAAM by default',
   );
   assert.ok(
+    pageSource.match(/<option value="MLB">MLB<\/option>/g)?.length === 2 &&
     !pageSource.includes('<option value="NCAAM">NCAAM</option>'),
-    'results page must not expose NCAAM in sport filters',
+    'results page must expose MLB and must not expose NCAAM in sport filters',
   );
   assert.ok(
     pageSource.includes('Betting Record') &&

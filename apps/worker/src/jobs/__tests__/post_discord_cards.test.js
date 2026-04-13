@@ -12,6 +12,7 @@ const Database = require('better-sqlite3');
 function makeCard(overrides = {}) {
   return {
     id: 'card-1',
+    sport: 'nhl',
     matchup: 'Boston Bruins @ New York Rangers',
     cardType: 'nhl-model-output',
     payloadData: {
@@ -205,6 +206,62 @@ describe('post_discord_cards helpers', () => {
     expect(snapshot.messages[0]).not.toContain('⚪ PASS');
   });
 
+  test('buildDiscordSnapshot promotes NHL total to PLAY section at edge >= 1.0 (was: play-grade label)', () => {
+    const cards = [
+      makeCard({
+        id: 'play-grade',
+        payloadData: {
+          action: 'LEAN',
+          kind: 'PLAY',
+          market_type: 'TOTAL',
+          selection: { side: 'OVER' },
+          price: -110,
+          line: 6.0,
+          edge: 1.1,
+          model_projection: 6.8,
+          projection_only: false,
+        },
+      }),
+    ];
+
+    const snapshot = buildDiscordSnapshot({ cards, now: new Date('2026-03-20T14:00:00.000Z') });
+    // edge=1.1 >= 1.0, line=6.0 (not >= 6.5), no integrity/uncertainty issues → official bucket
+    expect(snapshot.sectionCounts.official).toBe(1);
+    expect(snapshot.sectionCounts.lean).toBe(0);
+    expect(snapshot.messages[0]).toContain('🟢 PLAY');
+    // Conviction label still rendered in card body, subordinate to PLAY status
+    expect(snapshot.messages[0]).toContain('Conviction: Play-Grade Edge');
+    // Section headers for lean tiers must NOT appear
+    expect(snapshot.messages[0]).not.toContain('🟠 Play-Grade Edge');
+  });
+
+  test('buildDiscordSnapshot promotes NHL total UNDER 6.5 to PLAY section at edge >= 1.5 (was: strong label)', () => {
+    const cards = [
+      makeCard({
+        id: 'strong-play-under',
+        payloadData: {
+          action: 'WATCH',
+          kind: 'PLAY',
+          market_type: 'TOTAL',
+          selection: { side: 'UNDER' },
+          price: -102,
+          line: 6.5,
+          edge: 1.6,
+          model_projection: 5.5,
+          projection_only: false,
+        },
+      }),
+    ];
+
+    const snapshot = buildDiscordSnapshot({ cards, now: new Date('2026-03-20T14:00:00.000Z') });
+    // edge=1.6 >= 1.0, UNDER on 6.5 (neither UNDER ≤5.5 nor OVER ≥6.5 fragility) → official bucket
+    expect(snapshot.sectionCounts.official).toBe(1);
+    expect(snapshot.sectionCounts.lean).toBe(0);
+    expect(snapshot.messages[0]).toContain('🟢 PLAY');
+    expect(snapshot.messages[0]).toContain('Conviction: Strong Play Edge');
+    expect(snapshot.messages[0]).not.toContain('🔴 Strong Play Edge');
+  });
+
   test('buildDiscordSnapshot does not print @ null when price is missing', () => {
     const cards = [
       makeCard({
@@ -343,7 +400,7 @@ describe('post_discord_cards helpers', () => {
       id: 'stale-1',
       cardType: 'nhl-model-output',
       payloadData: {
-        action: 'FIRE',
+        action: 'LEAN',
         kind: 'PLAY',
         pass_reason: null,
         pass_reason_code: null,
@@ -352,7 +409,7 @@ describe('post_discord_cards helpers', () => {
         price: -110,
         line: 5.5,
         projection_only: false,
-        edge: 0.04,
+        edge: 0.8,
         model_projection: 6.1,
         price_staleness_warning: {
           locked_price: -110,
@@ -378,7 +435,7 @@ describe('post_discord_cards helpers', () => {
       id: 'clean-1',
       cardType: 'nhl-model-output',
       payloadData: {
-        action: 'FIRE',
+        action: 'LEAN',
         kind: 'PLAY',
         pass_reason: null,
         market_type: 'TOTAL',
@@ -386,14 +443,284 @@ describe('post_discord_cards helpers', () => {
         price: -110,
         line: 5.5,
         projection_only: false,
-        edge: 0.04,
+        edge: 0.8,
         model_projection: 6.1,
       },
     });
 
     const snapshot = buildDiscordSnapshot({ cards: [cleanCard], now: new Date('2026-03-20T14:00:00.000Z') });
 
+    expect(snapshot.messages).toHaveLength(1);
     expect(snapshot.messages[0]).not.toContain('Hard-locked');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WI-0934: NHL totals bucket policy enforcement
+// ---------------------------------------------------------------------------
+describe('WI-0934: NHL totals bucket policy — PLAY / SLIGHT EDGE / PASS', () => {
+  function makeNhlTotalCard(overrides = {}) {
+    return {
+      id: 'nhl-total-1',
+      sport: 'nhl',
+      matchup: 'Carolina Hurricanes @ Philadelphia Flyers',
+      cardType: 'nhl-totals-call',
+      gameTimeUtc: new Date(Date.now() + 3 * 60 * 60 * 1000).toISOString(),
+      payloadData: {
+        action: 'LEAN',
+        kind: 'PLAY',
+        market_type: 'TOTAL',
+        selection: { side: 'OVER' },
+        price: -110,
+        line: 5.5,
+        edge: 2.1,
+        model_projection: 7.2,
+        projection_only: false,
+      },
+      ...overrides,
+    };
+  }
+
+  // ── High-delta over on 5.5 → PLAY ─────────────────────────────────────────
+  test('CAR/PHI +2.1 over 5.5 clean → official PLAY bucket', () => {
+    const card = makeNhlTotalCard(); // edge=2.1, line=5.5, OVER, clean
+    const snapshot = buildDiscordSnapshot({ cards: [card], now: new Date('2026-04-13T20:00:00Z') });
+    expect(snapshot.sectionCounts.official).toBe(1);
+    expect(snapshot.sectionCounts.lean).toBe(0);
+    expect(snapshot.messages[0]).toContain('🟢 PLAY');
+  });
+
+  // ── WPG/VGK thin edge → SLIGHT EDGE, never equal to +2.1 ──────────────────
+  test('WPG/VGK +0.5 over 5.5 → lean bucket, never equal to +2.1 PLAY', () => {
+    const card = makeNhlTotalCard({
+      id: 'wpg-vgk',
+      matchup: 'Winnipeg Jets @ Vegas Golden Knights',
+      payloadData: {
+        action: 'LEAN', kind: 'PLAY', market_type: 'TOTAL',
+        selection: { side: 'OVER' }, price: -110, line: 5.5, edge: 0.5,
+        model_projection: 5.8, projection_only: false,
+      },
+    });
+    const snapshot = buildDiscordSnapshot({ cards: [card], now: new Date('2026-04-13T20:00:00Z') });
+    expect(snapshot.sectionCounts.official).toBe(0);
+    expect(snapshot.sectionCounts.lean).toBe(1);
+    expect(snapshot.messages[0]).not.toContain('🟢 PLAY');
+    expect(snapshot.messages[0]).toContain('🟡 Slight Edge');
+  });
+
+  // ── OVER 6.5 without adequate accelerant → caps PLAY to SLIGHT EDGE ────────
+  test('Over 6.5 without adequate accelerant caps PLAY to SLIGHT EDGE', () => {
+    const card = makeNhlTotalCard({
+      id: 'over65-no-accel',
+      payloadData: {
+        action: 'LEAN', kind: 'PLAY', market_type: 'TOTAL',
+        selection: { side: 'OVER' }, price: -108, line: 6.5, edge: 1.2,
+        model_projection: 7.6, projection_only: false,
+        accelerant_score: 0.10, // below 0.20 threshold
+      },
+    });
+    const snapshot = buildDiscordSnapshot({ cards: [card], now: new Date('2026-04-13T20:00:00Z') });
+    // edge=1.2 would be PLAY, but OVER 6.5 + accelerant 0.10 < 0.20 caps to SLIGHT EDGE
+    expect(snapshot.sectionCounts.official).toBe(0);
+    expect(snapshot.sectionCounts.lean).toBe(1);
+    expect(snapshot.messages[0]).not.toContain('🟢 PLAY');
+  });
+
+  // ── OVER 6.5 with adequate accelerant → PLAY allowed ─────────────────────
+  test('Over 6.5 with adequate accelerant_score 0.25 stays PLAY', () => {
+    const card = makeNhlTotalCard({
+      id: 'over65-accel-ok',
+      payloadData: {
+        action: 'LEAN', kind: 'PLAY', market_type: 'TOTAL',
+        selection: { side: 'OVER' }, price: -106, line: 6.5, edge: 1.2,
+        model_projection: 7.7, projection_only: false,
+        accelerant_score: 0.25, // passes threshold
+      },
+    });
+    const snapshot = buildDiscordSnapshot({ cards: [card], now: new Date('2026-04-13T20:00:00Z') });
+    expect(snapshot.sectionCounts.official).toBe(1);
+    expect(snapshot.messages[0]).toContain('🟢 PLAY');
+  });
+
+  // ── COL/EDM UNDER 6.5 at -1.5 → PLAY (no fragility rule applies) ──────────
+  test('COL/EDM Under 6.5 at -1.5 → official PLAY (UNDER 6.5 is not UNDER 5.5)', () => {
+    const card = makeNhlTotalCard({
+      id: 'col-edm',
+      matchup: 'Colorado Avalanche @ Edmonton Oilers',
+      payloadData: {
+        action: 'LEAN', kind: 'PLAY', market_type: 'TOTAL',
+        selection: { side: 'UNDER' }, price: -105, line: 6.5, edge: -1.5,
+        model_projection: 5.1, projection_only: false,
+      },
+    });
+    const snapshot = buildDiscordSnapshot({ cards: [card], now: new Date('2026-04-13T20:00:00Z') });
+    expect(snapshot.sectionCounts.official).toBe(1);
+    expect(snapshot.messages[0]).toContain('🟢 PLAY');
+  });
+
+  // ── UNDER 5.5 auto-downgrade: SLIGHT_EDGE → PASS ─────────────────────────
+  test('Under 5.5 with edge=-0.8 gets one-tier downgrade: SLIGHT_EDGE → PASS', () => {
+    const card = makeNhlTotalCard({
+      id: 'under-5.5-slim',
+      payloadData: {
+        action: 'LEAN', kind: 'PLAY', market_type: 'TOTAL',
+        selection: { side: 'UNDER' }, price: -112, line: 5.5, edge: -0.8,
+        model_projection: 4.8, projection_only: false,
+      },
+    });
+    const snapshot = buildDiscordSnapshot({ cards: [card], now: new Date('2026-04-13T20:00:00Z') });
+    // base=SLIGHT_EDGE, UNDER ≤5.5 → downgrade → PASS
+    expect(snapshot.sectionCounts.official).toBe(0);
+    expect(snapshot.sectionCounts.lean).toBe(0);
+    expect(snapshot.messages).toHaveLength(0);
+  });
+
+  // ── UNDER 5.5 with PLAY-grade edge: PLAY → SLIGHT_EDGE ───────────────────
+  test('Under 5.5 with edge=-1.5 (PLAY base) gets one-tier downgrade to SLIGHT EDGE', () => {
+    const card = makeNhlTotalCard({
+      id: 'under-5.5-strong',
+      payloadData: {
+        action: 'LEAN', kind: 'PLAY', market_type: 'TOTAL',
+        selection: { side: 'UNDER' }, price: -108, line: 5.5, edge: -1.5,
+        model_projection: 4.2, projection_only: false,
+      },
+    });
+    const snapshot = buildDiscordSnapshot({ cards: [card], now: new Date('2026-04-13T20:00:00Z') });
+    // base=PLAY, UNDER ≤5.5 → downgrade → SLIGHT_EDGE → lean
+    expect(snapshot.sectionCounts.official).toBe(0);
+    expect(snapshot.sectionCounts.lean).toBe(1);
+    expect(snapshot.messages[0]).not.toContain('🟢 PLAY');
+  });
+
+  // ── Mixed-book integrity veto → always PASS ───────────────────────────────
+  test('Mixed-book integrity block forces PASS regardless of edge', () => {
+    const card = makeNhlTotalCard({
+      id: 'mixed-book',
+      payloadData: {
+        action: 'LEAN', kind: 'PLAY', market_type: 'TOTAL',
+        selection: { side: 'OVER' }, price: -110, line: 5.5, edge: 2.1,
+        model_projection: 7.2, projection_only: false,
+        blocked_reason_code: 'MIXED_BOOK_INTEGRITY_GATE',
+        reason_codes: ['MIXED_BOOK_INTEGRITY_GATE'],
+      },
+    });
+    const snapshot = buildDiscordSnapshot({ cards: [card], now: new Date('2026-04-13T20:00:00Z') });
+    expect(snapshot.sectionCounts.official).toBe(0);
+    expect(snapshot.sectionCounts.lean).toBe(0);
+    expect(snapshot.messages).toHaveLength(0);
+  });
+
+  // ── Goalie uncertainty caps medium edge at SLIGHT EDGE ────────────────────
+  test('Goalie uncertainty hold caps medium edge (+1.2) at SLIGHT EDGE, not PLAY', () => {
+    const card = makeNhlTotalCard({
+      id: 'goalie-uncertain-medium',
+      matchup: 'New York Rangers @ Florida Panthers',
+      payloadData: {
+        action: 'LEAN', kind: 'PLAY', market_type: 'TOTAL',
+        selection: { side: 'OVER' }, price: -110, line: 6.0, edge: 1.2,
+        model_projection: 7.0, projection_only: false,
+        reason_codes: ['GOALIE_UNCONFIRMED'],
+      },
+    });
+    const snapshot = buildDiscordSnapshot({ cards: [card], now: new Date('2026-04-13T20:00:00Z') });
+    // edge=1.2 would be PLAY, but uncertainty hold caps at SLIGHT_EDGE
+    expect(snapshot.sectionCounts.official).toBe(0);
+    expect(snapshot.sectionCounts.lean).toBe(1);
+    expect(snapshot.messages[0]).not.toContain('🟢 PLAY');
+  });
+
+  // ── Goalie uncertainty caps thin edge to PASS ─────────────────────────────
+  test('Goalie uncertainty hold with thin edge (+0.4) results in PASS', () => {
+    const card = makeNhlTotalCard({
+      id: 'goalie-uncertain-thin',
+      payloadData: {
+        action: 'LEAN', kind: 'PLAY', market_type: 'TOTAL',
+        selection: { side: 'OVER' }, price: -110, line: 5.5, edge: 0.4,
+        model_projection: 5.9, projection_only: false,
+        reason_codes: ['GOALIE_UNCONFIRMED'],
+      },
+    });
+    const snapshot = buildDiscordSnapshot({ cards: [card], now: new Date('2026-04-13T20:00:00Z') });
+    // edge=0.4 < 0.5 (SLIGHT_EDGE floor), uncertainty hold → PASS
+    expect(snapshot.sectionCounts.official).toBe(0);
+    expect(snapshot.sectionCounts.lean).toBe(0);
+    expect(snapshot.messages).toHaveLength(0);
+  });
+
+  // ── Sub-threshold edge → PASS ──────────────────────────────────────────────
+  test('Edge below 0.35 (noise floor) always PASS regardless of other inputs', () => {
+    const card = makeNhlTotalCard({
+      id: 'noise-floor',
+      payloadData: {
+        action: 'LEAN', kind: 'PLAY', market_type: 'TOTAL',
+        selection: { side: 'OVER' }, price: -110, line: 5.5, edge: 0.2,
+        model_projection: 5.7, projection_only: false,
+      },
+    });
+    const snapshot = buildDiscordSnapshot({ cards: [card], now: new Date('2026-04-13T20:00:00Z') });
+    expect(snapshot.sectionCounts.official).toBe(0);
+    expect(snapshot.sectionCounts.lean).toBe(0);
+    expect(snapshot.messages).toHaveLength(0);
+  });
+
+  // ── NYR/FLA: OVER 6.5 at +0.6, weak accelerant → PASS under canonical fragility ──
+  test('NYR/FLA +0.6 over 6.5 with weak accelerant downgrades to PASS', () => {
+    const card = makeNhlTotalCard({
+      id: 'nyr-fla',
+      matchup: 'New York Rangers @ Florida Panthers',
+      payloadData: {
+        action: 'LEAN', kind: 'PLAY', market_type: 'TOTAL',
+        selection: { side: 'OVER' }, price: -108, line: 6.5, edge: 0.6,
+        model_projection: 6.9, projection_only: false,
+        accelerant_score: 0.10, // weak — canonical policy downgrades SLIGHT_EDGE to PASS on OVER 6.5
+      },
+    });
+    const snapshot = buildDiscordSnapshot({ cards: [card], now: new Date('2026-04-13T20:00:00Z') });
+    // base=SLIGHT_EDGE (0.6 < 1.0), OVER-6.5 weak accelerant → PASS
+    expect(snapshot.sectionCounts.official).toBe(0);
+    expect(snapshot.sectionCounts.lean).toBe(0);
+    expect(snapshot.messages).toHaveLength(0);
+  });
+
+  // ── Slate regression: all 5 games correct ────────────────────────────────
+  test('Slate regression: high-delta cards surface as PLAY, thin as SLIGHT EDGE', () => {
+    const now = new Date('2026-04-13T22:00:00Z');
+    const gameTime = new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString();
+
+    function slateCard(id, matchup, side, line, edge, extra = {}) {
+      return {
+        id, sport: 'nhl', matchup, cardType: 'nhl-totals-call', gameTimeUtc: gameTime,
+        payloadData: {
+          action: 'LEAN', kind: 'PLAY', market_type: 'TOTAL',
+          selection: { side }, price: -110, line, edge: side === 'UNDER' ? -Math.abs(edge) : Math.abs(edge),
+          model_projection: line + (side === 'OVER' ? Math.abs(edge) : -Math.abs(edge)),
+          projection_only: false,
+          ...extra,
+        },
+      };
+    }
+
+    const cards = [
+      slateCard('car-phi', 'Carolina Hurricanes @ Philadelphia Flyers', 'OVER', 5.5, 2.1),  // PLAY
+      slateCard('min-stl', 'Minnesota Wild @ St. Louis Blues', 'OVER', 5.5, 1.2),             // PLAY
+      slateCard('lak-sea', 'Los Angeles Kings @ Seattle Kraken', 'OVER', 5.5, 1.3),           // PLAY
+      slateCard('col-edm', 'Colorado Avalanche @ Edmonton Oilers', 'UNDER', 6.5, 1.5),        // PLAY
+      slateCard('nyr-fla', 'New York Rangers @ Florida Panthers', 'OVER', 6.5, 0.6,           // SLIGHT EDGE
+        { accelerant_score: 0.10 }),
+      slateCard('wpg-vgk', 'Winnipeg Jets @ Vegas Golden Knights', 'OVER', 5.5, 0.5),         // SLIGHT EDGE
+    ];
+
+    const snapshot = buildDiscordSnapshot({ cards, now });
+    // One card (NYR/FLA) is now PASS under canonical OVER-6.5 fragility.
+    expect(snapshot.totalGames).toBe(5);
+    // 4 PLAY cards: CAR/PHI, MIN/STL, LAK/SEA, COL/EDM
+    expect(snapshot.sectionCounts.official).toBe(4);
+    // 1 SLIGHT EDGE card: WPG/VGK
+    expect(snapshot.sectionCounts.lean).toBe(1);
+    expect(snapshot.sectionCounts.passBlocked).toBe(1);
+
+    // All six game messages include a separator line
+    expect(snapshot.messages.every((m) => m.includes('─'))).toBe(true);
   });
 });
 

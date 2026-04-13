@@ -1,6 +1,5 @@
 const fs = require('fs');
 const path = require('path');
-const glob = require('glob');
 
 /**
  * AST-Based Ownership Enforcement Test
@@ -64,5 +63,14 @@ describe('AST Ownership Enforcement', () => {
         `\n${violations.join('\n')}\n\nFix: Delete these definitions and import from owner module instead.`,
       );
     }
+  });
+
+  test('models index does not expose legacy unused exports', () => {
+    const models = require('../index');
+
+    expect(models).not.toHaveProperty('getInference');
+    expect(models).not.toHaveProperty('callRemoteModel');
+    expect(models).not.toHaveProperty('mockModels');
+    expect(models).not.toHaveProperty('computeSkaterInjuryFactor');
   });
 });

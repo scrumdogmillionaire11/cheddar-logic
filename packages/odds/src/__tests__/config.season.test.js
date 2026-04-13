@@ -54,6 +54,11 @@ describe('MLB season logic (within-year: 03-20 to 11-01)', () => {
     SPORTS_CONFIG.MLB.active = true; // keep active for other tests
   });
 
+  test('featured MLB markets include h2h and totals by default', () => {
+    expect(SPORTS_CONFIG.MLB.markets).toEqual(['h2h', 'totals']);
+    expect(SPORTS_CONFIG.MLB.tokensPerFetch).toBe(2);
+  });
+
   test('January 15 — NOT in season', () => {
     withDate('01-15', () => {
       expect(isInSeason('MLB')).toBe(false);
@@ -258,5 +263,13 @@ describe('active flag suppresses even in-season results', () => {
       const result = withDate('04-01', () => getActiveSports());
       expect(result).not.toContain('MLB');
     });
+  });
+});
+
+describe('MLB featured-odds config', () => {
+  test('MLB is active by default with h2h and totals featured markets', () => {
+    expect(SPORTS_CONFIG.MLB.active).toBe(true);
+    expect(SPORTS_CONFIG.MLB.markets).toEqual(['h2h', 'totals']);
+    expect(SPORTS_CONFIG.MLB.tokensPerFetch).toBe(2);
   });
 });

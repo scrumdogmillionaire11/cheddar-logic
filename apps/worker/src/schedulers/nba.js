@@ -23,6 +23,7 @@ const {
 
 const { runNBAModel } = require('../jobs/run_nba_model');
 const { syncNbaPlayerAvailability } = require('../jobs/sync_nba_player_availability');
+const { isFeatureEnabled } = require('@cheddar-logic/data/src/feature-flags');
 
 /**
  * Compute due NBA jobs for this tick
@@ -40,8 +41,8 @@ function computeNbaDueJobs(nowEt, {
   pullOddsHourly,
   ENABLE_WITHOUT_ODDS_MODE,
 }) {
-  const ENABLE_NBA_MODEL = process.env.ENABLE_NBA_MODEL !== 'false';
-  const ENABLE_NBA_PLAYER_AVAILABILITY_SYNC = process.env.ENABLE_NBA_PLAYER_AVAILABILITY_SYNC !== 'false';
+  const ENABLE_NBA_MODEL = isFeatureEnabled('nba', 'model');
+  const ENABLE_NBA_PLAYER_AVAILABILITY_SYNC = isFeatureEnabled('nba', 'player-availability-sync');
 
   if (!ENABLE_NBA_MODEL && !ENABLE_NBA_PLAYER_AVAILABILITY_SYNC) return [];
 
