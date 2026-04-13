@@ -14,8 +14,6 @@ const warnedSportValues = new Set();
 let oddsContextReferenceRegistry = new WeakMap();
 let readOnlyOpenFailureStreak = 0;
 let lastReadOnlyFailureAtMs = 0;
-const EXPECTED_TABLE_NAMES = ['games', 'card_payloads', 'card_results', 'game_results'];
-const REQUIRED_CARD_RESULTS_MARKET_COLUMNS = ['market_key', 'market_type', 'selection', 'line', 'locked_price'];
 const DEFAULT_REFRESH_TOKEN_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
 function normalizeConfiguredPath(rawPath) {
@@ -35,121 +33,6 @@ function normalizeConfiguredPath(rawPath) {
   }
 
   return path.isAbsolute(trimmed) ? path.normalize(trimmed) : path.resolve(trimmed);
-}
-
-function inspectDatabaseStats(dbFile) {
-  try {
-    if (!fs.existsSync(dbFile)) {
-      return {
-        exists: false,
-        tableCount: 0,
-        rowCount: 0,
-        cardPayloadCount: 0,
-        hasMarketContractColumns: false,
-        modifiedMs: 0,
-      };
-    }
-    const stats = fs.statSync(dbFile);
-    const db = new Database(dbFile, { readonly: true });
-    const tablePlaceholders = EXPECTED_TABLE_NAMES.map(() => '?').join(', ');
-    const tableRow = db.prepare(
-      `SELECT COUNT(*) AS c
-       FROM sqlite_master
-       WHERE type='table' AND name IN (${tablePlaceholders})`
-    ).get(EXPECTED_TABLE_NAMES);
-    let tableCount = Number(tableRow?.c || 0);
-
-    let rowCount = 0;
-    let cardPayloadCount = 0;
-    let hasMarketContractColumns = false;
-    if (tableCount > 0) {
-      for (const tableName of EXPECTED_TABLE_NAMES) {
-        try {
-          const row = db.prepare(`SELECT COUNT(*) AS c FROM ${tableName}`).get();
-          const count = Number(row?.c || 0);
-          rowCount += count;
-          if (tableName === 'card_payloads') {
-            cardPayloadCount = count;
-          }
-        } catch {
-          // Ignore missing/incompatible tables.
-        }
-      }
-
-      try {
-        const columns = db.prepare(`PRAGMA table_info(card_results)`).all();
-        const columnNames = new Set(
-          columns.map((row) => (typeof row.name === 'string' ? row.name : ''))
-        );
-        hasMarketContractColumns = REQUIRED_CARD_RESULTS_MARKET_COLUMNS.every((name) =>
-          columnNames.has(name)
-        );
-      } catch {
-        // Best-effort schema inspection.
-      }
-    }
-
-    db.close();
-    return {
-      exists: true,
-      tableCount,
-      rowCount,
-      cardPayloadCount,
-      hasMarketContractColumns,
-      modifiedMs: Number(stats.mtimeMs || 0),
-    };
-  } catch {
-    return {
-      exists: true,
-      tableCount: 0,
-      rowCount: 0,
-      cardPayloadCount: 0,
-      hasMarketContractColumns: false,
-      modifiedMs: 0,
-    };
-  }
-}
-
-function shouldPreferCandidate(candidate, currentBest) {
-  const candidateHasRows = candidate.rowCount > 0;
-  const currentHasRows = currentBest.rowCount > 0;
-  if (candidateHasRows !== currentHasRows) return candidateHasRows;
-
-  if (candidate.rowCount !== currentBest.rowCount) {
-    return candidate.rowCount > currentBest.rowCount;
-  }
-
-  if (candidate.tableCount !== currentBest.tableCount) {
-    return candidate.tableCount > currentBest.tableCount;
-  }
-
-  if (candidate.modifiedMs !== currentBest.modifiedMs) {
-    return candidate.modifiedMs > currentBest.modifiedMs;
-  }
-
-  if (candidate.exists !== currentBest.exists) {
-    return candidate.exists;
-  }
-
-  return false;
-}
-
-function listDbFiles(directory) {
-  try {
-    if (!directory || !fs.existsSync(directory)) return [];
-    return fs
-      .readdirSync(directory)
-      .filter((name) => name.toLowerCase().endsWith('.db'))
-      .map((name) => path.join(directory, name));
-  } catch {
-    return [];
-  }
-}
-
-function isTruthyEnv(value) {
-  if (typeof value !== 'string') return false;
-  const normalized = value.trim().toLowerCase();
-  return normalized === '1' || normalized === 'true' || normalized === 'yes';
 }
 
 function isProcessAlive(pid) {
@@ -398,76 +281,6 @@ function acquireDbFileLock(dbFile) {
   console.warn(message);
 }
 
-function chooseBestDatabasePath(primaryPath) {
-  const primaryDir = path.dirname(primaryPath);
-  const configuredDataDir = normalizeConfiguredPath(process.env.CHEDDAR_DATA_DIR);
-
-  const seedCandidates = [
-    primaryPath,
-    normalizeConfiguredPath(process.env.CHEDDAR_DB_PATH),
-    normalizeConfiguredPath(path.join(process.env.CHEDDAR_DATA_DIR || '', 'cheddar.db')),
-    normalizeConfiguredPath(path.join(primaryDir, 'backups', path.basename(primaryPath))),
-    configuredDataDir ? path.join(configuredDataDir, 'backups', 'cheddar.db') : null,
-    '/opt/data/backups/cheddar.db',
-    '/opt/data/cheddar.db',
-    '/opt/cheddar-logic/packages/data/cheddar.db',
-    '/opt/cheddar-logic/packages/data/backups/cheddar.db',
-    '/tmp/cheddar-logic/cheddar.db',
-    '/tmp/cheddar-logic/backups/cheddar.db',
-  ].filter(Boolean);
-
-  const searchDirs = [
-    primaryDir,
-    path.join(primaryDir, 'backups'),
-    normalizeConfiguredPath(process.env.CHEDDAR_DATA_DIR),
-    configuredDataDir ? path.join(configuredDataDir, 'backups') : null,
-    '/opt/data',
-    '/opt/data/backups',
-    '/opt/cheddar-logic/packages/data',
-    '/opt/cheddar-logic/packages/data/backups',
-    '/tmp/cheddar-logic',
-    '/tmp/cheddar-logic/backups',
-  ].filter(Boolean);
-
-  const candidates = [
-    ...seedCandidates,
-    ...searchDirs.flatMap((dir) => listDbFiles(dir)),
-  ]
-    .filter(Boolean)
-    .map((candidate) => path.normalize(candidate));
-
-  const uniqueCandidates = [...new Set(candidates)];
-
-  let bestPath = primaryPath;
-  let bestStats = inspectDatabaseStats(primaryPath);
-
-  const primaryLooksHealthy =
-    bestStats.exists
-    && bestStats.tableCount === EXPECTED_TABLE_NAMES.length
-    && bestStats.cardPayloadCount > 0
-    && bestStats.hasMarketContractColumns;
-
-  if (primaryLooksHealthy) {
-    return primaryPath;
-  }
-
-  for (const candidate of uniqueCandidates) {
-    const stats = inspectDatabaseStats(candidate);
-    if (shouldPreferCandidate(stats, bestStats)) {
-      bestStats = stats;
-      bestPath = candidate;
-    }
-  }
-
-  if (bestPath !== primaryPath && bestStats.rowCount > 0) {
-    console.warn(
-      `[DB] Using populated database: ${bestPath} (tables=${bestStats.tableCount}, rows=${bestStats.rowCount}, payloads=${bestStats.cardPayloadCount}) instead of ${primaryPath}`
-    );
-  }
-
-  return bestPath;
-}
-
 function normalizeSportValue(sport, context) {
   if (sport == null) return null;
   const raw = String(sport);
@@ -497,10 +310,7 @@ function loadDatabase() {
     warnedDbPathContract = true;
   }
   const preferredPath = dbPath || resolved.dbPath;
-  const autoDiscoverEnabled = isTruthyEnv(process.env.CHEDDAR_DB_AUTODISCOVER);
-  // Explicit DB paths must be deterministic and should never be auto-swapped.
-  const shouldAutoDiscover = autoDiscoverEnabled && !resolved.isExplicitFile && !dbPath;
-  const dbFile = shouldAutoDiscover ? chooseBestDatabasePath(preferredPath) : preferredPath;
+  const dbFile = preferredPath;
 
   if (resolved.isExplicitFile && !fs.existsSync(preferredPath)) {
     const message = `[DB] ${resolved.source} points to missing DB file: ${preferredPath}`;
@@ -510,14 +320,7 @@ function loadDatabase() {
     console.warn(`${message}. Creating new DB at this path.`);
   }
 
-  if (process.env.NODE_ENV === 'production' && !autoDiscoverEnabled && dbFile !== preferredPath) {
-    throw new Error(
-      `[DB] Production DB path drift detected. Expected ${preferredPath}, got ${dbFile}. ` +
-      `Disable fallback selection and keep one canonical database path.`
-    );
-  }
-
-  if (process.env.NODE_ENV === 'production' && !autoDiscoverEnabled) {
+  if (process.env.NODE_ENV === 'production') {
     console.log(`[DB] Using strict DB path in production (${resolved.source}): ${dbFile}`);
   }
 

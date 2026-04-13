@@ -2524,15 +2524,8 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
   const dedupedTags = Array.from(new Set(tags));
   const passReasonCode =
     reasonCodesUnique.find((code) => code.startsWith('PASS_')) ?? null;
-  const decisionPlayRecord = decision.play as unknown as
-    | (Record<string, unknown> & { pass_reason?: unknown })
-    | undefined;
-  const legacyPassReason =
-    typeof decisionPlayRecord?.pass_reason === 'string'
-      ? String(decisionPlayRecord.pass_reason)
-      : null;
   const sourcePassReasonCode = normalizePassReasonCode(
-    decision.play?.pass_reason_code ?? legacyPassReason,
+    decision.play?.pass_reason_code ?? null,
   );
   const resolvedPassReasonCode =
     finalDecision === 'PASS'

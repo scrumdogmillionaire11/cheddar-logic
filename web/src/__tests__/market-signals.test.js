@@ -96,9 +96,9 @@ test('returns [] when marketSignals is absent', () => {
   assert.deepStrictEqual(deriveMarketSignals(card), []);
 });
 
-// 2. PASS_SHARP_MONEY_OPPOSITE → Sharp Divergence (blue)
-test('emits Sharp Divergence for PASS_SHARP_MONEY_OPPOSITE reason code', () => {
-  const pills = deriveMarketSignals(makeCard({ primaryReasonCode: 'PASS_SHARP_MONEY_OPPOSITE', officialStatus: 'LEAN', publicBetsPctHome: 74 }));
+// 2. SHARP_MONEY_OPPOSITE tag → Sharp Divergence (blue)
+test('emits Sharp Divergence for SHARP_MONEY_OPPOSITE tag (canonical path)', () => {
+  const pills = deriveMarketSignals(makeCard({ tags: ['SHARP_MONEY_OPPOSITE'], officialStatus: 'LEAN', publicBetsPctHome: 74 }));
   assert.ok(pills.some((p) => p.label === 'Sharp Divergence' && p.color === 'blue'), JSON.stringify(pills));
 });
 
@@ -132,8 +132,8 @@ test('emits Consensus when spreadConsensusConfidence=HIGH and no divergence', ()
   assert.ok(pills.some((p) => p.label === 'Consensus' && p.color === 'slate'), JSON.stringify(pills));
 });
 
-test('Consensus suppressed when Sharp Divergence present', () => {
-  const pills = deriveMarketSignals(makeCard({ spreadConsensusConfidence: 'HIGH', primaryReasonCode: 'PASS_SHARP_MONEY_OPPOSITE' }));
+test('Consensus suppressed when SHARP_MONEY_OPPOSITE tag present', () => {
+  const pills = deriveMarketSignals(makeCard({ spreadConsensusConfidence: 'HIGH', tags: ['SHARP_MONEY_OPPOSITE'] }));
   assert.ok(!pills.some((p) => p.label === 'Consensus'), JSON.stringify(pills));
 });
 

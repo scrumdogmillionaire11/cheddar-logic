@@ -1,13 +1,48 @@
 const {
   isNonPassCard,
   isDisplayableWebhookCard,
+  isDisplayableWebhookCardLegacy,
   buildDiscordSnapshot,
   chunkDiscordContent,
   sendDiscordMessages,
   postDiscordCards,
 } = require('../post_discord_cards');
+const { classifyNhlTotalsStatus } = require('../../models/nhl-totals-status');
+const { computeWebhookFields } = require('../../utils/decision-publisher');
 const fs = require('fs');
 const Database = require('better-sqlite3');
+
+/**
+ * Simulate model-runner + publisher behaviour for NHL total card fixtures:
+ * stamps nhl_totals_status then webhook_* fields, exactly as production does.
+ * Uses |edge| with direction derived from selection.side so fixture edge values
+ * can be either signed (UNDER uses negative) or unsigned (always positive).
+ */
+function stampNhlTotals(pd) {
+  const reasonCodes = Array.from(
+    new Set([
+      ...(pd.reason_codes || []),
+      ...(pd.blocked_reason_code ? [pd.blocked_reason_code] : []),
+    ])
+  );
+  const integrityOk = !reasonCodes.includes('MIXED_BOOK_INTEGRITY_GATE');
+  const goaliesConfirmed = !reasonCodes.includes('GOALIE_UNCONFIRMED');
+  const edgeSign = pd.selection?.side === 'UNDER' ? -1 : 1;
+  const absDelta = Math.abs(Number(pd.edge || 0));
+  pd.sport = pd.sport || 'nhl';
+  pd.nhl_totals_status = classifyNhlTotalsStatus({
+    side: pd.selection?.side,
+    modelTotal: Number(pd.line) + edgeSign * absDelta,
+    marketTotal: Number(pd.line),
+    integrityOk,
+    goaliesConfirmedHome: goaliesConfirmed,
+    goaliesConfirmedAway: goaliesConfirmed,
+    majorInjuryUncertainty: reasonCodes.includes('MAJOR_INJURY_UNCERTAINTY'),
+    accelerantScore: pd.accelerant_score ?? null,
+    hasRequiredInputs: true,
+  });
+  computeWebhookFields(pd);
+}
 
 function makeCard(overrides = {}) {
   return {
@@ -473,22 +508,19 @@ describe('post_discord_cards helpers', () => {
   });
 
   test('buildDiscordSnapshot promotes NHL total to PLAY section at edge >= 1.0 (was: play-grade label)', () => {
-    const cards = [
-      makeCard({
-        id: 'play-grade',
-        payloadData: {
-          action: 'LEAN',
-          kind: 'PLAY',
-          market_type: 'TOTAL',
-          selection: { side: 'OVER' },
-          price: -110,
-          line: 6.0,
-          edge: 1.1,
-          model_projection: 6.8,
-          projection_only: false,
-        },
-      }),
-    ];
+    const pd = {
+      action: 'LEAN',
+      kind: 'PLAY',
+      market_type: 'TOTAL',
+      selection: { side: 'OVER' },
+      price: -110,
+      line: 6.0,
+      edge: 1.1,
+      model_projection: 6.8,
+      projection_only: false,
+    };
+    stampNhlTotals(pd);
+    const cards = [makeCard({ id: 'play-grade', payloadData: pd })];
 
     const snapshot = buildDiscordSnapshot({ cards, now: new Date('2026-03-20T14:00:00.000Z') });
     // edge=1.1 >= 1.0, line=6.0 (not >= 6.5), no integrity/uncertainty issues → official bucket
@@ -499,22 +531,19 @@ describe('post_discord_cards helpers', () => {
   });
 
   test('buildDiscordSnapshot promotes NHL total UNDER 6.5 to PLAY section at edge >= 1.5 (was: strong label)', () => {
-    const cards = [
-      makeCard({
-        id: 'strong-play-under',
-        payloadData: {
-          action: 'WATCH',
-          kind: 'PLAY',
-          market_type: 'TOTAL',
-          selection: { side: 'UNDER' },
-          price: -102,
-          line: 6.5,
-          edge: 1.6,
-          model_projection: 5.5,
-          projection_only: false,
-        },
-      }),
-    ];
+    const pd = {
+      action: 'WATCH',
+      kind: 'PLAY',
+      market_type: 'TOTAL',
+      selection: { side: 'UNDER' },
+      price: -102,
+      line: 6.5,
+      edge: 1.6,
+      model_projection: 5.5,
+      projection_only: false,
+    };
+    stampNhlTotals(pd);
+    const cards = [makeCard({ id: 'strong-play-under', payloadData: pd })];
 
     const snapshot = buildDiscordSnapshot({ cards, now: new Date('2026-03-20T14:00:00.000Z') });
     // edge=1.6 >= 1.0, UNDER on 6.5 (neither UNDER ≤5.5 nor OVER ≥6.5 fragility) → official bucket
@@ -722,7 +751,7 @@ describe('post_discord_cards helpers', () => {
 // ---------------------------------------------------------------------------
 describe('WI-0934: NHL totals bucket policy — PLAY / SLIGHT EDGE / PASS', () => {
   function makeNhlTotalCard(overrides = {}) {
-    return {
+    const card = {
       id: 'nhl-total-1',
       sport: 'nhl',
       matchup: 'Carolina Hurricanes @ Philadelphia Flyers',
@@ -741,6 +770,9 @@ describe('WI-0934: NHL totals bucket policy — PLAY / SLIGHT EDGE / PASS', () =
       },
       ...overrides,
     };
+    // Simulate model-runner + publisher: stamp nhl_totals_status → webhook_* fields
+    stampNhlTotals(card.payloadData);
+    return card;
   }
 
   // ── High-delta over on 5.5 → PLAY ─────────────────────────────────────────
@@ -950,16 +982,15 @@ describe('WI-0934: NHL totals bucket policy — PLAY / SLIGHT EDGE / PASS', () =
     const gameTime = new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString();
 
     function slateCard(id, matchup, side, line, edge, extra = {}) {
-      return {
-        id, sport: 'nhl', matchup, cardType: 'nhl-totals-call', gameTimeUtc: gameTime,
-        payloadData: {
-          action: 'LEAN', kind: 'PLAY', market_type: 'TOTAL',
-          selection: { side }, price: -110, line, edge: side === 'UNDER' ? -Math.abs(edge) : Math.abs(edge),
-          model_projection: line + (side === 'OVER' ? Math.abs(edge) : -Math.abs(edge)),
-          projection_only: false,
-          ...extra,
-        },
+      const pd = {
+        action: 'LEAN', kind: 'PLAY', market_type: 'TOTAL',
+        selection: { side }, price: -110, line, edge: side === 'UNDER' ? -Math.abs(edge) : Math.abs(edge),
+        model_projection: line + (side === 'OVER' ? Math.abs(edge) : -Math.abs(edge)),
+        projection_only: false,
+        ...extra,
       };
+      stampNhlTotals(pd);
+      return { id, sport: 'nhl', matchup, cardType: 'nhl-totals-call', gameTimeUtc: gameTime, payloadData: pd };
     }
 
     const cards = [
@@ -974,12 +1005,15 @@ describe('WI-0934: NHL totals bucket policy — PLAY / SLIGHT EDGE / PASS', () =
 
     const snapshot = buildDiscordSnapshot({ cards, now });
     // One card (NYR/FLA) is now PASS under canonical OVER-6.5 fragility.
+    // Canonical-path pass_blocked cards are excluded in isDisplayableWebhookCard so they
+    // never reach the game loop — passBlocked counter is 0 (correct for Layer B).
     expect(snapshot.totalGames).toBe(5);
     // 4 PLAY cards: CAR/PHI, MIN/STL, LAK/SEA, COL/EDM
     expect(snapshot.sectionCounts.official).toBe(4);
     // 1 SLIGHT EDGE card: WPG/VGK
     expect(snapshot.sectionCounts.lean).toBe(1);
-    expect(snapshot.sectionCounts.passBlocked).toBe(1);
+    // NYR/FLA filtered upstream by webhook_eligible=false — does not appear in loop
+    expect(snapshot.sectionCounts.passBlocked).toBe(0);
 
     // All six game messages include a separator line
     expect(snapshot.messages.every((m) => m.includes('─'))).toBe(true);
