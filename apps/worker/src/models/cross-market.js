@@ -264,6 +264,51 @@ function buildExpressionChoiceSnapshot(expressionChoice) {
   };
 }
 
+function resolveNhlTotalConviction(edgeValue) {
+  const edge = Number(edgeValue);
+  if (!Number.isFinite(edge)) {
+    return {
+      tier: 'NO_EDGE',
+      label: 'No Edge',
+      min_edge: null,
+      edge_abs: null,
+    };
+  }
+
+  const edgeAbs = Math.abs(edge);
+  if (edgeAbs >= 1.5) {
+    return {
+      tier: 'STRONG_PLAY',
+      label: 'Strong Play Edge',
+      min_edge: 1.5,
+      edge_abs: Number(edgeAbs.toFixed(3)),
+    };
+  }
+  if (edgeAbs >= 1.0) {
+    return {
+      tier: 'PLAY_GRADE',
+      label: 'Play-Grade Edge',
+      min_edge: 1.0,
+      edge_abs: Number(edgeAbs.toFixed(3)),
+    };
+  }
+  if (edgeAbs >= 0.5) {
+    return {
+      tier: 'SLIGHT_EDGE',
+      label: 'Slight Edge',
+      min_edge: 0.5,
+      edge_abs: Number(edgeAbs.toFixed(3)),
+    };
+  }
+
+  return {
+    tier: 'NO_EDGE',
+    label: 'No Edge',
+    min_edge: null,
+    edge_abs: Number(edgeAbs.toFixed(3)),
+  };
+}
+
 function computeNHLMarketDecisions(oddsSnapshot) {
   const raw = parseRawData(oddsSnapshot?.raw_data);
   const totalLine = toNumber(oddsSnapshot?.total);
@@ -568,6 +613,9 @@ function computeNHLMarketDecisions(oddsSnapshot) {
     }),
     riskFlags: totalFragilityPenalty > 0 ? ['KEY_NUMBER'] : [],
   });
+  totalDecision.conviction = resolveNhlTotalConviction(totalDecision.edge);
+  totalDecision.conviction_tier = totalDecision.conviction.tier;
+  totalDecision.conviction_label = totalDecision.conviction.label;
 
   const powerRatingSignal =
     projectedMargin !== null ? clamp(projectedMargin / 3, -1, 1) : 0;
@@ -1476,6 +1524,7 @@ module.exports = {
   computeNHLMarketDecisions,
   computeNBAMarketDecisions,
   selectExpressionChoice,
+  resolveNhlTotalConviction,
   goalieUncertaintyBlocks,
   computeTotalBias,
   buildMarketPayload,

@@ -12,6 +12,7 @@ const Database = require('better-sqlite3');
 function makeCard(overrides = {}) {
   return {
     id: 'card-1',
+    sport: 'nhl',
     matchup: 'Boston Bruins @ New York Rangers',
     cardType: 'nhl-model-output',
     payloadData: {
@@ -203,6 +204,52 @@ describe('post_discord_cards helpers', () => {
     // Lean rendered → PASS block suppressed
     expect(snapshot.messages[0]).toContain('🟡 Slight Edge');
     expect(snapshot.messages[0]).not.toContain('⚪ PASS');
+  });
+
+  test('buildDiscordSnapshot upgrades NHL total lean section to play-grade label at edge >= 1.0', () => {
+    const cards = [
+      makeCard({
+        id: 'lean-play-grade',
+        payloadData: {
+          action: 'LEAN',
+          kind: 'PLAY',
+          market_type: 'TOTAL',
+          selection: { side: 'OVER' },
+          price: -110,
+          line: 6.0,
+          edge: 1.1,
+          model_projection: 6.8,
+          projection_only: false,
+        },
+      }),
+    ];
+
+    const snapshot = buildDiscordSnapshot({ cards, now: new Date('2026-03-20T14:00:00.000Z') });
+    expect(snapshot.messages[0]).toContain('🟠 Play-Grade Edge');
+    expect(snapshot.messages[0]).toContain('Conviction: Play-Grade Edge');
+  });
+
+  test('buildDiscordSnapshot upgrades NHL total lean section to strong label at edge >= 1.5', () => {
+    const cards = [
+      makeCard({
+        id: 'lean-strong-play',
+        payloadData: {
+          action: 'WATCH',
+          kind: 'PLAY',
+          market_type: 'TOTAL',
+          selection: { side: 'UNDER' },
+          price: -102,
+          line: 6.5,
+          edge: 1.6,
+          model_projection: 5.5,
+          projection_only: false,
+        },
+      }),
+    ];
+
+    const snapshot = buildDiscordSnapshot({ cards, now: new Date('2026-03-20T14:00:00.000Z') });
+    expect(snapshot.messages[0]).toContain('🔴 Strong Play Edge');
+    expect(snapshot.messages[0]).toContain('Conviction: Strong Play Edge');
   });
 
   test('buildDiscordSnapshot does not print @ null when price is missing', () => {

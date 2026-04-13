@@ -8,6 +8,7 @@ const { getSigmaDefaults } = require('@cheddar-logic/models/src/edge-calculator'
 const {
   computeNHLMarketDecisions,
   selectExpressionChoice,
+  resolveNhlTotalConviction,
   computeTotalBias,
   goalieUncertaintyBlocks,
   evaluateNHLGameMarkets,
@@ -221,6 +222,8 @@ describe('cross-market orchestration', () => {
     expect(decisions.TOTAL.pricing_trace.line_source).toBe('odds_snapshot');
     expect(decisions.TOTAL.pricing_trace.price_source).toBe('odds_snapshot');
     expect(decisions.ML.pricing_trace.price_source).toBe('odds_snapshot');
+    expect(decisions.TOTAL.conviction_tier).toBeDefined();
+    expect(decisions.TOTAL.conviction_label).toBeDefined();
   });
 
   test('goalie signal can derive from composite save-pct-only inputs', () => {
@@ -262,6 +265,23 @@ describe('cross-market orchestration', () => {
 
     expect(goalieDriver.eligible).toBe(true);
     expect(goalieDriver.signal).not.toBe(0);
+  });
+});
+
+describe('NHL total conviction split (WI-0931)', () => {
+  test('maps edge bands to deterministic conviction tiers', () => {
+    expect(resolveNhlTotalConviction(0.49).tier).toBe('NO_EDGE');
+    expect(resolveNhlTotalConviction(0.5).tier).toBe('SLIGHT_EDGE');
+    expect(resolveNhlTotalConviction(0.99).tier).toBe('SLIGHT_EDGE');
+    expect(resolveNhlTotalConviction(1.0).tier).toBe('PLAY_GRADE');
+    expect(resolveNhlTotalConviction(1.49).tier).toBe('PLAY_GRADE');
+    expect(resolveNhlTotalConviction(1.5).tier).toBe('STRONG_PLAY');
+  });
+
+  test('uses absolute edge so both sides map identically by strength', () => {
+    expect(resolveNhlTotalConviction(-1.6).tier).toBe('STRONG_PLAY');
+    expect(resolveNhlTotalConviction(-1.1).tier).toBe('PLAY_GRADE');
+    expect(resolveNhlTotalConviction(-0.7).tier).toBe('SLIGHT_EDGE');
   });
 });
 
