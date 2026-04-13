@@ -427,6 +427,48 @@ async function runTests() {
     client.prepare(`DELETE FROM run_state WHERE id IN ('test-nhl-wi0447', 'test-nhl-props-wi0447')`).run();
     client.prepare(`DELETE FROM job_runs WHERE id IN (?, ?)`).run(TEST_RUN_CANONICAL, TEST_RUN_NONCANONICAL);
 
+    // WI-0902: Parity-required behavioral fields must be present in both cards routes.
+    // These source-contract assertions lock the fields needed for parity comparison.
+    console.log('Test 7: Cards routes surface parity-required behavioral fields');
+
+    // reason_code: cards routes must surface execution_status as the visibility signal
+    // (pass_reason_code may be inside payloadData — we verify it flows through)
+    const cardsHasExecutionStatus =
+      cardsRouteSource.includes("execution_status") &&
+      perGameCardsRouteSource.includes("execution_status");
+    if (cardsHasExecutionStatus) {
+      console.log('✓ Cards routes reference execution_status (reason_code visibility signal)\n');
+    } else {
+      console.log('✗ Missing execution_status reference in one or more cards routes\n');
+      process.exit(1);
+    }
+
+    // visibility_class equivalent: cards routes must use PROJECTION_ONLY detection logic
+    // (isBettingSurfacePayload covers both line_source and execution_status checks)
+    const cardsHasProjectionOnlyDetection =
+      cardsRouteSource.includes("PROJECTION_ONLY") &&
+      perGameCardsRouteSource.includes("PROJECTION_ONLY");
+    if (cardsHasProjectionOnlyDetection) {
+      console.log('✓ Cards routes have PROJECTION_ONLY detection for visibility_class parity\n');
+    } else {
+      console.log('✗ Missing PROJECTION_ONLY detection in one or more cards routes\n');
+      process.exit(1);
+    }
+
+    // has_projection_marker equivalent: cards routes must reference projection_source
+    // and synthetic_fallback line source detection
+    const cardsHasProjectionSourceDetection =
+      cardsRouteSource.includes("projection_source") &&
+      cardsRouteSource.includes("synthetic_fallback") &&
+      perGameCardsRouteSource.includes("projection_source") &&
+      perGameCardsRouteSource.includes("synthetic_fallback");
+    if (cardsHasProjectionSourceDetection) {
+      console.log('✓ Cards routes detect projection_source/synthetic_fallback (has_projection_marker parity)\n');
+    } else {
+      console.log('✗ Missing projection_source/synthetic_fallback detection in one or more cards routes\n');
+      process.exit(1);
+    }
+
     // Clean up
     console.log('📝 Cleaning up test data...');
     client
@@ -435,7 +477,7 @@ async function runTests() {
     client.prepare(`DELETE FROM games WHERE game_id LIKE 'test-lifecycle-%'`).run();
     console.log('✓ Test data cleaned\n');
 
-    console.log('✅ All WI-0392/WI-0447 Lifecycle Parity + Run-State Shield Tests Passed!');
+    console.log('✅ All WI-0392/WI-0447/WI-0902 Lifecycle Parity + Run-State Shield + Behavioral Parity Field Tests Passed!');
     process.exit(0);
   } catch (error) {
     console.error('❌ Test Error:', error.message);
