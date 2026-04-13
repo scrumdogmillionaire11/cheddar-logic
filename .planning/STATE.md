@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Model Integrity & Betting Execution Hardening
 status: active
-last_updated: "2026-04-12T21:30:00Z"
-last_activity: "2026-04-13 - Completed quick task 159: WI-0911 NHL Player Blocks Projection Settlement Policy"
+last_updated: "2026-04-13T23:25:00Z"
+last_activity: "2026-04-13 - Completed discord-3layer-02-PLAN.md (Layer B: Discord reads canonical webhook fields)"
 ---
 
 # Project State
