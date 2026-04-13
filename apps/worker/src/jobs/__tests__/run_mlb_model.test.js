@@ -1417,7 +1417,15 @@ describe('WI-0720 MLB execution envelope', () => {
     });
 
     expect(result).toEqual({ evaluated: false, blocked: false });
-    expect(payload.execution_gate).toBeUndefined();
+    expect(payload.execution_gate).toMatchObject({
+      evaluated: false,
+      blocked_by: ['PROJECTION_ONLY_EXCLUSION'],
+      snapshot_age_ms: 60_000,
+      drop_reason: {
+        drop_reason_code: 'PROJECTION_ONLY_EXCLUSION',
+        drop_reason_layer: 'worker_gate',
+      },
+    });
   });
 });
 

@@ -111,4 +111,29 @@ assert(
   'Expected /api/games route to map only PASS (not WATCH or PLAY) verdict to PROJECTION — ODDS_BACKED WATCH/PLAY must pass through unchanged',
 );
 
+// WI-0902: Parity-required behavioral fields must be surfaced in the games path.
+// These fields enable deterministic comparison with the cards path.
+
+// reason_code: games path must emit pass_reason_code (the normalized reason signal)
+assert(
+  routeSource.includes('pass_reason_code:'),
+  'Expected /api/games route to emit pass_reason_code as the normalized reason code field for parity',
+);
+
+// visibility_class equivalent: games path must emit execution_status and prop_display_state
+// as the canonical visibility signals (projection_only vs executable)
+assert(
+  routeSource.includes('execution_status: normalizedExecutionStatus') &&
+    routeSource.includes('prop_display_state: normalizedPropDisplayState'),
+  'Expected /api/games route to emit execution_status and prop_display_state as parity-comparable visibility fields',
+);
+
+// has_projection_marker equivalent: games path must emit prop_decision.projection_source
+// and prop_display_state so callers can derive projection marker presence
+assert(
+  routeSource.includes('projection_source') &&
+    routeSource.includes('prop_display_state: normalizedPropDisplayState'),
+  'Expected /api/games route to surface projection_source and prop_display_state for has_projection_marker parity comparison',
+);
+
 console.log('✅ API games prop decision contract test passed');

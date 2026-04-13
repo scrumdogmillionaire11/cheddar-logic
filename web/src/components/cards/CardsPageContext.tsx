@@ -568,6 +568,14 @@ export function CardsPageProvider({
         card.play?.pass_reason_code ??
         null,
       _drop_reason_layer: card.play?.transform_meta?.drop_reason?.drop_reason_layer ?? null,
+      _reason_code_set: Array.from(
+        new Set([
+          ...(Array.isArray(card.play?.reason_codes) ? card.play.reason_codes : []),
+          ...(card.play?.transform_meta?.drop_reason?.drop_reason_code
+            ? [card.play.transform_meta.drop_reason.drop_reason_code]
+            : []),
+        ]),
+      ),
     }));
   }, [diagnosticsEnabled, enrichedCards, filteredCards, uiState.diagnosticFilter]);
 
@@ -1071,7 +1079,25 @@ export function CardsPageProvider({
       dropTraceStats.droppedMetaBySport,
     );
     console.info('[✅ DISPLAYED - META BY SPORT]', displayedMetaBySport);
+    console.info(
+      '[🧾 FILTERED OUT - REASON SETS]',
+      diagnosticCards.map((card) => ({
+        id: card.id,
+        sport: card.sport,
+        game: `${card.awayTeam} @ ${card.homeTeam}`,
+        drop_reason_code:
+          card.play?.transform_meta?.drop_reason?.drop_reason_code ??
+          card.play?.pass_reason_code ??
+          null,
+        drop_reason_layer:
+          card.play?.transform_meta?.drop_reason?.drop_reason_layer ?? null,
+        reason_codes: Array.isArray(card.play?.reason_codes)
+          ? card.play.reason_codes
+          : [],
+      })),
+    );
   }, [
+    diagnosticCards,
     diagnosticsEnabled,
     dropTraceStats,
     filteredCards,
