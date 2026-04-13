@@ -607,6 +607,20 @@ function parseJsonObject(value) {
   }
 }
 
+function hasTableColumn(db, tableName, columnName) {
+  if (!db || !tableName || !columnName) return false;
+  try {
+    const columns = db.prepare(`PRAGMA table_info(${tableName})`).all();
+    return columns.some(
+      (column) =>
+        String(column?.name || '').trim().toLowerCase() ===
+        String(columnName).trim().toLowerCase(),
+    );
+  } catch {
+    return false;
+  }
+}
+
 function isMlbPitcherKRow(row, payloadData = null) {
   const cardType = String(row?.card_type || '').trim().toLowerCase();
   if (cardType === 'mlb-pitcher-k') return true;
@@ -2282,6 +2296,11 @@ async function settlePendingCards({
       // --- Step 1: Settle pending card_results ---
 
       // Join pending card_results with final game_results and display ledger
+      const hasCardPayloadActualResult = hasTableColumn(
+        db,
+        'card_payloads',
+        'actual_result',
+      );
       const pendingStmt = db.prepare(`
         SELECT
           cr.id AS result_id,
@@ -2299,7 +2318,7 @@ async function settlePendingCards({
           cdl.displayed_at,
           cdl.api_endpoint,
           cp.payload_data,
-          cp.actual_result,
+          ${hasCardPayloadActualResult ? 'cp.actual_result' : 'NULL AS actual_result'},
           cp.first_seen_price,
           gr.final_score_home,
           gr.final_score_away,
