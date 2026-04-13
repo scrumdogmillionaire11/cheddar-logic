@@ -42,13 +42,13 @@ function getRequiredMarkets(sport) {
  * @param {string} sport - Sport code
  * @returns {{marketOk: boolean, missing: array, details: object}}
  */
-function validateMarketContract(game, sport) {
+function extractLegacyGameIdDate(gameId) {
+  const match = String(gameId || '').match(/^[a-z]+-(\d{4})-(\d{2})-(\d{2})-[a-z0-9-]+$/i);
+  if (!match) return null;
+  return `${match[1]}-${match[2]}-${match[3]}`;
+}
 
-  function extractLegacyGameIdDate(gameId) {
-    const match = String(gameId || '').match(/^[a-z]+-(\d{4})-(\d{2})-(\d{2})-[a-z0-9-]+$/i);
-    if (!match) return null;
-    return `${match[1]}-${match[2]}-${match[3]}`;
-  }
+function validateMarketContract(game, sport) {
   if (!game || !game.market) {
     return {
       marketOk: false,
