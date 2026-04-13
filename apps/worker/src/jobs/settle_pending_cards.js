@@ -608,6 +608,12 @@ function isProjectionOnlyF5Row(row, payloadData = null) {
   return F5_MARKET_TOKENS.some((token) => payloadMarket.includes(token));
 }
 
+// nhl-player-blk is projection-audit-only: grading is not supported for this market.
+// Any pending card_results rows for this type auto-close with an explicit reason.
+function isProjectionAuditOnlyBlkRow(row) {
+  return String(row?.card_type || '').trim().toLowerCase() === 'nhl-player-blk';
+}
+
 function resolveNonActionableFinalReason(payloadData, row) {
   // F5 market cards are projection-only and must remain pending for settle_mlb_f5.
   if (isProjectionOnlyF5Row(row, payloadData)) {
@@ -665,6 +671,32 @@ function buildNonActionableAutoCloseMetadata(existingMetadata, reason, settledAt
     details: reason.details || {},
   };
   return JSON.stringify(metadata);
+}
+
+// Writes an explicit PROJECTION_AUDIT_ONLY_BLK auto-close entry for a nhl-player-blk row.
+// Result is NO_GRADE, outcome is PROJECTION_AUDIT_ONLY — this market is never grading-eligible.
+function autoCloseBlkProjectionAuditRow(db, row, settledAt) {
+  const blkCloseReason = {
+    code: 'PROJECTION_AUDIT_ONLY_BLK',
+    message: 'nhl-player-blk is projection-audit-only — grading not supported for this market',
+    details: { market: 'player_blocked_shots' },
+  };
+  const updatedMetadata = (() => {
+    const metadata = parseJsonObject(row.metadata) || {};
+    metadata.settlement_error = {
+      code: blkCloseReason.code,
+      message: blkCloseReason.message,
+      at: settledAt,
+      classification: 'PROJECTION_AUDIT_ONLY_AUTO_CLOSE',
+      details: blkCloseReason.details,
+    };
+    return JSON.stringify(metadata);
+  })();
+  db.prepare(
+    `UPDATE card_results
+     SET status = 'error', result = 'NO_GRADE', outcome = 'PROJECTION_AUDIT_ONLY', settled_at = ?, metadata = ?
+     WHERE id = ? AND status = 'pending'`,
+  ).run(settledAt, updatedMetadata, row.result_id);
 }
 
 function autoCloseNonActionableFinalPendingRows(db, settledAt) {
@@ -2127,6 +2159,18 @@ async function settlePendingCards({
         const firstPeriodScores = readFirstPeriodScores(gameResultMetadata);
         const isNhlShotsCard = isNhlShotsOnGoalCard(pendingCard, payloadData);
 
+        if (isProjectionAuditOnlyBlkRow(pendingCard)) {
+          // Auto-close with explicit market-specific reason — grading not supported for nhl-player-blk
+          if (!dryRun) {
+            autoCloseBlkProjectionAuditRow(db, pendingCard, settledAt);
+          }
+          console.log(
+            `[SettleCards] Auto-closed nhl-player-blk card ${pendingCard.card_id} (${pendingCard.result_id}) as PROJECTION_AUDIT_ONLY_BLK`,
+          );
+          cardsSettled++;
+          continue;
+        }
+
         if (isProjectionOnlyF5Row(pendingCard, payloadData)) {
           cardsSkipped++;
           console.log(
@@ -2586,6 +2630,7 @@ module.exports = {
     resolveDecisionBasisForSettlement,
     resolveSettlementMarketBucket,
     isProjectionOnlyF5Row,
+    isProjectionAuditOnlyBlkRow,
     shouldEnableDisplayBackfill,
   },
 };
