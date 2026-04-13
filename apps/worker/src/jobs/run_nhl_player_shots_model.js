@@ -30,6 +30,7 @@ const {
   calcFairLine1p,
   projectSogV2,
   projectBlkV1,
+  weightedRateBlendBLK,
 } = require('../models/nhl-player-shots');
 const { fetchMoneyPuckSnapshot } = require('../moneypuck');
 const { applyNhlDecisionBasisMeta } = require('../utils/nhl-shots-patch');
@@ -3562,7 +3563,9 @@ async function runNHLPlayerShotsModel() {
                       ? 'OVER'
                       : 'UNDER'
                     : 'OVER';
-                // BLK: playoff tightening — games in NHL playoff window (Apr 19 – Jun 30) get 1.06 boost.
+                // BLK: playoff tightening — games in NHL playoff window (Apr 19 – Jun 30).
+                // Established blockers (non-LOW stability, L5-heavy EV blend >= 5.0/60) get 1.07.
+                // Standard playoff baseline: 1.06. Regular season: 1.00.
                 const blkGameDate = new Date(game.game_time_utc);
                 const blkGameMonth = blkGameDate.getUTCMonth() + 1; // 1-12
                 const blkGameDay = blkGameDate.getUTCDate();
@@ -3570,7 +3573,18 @@ async function runNHLPlayerShotsModel() {
                   (blkGameMonth === 4 && blkGameDay >= 19) ||
                   blkGameMonth === 5 ||
                   blkGameMonth === 6;
-                const blkPlayoffFactor = blkInPlayoffs ? 1.06 : 1.0;
+                const blkEvBlendedRate = weightedRateBlendBLK(
+                  blkRateRow?.ev_blocks_season_per60 ?? null,
+                  blkRateRow?.ev_blocks_l10_per60 ?? null,
+                  blkRateRow?.ev_blocks_l5_per60 ?? null,
+                );
+                const blkIsEstablished =
+                  blkInPlayoffs &&
+                  roleStability !== 'LOW' &&
+                  blkEvBlendedRate >= 5.0;
+                const blkBlockerProfile = blkIsEstablished ? 'ESTABLISHED' : 'STANDARD';
+                const blkPlayoffBonus = blkIsEstablished ? 0.01 : 0;
+                const blkPlayoffFactor = blkInPlayoffs ? (1.06 + blkPlayoffBonus) : 1.0;
                 const blkUnderdogContext = computeBlkUnderdogScriptContext({
                   db,
                   resolvedGameId,
@@ -3606,6 +3620,9 @@ async function runNHLPlayerShotsModel() {
                   defensive_zone_factor: roundMetric(blkDefensiveZoneFactorFinal, 4),
                   underdog_script_factor: roundMetric(blkUnderdogScriptFactorFinal, 4),
                   playoff_tightening_factor: roundMetric(blkPlayoffFactor, 4),
+                  playoff_blocker_bonus: blkPlayoffBonus,
+                  blocker_profile: blkBlockerProfile,
+                  blk_rate_ev_blended: roundMetric(blkEvBlendedRate, 4),
                 };
                 const blkContextTag =
                   blkUnderdogScriptFactorFinal > 1.0 &&

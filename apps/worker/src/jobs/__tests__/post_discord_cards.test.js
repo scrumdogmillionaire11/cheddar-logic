@@ -663,8 +663,8 @@ describe('WI-0934: NHL totals bucket policy — PLAY / SLIGHT EDGE / PASS', () =
     expect(snapshot.messages).toHaveLength(0);
   });
 
-  // ── NYR/FLA: OVER 6.5 at +0.6, weak accelerant → SLIGHT EDGE (not PASS) ──
-  test('NYR/FLA +0.6 over 6.5 with weak accelerant stays SLIGHT EDGE (OVER-6.5 rule only blocks PLAY)', () => {
+  // ── NYR/FLA: OVER 6.5 at +0.6, weak accelerant → PASS under canonical fragility ──
+  test('NYR/FLA +0.6 over 6.5 with weak accelerant downgrades to PASS', () => {
     const card = makeNhlTotalCard({
       id: 'nyr-fla',
       matchup: 'New York Rangers @ Florida Panthers',
@@ -672,14 +672,14 @@ describe('WI-0934: NHL totals bucket policy — PLAY / SLIGHT EDGE / PASS', () =
         action: 'LEAN', kind: 'PLAY', market_type: 'TOTAL',
         selection: { side: 'OVER' }, price: -108, line: 6.5, edge: 0.6,
         model_projection: 6.9, projection_only: false,
-        accelerant_score: 0.10, // weak — would block PLAY promotion but card is only SLIGHT_EDGE base
+        accelerant_score: 0.10, // weak — canonical policy downgrades SLIGHT_EDGE to PASS on OVER 6.5
       },
     });
     const snapshot = buildDiscordSnapshot({ cards: [card], now: new Date('2026-04-13T20:00:00Z') });
-    // base=SLIGHT_EDGE (0.6 < 1.0), OVER-6.5 rule only downgrades PLAY → stays SLIGHT_EDGE
+    // base=SLIGHT_EDGE (0.6 < 1.0), OVER-6.5 weak accelerant → PASS
     expect(snapshot.sectionCounts.official).toBe(0);
-    expect(snapshot.sectionCounts.lean).toBe(1);
-    expect(snapshot.messages[0]).not.toContain('🟢 PLAY');
+    expect(snapshot.sectionCounts.lean).toBe(0);
+    expect(snapshot.messages).toHaveLength(0);
   });
 
   // ── Slate regression: all 5 games correct ────────────────────────────────
@@ -711,13 +711,13 @@ describe('WI-0934: NHL totals bucket policy — PLAY / SLIGHT EDGE / PASS', () =
     ];
 
     const snapshot = buildDiscordSnapshot({ cards, now });
-    // Each card creates its own game message
-    expect(snapshot.totalGames).toBe(6);
+    // One card (NYR/FLA) is now PASS under canonical OVER-6.5 fragility.
+    expect(snapshot.totalGames).toBe(5);
     // 4 PLAY cards: CAR/PHI, MIN/STL, LAK/SEA, COL/EDM
     expect(snapshot.sectionCounts.official).toBe(4);
-    // 2 SLIGHT EDGE cards: NYR/FLA, WPG/VGK
-    expect(snapshot.sectionCounts.lean).toBe(2);
-    expect(snapshot.sectionCounts.passBlocked).toBe(0);
+    // 1 SLIGHT EDGE card: WPG/VGK
+    expect(snapshot.sectionCounts.lean).toBe(1);
+    expect(snapshot.sectionCounts.passBlocked).toBe(1);
 
     // All six game messages include a separator line
     expect(snapshot.messages.every((m) => m.includes('─'))).toBe(true);

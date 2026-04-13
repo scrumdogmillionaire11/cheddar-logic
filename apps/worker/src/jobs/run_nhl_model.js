@@ -96,6 +96,7 @@ const { computeRestDays } = require('../utils/rest-days');
 const { sendDiscordMessages } = require('./post_discord_cards');
 const { applyCalibration } = require('../utils/calibration');
 const { assertFeatureTimeliness } = require('../models/feature-time-guard');
+const { classifyNhlTotalsStatus } = require('../models/nhl-totals-status');
 
 const ENABLE_WELCOME_HOME = process.env.ENABLE_WELCOME_HOME === 'true';
 const USE_ORCHESTRATED_MARKET =
@@ -943,6 +944,9 @@ function deriveNhlUncertaintyHoldReasonCodes({
 }
 
 function applyNhlUncertaintyHold(card, reasonCodes = []) {
+  if (String(card?.cardType || '').toLowerCase() === 'nhl-totals-call') {
+    return false;
+  }
   if (!card?.payloadData || !Array.isArray(reasonCodes) || reasonCodes.length === 0) {
     return false;
   }
@@ -986,6 +990,94 @@ function applyNhlUncertaintyHold(card, reasonCodes = []) {
   }
 
   return true;
+}
+
+function mapCanonicalNhlTotalsToInternalStatus(status) {
+  if (status === 'PLAY') {
+    return {
+      action: 'FIRE',
+      status: 'FIRE',
+      classification: 'BASE',
+      officialStatus: 'PLAY',
+      passReasonCode: null,
+    };
+  }
+  if (status === 'SLIGHT EDGE') {
+    return {
+      action: 'HOLD',
+      status: 'WATCH',
+      classification: 'LEAN',
+      officialStatus: 'LEAN',
+      passReasonCode: null,
+    };
+  }
+  return {
+    action: 'PASS',
+    status: 'PASS',
+    classification: 'PASS',
+    officialStatus: 'PASS',
+    passReasonCode: 'PASS_NHL_TOTALS_POLICY',
+  };
+}
+
+function applyCanonicalNhlTotalsStatus(card, context = {}) {
+  if (String(card?.cardType || '').toLowerCase() !== 'nhl-totals-call') {
+    return null;
+  }
+
+  const payload = card?.payloadData || {};
+  const selectionSide = String(payload?.selection?.side || '').toUpperCase();
+  const modelTotal = Number(payload?.projection?.total ?? payload?.projection?.projected_total);
+  const marketTotal = Number(payload?.line);
+  const reasonCodes = Array.isArray(payload.reason_codes) ? payload.reason_codes : [];
+  const blockedReasonCode = String(payload.blocked_reason_code || '').toUpperCase();
+  const hasIntegrityBlock =
+    blockedReasonCode.includes('EDGE_VERIFICATION_REQUIRED') ||
+    blockedReasonCode.includes('BLOCK_STALE_DATA') ||
+    reasonCodes.some((code) => {
+      const token = String(code || '').toUpperCase();
+      return token.includes('MIXED_BOOK') || token.includes('STALE');
+    });
+  const integrityOk = !hasIntegrityBlock;
+
+  const homeStarter = String(context.homeGoalieState?.starter_state || '').toUpperCase();
+  const awayStarter = String(context.awayGoalieState?.starter_state || '').toUpperCase();
+  const goaliesConfirmedHome = homeStarter === 'CONFIRMED';
+  const goaliesConfirmedAway = awayStarter === 'CONFIRMED';
+  const majorInjuryUncertainty =
+    Array.isArray(context.uncertaintyHoldReasonCodes) &&
+    context.uncertaintyHoldReasonCodes.includes('BLOCK_INJURY_RISK');
+
+  const result = classifyNhlTotalsStatus({
+    side: selectionSide,
+    modelTotal,
+    marketTotal,
+    integrityOk,
+    goaliesConfirmedHome,
+    goaliesConfirmedAway,
+    majorInjuryUncertainty,
+    accelerantScore: payload.accelerant_score ?? null,
+    hasRequiredInputs:
+      (selectionSide === 'OVER' || selectionSide === 'UNDER') &&
+      Number.isFinite(modelTotal) &&
+      Number.isFinite(marketTotal),
+  });
+
+  const mapped = mapCanonicalNhlTotalsToInternalStatus(result.status);
+  payload.action = mapped.action;
+  payload.status = mapped.status;
+  payload.classification = mapped.classification;
+  payload.nhl_totals_status = result;
+  if (result.status === 'PASS') {
+    payload.pass_reason_code = mapped.passReasonCode;
+  }
+  if (payload.decision_v2 && typeof payload.decision_v2 === 'object') {
+    payload.decision_v2.official_status = mapped.officialStatus;
+    payload.decision_v2.primary_reason_code =
+      result.reasonCodes[0] || payload.decision_v2.primary_reason_code || null;
+  }
+
+  return result;
 }
 
 function applyNhlGoalieExecutionStatusGuard(card, paceResult) {
@@ -1520,6 +1612,7 @@ function generateNHLMarketCallCards(
     expressionChoice = null,
     homeGoalieState = null,
     awayGoalieState = null,
+    uncertaintyHoldReasonCodes = [],
     useOrchestratedMarket = USE_ORCHESTRATED_MARKET,
     withoutOddsMode = false,
     gameEval = null,
@@ -1570,15 +1663,25 @@ function generateNHLMarketCallCards(
       (withoutOddsMode && _totalProjection != null)
     )
   ) {
-    const rawStatus = totalDecision.status || 'PASS';
-    // In Without Odds Mode a below-threshold status becomes LEAN, not PASS
-    const status = withoutOddsMode && rawStatus === 'PASS' ? 'LEAN' : rawStatus;
-    const confidence = CONFIDENCE_MAP[rawStatus] ?? (withoutOddsMode ? 0.52 : 0.5);
-    const tier = determineTier(confidence);
     const { side, line: marketLine } = totalDecision.best_candidate;
     // In Without Odds Mode there is no market line — fall back to projection.
     const projectedTotal = totalDecision.projection?.projected_total ?? null;
     const line = withoutOddsMode ? (projectedTotal ?? marketLine) : marketLine;
+    const canonicalTotalsStatus = classifyNhlTotalsStatus({
+      side,
+      modelTotal: projectedTotal,
+      marketTotal: line,
+      integrityOk: totalDecision?.projection_comparison?.playable_edge !== false,
+      goaliesConfirmedHome: String(homeGoalieState?.starter_state || '').toUpperCase() === 'CONFIRMED',
+      goaliesConfirmedAway: String(awayGoalieState?.starter_state || '').toUpperCase() === 'CONFIRMED',
+      majorInjuryUncertainty: uncertaintyHoldReasonCodes.includes('BLOCK_INJURY_RISK'),
+      accelerantScore: totalDecision?.projection?.accelerant_score ?? null,
+      hasRequiredInputs: (side === 'OVER' || side === 'UNDER') && Number.isFinite(projectedTotal) && Number.isFinite(line),
+    });
+    const canonicalMapped = mapCanonicalNhlTotalsToInternalStatus(canonicalTotalsStatus.status);
+    const status = canonicalMapped.officialStatus;
+    const confidence = CONFIDENCE_MAP[canonicalMapped.status] ?? (withoutOddsMode ? 0.52 : 0.5);
+    const tier = determineTier(confidence);
     const totalPrice = withoutOddsMode
       ? null
       : side === 'OVER'
@@ -1631,6 +1734,7 @@ function generateNHLMarketCallCards(
         line,
         price: totalPrice,
         reason_codes: reasonCodes,
+        nhl_totals_status: canonicalTotalsStatus,
         tags: withoutOddsMode ? ['no_odds_mode'] : [],
         consistency: marketPayload.consistency,
         expression_choice: marketPayload.expression_choice,
@@ -1691,7 +1795,7 @@ function generateNHLMarketCallCards(
           weights: topDrivers,
           impact_note: 'Cross-market totals decision.',
         },
-        ev_passed: !withoutOddsMode && totalDecision.status === 'FIRE',
+        ev_passed: !withoutOddsMode && canonicalTotalsStatus.status === 'PLAY',
         odds_context: {
           h2h_home: oddsSnapshot?.h2h_home,
           h2h_away: oddsSnapshot?.h2h_away,
@@ -1739,6 +1843,19 @@ function generateNHLMarketCallCards(
         generated_at: now,
         primary_display_market: primaryDisplayMarket?.market_type ?? null,
         is_primary_display: primaryDisplayMarket?.candidate_id === `${gameId}::total`,
+      };
+
+      payloadData.action = canonicalMapped.action;
+      payloadData.status = canonicalMapped.status;
+      payloadData.classification = canonicalMapped.classification;
+      payloadData.pass_reason_code =
+        canonicalMapped.passReasonCode || payloadData.pass_reason_code || null;
+      payloadData.decision_v2 = {
+        ...(payloadData.decision_v2 && typeof payloadData.decision_v2 === 'object'
+          ? payloadData.decision_v2
+          : {}),
+        official_status: canonicalMapped.officialStatus,
+        primary_reason_code: canonicalTotalsStatus.reasonCodes[0] || null,
       };
 
       cards.push(
@@ -2640,6 +2757,7 @@ async function runNHLModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
               expressionChoice,
               homeGoalieState: canonicalGoalieState?.home,
               awayGoalieState: canonicalGoalieState?.away,
+              uncertaintyHoldReasonCodes,
               withoutOddsMode,
               gameEval,
               primaryDisplayMarket,
@@ -2695,6 +2813,11 @@ async function runNHLModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
             applyNhlUncertaintyHold(card, uncertaintyHoldReasonCodes);
             const executionGateOutcome = applyExecutionGateToNhlCard(card, {
               oddsSnapshot,
+            });
+            applyCanonicalNhlTotalsStatus(card, {
+              homeGoalieState: canonicalGoalieState?.home,
+              awayGoalieState: canonicalGoalieState?.away,
+              uncertaintyHoldReasonCodes,
             });
             if (executionGateOutcome.blocked) {
               console.log(

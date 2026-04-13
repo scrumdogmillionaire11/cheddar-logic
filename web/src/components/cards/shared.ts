@@ -401,8 +401,12 @@ export function mapPropStatusToExpression(
 
 export function mapPropTypeToGroup(
   propType: string,
-): 'SOG' | 'PTS' | 'AST' | 'REB' | 'PRA' | 'K' | 'OTHER' {
+): 'SOG' | 'PTS' | 'AST' | 'REB' | 'PRA' | 'K' | 'BLOCKS' | 'OTHER' {
   const normalized = String(propType || '').toUpperCase();
+
+  // Check BLOCK before SHOT — "Blocked Shots" contains "SHOT" and would
+  // otherwise silently route to SOG.
+  if (normalized.includes('BLOCK')) return 'BLOCKS';
 
   if (
     normalized.includes('SHOT') ||

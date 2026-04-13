@@ -163,6 +163,7 @@ export default function FilterPanel({
   const marketOptions: Market[] = ['ML', 'SPREAD', 'TOTAL'];
   const propMarketOptions: Array<{ value: PropStatGroup; label: string }> = [
     { value: 'SOG', label: 'Shots' },
+    { value: 'BLOCKS', label: 'Blocks' },
     { value: 'K', label: 'Strikeouts' },
     { value: 'PTS', label: 'Points' },
     { value: 'AST', label: 'Assists' },
