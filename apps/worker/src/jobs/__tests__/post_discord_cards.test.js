@@ -1,6 +1,7 @@
 const {
   isNonPassCard,
   isDisplayableWebhookCard,
+  isDisplayableWebhookCardLegacy,
   buildDiscordSnapshot,
   chunkDiscordContent,
   sendDiscordMessages,

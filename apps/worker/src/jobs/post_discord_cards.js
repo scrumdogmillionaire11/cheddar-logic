@@ -261,6 +261,12 @@ function isNonPassCard(card) {
 }
 
 function isDisplayableWebhookCard(card) {
+  const eligible = card?.payloadData?.webhook_eligible;
+  if (typeof eligible === 'boolean') return eligible;
+  return isDisplayableWebhookCardLegacy(card);
+}
+
+function isDisplayableWebhookCardLegacy(card) {
   const payload = card?.payloadData || {};
 
   // Player prop cards (e.g. nhl-player-shots) don't carry kind='PLAY' at the
@@ -413,79 +419,13 @@ function summarizePick(card) {
   return `${card.matchup} — ${card.cardType}${side}${lineText}${priceText}${projectionOnly}`;
 }
 
-function classifyNhlTotalsBucketStatus(card) {
-  const payload = card?.payloadData || {};
-
-  const embeddedCanonical =
-    payload?.nhl_totals_status && typeof payload.nhl_totals_status === 'object'
-      ? payload.nhl_totals_status
-      : null;
-
-  const side = normalizeToken(payload?.selection?.side || payload?.selection);
-  const marketTotal = Number(payload?.line ?? payload?.total ?? payload?.market_total);
-  const directModelTotal = Number(
-    payload?.model_projection ??
-      payload?.projected_total ??
-      payload?.projection?.total ??
-      payload?.projection?.projected_total,
-  );
-  const edge = Number(payload?.edge ?? payload?.edge_pct ?? payload?.edge_over_pp);
-  const signedEdge = Number.isFinite(edge)
-    ? side === 'UNDER'
-      ? -Math.abs(edge)
-      : side === 'OVER'
-        ? Math.abs(edge)
-        : edge
-    : NaN;
-  const inferredModelTotal =
-    Number.isFinite(marketTotal) && Number.isFinite(signedEdge)
-      ? marketTotal + signedEdge
-      : NaN;
-  const modelTotal = Number.isFinite(inferredModelTotal)
-    ? inferredModelTotal
-    : directModelTotal;
-
-  const reasonCodes = Array.isArray(payload?.reason_codes)
-    ? payload.reason_codes.map(normalizeToken)
-    : [];
-  const blockedReasonCode = normalizeToken(payload?.blocked_reason_code || '');
-  const integrityOk =
-    !blockedReasonCode.includes('EDGE_VERIFICATION_REQUIRED') &&
-    !blockedReasonCode.includes('BLOCK_STALE_DATA') &&
-    !reasonCodes.some((code) => code.includes('MIXED_BOOK') || code.includes('STALE'));
-  const goaliesConfirmed = !reasonCodes.some(
-    (code) => code.includes('GOALIE_UNCONFIRMED') || code.includes('GOALIE_CONFLICTING'),
-  );
-  const majorInjuryUncertainty = reasonCodes.some((code) => code.includes('INJURY_UNCERTAIN'));
-
-  const canonical =
-    embeddedCanonical ||
-    classifyNhlTotalsStatus({
-      side,
-      modelTotal,
-      marketTotal,
-      integrityOk,
-      goaliesConfirmedHome: goaliesConfirmed,
-      goaliesConfirmedAway: goaliesConfirmed,
-      majorInjuryUncertainty,
-      accelerantScore: payload?.accelerant_score ?? null,
-      hasRequiredInputs:
-        (side === 'OVER' || side === 'UNDER') &&
-        Number.isFinite(modelTotal) &&
-        Number.isFinite(marketTotal),
-    });
-
-  if (canonical?.status === 'PLAY') return 'official';
-  if (canonical?.status === 'SLIGHT EDGE') return 'lean';
-  return 'pass_blocked';
+function classifyDecisionBucket(card) {
+  const bucket = card?.payloadData?.webhook_bucket;
+  if (bucket === 'official' || bucket === 'lean' || bucket === 'pass_blocked') return bucket;
+  return classifyDecisionBucketLegacy(card);
 }
 
-function classifyDecisionBucket(card) {
-  // NHL totals use a deterministic edge/integrity/fragility bucket policy
-  if (normalizeToken(card?.sport) === 'NHL' && normalizeMarketTag(card) === 'TOTAL') {
-    return classifyNhlTotalsBucketStatus(card);
-  }
-
+function classifyDecisionBucketLegacy(card) {
   const payload = card?.payloadData || {};
   const canonical1PDecision = payload?.nhl_1p_decision;
   if (normalizeMarketTag(card) === '1P' && canonical1PDecision && typeof canonical1PDecision === 'object') {
@@ -605,6 +545,8 @@ function normalizeMarketTag(card) {
 
 function selectionSummary(card) {
   const payload = card?.payloadData || {};
+  const webhookSide = card?.payloadData?.webhook_display_side;
+  if (webhookSide) return webhookSide;
   const canonical1PSide = normalizeSelectionSide(payload?.nhl_1p_decision?.projection?.side);
   if (canonical1PSide) return canonical1PSide;
   const selection = payload?.selection;
@@ -949,6 +891,8 @@ function fetchCardsForSnapshot({ maxRows = DEFAULT_MAX_ROWS, now = new Date() } 
 // For prop cards the edge is often only in the prediction string (e.g. "Edge -0.1")
 // so we also try to parse it from there.
 function passesLeanThreshold(card) {
+  const eligible = card?.payloadData?.webhook_lean_eligible;
+  if (typeof eligible === 'boolean') return eligible;
   const payload = card?.payloadData || {};
   const raw = payload?.edge ?? payload?.edge_pct ?? payload?.edge_over_pp;
 
