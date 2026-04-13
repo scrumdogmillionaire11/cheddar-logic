@@ -2226,29 +2226,6 @@ async function runMLBModel({
             console.log(`[MLBModel] NO_F5_ML_LINE: ${gameId} — ml_f5 price absent, F5 ML card blocked`);
           }
 
-          // Short-circuit: no qualified markets for this game
-          if (
-            gameEval.status === 'SKIP_MARKET_NO_EDGE' ||
-            gameEval.status === 'SKIP_GAME_INPUT_FAILURE'
-          ) {
-            console.log(
-              `  ⏭️  ${gameId}: ${gameEval.status} — ${gameEval.rejected
-                .flatMap((r) => r.reason_codes)
-                .filter((v, i, a) => a.indexOf(v) === i)
-                .join(', ') || 'no reason codes'}`,
-            );
-            gamePipelineStates[gameId] = buildMlbPipelineState({
-              oddsSnapshot: gameOddsSnapshot,
-              marketAvailability,
-              projectionReady: gameEval.status !== 'SKIP_GAME_INPUT_FAILURE',
-              driversReady: false,
-              pricingReady: false,
-              cardReady: false,
-              executionEnvelopes: [],
-            });
-            continue;
-          }
-
           // Recover qualified driver cards from evaluateMlbGameMarkets results
           const qualifiedDrivers = [
             ...gameEval.official_plays,
@@ -2304,6 +2281,36 @@ async function runMLBModel({
                   projection_floor_line: projectionFloorF5,
                 }
               : null;
+          const hasProjectionOnlyFallbackCandidates =
+            pitcherKDriverCards.some(
+              (driver) => driver.execution_envelope?._publish_state?.emit_allowed === true,
+            ) ||
+            projectionFloorDriver !== null;
+
+          // Short-circuit only when nothing can be emitted. Projection-only
+          // pitcher props and projection-floor F5 cards should still write.
+          if (
+            (gameEval.status === 'SKIP_MARKET_NO_EDGE' ||
+              gameEval.status === 'SKIP_GAME_INPUT_FAILURE') &&
+            !hasProjectionOnlyFallbackCandidates
+          ) {
+            console.log(
+              `  ⏭️  ${gameId}: ${gameEval.status} — ${gameEval.rejected
+                .flatMap((r) => r.reason_codes)
+                .filter((v, i, a) => a.indexOf(v) === i)
+                .join(', ') || 'no reason codes'}`,
+            );
+            gamePipelineStates[gameId] = buildMlbPipelineState({
+              oddsSnapshot: gameOddsSnapshot,
+              marketAvailability,
+              projectionReady: gameEval.status !== 'SKIP_GAME_INPUT_FAILURE',
+              driversReady: false,
+              pricingReady: false,
+              cardReady: false,
+              executionEnvelopes: [],
+            });
+            continue;
+          }
           const gamePricingStatus = gameOddsSnapshot?.captured_at ? 'FRESH' : 'MISSING';
           const gamePricingReason = gameOddsSnapshot?.captured_at
             ? null

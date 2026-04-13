@@ -2139,6 +2139,9 @@ export async function GET(request: NextRequest) {
           rowSport === 'MLB' && normalizedMarketTypeRaw === 'FIRST_PERIOD'
             ? ('FIRST_5_INNINGS' as const)
             : normalizedMarketTypeRaw;
+        const inferredMarketTypeFromCardType = inferMarketFromCardType(
+          cardRow.card_type,
+        );
         const normalizedDisplaySelectionSide = normalizedSelectionSide;
         const normalizedPrediction =
           normalizedDisplaySelectionSide === 'HOME' ||
@@ -2913,6 +2916,8 @@ export async function GET(request: NextRequest) {
           market_type:
             normalizedMarketType !== undefined
               ? normalizedMarketType
+              : inferredMarketTypeFromCardType !== undefined
+                ? inferredMarketTypeFromCardType
               : typeof (payload.recommendation as Record<string, unknown>)
                     ?.type === 'string'
                 ? (() => {
@@ -3176,6 +3181,7 @@ export async function GET(request: NextRequest) {
           parsedMarket === 'PROP' &&
           (cardRow.card_type === 'nhl-player-shots' ||
             cardRow.card_type === 'nhl-player-shots-1p' ||
+            cardRow.card_type === 'nhl-player-blk' ||
             play.market_type === 'PROP');
         if (isNhlPropPlay) {
           const playerId = firstString(play.player_id);

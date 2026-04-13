@@ -36,6 +36,13 @@ assert(
   'Expected canonical MLB contract to include mlb-full-game / mlb-full-game-ml and full-game playable market pathways',
 );
 
+assert(
+  routeSource.includes('const inferredMarketTypeFromCardType = inferMarketFromCardType(') &&
+    routeSource.includes(': inferredMarketTypeFromCardType !== undefined') &&
+    routeSource.includes('? inferredMarketTypeFromCardType'),
+  'Expected /api/games route to use inferMarketFromCardType as canonical fallback before side-based market inference',
+);
+
 const requiredFields = [
   'verdict',
   'lean_side',

@@ -708,6 +708,49 @@ describe('runMLBModel dual-run orchestration', () => {
     );
   });
 
+  test('SKIP_MARKET_NO_EDGE still emits projection-only player and game props when fallback drivers exist', async () => {
+    const explicitSkipSelection = {
+      game_id: 'mlb-game-001',
+      sport: 'MLB',
+      status: 'SKIP_MARKET_NO_EDGE',
+      market_results: [],
+      official_plays: [],
+      leans: [],
+      rejected: [],
+    };
+    const projectionOnlyProp = {
+      ...pitcherKHome,
+      basis: 'PROJECTION_ONLY',
+    };
+
+    const { runMLBModel, mocks } = loadRunMlbModel({
+      mode: 'ODDS_BACKED',
+      gameDriverCards: [],
+      pitcherKDriverCards: [projectionOnlyProp],
+      selection: explicitSkipSelection,
+      snapshotOverrides: {
+        total_f5: null,
+        total_price_over_f5: null,
+        total_price_under_f5: null,
+        raw_data: {
+          mlb: {
+            home_pitcher: buildF5Snapshot().raw_data.mlb.home_pitcher,
+            away_pitcher: buildF5Snapshot().raw_data.mlb.away_pitcher,
+          },
+        },
+      },
+    });
+    jest.spyOn(console, 'log').mockImplementation(() => {});
+    jest.spyOn(console, 'error').mockImplementation(() => {});
+    jest.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const result = await runMLBModel();
+
+    expect(result.success).toBe(true);
+    const emittedTypes = mocks.insertCardPayload.mock.calls.map(([card]) => card.cardType);
+    expect(emittedTypes).toEqual(expect.arrayContaining(['mlb-pitcher-k', 'mlb-f5']));
+  });
+
   test('no-edge mlb-f5 PASS cards are still written with playability metadata', async () => {
     const noEdgeDriver = {
       ...gameDriver,
