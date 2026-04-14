@@ -241,6 +241,31 @@ describe('post_discord_cards helpers', () => {
     expect(snapshot.messages[0]).not.toContain('⚪ PASS');
   });
 
+  test('buildDiscordSnapshot honors canonical webhook_bucket tokens even when uppercased', () => {
+    const cards = [
+      makeCard({
+        id: 'canonical-upper-bucket',
+        cardType: 'nhl-model-output',
+        payloadData: {
+          action: 'FIRE',
+          kind: 'PLAY',
+          market_type: 'TOTAL',
+          selection: { side: 'OVER' },
+          price: -110,
+          line: 6.0,
+          edge: 1.0,
+          webhook_bucket: 'OFFICIAL',
+          webhook_eligible: true,
+        },
+      }),
+    ];
+
+    const snapshot = buildDiscordSnapshot({ cards, now: new Date('2026-03-20T14:00:00.000Z') });
+    expect(snapshot.sectionCounts.official).toBe(1);
+    expect(snapshot.sectionCounts.lean).toBe(0);
+    expect(snapshot.messages[0]).toContain('🟢 PLAY');
+  });
+
   test('buildDiscordSnapshot keeps 1P OVER/UNDER direction when selection object is empty', () => {
     const cards = [
       makeCard({

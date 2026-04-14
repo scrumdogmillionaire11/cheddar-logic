@@ -421,7 +421,7 @@ function summarizePick(card) {
 }
 
 function classifyDecisionBucket(card) {
-  const bucket = card?.payloadData?.webhook_bucket;
+  const bucket = normalizeWebhookBucketToken(card?.payloadData?.webhook_bucket);
   if (bucket === 'official' || bucket === 'lean' || bucket === 'pass_blocked') return bucket;
   return classifyDecisionBucketLegacy(card);
 }
