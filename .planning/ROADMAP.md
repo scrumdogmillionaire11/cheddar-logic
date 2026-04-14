@@ -164,3 +164,22 @@ Plans:
 Plans:
 - [ ] discord-3layer-01-PLAN.md — Layer A: Publisher stamps webhook_bucket/eligible/display_side/lean_eligible/reason_code on every card (Wave 1)
 - [ ] discord-3layer-02-PLAN.md — Layer B: Discord reads canonical webhook fields; deletes classifyNhlTotalsBucketStatus (Wave 2)
+
+---
+
+### Phase: ui-decision-contract — Public Decision Surface Contract
+
+**Goal**: Enforce a single, coherent public card decision surface so surfaced status, verification/certainty gating, and optional model context cannot contradict each other. PASS cards must not publicly expose BEST/raw-edge/fair signals in the primary body unless explicitly internal-labeled.
+
+**Requirements:** [UI-CONTRACT-01, UI-CONTRACT-02, UI-CONTRACT-03, UI-CONTRACT-04]
+
+- `UI-CONTRACT-01`: Introduce canonical `final_market_decision` payload contract in web transform with surfaced_status, surfaced_reason, verification_state, certainty_state, and model-context visibility flags
+- `UI-CONTRACT-02`: Encode precedence rule in one helper: integrity/verification gate -> certainty gate -> market-stability gate -> surfaced status -> optional model context
+- `UI-CONTRACT-03`: `GameCardItem` primary body must render from surfaced decision only; PASS suppresses public BEST/edge/fair fields
+- `UI-CONTRACT-04`: Add regression guards preventing PASS + BEST + large edge + verification-required contradictions in public output
+
+**Plans:** 2 plans in 2 waves
+
+Plans:
+- [ ] ui-decision-contract-01-PLAN.md — Canonical `final_market_decision` transform contract + precedence helper + contract tests (Wave 1)
+- [ ] ui-decision-contract-02-PLAN.md — GameCardItem surfaced-status-first rendering + legacy contradictory path removal + regression tests (Wave 2)

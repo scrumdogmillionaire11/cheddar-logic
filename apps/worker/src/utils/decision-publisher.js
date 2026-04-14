@@ -4,11 +4,19 @@ const {
   CANONICAL_EDGE_CONTRACT,
   computeCandidateHash,
   computeInputsHash,
+  deriveWebhookBucket,
+  deriveLegacyDecisionEnvelope,
+  deriveWebhookReasonCode,
+  deriveUiDisplayStatus,
   getSideFamily,
+  isWebhookLeanEligible,
   isWave1EligiblePayload,
+  mapActionToClassification,
+  normalizeOfficialStatus,
   isRecommendationPayload,
   normalizeMarketType,
   normalizePeriod,
+  resolveWebhookDisplaySide,
   shouldFlip,
 } = require('@cheddar-logic/models');
 
@@ -68,38 +76,6 @@ function syncSelectionCompatibilityFields(payload, updates = {}) {
   if (nextTeam !== undefined) {
     payload.selection.team = nextTeam;
   }
-}
-
-function mapOfficialStatusToLegacyDecision(officialStatus) {
-  if (officialStatus === 'PLAY') {
-    return {
-      classification: 'BASE',
-      action: 'FIRE',
-      status: 'FIRE',
-      passReasonCode: null,
-    };
-  }
-  if (officialStatus === 'LEAN') {
-    return {
-      classification: 'LEAN',
-      action: 'HOLD',
-      status: 'WATCH',
-      passReasonCode: null,
-    };
-  }
-  return {
-    classification: 'PASS',
-    action: 'PASS',
-    status: 'PASS',
-    passReasonCode: null,
-  };
-}
-
-function mapActionToClassification(action) {
-  const normalizedAction = String(action || '').toUpperCase();
-  if (normalizedAction === 'FIRE') return 'BASE';
-  if (normalizedAction === 'HOLD') return 'LEAN';
-  return 'PASS';
 }
 
 function applyDecisionVeto(cardOrDecision, vetoReason) {
@@ -383,7 +359,7 @@ function finalizeDecisionFields(payload, context = {}) {
     const decisionV2 = buildDecisionV2(payload, context);
     if (decisionV2) {
       payload.decision_v2 = decisionV2;
-      const legacyDecision = mapOfficialStatusToLegacyDecision(
+      const legacyDecision = deriveLegacyDecisionEnvelope(
         decisionV2.official_status,
       );
       payload.classification = legacyDecision.classification;
@@ -419,23 +395,6 @@ function finalizeDecisionFields(payload, context = {}) {
   return payload;
 }
 
-function deriveUiDisplayStatus(payload) {
-  const executionStatus = String(payload?.execution_status || '').toUpperCase();
-  const officialStatus = String(
-    payload?.decision_v2?.official_status || '',
-  ).toUpperCase();
-  if (executionStatus === 'PROJECTION_ONLY') return 'WATCH';
-  if (executionStatus === 'BLOCKED') return 'PASS';
-  if (executionStatus === 'EXECUTABLE' && officialStatus === 'PLAY') {
-    return 'PLAY';
-  }
-  if (executionStatus === 'EXECUTABLE' && officialStatus === 'LEAN') {
-    return 'WATCH';
-  }
-  if (officialStatus === 'LEAN') return 'WATCH';
-  return 'PASS';
-}
-
 /**
  * Backward-compatible wrapper:
  * - Pre-publish payloads: finalize semantic decision fields, then decorate UI
@@ -459,7 +418,10 @@ function applyUiActionFields(payload, context = {}) {
     finalizeDecisionFields(payload, context);
   }
 
-  payload.ui_display_status = deriveUiDisplayStatus(payload);
+  payload.ui_display_status = deriveUiDisplayStatus(
+    payload?.execution_status,
+    payload?.decision_v2?.official_status,
+  );
 
   if (strictDecisionSnapshot) {
     assertNoDecisionMutation(payload, strictDecisionSnapshot, {
@@ -638,60 +600,11 @@ function computeWebhookFields(payload) {
   const market = normalizeMarketType(payload.market_type, payload.recommended_bet_type);
   const isNhlTotal = sport === 'NHL' && period === 'full_game' && market === 'total';
   const is1P = period === '1p';
+  const bucket = deriveWebhookBucket(payload, { isNhlTotal, is1P });
+  const displaySide = resolveWebhookDisplaySide(payload);
+  const leanEligible = isWebhookLeanEligible(payload, WEBHOOK_MIN_LEAN_EDGE);
 
-  let bucket;
-  if (isNhlTotal && payload.nhl_totals_status && typeof payload.nhl_totals_status === 'object') {
-    const s = String(payload.nhl_totals_status.status || '').toUpperCase();
-    bucket = s === 'PLAY' ? 'official' : s === 'SLIGHT EDGE' ? 'lean' : 'pass_blocked';
-  } else if (is1P && payload.nhl_1p_decision && typeof payload.nhl_1p_decision === 'object') {
-    const s = String(payload.nhl_1p_decision.surfaced_status || '').toUpperCase();
-    bucket = s === 'PLAY' ? 'official' : (s.includes('SLIGHT') || s === 'LEAN') ? 'lean' : 'pass_blocked';
-  } else {
-    const dv2Status = String(payload.decision_v2?.official_status || '').toUpperCase();
-    const rootAction = String(payload.action || payload.play?.action || payload.status || '').toUpperCase();
-    const rootClass = String(payload.classification || payload.play?.classification || '').toUpperCase();
-    if (dv2Status === 'PLAY' || rootAction === 'FIRE' || rootClass === 'BASE') {
-      bucket = 'official';
-    } else if (
-      dv2Status === 'LEAN' ||
-      ['HOLD', 'WATCH', 'LEAN', 'EVIDENCE'].includes(rootAction) ||
-      rootClass === 'LEAN'
-    ) {
-      bucket = 'lean';
-    } else {
-      bucket = 'pass_blocked';
-    }
-  }
-
-  // PASS at root always overrides any bucket derivation path
-  const forcePassAction = String(payload.action || payload.play?.action || '').toUpperCase();
-  const forcePassClass = String(payload.classification || payload.play?.classification || '').toUpperCase();
-  if (forcePassAction === 'PASS' || forcePassClass === 'PASS') {
-    bucket = 'pass_blocked';
-  }
-
-  const rawSide =
-    payload.nhl_1p_decision?.projection?.side ||
-    payload.selection?.side ||
-    payload.prediction ||
-    null;
-  const displaySide = rawSide ? String(rawSide).toUpperCase() : null;
-
-  const edgeRaw = payload.edge ?? payload.edge_pct ?? payload.edge_over_pp;
-  const leanEligible =
-    edgeRaw !== null && edgeRaw !== undefined && Number.isFinite(Number(edgeRaw))
-      ? Math.abs(Number(edgeRaw)) >= WEBHOOK_MIN_LEAN_EDGE
-      : true;
-
-  const reasonCode =
-    bucket === 'pass_blocked'
-      ? payload.pass_reason_code ||
-        (Array.isArray(payload.nhl_totals_status?.reasonCodes)
-          ? payload.nhl_totals_status.reasonCodes[0]
-          : null) ||
-        payload.nhl_1p_decision?.surfaced_reason_code ||
-        'PASS_NO_EDGE'
-      : null;
+  const reasonCode = deriveWebhookReasonCode(payload, bucket);
 
   payload.webhook_bucket = bucket;
   payload.webhook_eligible = bucket !== 'pass_blocked';

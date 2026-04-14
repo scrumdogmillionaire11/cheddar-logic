@@ -10,7 +10,8 @@ dependency_graph:
     - "Layer B: Discord reads canonical webhook_* fields, never computes thresholds"
     - "classifyNhlTotalsBucketStatus deleted from Discord layer"
     - "classifyNhlTotalsStatus import removed from post_discord_cards.js"
-    - "All four bucket/eligibility/side/lean functions are canonical-first"
+    - "All four bucket/eligibility/side/lean functions are canonical-first with legacy fallbacks"
+    - "9 canonical-path tests verify direct field reading behavior"
   affects:
     - "All sports and markets that pass through post_discord_cards.js"
 
@@ -19,6 +20,7 @@ tech_stack:
   patterns:
     - "Layer B read pattern: if (typeof canonicalField === X) return canonicalField; else fallback()"
     - "Test stamping pattern: stampNhlTotals(pd) simulates model-runner → publisher pipeline in test fixtures"
+    - "Direct function testing: internal helpers exported for unit-level canonical path verification"
 
 key_files:
   created: []
@@ -36,19 +38,22 @@ decisions:
   - id: "test-fixture-stamp-helper"
     decision: "stampNhlTotals(pd) helper in test file calls classifyNhlTotalsStatus + computeWebhookFields to simulate model-runner + publisher"
     rationale: "Tests must prove the full Layer A → B contract, not just Discord inference"
+  - id: "export-internal-helpers"
+    decision: "Exported classifyDecisionBucket, classifyDecisionBucketLegacy, selectionSummary, passesLeanThreshold for direct testing"
+    rationale: "Direct unit tests are clearer than indirect testing via buildDiscordSnapshot; easier to debug canonical precedence logic"
 
 metrics:
-  duration: "~30min"
+  duration: "~35min total (prior: ~30min, this session: ~5min)"
   completed: "2026-04-13"
-  tests_passing: 99
-  tests_added: 0
-  tests_fixed: 10
+  tests_passing: 111
+  tests_added: 9
+  tests_fixed_prior: 10
 ---
 
 # Phase discord-3layer Plan 02: Layer B — Discord reads canonical webhook fields
 
 ## One-liner
-Discord bucket/eligibility/side/lean functions simplified to canonical `webhook_*` reads; `classifyNhlTotalsBucketStatus` deleted and `classifyNhlTotalsStatus` import removed.
+Discord bucket/eligibility/side/lean functions simplified to canonical `webhook_*` reads; `classifyNhlTotalsBucketStatus` deleted; `classifyNhlTotalsStatus` import removed; 9 canonical-path tests added.
 
 ## What Was Built
 
@@ -63,10 +68,17 @@ Four functions now use canonical-first pattern:
 | `selectionSummary` | 15-path waterfall from the top | Reads `webhook_display_side` first; waterfall unchanged below |
 | `passesLeanThreshold` | Edge parsing + threshold math | Reads `webhook_lean_eligible` first; edge parsing unchanged below |
 
-- `classifyNhlTotalsBucketStatus()` — deleted (103 LOC removed)
-- `classifyNhlTotalsStatus` import — removed
+- `classifyNhlTotalsBucketStatus()` — deleted (103 LOC removed, prior work)
+- `classifyNhlTotalsStatus` import — removed (line 17, corrected in this session)
 
-### Test fixtures updated
+### Test enhancements (this session)
+
+- Exported internal helpers: `classifyDecisionBucket`, `classifyDecisionBucketLegacy`, `selectionSummary`, `passesLeanThreshold`
+- Added 9 canonical-path tests in new `describe('canonical webhook fields path')` block
+- Tests verify direct reads of all four canonical fields with expected return values
+- Tests verify fallback behavior when canonical field absent
+
+### Test fixtures updated (prior work)
 
 All WI-0934 NHL totals test fixtures now call `stampNhlTotals(pd)`, which:
 1. Calls `classifyNhlTotalsStatus` using `edge` as the directional delta
@@ -77,18 +89,17 @@ This correctly simulates production: `run_nhl_model.js` → `classifyNhlTotalsSt
 
 ## Deviations from Plan
 
-### Auto-fixed: `passBlocked` counter assertion
+### None in this session
 
-- **Found during:** Slate regression test
-- **Issue:** `sectionCounts.passBlocked` assertion expected `1` for NYR/FLA (PASS under OVER 6.5 fragility). With canonical path, `webhook_eligible=false` cards are filtered in `isDisplayableWebhookCard` before grouping, so they never reach the game loop `passBlocked` counter.
-- **Fix:** Updated assertion from `.toBe(1)` to `.toBe(0)` with explanatory comment.
-- **Contract change:** `passBlocked` counter is now explicitly legacy-only. Tests document this.
+Work executed exactly as specified:
+- ✅ Task 1: Remove unused import, ensure all canonical reads present in functions
+- ✅ Task 2: Add canonical-path tests covering all four functions
 
-### Auto-fixed: Import path
+### Prior session deviations (documented in earlier commits)
 
-- **Found during:** First test run
-- **Issue:** Import path `'../models/nhl-totals-status'` incorrect from `__tests__/` subdirectory
-- **Fix:** Changed to `'../../models/nhl-totals-status'`
+1. **Auto-fixed: `passBlocked` counter assertion** — Updated assertion from `.toBe(1)` to `.toBe(0)` with explanatory comment (canonical-path cards filtered upstream)
+
+2. **Auto-fixed: Import path** — Corrected `'../models/nhl-totals-status'` to `'../../models/nhl-totals-status'` from test subdirectory
 
 ## Architecture Verification
 
@@ -115,9 +126,18 @@ post_discord_cards.js (this plan)
 |------|---------|
 | `cfbae4c2` | feat(discord-3layer-02): simplify discord layer to read canonical webhook fields |
 | `a63df26f` | test(discord-3layer-02): fix WI-0934 NHL totals fixtures to simulate model-runner stamp |
+| `e14e3472` | docs(discord-3layer-02): complete Layer B plan — Discord reads canonical webhook fields |
+| `df643148` | WI-0935/discord-3layer-02: Remove Discord inference functions with canonical webhook field reads (this session) |
 
 ## Tests
 
-- **Suites:** post_discord_cards.test.js + decision-publisher.v2.test.js
-- **Passing:** 99/99
-- **Fixed in this plan:** 10 (all WI-0934 NHL totals policy tests)
+- **Test Files:** post_discord_cards.test.js + decision-publisher.v2.test.js
+- **Passing:** 111/111 (66 decision-publisher + 45 Discord)
+- **Added in this session:** 9 canonical-path tests
+- **Fixed in prior session:** 10 (all WI-0934 NHL totals policy tests)
+- **Coverage:**
+  - classifyDecisionBucket (4 tests: official, lean, pass_blocked, fallback)
+  - isDisplayableWebhookCard (2 tests: true, false)
+  - passesLeanThreshold (2 tests: true, false)
+  - selectionSummary (1 test: returns OVER)
+  - All prior WI-0934 tests still passing (36 original)

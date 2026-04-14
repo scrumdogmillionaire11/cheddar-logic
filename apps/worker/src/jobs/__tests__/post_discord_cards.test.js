@@ -2,6 +2,10 @@ const {
   isNonPassCard,
   isDisplayableWebhookCard,
   isDisplayableWebhookCardLegacy,
+  classifyDecisionBucket,
+  classifyDecisionBucketLegacy,
+  selectionSummary,
+  passesLeanThreshold,
   buildDiscordSnapshot,
   chunkDiscordContent,
   sendDiscordMessages,
@@ -239,6 +243,31 @@ describe('post_discord_cards helpers', () => {
     // Lean rendered → PASS block suppressed
     expect(snapshot.messages[0]).toContain('🟡 Slight Edge');
     expect(snapshot.messages[0]).not.toContain('⚪ PASS');
+  });
+
+  test('buildDiscordSnapshot honors canonical webhook_bucket tokens even when uppercased', () => {
+    const cards = [
+      makeCard({
+        id: 'canonical-upper-bucket',
+        cardType: 'nhl-model-output',
+        payloadData: {
+          action: 'FIRE',
+          kind: 'PLAY',
+          market_type: 'TOTAL',
+          selection: { side: 'OVER' },
+          price: -110,
+          line: 6.0,
+          edge: 1.0,
+          webhook_bucket: 'OFFICIAL',
+          webhook_eligible: true,
+        },
+      }),
+    ];
+
+    const snapshot = buildDiscordSnapshot({ cards, now: new Date('2026-03-20T14:00:00.000Z') });
+    expect(snapshot.sectionCounts.official).toBe(1);
+    expect(snapshot.sectionCounts.lean).toBe(0);
+    expect(snapshot.messages[0]).toContain('🟢 PLAY');
   });
 
   test('buildDiscordSnapshot keeps 1P OVER/UNDER direction when selection object is empty', () => {
@@ -1017,6 +1046,59 @@ describe('WI-0934: NHL totals bucket policy — PLAY / SLIGHT EDGE / PASS', () =
 
     // All six game messages include a separator line
     expect(snapshot.messages.every((m) => m.includes('─'))).toBe(true);
+  });
+});
+
+describe('canonical webhook fields path', () => {
+  // classifyDecisionBucket reads webhook_bucket
+  it('classifyDecisionBucket returns official when webhook_bucket=official', () => {
+    const card = makeCard({ payloadData: { webhook_bucket: 'official' } });
+    expect(classifyDecisionBucket(card)).toBe('official');
+  });
+
+  it('classifyDecisionBucket returns lean when webhook_bucket=lean', () => {
+    const card = makeCard({ payloadData: { webhook_bucket: 'lean' } });
+    expect(classifyDecisionBucket(card)).toBe('lean');
+  });
+
+  it('classifyDecisionBucket returns pass_blocked when webhook_bucket=pass_blocked', () => {
+    const card = makeCard({ payloadData: { webhook_bucket: 'pass_blocked' } });
+    expect(classifyDecisionBucket(card)).toBe('pass_blocked');
+  });
+
+  it('classifyDecisionBucket falls back to legacy when no webhook_bucket', () => {
+    const card = makeCard({
+      payloadData: { action: 'FIRE', classification: 'BASE' },
+    });
+    expect(classifyDecisionBucket(card)).toBe('official');
+  });
+
+  // isDisplayableWebhookCard reads webhook_eligible
+  it('isDisplayableWebhookCard returns true when webhook_eligible=true', () => {
+    const card = makeCard({ payloadData: { webhook_eligible: true } });
+    expect(isDisplayableWebhookCard(card)).toBe(true);
+  });
+
+  it('isDisplayableWebhookCard returns false when webhook_eligible=false', () => {
+    const card = makeCard({ payloadData: { webhook_eligible: false } });
+    expect(isDisplayableWebhookCard(card)).toBe(false);
+  });
+
+  // passesLeanThreshold reads webhook_lean_eligible
+  it('passesLeanThreshold returns false when webhook_lean_eligible=false', () => {
+    const card = makeCard({ payloadData: { webhook_lean_eligible: false } });
+    expect(passesLeanThreshold(card)).toBe(false);
+  });
+
+  it('passesLeanThreshold returns true when webhook_lean_eligible=true', () => {
+    const card = makeCard({ payloadData: { webhook_lean_eligible: true } });
+    expect(passesLeanThreshold(card)).toBe(true);
+  });
+
+  // selectionSummary reads webhook_display_side
+  it('selectionSummary returns webhook_display_side when present', () => {
+    const card = makeCard({ payloadData: { webhook_display_side: 'OVER' } });
+    expect(selectionSummary(card)).toBe('OVER');
   });
 });
 

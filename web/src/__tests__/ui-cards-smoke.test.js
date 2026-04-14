@@ -86,8 +86,8 @@ async function validateCardsSourceContract(assert) {
     'cards page should distinguish true no-edge-at-price from missing edge',
   );
   assert.ok(
-    source.includes('Pricing Status:'),
-    'cards page should use user-facing pricing status label',
+    source.includes('surfacedReason') || source.includes('finalMarketDecision'),
+    'cards page should use canonical surfaced decision context in primary rendering',
   );
   assert.ok(
     !source.includes('Sharp Verdict:'),

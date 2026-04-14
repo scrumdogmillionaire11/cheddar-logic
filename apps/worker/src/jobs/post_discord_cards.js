@@ -13,7 +13,7 @@ const {
   getDatabase,
   createJob,
 } = require('@cheddar-logic/data');
-const { classifyNhlTotalsStatus } = require('../models/nhl-totals-status');
+const { isWebhookLeanEligible } = require('@cheddar-logic/models');
 
 const JOB_NAME = 'post_discord_cards';
 const DEFAULT_CHAR_LIMIT = 1800;
@@ -420,7 +420,7 @@ function summarizePick(card) {
 }
 
 function classifyDecisionBucket(card) {
-  const bucket = card?.payloadData?.webhook_bucket;
+  const bucket = normalizeWebhookBucketToken(card?.payloadData?.webhook_bucket);
   if (bucket === 'official' || bucket === 'lean' || bucket === 'pass_blocked') return bucket;
   return classifyDecisionBucketLegacy(card);
 }
@@ -898,7 +898,9 @@ function passesLeanThreshold(card) {
 
   if (raw !== null && raw !== undefined) {
     const val = Number(raw);
-    if (Number.isFinite(val)) return Math.abs(val) >= MIN_LEAN_EDGE_ABS;
+    if (Number.isFinite(val)) {
+      return isWebhookLeanEligible(payload, MIN_LEAN_EDGE_ABS);
+    }
   }
 
   // Fallback: parse edge from prediction string ("... Edge +0.9" or "Edge: -0.4")
@@ -1149,9 +1151,14 @@ module.exports = {
   postDiscordCards,
   isNonPassCard,
   isDisplayableWebhookCard,
+  isDisplayableWebhookCardLegacy,
   isPlayerPropCard,
   isFirstPeriodCard,
   buildDiscordSnapshot,
   chunkDiscordContent,
   sendDiscordMessages,
+  classifyDecisionBucket,
+  classifyDecisionBucketLegacy,
+  selectionSummary,
+  passesLeanThreshold,
 };

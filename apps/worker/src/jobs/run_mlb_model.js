@@ -473,7 +473,9 @@ function buildMlbMarketAvailability(oddsSnapshot, { expectF5Ml = false, withoutO
 
   const f5MlOk =
     f5MoneylineContext.home !== null && f5MoneylineContext.away !== null;
-  const fullGameTotalOk = fullGameTotalContext.line !== null;
+  const fullGameTotalOk = withoutOddsMode
+    ? false
+    : fullGameTotalContext.line !== null;
 
   if (!effectiveF5LineOk) {
     blockingReasonCodes.push(MLB_PIPELINE_REASON_CODES.F5_TOTAL_UNAVAILABLE);
@@ -487,6 +489,10 @@ function buildMlbMarketAvailability(oddsSnapshot, { expectF5Ml = false, withoutO
   // Only block entire game if NO market lines available at all
   if (!effectiveF5LineOk && !fullGameTotalOk) {
     blockingReasonCodes.push(WATCHDOG_REASONS.MARKET_UNAVAILABLE);
+  }
+
+  if (withoutOddsMode) {
+    blockingReasonCodes.push('PROJECTION_ONLY_NO_TOTALS');
   }
 
   return {
@@ -2326,7 +2332,10 @@ async function runMLBModel({
             return gameDriverCards.find(
               (c) => `${gameId}::${c.market ?? 'unknown'}` === evalResult.candidate_id,
             );
-          }).filter(Boolean);
+          }).filter(Boolean).filter((driver) => {
+            if (!withoutOddsMode) return true;
+            return driver.market !== 'f5_total' && driver.market !== 'full_game_total';
+          });
 
           // WI-0877: Try full-model synthetic-line edge driver first.
           // Falls back to SYNTHETIC_FALLBACK PASS when offense profiles are absent or
