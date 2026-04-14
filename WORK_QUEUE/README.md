@@ -14,62 +14,60 @@ See [docs/decisions/ADR-0005-python-research-reference-only.md](../docs/decision
 
 ## Active Work Items
 
-**Updated**: 2026-04-03
+**Updated**: 2026-04-13
 
-Items below are listed in execution priority order. FPL workstream items are lowest priority and grouped at the end.
-
----
-
-### Priority 1 — Projection feedback loop (close accuracy tracking gap)
-
-- `WI-0757`: Actual result ingestion for projection cards (nhl-pace-1p and mlb-f5)
-- `WI-0758`: Actual result ingestion for player prop cards (nhl-player-shots, nhl-player-blk, mlb-pitcher-k)
-- `WI-0751`: NHL Player Blocks — wire actual value resolution for projection accuracy tracking
+Items below are listed in execution priority order for the work items that remain in `WORK_QUEUE/`.
 
 ---
 
-### Priority 2 — Active sport pipeline extensions
+### Priority 0 — Finish in-progress/claimed items
 
-- `WI-0663`: MLB pitcher-K strong under monitoring
-- `WI-0664`: DB migration — add public betting splits columns to odds_snapshots
-- `WI-0665`: ActionNetwork adapter — fetch and normalize public betting splits
-- `WI-0666`: Worker job — pull_public_splits + scheduler registration + DB write layer *(depends on WI-0664, WI-0665)*
-- `WI-0667`: Pipeline gate — computePublicSplitsGate + wire PASS_SHARP_MONEY_OPPOSITE *(depends on WI-0666)*
-
-Execution order for splits chain: `WI-0664` → `WI-0665` → `WI-0666` → `WI-0667`.
+- `WI-0897`: Replace fragile source-contract tests with behavioral endpoint/transform tests *(claimed; finish by removing remaining source.includes assertions)*
+- `WI-0905`: Human-facing truthfulness audit for decision explanations *(claimed; complete cross-surface manual verification and closeout evidence)*
+- `WI-0708`: API contract expansion for posture-aware outputs *(claimed; complete acceptance and test evidence)*
 
 ---
 
-### Priority 3 — CI / platform hardening
+### Priority 1 — Dependency chain: data truth and freshness governance
 
-- `WI-0741`: Harden audit artifact upload checks
+- `WI-0899`: Database truth ownership audit for stateful tables
+- `WI-0900`: Timestamp integrity and freshness semantics audit *(depends on `WI-0899`)*
+- `WI-0907`: Recovery-path policy audit and failure-mode classification *(depends on `WI-0900`, `WI-0901`)*
+- `WI-0906`: Calibration-to-staking continuity audit *(depends on `WI-0825`, `WI-0831`, `WI-0819`)*
+
+Execution order for this chain: `WI-0899` → `WI-0900` → `WI-0907`, with `WI-0906` immediately after.
 
 ---
 
-### Priority 4 — FPL workstream (lowest priority, FPL last)
+### Priority 2 — Dead-surface cleanup and platform clarity
 
-Quick fixes first:
-
-- `WI-0705`: Fix Build Lab "New session" — frontend/backend contract mismatch
-- `WI-0706`: Persist manager profile across sessions — onboarding state lost on reload
-
-Data / API foundations:
-
-- `WI-0710`: Wire real OCR and live player registry into screenshot parser
-- `WI-0708`: API Contract Expansion for Posture-Aware Outputs
-- `WI-0709`: Derive nextGW ceiling/floor pts from FPL data to activate posture-aware transfer scoring
-
-Draft Lab features:
-
-- `WI-0668`: Natural Language Intent Translation Layer
-- `WI-0669`: Final Recommendation Terminal Output
-- `WI-0670`: Comparison as Core Behavior and Inline Tradeoff Surface
-- `WI-0672`: Draft Lab State Visibility and Reset to Baseline
-- `WI-0671`: Post-Draft Season Loop Foundation
-
-Housekeeping:
-
+- `WI-0894`: Remove or restore dead Soccer/NCAAM model runner surfaces
+- `WI-0904`: Dead-feature liquidation classification and action plan
+- `WI-0766`: Define NFL data-layer spec before enabling/removing NFL model stub
 - `WI-0662`: Standalone Sage frontend internal-only conversion and runbook cleanup
+
+---
+
+### Priority 3 — FPL usability and posture activation (execute in this order)
+
+- `WI-0705`: Fix Build Lab "New session" frontend/backend contract mismatch
+- `WI-0706`: Persist manager profile across sessions
+- `WI-0710`: Wire real OCR and live player registry into screenshot parser
+- `WI-0709`: Derive nextGW ceiling/floor pts to activate posture-aware transfer scoring
+
+---
+
+### Priority 4 — Planned medium-priority analysis item
+
+- `WI-0834`: Risk model recalibration notebook rerun with empirically calibrated edge *(gated by >=60 days and >=300 resolved rows)*
+
+---
+
+### Deferred / blocked (do not schedule until auth rollout resumes)
+
+- `WI-0794`: Activate admin API auth wall and middleware guard *(deferred)*
+- `WI-0795`: AUTH_SECRET placeholder assertion + production secret rotation *(deferred)*
+- `WI-0796`: JWT revocation persistence *(deferred; depends on `WI-0794`)*
 
 ---
 
