@@ -67,7 +67,8 @@ assert(
 assert(
   source.includes('contextLine1') &&
     source.includes('contextLine2') &&
-    source.includes('{contextLine2 && (') &&
+    (source.includes('{contextLine2 && (') ||
+      source.includes('{contextLine2 && !isMlbF5Projection && (')) &&
     source.includes('{hasDetails && ('),
   'cards page should keep compact context lines and suppress optional sections when empty',
 );
@@ -76,7 +77,8 @@ assert(
 assert(
   source.includes('visibleBetText') &&
     source.includes('contextLine1') &&
-    source.includes('{contextLine2 && (') &&
+    (source.includes('{contextLine2 && (') ||
+      source.includes('{contextLine2 && !isMlbF5Projection && (')) &&
     !source.includes('Odds unavailable'),
   'cards page should keep visible primary blocks compact and avoid extra empty visible sections',
 );

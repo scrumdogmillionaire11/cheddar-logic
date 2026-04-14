@@ -242,6 +242,20 @@ export default function GameCardItem({
       !shouldPreserveNoBetLean)
       ? 'PASS'
       : inferredDecision;
+  const finalMarketDecision = displayPlay.final_market_decision;
+  const contractDecision =
+    finalMarketDecision?.surfaced_status === 'PLAY'
+      ? 'PLAY'
+      : finalMarketDecision?.surfaced_status === 'SLIGHT EDGE'
+        ? 'LEAN'
+        : finalMarketDecision?.surfaced_status === 'PASS'
+          ? 'PASS'
+          : null;
+  const displayDecisionResolved = contractDecision ?? displayDecision;
+  const surfacedReason = finalMarketDecision?.surfaced_reason ?? null;
+  const modelContextAllowed =
+    finalMarketDecision?.show_model_context ?? true;
+
   const canonicalGates = (displayPlay.gates ?? []).map((gate) => gate.code);
   const activeRiskCodes = Array.from(
     new Set(
@@ -577,8 +591,6 @@ export default function GameCardItem({
     (hasEdgeMathContext ||
       typeof livePrice === 'number' ||
       typeof mlBreakEvenPrice === 'number');
-  const sharpVerdict = decisionV2?.sharp_price_status;
-  const modelLean = decisionV2?.direction;
   const isCoinflip = Boolean(
     canRenderModelSummary && displayPlay.decision_data?.coinflip,
   );
@@ -628,10 +640,10 @@ export default function GameCardItem({
         : 'UNDER'
       : null;
   const isActionableDecision =
-    displayDecision === 'PLAY' || displayDecision === 'LEAN';
+    displayDecisionResolved === 'PLAY' || displayDecisionResolved === 'LEAN';
   const shouldDemoteForMissingOdds =
     isActionableDecision && !hasVisibleBetOdds && !isProjectionOnlyCard;
-  const visibleDecision = shouldDemoteForMissingOdds ? 'PASS' : displayDecision;
+  const visibleDecision = shouldDemoteForMissingOdds ? 'PASS' : displayDecisionResolved;
   const visibleVerdict = getDisplayVerdict(visibleDecision);
   const visibleStatusLabel = visibleVerdict ? visibleVerdict.label : visibleDecision;
   const visibleBetText = shouldDemoteForMissingOdds ? 'NO PLAY' : displayBetText;
@@ -656,20 +668,20 @@ export default function GameCardItem({
         )
       : null;
   const contextLine1 =
-    projectedSentence ||
-    (hasActionableEdge && primaryReasonCode !== 'EXACT_WAGER_MISMATCH'
-      ? `Edge: ${(effectiveEdgePct * 100).toFixed(1)}% | Tier: ${
-          decisionV2?.play_tier ??
-          displayPlay.decision_data?.edge_tier ??
-          displayPlay.valueStatus
-        }`
-      : isNoEdgeAtPrice
-        ? `No edge at current price | Tier: ${
-            decisionV2?.play_tier ??
-            displayPlay.decision_data?.edge_tier ??
-            displayPlay.valueStatus
-          }`
-        : 'No market-specific edge available');
+    visibleDecision === 'PASS'
+      ? surfacedReason || 'No edge at current price'
+      : !modelContextAllowed
+        ? surfacedReason || 'Waiting on verification'
+        : projectedSentence ||
+          (hasActionableEdge && primaryReasonCode !== 'EXACT_WAGER_MISMATCH'
+            ? `Edge: ${(effectiveEdgePct * 100).toFixed(1)}% | Tier: ${
+                decisionV2?.play_tier ??
+                displayPlay.decision_data?.edge_tier ??
+                displayPlay.valueStatus
+              }`
+            : isNoEdgeAtPrice
+              ? 'No edge at current price'
+              : 'No market-specific edge available');
   const baseDriverLine =
     primaryReasonCode && !INFORMATIONAL_CODES.has(primaryReasonCode)
       ? formatReasonCode(primaryReasonCode)
@@ -688,12 +700,20 @@ export default function GameCardItem({
       ? `Risk: ${formatReasonCode(activeRiskCodes[0])}`
       : null;
   const showMathDetails =
+    visibleDecision !== 'PASS' &&
+    modelContextAllowed &&
     canRenderModelSummary &&
     (shouldRenderSpreadContext ||
       hasTotalContext ||
       hasOnePeriodTotalContext ||
       hasMlContext ||
       hasEdgeMathContext);
+  const showInternalModelContext =
+    visibleDecision === 'LEAN' &&
+    !modelContextAllowed &&
+    Boolean(finalMarketDecision) &&
+    Boolean(decisionV2) &&
+    (hasEdgeMathContext || hasActionableEdge || Boolean(finalMarketDecision?.fair_price));
   const hasDriverDetails = decisionV2
     ? decisionV2.driver_reasons.length > 0
     : fallbackDecision.topContributors.length > 0;
@@ -702,7 +722,8 @@ export default function GameCardItem({
       (isBroken || isDegraded) &&
       (displayPlay.transform_meta?.missing_inputs?.length ?? 0) > 0) ||
     Boolean(decisionV2 && decisionV2.missing_data.missing_fields.length > 0);
-  const showPassDetail = visibleDecision === 'PASS' && Boolean(decisionV2);
+  const showPassDetail =
+    visibleDecision === 'PASS' && Boolean(surfacedReason || primaryReasonCode);
   const showAdvancedRisk =
     activeRiskCodes.length > 0 ||
     isCoinflipHighEdge ||
@@ -710,6 +731,7 @@ export default function GameCardItem({
     fallbackDecision.spreadCompare !== undefined;
   const hasDetails =
     showMathDetails ||
+    showInternalModelContext ||
     hasDriverDetails ||
     hasMissingInputDetails ||
     showPassDetail ||
@@ -1153,26 +1175,62 @@ export default function GameCardItem({
                 </div>
               )}
 
+              {showInternalModelContext && (
+                <div className="space-y-1 text-xs font-mono text-cloud/65">
+                  <p className="text-cloud/45 uppercase tracking-widest">
+                    Model context (internal)
+                  </p>
+                  {finalMarketDecision?.model_strength && (
+                    <p>
+                      Model strength:{' '}
+                      <span className="text-cloud/90 font-bold">
+                        {finalMarketDecision.model_strength}
+                      </span>
+                    </p>
+                  )}
+                  {typeof finalMarketDecision?.model_edge_pct === 'number' && (
+                    <p>
+                      Model edge:{' '}
+                      <span className="text-cloud/90 font-bold">
+                        {(finalMarketDecision.model_edge_pct * 100).toFixed(1)}%
+                      </span>
+                    </p>
+                  )}
+                  {finalMarketDecision?.fair_price && (
+                    <p>
+                      Internal fair:{' '}
+                      <span className="text-cloud/90 font-bold">
+                        {finalMarketDecision.fair_price}
+                      </span>
+                    </p>
+                  )}
+                </div>
+              )}
+
               {showPassDetail && (
                 <div className="text-xs text-cloud/70 space-y-1">
                   <p>
-                    Model direction:{' '}
-                    <span className="text-cloud/90 font-semibold">
-                      {modelLean ?? 'NONE'}
-                    </span>
-                  </p>
-                  <p>
-                    Pricing Status:{' '}
-                    <span className="text-cloud/90 font-semibold">
-                      {formatSharpPriceStatus(sharpVerdict)}
-                    </span>
-                  </p>
-                  <p>
                     Reason:{' '}
                     <span className="text-cloud/90 font-semibold">
-                      {formatReasonCode(primaryReasonCode)}
+                      {surfacedReason || formatReasonCode(primaryReasonCode)}
                     </span>
                   </p>
+                  {finalMarketDecision?.verification_state && (
+                    <p>
+                      Verification:{' '}
+                      <span className="text-cloud/90 font-semibold">
+                        {finalMarketDecision.verification_state}
+                      </span>
+                    </p>
+                  )}
+                  {finalMarketDecision?.certainty_state && (
+                    <p>
+                      Certainty:{' '}
+                      <span className="text-cloud/90 font-semibold">
+                        {finalMarketDecision.certainty_state}
+                      </span>
+                    </p>
+                  )}
                 </div>
               )}
 
