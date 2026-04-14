@@ -91,6 +91,7 @@ function findBestDatabase(dataDir) {
 function resolveDatabasePath({ env = process.env, cwd = process.cwd() } = {}) {
   const canonical = normalizePath(env.CHEDDAR_DB_PATH, cwd);
   const fromUrl = parseSqliteUrl(env.DATABASE_URL, cwd);
+  const isProduction = (env.NODE_ENV || '').toLowerCase() === 'production';
 
   const explicitCandidates = [
     canonical ? { source: 'CHEDDAR_DB_PATH', value: canonical } : null,
@@ -116,7 +117,7 @@ function resolveDatabasePath({ env = process.env, cwd = process.cwd() } = {}) {
   // Reaching this point in production means the env is misconfigured — fail loudly rather
   // than silently resolving to a guessed filename (e.g. "cheddar.db" when the production
   // file is named "cheddar-prod.db").
-  if ((env.NODE_ENV || '').toLowerCase() === 'production') {
+  if (isProduction) {
     const error = new Error(
       '[DB] Production requires CHEDDAR_DB_PATH to be set explicitly. ' +
       'Do not rely on CHEDDAR_DATA_DIR or DEFAULT fallback in production — ' +

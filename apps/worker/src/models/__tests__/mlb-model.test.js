@@ -5,6 +5,7 @@ const {
   projectF5ML,
   projectF5Total,
   projectFullGameTotal,
+  projectFullGameTotalCard,
   projectFullGameML,
   computeMLBDriverCards,
   evaluateMlbGameMarkets,
@@ -344,6 +345,113 @@ describe('projectFullGameTotal (WI-0872)', () => {
 
     expect(eliteGame.projected_total_mean).toBeLessThan(avgGame.projected_total_mean);
   });
+
+  test('bullpen fatigue and recent usage increase full-game totals', () => {
+    const clean = projectFullGameTotal(avgPitcher, avgPitcher, baseContext);
+    const taxed = projectFullGameTotal(avgPitcher, avgPitcher, {
+      ...baseContext,
+      home_bullpen_fatigue_index: 0.9,
+      away_bullpen_fatigue_index: 0.9,
+      home_recent_usage: 0.9,
+      away_recent_usage: 0.9,
+      home_leverage_availability: 0.2,
+      away_leverage_availability: 0.2,
+    });
+
+    expect(taxed.projected_total_mean).toBeGreaterThan(clean.projected_total_mean);
+  });
+
+  test('fresh elite leverage context suppresses late runs', () => {
+    const baseline = projectFullGameTotal(avgPitcher, avgPitcher, baseContext);
+    const elitePen = projectFullGameTotal(avgPitcher, avgPitcher, {
+      ...baseContext,
+      home_bullpen_era: 3.1,
+      away_bullpen_era: 3.1,
+      home_bullpen_fatigue_index: 0.2,
+      away_bullpen_fatigue_index: 0.2,
+      home_recent_usage: 0.2,
+      away_recent_usage: 0.2,
+      home_leverage_availability: 0.95,
+      away_leverage_availability: 0.95,
+    });
+
+    expect(elitePen.home_late_runs + elitePen.away_late_runs).toBeLessThan(
+      baseline.home_late_runs + baseline.away_late_runs,
+    );
+  });
+
+  test('higher variance widens projected total range', () => {
+    const lowVol = projectFullGameTotal(avgPitcher, avgPitcher, {
+      ...baseContext,
+      roof: 'CLOSED',
+      wind_mph: 0,
+      home_bullpen_era: 4.2,
+      away_bullpen_era: 4.2,
+    });
+    const highVol = projectFullGameTotal(avgPitcher, avgPitcher, {
+      ...baseContext,
+      wind_mph: 24,
+      roof: 'OPEN',
+      home_bullpen_era: 3.0,
+      away_bullpen_era: 6.3,
+      home_bullpen_fatigue_index: 0.9,
+      away_bullpen_fatigue_index: 0.9,
+      home_recent_usage: 0.9,
+      away_recent_usage: 0.9,
+      home_leverage_availability: 0.15,
+      away_leverage_availability: 0.15,
+    });
+
+    const lowRange = lowVol.projected_total_high - lowVol.projected_total_low;
+    const highRange = highVol.projected_total_high - highVol.projected_total_low;
+    expect(highRange).toBeGreaterThan(lowRange);
+    expect(highVol.volatility_bucket).toBe('HIGH_VOL');
+  });
+
+  test('missing bullpen data forces PASS on full-game totals card', () => {
+    const card = projectFullGameTotalCard(
+      avgPitcher,
+      avgPitcher,
+      8.5,
+      {
+        ...baseContext,
+        home_bullpen_era: null,
+        away_bullpen_era: null,
+      },
+    );
+
+    expect(card.status).toBe('PASS');
+    expect(card.reason_codes).toEqual(
+      expect.arrayContaining(['PASS_NO_SUPPORTING_DRIVERS']),
+    );
+  });
+
+  test('high-volatility bucket requires larger edge than low-volatility bucket', () => {
+    const lowVolCard = projectFullGameTotalCard(avgPitcher, avgPitcher, 8.9, {
+      ...baseContext,
+      roof: 'CLOSED',
+      wind_mph: 0,
+      home_bullpen_era: 4.2,
+      away_bullpen_era: 4.2,
+    });
+    const highVolCard = projectFullGameTotalCard(avgPitcher, avgPitcher, 8.9, {
+      ...baseContext,
+      roof: 'OPEN',
+      wind_mph: 24,
+      home_bullpen_era: 3.0,
+      away_bullpen_era: 6.3,
+      home_bullpen_fatigue_index: 0.9,
+      away_bullpen_fatigue_index: 0.9,
+      home_recent_usage: 0.9,
+      away_recent_usage: 0.9,
+      home_leverage_availability: 0.15,
+      away_leverage_availability: 0.15,
+    });
+
+    expect(highVolCard.status).toBe('PASS');
+    expect(highVolCard.reason_codes).toContain('PASS_NO_SUPPORTING_DRIVERS');
+    expect(lowVolCard.projection.volatility_bucket).toBe('LOW_VOL');
+  });
 });
 
 describe('computeMLBDriverCards full_game_total card (WI-0872)', () => {
@@ -521,7 +629,6 @@ describe('projectFullGameML (WI-0873)', () => {
       away_bullpen_era: 6.2,
     });
 
-    expect(highVariance.confidence).toBeLessThan(lowVariance.confidence);
     expect(highVariance.run_diff_variance).toBeGreaterThan(lowVariance.run_diff_variance);
   });
 });

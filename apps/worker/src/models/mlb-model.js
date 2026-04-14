@@ -600,8 +600,17 @@ function projectF5Total(homePitcher, awayPitcher, context = {}) {
 
 const MLB_FULL_GAME_DEFAULT_BULLPEN_ERA = 4.3;
 const MLB_FULL_GAME_POISSON_RANGE_SCALE = 0.38;
-const MLB_FULL_GAME_EDGE_THRESHOLD = 0.5;
 const MLB_FULL_GAME_HOME_FIELD_RUNS = 0.12;
+const MLB_FULL_GAME_EDGE_THRESHOLD_LOW_VOL = 0.4;
+const MLB_FULL_GAME_EDGE_THRESHOLD_MED_VOL = 0.6;
+const MLB_FULL_GAME_EDGE_THRESHOLD_HIGH_VOL = 0.85;
+const MLB_FULL_GAME_SANITY_BAND = 0.3;
+
+const MLB_TOTAL_VOL_BUCKETS = Object.freeze({
+  LOW: 'LOW_VOL',
+  MED: 'MED_VOL',
+  HIGH: 'HIGH_VOL',
+});
 
 function absOrZero(value) {
   return Number.isFinite(value) ? Math.abs(value) : 0;
@@ -635,6 +644,199 @@ function probabilityToFairMl(probability) {
   return Object.is(fair, -0) ? 0 : fair;
 }
 
+function resolveVarianceEdgeThreshold(volatilityBucket) {
+  if (volatilityBucket === MLB_TOTAL_VOL_BUCKETS.LOW) {
+    return MLB_FULL_GAME_EDGE_THRESHOLD_LOW_VOL;
+  }
+  if (volatilityBucket === MLB_TOTAL_VOL_BUCKETS.HIGH) {
+    return MLB_FULL_GAME_EDGE_THRESHOLD_HIGH_VOL;
+  }
+  return MLB_FULL_GAME_EDGE_THRESHOLD_MED_VOL;
+}
+
+function computeBullpenContext(opponentBullpenEra, context = {}) {
+  const bullpenEra = toFiniteNumberOrNull(opponentBullpenEra);
+  if (bullpenEra === null) {
+    return {
+      available: false,
+      missing_inputs: ['bullpen_era'],
+      bullpen_ra9_used: null,
+      bullpen_factor: null,
+      volatility_component: null,
+      fatigue_penalty: null,
+      leverage_penalty: null,
+      usage_penalty: null,
+    };
+  }
+
+  const fatigueIndex = clampValue(
+    toFiniteNumberOrNull(context?.fatigue_index) ??
+      toFiniteNumberOrNull(context?.bullpen_fatigue_index) ??
+      0.5,
+    0,
+    1,
+  );
+  const leverageAvailability = clampValue(
+    toFiniteNumberOrNull(context?.leverage_availability) ??
+      toFiniteNumberOrNull(context?.high_leverage_availability) ??
+      0.7,
+    0,
+    1,
+  );
+  const recentUsage = clampValue(
+    toFiniteNumberOrNull(context?.recent_usage) ??
+      toFiniteNumberOrNull(context?.recent_usage_index) ??
+      0.5,
+    0,
+    1,
+  );
+
+  const fatiguePenalty = (fatigueIndex - 0.5) * 0.24;
+  const leveragePenalty = (0.7 - leverageAvailability) * 0.2;
+  const usagePenalty = (recentUsage - 0.5) * 0.18;
+  const bullpenFactor = clampValue(
+    1 + fatiguePenalty + leveragePenalty + usagePenalty,
+    0.82,
+    1.28,
+  );
+  const volatilityComponent =
+    Math.abs(fatiguePenalty) * 0.75 +
+    Math.abs(leveragePenalty) * 0.9 +
+    Math.abs(usagePenalty) * 0.7;
+
+  return {
+    available: true,
+    missing_inputs: [],
+    bullpen_ra9_used: bullpenEra,
+    bullpen_factor: bullpenFactor,
+    volatility_component: volatilityComponent,
+    fatigue_penalty: fatiguePenalty,
+    leverage_penalty: leveragePenalty,
+    usage_penalty: usagePenalty,
+  };
+}
+
+function computeTotalVariance({
+  totalMean,
+  homeF5Runs,
+  awayF5Runs,
+  homeLateContext,
+  awayLateContext,
+  offenseEdge,
+  environment = {},
+}) {
+  const baseVariance = Math.max(2.8, totalMean * 1.08);
+  const spVolatility = clampValue(
+    Math.abs((homeF5Runs ?? 0) - (awayF5Runs ?? 0)) * 0.26,
+    0,
+    0.85,
+  );
+  const bullpenVolatility = clampValue(
+    (homeLateContext?.volatility_component ?? 0) +
+      (awayLateContext?.volatility_component ?? 0),
+    0,
+    0.95,
+  );
+  const offensiveVolatility = clampValue(absOrZero(offenseEdge) * 1.9, 0, 0.6);
+
+  const parkFactor = toFiniteNumberOrNull(environment?.park_run_factor) ?? 1.0;
+  const weatherFactor = resolveWeatherRunFactor(environment) ?? 1.0;
+  const parkVariance = clampValue(
+    Math.abs(parkFactor - 1.0) * 0.9 + Math.abs(weatherFactor - 1.0) * 1.4,
+    0,
+    0.75,
+  );
+
+  const varianceMultiplier =
+    1 +
+    spVolatility +
+    bullpenVolatility +
+    offensiveVolatility +
+    parkVariance;
+  const totalVariance = baseVariance * varianceMultiplier;
+  const runDiffVariance = Math.max(0.45, totalVariance * 0.36);
+
+  let volatilityBucket = MLB_TOTAL_VOL_BUCKETS.MED;
+  if (varianceMultiplier >= 2.15 || totalVariance >= 14) {
+    volatilityBucket = MLB_TOTAL_VOL_BUCKETS.HIGH;
+  } else if (varianceMultiplier <= 1.5 && totalVariance <= 10.2) {
+    volatilityBucket = MLB_TOTAL_VOL_BUCKETS.LOW;
+  }
+
+  return {
+    total_variance: totalVariance,
+    run_diff_variance: runDiffVariance,
+    variance_multiplier: varianceMultiplier,
+    volatility_bucket: volatilityBucket,
+    components: {
+      base_variance: baseVariance,
+      sp_volatility: spVolatility,
+      bullpen_volatility: bullpenVolatility,
+      offensive_volatility: offensiveVolatility,
+      park_factor_variance: parkVariance,
+    },
+  };
+}
+
+function simulateGameTotalDistribution(totalMean, totalVariance, marketLine) {
+  if (
+    !Number.isFinite(totalMean) ||
+    !Number.isFinite(totalVariance) ||
+    totalVariance <= 0 ||
+    !Number.isFinite(marketLine)
+  ) {
+    return null;
+  }
+
+  const sigma = Math.sqrt(totalVariance);
+  const z = (marketLine - totalMean) / sigma;
+  const pUnder = clampValue(normalCdf(z), 0.001, 0.999);
+  const pOver = clampValue(1 - pUnder, 0.001, 0.999);
+
+  return {
+    mean: totalMean,
+    sigma,
+    p_over: pOver,
+    p_under: pUnder,
+  };
+}
+
+function validateTotalDrivers({
+  homeF5Runs,
+  awayF5Runs,
+  homeLateContext,
+  awayLateContext,
+  offenseEdge,
+  environment,
+}) {
+  const drivers = [];
+  const spMismatch = absOrZero((homeF5Runs ?? 0) - (awayF5Runs ?? 0));
+  const bullpenEdge = absOrZero(
+    (homeLateContext?.bullpen_factor ?? 1) -
+      (awayLateContext?.bullpen_factor ?? 1),
+  );
+  const parkFactor = toFiniteNumberOrNull(environment?.park_run_factor) ?? 1.0;
+  const weatherFactor = resolveWeatherRunFactor(environment) ?? 1.0;
+  const envEdge = Math.max(
+    Math.abs(parkFactor - 1),
+    Math.abs(weatherFactor - 1),
+  );
+
+  if (spMismatch >= 0.35) drivers.push('SP_MISMATCH');
+  if (bullpenEdge >= 0.1) drivers.push('BULLPEN_FATIGUE_EDGE');
+  if (absOrZero(offenseEdge) >= 0.025) drivers.push('OFFENSE_MATCHUP_EDGE');
+  if (envEdge >= 0.03) drivers.push('PARK_WEATHER_EDGE');
+
+  return {
+    valid: drivers.length > 0,
+    drivers,
+    sp_mismatch: spMismatch,
+    bullpen_edge: bullpenEdge,
+    offense_edge: offenseEdge,
+    environment_edge: envEdge,
+  };
+}
+
 function resolveOffenseEdgeSignal(homePitcher, awayPitcher, context = {}) {
   const homeMatchup = resolveTeamSplitProfile(
     context?.home_offense_profile ?? null,
@@ -651,42 +853,39 @@ function resolveOffenseEdgeSignal(homePitcher, awayPitcher, context = {}) {
   return homeMult - awayMult;
 }
 
-function resolveFullGameVariance({ proj, context = {} }) {
-  const totalMean = Number.isFinite(proj?.projected_total_mean)
-    ? proj.projected_total_mean
-    : 8.6;
-  const baseVariance = Math.max(2.8, totalMean * 1.12);
-
-  const homeBullpenEra = toFiniteNumberOrNull(context?.home_bullpen_era);
-  const awayBullpenEra = toFiniteNumberOrNull(context?.away_bullpen_era);
-  const bullpenVolatility =
-    homeBullpenEra !== null && awayBullpenEra !== null
-      ? clampValue((Math.abs(homeBullpenEra - awayBullpenEra) / 3.5) * 0.2, 0, 0.2)
-      : 0.1;
-
-  const avgIso =
-    ((toFiniteNumberOrNull(context?.home_offense_profile?.iso_vs_rhp) ?? MLB_F5_DEFAULT_TEAM_ISO) +
-      (toFiniteNumberOrNull(context?.away_offense_profile?.iso_vs_rhp) ?? MLB_F5_DEFAULT_TEAM_ISO)) /
-    2;
-  const hrVarianceBoost = clampValue((avgIso - MLB_F5_DEFAULT_TEAM_ISO) * 1.4, -0.05, 0.12);
-
-  const windMph = toFiniteNumberOrNull(context?.wind_mph) ?? 0;
-  const roof = String(context?.roof || '').trim().toUpperCase();
-  const weatherVolatility = roof === 'CLOSED' || roof === 'INDOOR'
-    ? 0
-    : clampValue((Math.max(0, windMph - 10) / 20) * 0.1, 0, 0.1);
-
-  const lineupUncertainty =
-    (context?.lineup_confirmed_home === false ? 0.06 : 0) +
-    (context?.lineup_confirmed_away === false ? 0.06 : 0);
-
-  const varianceMultiplier = 1 + bullpenVolatility + hrVarianceBoost + weatherVolatility + lineupUncertainty;
-  const diffVariance = Math.max(0.45, baseVariance * varianceMultiplier * 0.36);
+function resolveFullGameVariance({
+  proj,
+  context = {},
+  homePitcher = null,
+  awayPitcher = null,
+}) {
+  const offenseEdge = resolveOffenseEdgeSignal(
+    homePitcher,
+    awayPitcher,
+    context,
+  );
+  const variance = computeTotalVariance({
+    totalMean: Number.isFinite(proj?.projected_total_mean)
+      ? proj.projected_total_mean
+      : 8.6,
+    homeF5Runs: proj?.home_f5_runs,
+    awayF5Runs: proj?.away_f5_runs,
+    homeLateContext: proj?.home_bullpen_context,
+    awayLateContext: proj?.away_bullpen_context,
+    offenseEdge,
+    environment: {
+      park_run_factor: context?.park_run_factor,
+      temp_f: context?.temp_f,
+      wind_mph: context?.wind_mph,
+      wind_dir: context?.wind_dir,
+      roof: context?.roof,
+    },
+  });
 
   return {
-    game_variance: baseVariance * varianceMultiplier,
-    run_diff_variance: diffVariance,
-    variance_multiplier: varianceMultiplier,
+    game_variance: variance.total_variance,
+    run_diff_variance: variance.run_diff_variance,
+    variance_multiplier: variance.variance_multiplier,
   };
 }
 
@@ -720,14 +919,23 @@ function buildFullGameDriverSupport({
  * @param {object} environment  { park_run_factor, temp_f, wind_mph, wind_dir, roof }
  * @returns {{ late_runs: number, bullpen_ra9_used: number, degraded_inputs: string[] }}
  */
-function projectLateInningsRuns(offenseProfile, pitcherHandedness, opponentBullpenEra, environment = {}) {
+function projectLateInningsRuns(
+  offenseProfile,
+  pitcherHandedness,
+  opponentBullpenEra,
+  bullpenContext = {},
+  environment = {},
+) {
   const degradedInputs = [];
-  const bullpenEra = toFiniteNumberOrNull(opponentBullpenEra);
-  if (bullpenEra === null) degradedInputs.push('bullpen_era');
-  const bullpen_ra9 = bullpenEra ?? MLB_FULL_GAME_DEFAULT_BULLPEN_ERA;
+  const bullpen = computeBullpenContext(opponentBullpenEra, bullpenContext);
+  if (!bullpen.available) degradedInputs.push('bullpen_era');
+  const bullpen_ra9 = bullpen.available
+    ? bullpen.bullpen_ra9_used
+    : MLB_FULL_GAME_DEFAULT_BULLPEN_ERA;
 
   // Base late-innings projection: bullpen ERA scaled to 4 innings
   let lateMean = bullpen_ra9 * (4 / 9);
+  lateMean *= bullpen.bullpen_factor ?? 1;
 
   // Apply offense composite multiplier (same clamping as F5: [0.88, 1.14])
   const matchupProfile = resolveTeamSplitProfile(offenseProfile, pitcherHandedness);
@@ -749,6 +957,7 @@ function projectLateInningsRuns(offenseProfile, pitcherHandedness, opponentBullp
   return {
     late_runs: Math.max(0.1, lateMean),
     bullpen_ra9_used: bullpen_ra9,
+    bullpen_context: bullpen,
     degraded_inputs: degradedInputs,
   };
 }
@@ -789,12 +998,22 @@ function projectFullGameTotal(homePitcher, awayPitcher, context = {}) {
     homeOffenseProfile,
     awayPitcher?.handedness ?? null,
     context?.away_bullpen_era ?? null,
+    {
+      fatigue_index: context?.away_bullpen_fatigue_index,
+      leverage_availability: context?.away_leverage_availability,
+      recent_usage: context?.away_recent_usage,
+    },
     environment,
   );
   const awayLate = projectLateInningsRuns(
     awayOffenseProfile,
     homePitcher?.handedness ?? null,
     context?.home_bullpen_era ?? null,
+    {
+      fatigue_index: context?.home_bullpen_fatigue_index,
+      leverage_availability: context?.home_leverage_availability,
+      recent_usage: context?.home_recent_usage,
+    },
     environment,
   );
 
@@ -822,15 +1041,31 @@ function projectFullGameTotal(homePitcher, awayPitcher, context = {}) {
     };
   }
 
+  const offenseEdge = resolveOffenseEdgeSignal(homePitcher, awayPitcher, context);
   const homeProj = homeF5.f5_runs + homeLate.late_runs;
   const awayProj = awayF5.f5_runs + awayLate.late_runs;
   const fullGameMean = homeProj + awayProj;
-  const rangeWidth = Math.max(0.5, Math.sqrt(Math.max(fullGameMean, 0.1)) * MLB_FULL_GAME_POISSON_RANGE_SCALE);
+  const variance = computeTotalVariance({
+    totalMean: fullGameMean,
+    homeF5Runs: homeF5.f5_runs,
+    awayF5Runs: awayF5.f5_runs,
+    homeLateContext: homeLate.bullpen_context,
+    awayLateContext: awayLate.bullpen_context,
+    offenseEdge,
+    environment,
+  });
+  const rangeWidth = Math.max(
+    0.5,
+    Math.sqrt(Math.max(variance.total_variance, 0.1)) *
+      MLB_FULL_GAME_POISSON_RANGE_SCALE,
+  );
 
-  // Confidence: 7 base, +1 if both FULL_MODEL (zero degraded), -1 if bullpen_era missing
+  // Confidence: stricter in higher variance buckets and degraded bullpen state.
   let confidence = 7;
   if (degradedInputs.length === 0) confidence += 1;
   if (bullpenMissing) confidence -= 1;
+  if (variance.volatility_bucket === MLB_TOTAL_VOL_BUCKETS.HIGH) confidence -= 2;
+  if (variance.volatility_bucket === MLB_TOTAL_VOL_BUCKETS.MED) confidence -= 1;
   confidence = Math.max(1, Math.min(10, confidence));
 
   const projectionSource = degradedInputs.length === 0 ? 'FULL_MODEL' : 'DEGRADED_MODEL';
@@ -851,6 +1086,173 @@ function projectFullGameTotal(homePitcher, awayPitcher, context = {}) {
     away_f5_runs: awayF5.f5_runs,
     home_late_runs: homeLate.late_runs,
     away_late_runs: awayLate.late_runs,
+    home_bullpen_context: homeLate.bullpen_context,
+    away_bullpen_context: awayLate.bullpen_context,
+    total_variance: variance.total_variance,
+    run_diff_variance: variance.run_diff_variance,
+    variance_multiplier: variance.variance_multiplier,
+    volatility_bucket: variance.volatility_bucket,
+    variance_components: variance.components,
+  };
+}
+
+function projectFullGameTotalCard(homePitcher, awayPitcher, fullGameLine, context = {}) {
+  if (!Number.isFinite(fullGameLine)) return null;
+
+  const proj = projectFullGameTotal(homePitcher, awayPitcher, context);
+  if (!proj || proj.projected_total_mean == null) return null;
+
+  const distribution = simulateGameTotalDistribution(
+    proj.projected_total_mean,
+    proj.total_variance,
+    fullGameLine,
+  );
+  if (!distribution) {
+    return {
+      market: 'full_game_total',
+      prediction: 'PASS',
+      confidence: proj.confidence / 10,
+      ev_threshold_passed: false,
+      reasoning: 'Full-game total distribution unavailable; PASS (distribution required)',
+      status: 'PASS',
+      action: 'PASS',
+      classification: 'PASS',
+      projection_source: proj.projection_source,
+      status_cap: 'PASS',
+      pass_reason_code: 'PASS_NO_DISTRIBUTION',
+      reason_codes: ['PASS_NO_DISTRIBUTION'],
+      missing_inputs: proj.missing_inputs,
+      playability: null,
+      projection: {
+        projected_total: roundToTenth(proj.projected_total_mean),
+        projected_total_low: roundToTenth(proj.projected_total_low),
+        projected_total_high: roundToTenth(proj.projected_total_high),
+      },
+      drivers: [],
+    };
+  }
+
+  const edge = proj.projected_total_mean - fullGameLine;
+  const leanSide = edge >= 0 ? 'OVER' : 'UNDER';
+  const dynamicThreshold = resolveVarianceEdgeThreshold(proj.volatility_bucket);
+
+  const driverValidation = validateTotalDrivers({
+    homeF5Runs: proj.home_f5_runs,
+    awayF5Runs: proj.away_f5_runs,
+    homeLateContext: proj.home_bullpen_context,
+    awayLateContext: proj.away_bullpen_context,
+    offenseEdge: resolveOffenseEdgeSignal(homePitcher, awayPitcher, context),
+    environment: {
+      park_run_factor: context?.park_run_factor,
+      temp_f: context?.temp_f,
+      wind_mph: context?.wind_mph,
+      wind_dir: context?.wind_dir,
+      roof: context?.roof,
+    },
+  });
+
+  const marketAligned = Math.abs(edge) > MLB_FULL_GAME_SANITY_BAND;
+  const hasEdge = Math.abs(edge) >= dynamicThreshold;
+  const pOver = distribution.p_over;
+  const pUnder = distribution.p_under;
+  const probabilityPass =
+    (edge > 0 && pOver < 0.54) ||
+    (edge < 0 && pUnder < 0.54);
+
+  const f5Line = toFiniteNumberOrNull(context?.f5_line);
+  const f5Mean = Number.isFinite(proj.home_f5_runs) && Number.isFinite(proj.away_f5_runs)
+    ? proj.home_f5_runs + proj.away_f5_runs
+    : null;
+  const f5Edge = Number.isFinite(f5Mean) && Number.isFinite(f5Line)
+    ? f5Mean - f5Line
+    : null;
+  const bullpenShift = (proj.home_late_runs ?? 0) - (proj.away_late_runs ?? 0);
+  const preferF5 = Number.isFinite(f5Edge) && Math.abs(f5Edge) >= MLB_F5_EDGE_THRESHOLD && Math.abs(bullpenShift) < 0.12;
+  const fgContradictsF5 = Number.isFinite(f5Edge) && (Math.sign(edge) !== Math.sign(f5Edge)) && Math.abs(bullpenShift) > 0.14;
+
+  const reasonCodes = [];
+  if (proj.projection_source === 'DEGRADED_MODEL') reasonCodes.push('MODEL_DEGRADED_INPUTS');
+  if (!driverValidation.valid) reasonCodes.push('PASS_NO_SUPPORTING_DRIVERS');
+  if (!marketAligned) reasonCodes.push('PASS_MARKET_SANITY_FAIL');
+  if (probabilityPass) reasonCodes.push('PASS_PROBABILITY_EDGE_WEAK');
+  if (preferF5) reasonCodes.push('PASS_PREFER_F5_SP_DRIVEN');
+  if (fgContradictsF5) reasonCodes.push('PASS_BULLPEN_CONTRADICTS_F5');
+  if (!hasEdge) reasonCodes.push('PASS_NO_EDGE');
+
+  const canPlay =
+    hasEdge &&
+    marketAligned &&
+    driverValidation.valid &&
+    !probabilityPass &&
+    !preferF5 &&
+    !fgContradictsF5 &&
+    proj.confidence >= 7;
+
+  const prediction = canPlay ? (edge >= 0 ? 'OVER' : 'UNDER') : leanSide;
+  const status = canPlay
+    ? (proj.projection_source === 'FULL_MODEL' ? 'FIRE' : 'WATCH')
+    : 'PASS';
+  const action = status === 'FIRE' ? 'FIRE' : status === 'WATCH' ? 'HOLD' : 'PASS';
+  const classification = status === 'FIRE' ? 'BASE' : status === 'WATCH' ? 'LEAN' : 'PASS';
+  const playability = {
+    over_playable_at_or_below: roundToHalf(
+      proj.projected_total_mean - dynamicThreshold,
+      'floor',
+    ),
+    under_playable_at_or_above: roundToHalf(
+      proj.projected_total_mean + dynamicThreshold,
+      'ceil',
+    ),
+  };
+
+  return {
+    market: 'full_game_total',
+    prediction,
+    confidence: proj.confidence / 10,
+    ev_threshold_passed: status !== 'PASS',
+    reasoning: `FG TOTAL ${proj.projection_source} mean ${proj.projected_total_mean.toFixed(2)} vs line ${fullGameLine.toFixed(1)} edge ${edge >= 0 ? '+' : ''}${edge.toFixed(2)} bucket=${proj.volatility_bucket} thr=${dynamicThreshold.toFixed(2)} pOver=${(pOver * 100).toFixed(1)}% pUnder=${(pUnder * 100).toFixed(1)}% drivers=${driverValidation.drivers.join('|') || 'none'} conf=${proj.confidence}/10`,
+    status,
+    action,
+    classification,
+    projection_source: proj.projection_source,
+    status_cap: status === 'PASS' ? 'PASS' : proj.status_cap,
+    pass_reason_code:
+      status !== 'PASS'
+        ? null
+        : (reasonCodes.find((code) => code.startsWith('PASS_')) ??
+          'PASS_NO_EDGE'),
+    reason_codes: reasonCodes,
+    missing_inputs: proj.missing_inputs,
+    playability,
+    projection: {
+      projected_total: roundToTenth(proj.projected_total_mean),
+      projected_total_low: roundToTenth(proj.projected_total_low),
+      projected_total_high: roundToTenth(proj.projected_total_high),
+      home_proj: roundToTenth(proj.home_proj),
+      away_proj: roundToTenth(proj.away_proj),
+      home_f5_runs: roundToTenth(proj.home_f5_runs),
+      away_f5_runs: roundToTenth(proj.away_f5_runs),
+      home_late_runs: roundToTenth(proj.home_late_runs),
+      away_late_runs: roundToTenth(proj.away_late_runs),
+      total_variance: roundToTenth(proj.total_variance),
+      volatility_bucket: proj.volatility_bucket,
+      p_over: roundToTenth(distribution.p_over),
+      p_under: roundToTenth(distribution.p_under),
+    },
+    drivers: [
+      {
+        type: 'mlb-full-game',
+        edge,
+        projected: proj.projected_total_mean,
+        projection_source: proj.projection_source,
+        volatility_bucket: proj.volatility_bucket,
+        threshold: dynamicThreshold,
+      },
+      {
+        type: 'mlb-full-game-drivers',
+        support_keys: driverValidation.drivers,
+      },
+    ],
   };
 }
 
@@ -1153,7 +1555,12 @@ function projectFullGameML(homePitcher, awayPitcher, mlHome, mlAway, context = {
       : 0;
   const offenseEdge = resolveOffenseEdgeSignal(homePitcher, awayPitcher, context);
 
-  const variance = resolveFullGameVariance({ proj, context });
+  const variance = resolveFullGameVariance({
+    proj,
+    context,
+    homePitcher,
+    awayPitcher,
+  });
   const diffMean = runDiff + homeFieldRuns;
   const diffSigma = Math.sqrt(Math.max(variance.run_diff_variance, 0.2));
   const winProbHome = clampValue(normalCdf(diffMean / diffSigma), 0.01, 0.99);
@@ -1277,6 +1684,7 @@ function projectFullGameML(homePitcher, awayPitcher, mlHome, mlAway, context = {
     },
     game_variance: variance.game_variance,
     run_diff_variance: variance.run_diff_variance,
+    variance_multiplier: variance.variance_multiplier,
     degraded_inputs: proj.degraded_inputs,
     missing_inputs: proj.missing_inputs,
     ev_threshold_passed: side !== 'PASS',
@@ -1412,7 +1820,7 @@ function computeMLBDriverCards(gameId, oddsSnapshot) {
   // Full-game total card (WI-0872)
   const fullGameLine = toFiniteNumberOrNull(mlb.full_game_line);
   if (fullGameLine != null) {
-    const proj = projectFullGameTotal(homePitcher, awayPitcher, {
+    const fullGameCard = projectFullGameTotalCard(homePitcher, awayPitcher, fullGameLine, {
       home_offense_profile: mlb.home_offense_profile ?? null,
       away_offense_profile: mlb.away_offense_profile ?? null,
       park_run_factor: mlb.park_run_factor ?? null,
@@ -1422,55 +1830,16 @@ function computeMLBDriverCards(gameId, oddsSnapshot) {
       roof: mlb.roof ?? null,
       home_bullpen_era: mlb.home_bullpen_era ?? null,
       away_bullpen_era: mlb.away_bullpen_era ?? null,
+      home_bullpen_fatigue_index: mlb.home_bullpen_fatigue_index ?? null,
+      away_bullpen_fatigue_index: mlb.away_bullpen_fatigue_index ?? null,
+      home_leverage_availability: mlb.home_leverage_availability ?? null,
+      away_leverage_availability: mlb.away_leverage_availability ?? null,
+      home_recent_usage: mlb.home_recent_usage ?? null,
+      away_recent_usage: mlb.away_recent_usage ?? null,
+      f5_line: toFiniteNumberOrNull(mlb.f5_line),
     });
-    if (proj && proj.projected_total_mean != null) {
-      const edge = proj.projected_total_mean - fullGameLine;
-      const leanSide = edge >= 0 ? 'OVER' : 'UNDER';
-      const hasEdge = Math.abs(edge) >= MLB_FULL_GAME_EDGE_THRESHOLD;
-      const isOver = hasEdge && edge > 0 && proj.confidence >= 8;
-      const isUnder = hasEdge && edge < 0 && proj.confidence >= 8;
-      const prediction = isOver ? 'OVER' : isUnder ? 'UNDER' : leanSide;
-      const evThresholdPassed = isOver || isUnder;
-      const status = !evThresholdPassed ? 'PASS' : proj.projection_source === 'FULL_MODEL' ? 'FIRE' : 'WATCH';
-      const action = status === 'FIRE' ? 'FIRE' : status === 'WATCH' ? 'HOLD' : 'PASS';
-      const classification = status === 'FIRE' ? 'BASE' : status === 'WATCH' ? 'LEAN' : 'PASS';
-      const playability = {
-        over_playable_at_or_below: roundToHalf(proj.projected_total_mean - MLB_FULL_GAME_EDGE_THRESHOLD, 'floor'),
-        under_playable_at_or_above: roundToHalf(proj.projected_total_mean + MLB_FULL_GAME_EDGE_THRESHOLD, 'ceil'),
-      };
-      cards.push({
-        market: 'full_game_total',
-        prediction,
-        confidence: proj.confidence / 10,
-        ev_threshold_passed: evThresholdPassed,
-        reasoning: `Full-game ${proj.projection_source} projected ${proj.projected_total_mean.toFixed(2)} vs line ${fullGameLine} (edge ${edge >= 0 ? '+' : ''}${edge.toFixed(2)}, range ${roundToTenth(proj.projected_total_low)}-${roundToTenth(proj.projected_total_high)}, conf ${proj.confidence}/10)`,
-        status,
-        action,
-        classification,
-        projection_source: proj.projection_source,
-        status_cap: proj.status_cap,
-        pass_reason_code: !evThresholdPassed ? 'PASS_NO_EDGE' : null,
-        reason_codes: proj.degraded_inputs.length > 0 ? ['MODEL_DEGRADED_INPUTS'] : [],
-        missing_inputs: proj.missing_inputs,
-        playability,
-        projection: {
-          projected_total: roundToTenth(proj.projected_total_mean),
-          projected_total_low: roundToTenth(proj.projected_total_low),
-          projected_total_high: roundToTenth(proj.projected_total_high),
-          home_proj: roundToTenth(proj.home_proj),
-          away_proj: roundToTenth(proj.away_proj),
-          home_f5_runs: roundToTenth(proj.home_f5_runs),
-          away_f5_runs: roundToTenth(proj.away_f5_runs),
-          home_late_runs: roundToTenth(proj.home_late_runs),
-          away_late_runs: roundToTenth(proj.away_late_runs),
-        },
-        drivers: [{
-          type: 'mlb-full-game',
-          edge,
-          projected: proj.projected_total_mean,
-          projection_source: proj.projection_source,
-        }],
-      });
+    if (fullGameCard) {
+      cards.push(fullGameCard);
     }
   }
 
@@ -3138,8 +3507,13 @@ module.exports = {
   // Exported for unit testing (WI-0770)
   calculateProjectionK,
   // WI-0872: full-game total model
+  computeBullpenContext,
+  computeTotalVariance,
+  simulateGameTotalDistribution,
+  validateTotalDrivers,
   projectLateInningsRuns,
   projectFullGameTotal,
+  projectFullGameTotalCard,
   // WI-0873: full-game ML model
   projectFullGameML,
   // Exported for unit testing (WI-0821)

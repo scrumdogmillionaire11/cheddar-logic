@@ -32,9 +32,9 @@ function runCommand(command, cwd, envOverrides = {}) {
     encoding: 'utf-8',
     env: {
       ...process.env,
-      DATABASE_PATH: TEST_DB_PATH,
+      CHEDDAR_DB_PATH: TEST_DB_PATH,
+      DATABASE_PATH: '',
       RECORD_DATABASE_PATH: '',
-      CHEDDAR_DB_PATH: '',
       DATABASE_URL: '',
       CHEDDAR_DB_AUTODISCOVER: 'false',
       ...envOverrides,
@@ -56,9 +56,9 @@ async function getCounts() {
 
 describe('pipeline idempotency (NHL)', () => {
   beforeAll(() => {
-    process.env.DATABASE_PATH = TEST_DB_PATH;
+    process.env.CHEDDAR_DB_PATH = TEST_DB_PATH;
+    process.env.DATABASE_PATH = '';
     process.env.RECORD_DATABASE_PATH = '';
-    process.env.CHEDDAR_DB_PATH = '';
     process.env.DATABASE_URL = '';
     process.env.CHEDDAR_DB_AUTODISCOVER = 'false';
     if (fs.existsSync(TEST_DB_PATH)) {

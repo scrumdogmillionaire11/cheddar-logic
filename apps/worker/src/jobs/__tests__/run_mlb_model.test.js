@@ -41,6 +41,7 @@ const {
   assertMlbExecutionInvariant,
   applyExecutionGateToMlbPayload,
   applyMlbProjectionOnlyGuards,
+  buildMlbMarketAvailability,
   buildMlbPipelineState,
   buildPitcherKLineContract,
   buildMlbPitcherKPayloadFields,
@@ -282,6 +283,24 @@ describe('scorePitcherK — projection-only mode', () => {
     expect(result.reason_code).toBe('IL_RETURN');
     expect(result.verdict).toBe('PASS');
     expect(result.projection_source).toBe('FULL_MODEL');
+  });
+});
+
+describe('buildMlbMarketAvailability projection-only totals guard', () => {
+  test('withoutOddsMode disables full-game totals availability', () => {
+    const availability = buildMlbMarketAvailability(
+      {
+        total: 8.5,
+        raw_data: {
+          totals: { line: 8.5 },
+          mlb: { f5_line: 4.5 },
+        },
+      },
+      { withoutOddsMode: true },
+    );
+
+    expect(availability.full_game_total_ok).toBe(false);
+    expect(availability.blocking_reason_codes).toContain('PROJECTION_ONLY_NO_TOTALS');
   });
 });
 
