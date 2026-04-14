@@ -270,6 +270,125 @@ describe('post_discord_cards helpers', () => {
     expect(snapshot.messages[0]).toContain('🟢 PLAY');
   });
 
+  test('buildDiscordSnapshot renders header, PLAY section, and Slight Edge section in stable order', () => {
+    const cards = [
+      makeCard({
+        id: 'official-layout',
+        matchup: 'Washington Capitals @ Columbus Blue Jackets',
+        gameTimeUtc: '2026-03-20T23:00:00.000Z',
+        payloadData: {
+          action: 'FIRE',
+          kind: 'PLAY',
+          market_type: 'MONEYLINE',
+          selection: { side: 'HOME' },
+          price: -115,
+          why: 'Model edge confirmed at current number.',
+          projection_only: false,
+        },
+      }),
+      makeCard({
+        id: 'lean-layout',
+        matchup: 'Washington Capitals @ Columbus Blue Jackets',
+        gameTimeUtc: '2026-03-20T23:00:00.000Z',
+        cardType: 'nhl-totals-call',
+        payloadData: {
+          action: 'LEAN',
+          kind: 'PLAY',
+          market_type: 'TOTAL',
+          selection: { side: 'UNDER' },
+          line: 6.5,
+          edge: 0.7,
+          model_projection: 5.8,
+          price: -108,
+          why: 'Projection still favors the under, but not enough for PLAY.',
+          projection_only: false,
+        },
+      }),
+    ];
+
+    const snapshot = buildDiscordSnapshot({ cards, now: new Date('2026-03-20T14:00:00.000Z') });
+    const message = snapshot.messages[0];
+
+    expect(snapshot.totalGames).toBe(1);
+    expect(snapshot.sectionCounts).toEqual({ official: 1, lean: 1, passBlocked: 0 });
+    expect(message).toContain('🏒 NHL | 7:00 PM ET');
+    expect(message).toContain('WSH Capitals @ CBJ Blue Jackets');
+    expect(message).toContain('Snapshot: 10:00 AM ET');
+    expect(message).toContain('🟢 PLAY');
+    expect(message).toContain('ML | HOME (-115)');
+    expect(message).toContain('Why: Model edge confirmed at current number.');
+    expect(message).toContain('🟡 Slight Edge');
+    expect(message).toContain('TOTAL | UNDER 6.5 (-108)');
+    expect(message).toContain('5.8 | Edge: +0.70 (strong lean)');
+    expect(message).toContain('Why: Projection still favors the under, but not enough for PLAY.');
+    expect(message.indexOf('🟢 PLAY')).toBeLessThan(message.indexOf('🟡 Slight Edge'));
+    expect(message).not.toContain('⚪ PASS');
+  });
+
+  test('buildDiscordSnapshot surfaces blocked high-signal passes as WATCH with explicit reason', () => {
+    const cards = [
+      makeCard({
+        id: 'blocked-play',
+        matchup: 'Washington Capitals @ Columbus Blue Jackets',
+        gameTimeUtc: '2026-03-20T23:00:00.000Z',
+        payloadData: {
+          action: 'PASS',
+          status: 'PASS',
+          kind: 'PLAY',
+          market_type: 'MONEYLINE',
+          selection: { side: 'HOME' },
+          price: 100,
+          edge: 0.21,
+          pass_reason_code: 'EDGE_VERIFICATION_REQUIRED',
+          projection_only: false,
+          decision_v2: {
+            play_tier: 'BEST',
+          },
+        },
+      }),
+    ];
+
+    const snapshot = buildDiscordSnapshot({ cards, now: new Date('2026-03-20T14:00:00.000Z') });
+    const message = snapshot.messages[0];
+
+    expect(snapshot.totalGames).toBe(1);
+    expect(snapshot.sectionCounts.passBlocked).toBe(1);
+    expect(message).toContain('⚠️ WATCH (Would be PLAY)');
+    expect(message).toContain('ML | HOME (+100)');
+    expect(message).toContain('Edge: +0.21');
+    expect(message).toContain('Why: Would be PLAY, but line unstable — waiting for confirmation');
+    expect(message).not.toContain('⚪ PASS');
+    expect(message).not.toContain('PASS_NO_EDGE');
+  });
+
+  test('buildDiscordSnapshot labels thin leans differently from strong leans', () => {
+    const cards = [
+      makeCard({
+        id: 'thin-lean',
+        matchup: 'Dallas Stars @ Toronto Maple Leafs',
+        gameTimeUtc: '2026-03-20T23:00:00.000Z',
+        cardType: 'nhl-totals-call',
+        payloadData: {
+          action: 'LEAN',
+          kind: 'PLAY',
+          market_type: 'TOTAL',
+          selection: { side: 'UNDER' },
+          line: 6.5,
+          edge: 0.2,
+          model_projection: 6.1,
+          price: -108,
+          projection_only: false,
+        },
+      }),
+    ];
+
+    const snapshot = buildDiscordSnapshot({ cards, now: new Date('2026-03-20T14:00:00.000Z') });
+
+    expect(snapshot.totalGames).toBe(1);
+    expect(snapshot.messages[0]).toContain('🟡 Slight Edge (Lean)');
+    expect(snapshot.messages[0]).toContain('6.1 | Edge: +0.20 (thin lean)');
+  });
+
   test('buildDiscordSnapshot keeps 1P OVER/UNDER direction when selection object is empty', () => {
     const cards = [
       makeCard({

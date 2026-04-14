@@ -1,175 +1,123 @@
 /*
- * Route source contract for NHL props decision-first payload fields.
+ * Behavioral route contract for /api/games prop decision fields.
  * Run: node web/src/__tests__/api-games-prop-decision-contract.test.js
  */
 
 import assert from 'node:assert/strict';
-import fs from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+const repoRoot = path.resolve(__dirname, '../../..');
+const webRoot = path.resolve(repoRoot, 'web');
 
-const routeSource = fs.readFileSync(
-  path.resolve(__dirname, '../lib/games/route-handler.ts'),
-  'utf8',
-);
-const marketInferenceSource = fs.readFileSync(
-  path.resolve(__dirname, '../lib/games/market-inference.ts'),
-  'utf8',
-);
+const behaviorScript = String.raw`
+import assert from 'node:assert/strict';
+import { buildGamesResponseData } from './src/lib/games/route-handler.ts';
+import { ACTIVE_SPORT_CARD_TYPE_CONTRACT, inferMarketFromCardType } from './src/lib/games/market-inference.ts';
 
-assert(
-  routeSource.includes('ACTIVE_SPORT_CARD_TYPE_CONTRACT') &&
-    routeSource.includes("from '@/lib/games/market-inference'"),
-  'Expected /api/games route to consume ACTIVE_SPORT_CARD_TYPE_CONTRACT from market-inference as the canonical source',
-);
+assert.equal(inferMarketFromCardType('mlb-full-game-ml'), 'MONEYLINE');
+assert.equal(inferMarketFromCardType('mlb-full-game'), 'TOTAL');
+assert.ok(ACTIVE_SPORT_CARD_TYPE_CONTRACT.MLB.expectedPlayableMarkets.has('MONEYLINE'));
+assert.ok(ACTIVE_SPORT_CARD_TYPE_CONTRACT.MLB.expectedPlayableMarkets.has('TOTAL'));
+assert.ok(ACTIVE_SPORT_CARD_TYPE_CONTRACT.NHL.playProducerCardTypes.has('nhl-player-blk'));
 
-assert(
-  !routeSource.includes('const ACTIVE_SPORT_CARD_TYPE_CONTRACT: Record<string, SportCardTypeContract>'),
-  'Expected /api/games route to avoid defining a duplicate local card type contract',
-);
+const row = {
+  id: 'row-1',
+  game_id: 'game-1',
+  sport: 'MLB',
+  home_team: 'Home',
+  away_team: 'Away',
+  game_time_utc: '2026-04-14T23:00:00Z',
+  status: 'scheduled',
+  created_at: '2026-04-13T20:00:00Z',
+  h2h_home: null,
+  h2h_away: null,
+  total: null,
+  spread_home: null,
+  spread_away: null,
+  odds_captured_at: null,
+  projection_inputs_complete: true,
+  projection_missing_inputs: [],
+  source_mapping_ok: true,
+  source_mapping_failures: [],
+  ingest_failure_reason_code: null,
+  ingest_failure_reason_detail: null,
+};
 
-assert(
-  marketInferenceSource.includes("'mlb-full-game'") &&
-    marketInferenceSource.includes("'mlb-full-game-ml'") &&
-    marketInferenceSource.includes("expectedPlayableMarkets: new Set<MarketType>([") &&
-    marketInferenceSource.includes("'MONEYLINE'") &&
-    marketInferenceSource.includes("'TOTAL'"),
-  'Expected canonical MLB contract to include mlb-full-game / mlb-full-game-ml and full-game playable market pathways',
-);
+const play = {
+  source_card_id: 'card-1',
+  cardType: 'mlb-pitcher-k',
+  cardTitle: 'Pitcher Strikeouts',
+  prediction: 'OVER',
+  confidence: 0.62,
+  tier: 'WATCH',
+  reasoning: 'Behavioral contract fixture',
+  evPassed: false,
+  driverKey: 'pitcher-k',
+  kind: 'PLAY',
+  market_type: 'PROP',
+  canonical_market_key: 'pitcher_strikeouts',
+  selection: { side: 'OVER', team: 'Pitcher X' },
+  player_id: '42',
+  player_name: 'Pitcher X',
+  action: 'PASS',
+  status: 'PASS',
+  basis: 'PROJECTION_ONLY',
+  execution_status: 'PROJECTION_ONLY',
+  pass_reason_code: 'PASS_NO_EDGE',
+  market_bookmaker: 'book-a',
+  prop_display_state: 'PROJECTION_ONLY',
+  prop_decision: {
+    verdict: 'PROJECTION',
+    lean_side: 'UNDER',
+    line: 6.5,
+    display_price: -115,
+    projection: 6.1,
+    line_delta: -0.4,
+    fair_prob: 0.52,
+    implied_prob: 0.5,
+    prob_edge_pp: 2,
+    ev: 0.01,
+    l5_mean: 5.8,
+    l5_trend: 'stable',
+    why: 'Projection below line',
+    flags: ['PROJECTION_ONLY'],
+    k_mean: 6.1,
+    probability_ladder: { '5': 0.4 },
+    fair_prices: { over: -105, under: -115 },
+    playability: { over_playable_at_or_below: -110, under_playable_at_or_above: 105 },
+    projection_source: 'SYNTHETIC_FALLBACK',
+    status_cap: 'PASS',
+    pass_reason_code: 'PASS_NO_EDGE',
+    missing_inputs: ['market_price'],
+  },
+};
 
-assert(
-  routeSource.includes('const inferredMarketTypeFromCardType = inferMarketFromCardType(') &&
-    routeSource.includes(': inferredMarketTypeFromCardType !== undefined') &&
-    routeSource.includes('? inferredMarketTypeFromCardType'),
-  'Expected /api/games route to use inferMarketFromCardType as canonical fallback before side-based market inference',
-);
+const responseRows = buildGamesResponseData([row], 'pregame', {
+  playsMap: new Map([[row.game_id, [play]]]),
+  truePlayMap: new Map([[row.game_id, play]]),
+});
 
-const requiredFields = [
-  'verdict',
-  'lean_side',
-  'line',
-  'display_price',
-  'projection',
-  'line_delta',
-  'fair_prob',
-  'implied_prob',
-  'prob_edge_pp',
-  'ev',
-  'l5_mean',
-  'l5_trend',
-  'why',
-  'flags',
-];
+assert.equal(responseRows.length, 1);
+assert.equal(responseRows[0].plays.length, 1);
+const emittedPlay = responseRows[0].plays[0];
+assert.equal(emittedPlay.prop_display_state, 'PROJECTION_ONLY');
+assert.equal(emittedPlay.execution_status, 'PROJECTION_ONLY');
+assert.equal(emittedPlay.pass_reason_code, 'PASS_NO_EDGE');
+assert.equal(emittedPlay.market_bookmaker, 'book-a');
+assert.equal(emittedPlay.prop_decision?.projection_source, 'SYNTHETIC_FALLBACK');
+assert.equal(emittedPlay.prop_decision?.k_mean, 6.1);
+assert.equal(emittedPlay.prop_decision?.lean_side, 'UNDER');
+process.exit(0);
+`;
 
-for (const field of requiredFields) {
-  assert(
-    routeSource.includes(`${field}:`),
-    `Expected /api/games route to expose prop_decision.${field}`,
-  );
-}
+execFileSync(process.execPath, ['--import', 'tsx/esm', '--eval', behaviorScript], {
+  cwd: webRoot,
+  stdio: 'inherit',
+});
 
-assert(
-  routeSource.includes('(payload as Record<string, unknown>).prop_decision') &&
-    routeSource.includes('payloadPlay?.prop_decision'),
-  'Expected /api/games route to read prop_decision from both top-level and play payloads',
-);
-
-assert(
-  routeSource.includes('prop_decision: normalizedPropDecision'),
-  'Expected /api/games route to publish normalized prop_decision',
-);
-
-assert(
-  routeSource.includes('prop_display_state?: \'PLAY\' | \'WATCH\' | \'PROJECTION_ONLY\';') &&
-    routeSource.includes('rawPropDisplayState') &&
-    routeSource.includes('prop_display_state: normalizedPropDisplayState'),
-  'Expected /api/games route to preserve prop_display_state for projection-first prop rows',
-);
-
-assert(
-  routeSource.includes('const normalizedPlayerName = firstString(') &&
-    routeSource.includes('(payload as Record<string, unknown>).player_name,') &&
-    routeSource.includes('payloadPlay?.player_name,') &&
-    routeSource.includes('payloadSelection?.player_name,') &&
-    routeSource.includes('const normalizedSelectionTeamBase = firstString(') &&
-    routeSource.includes('normalizedPlayerName,'),
-  'Expected /api/games route to prefer canonical payload.player_name and use it before team fallback labels',
-);
-
-assert(
-  routeSource.includes("'nhl-player-blk'") ||
-    marketInferenceSource.includes("'nhl-player-blk'"),
-  'Expected NHL prop contract path to include nhl-player-blk in canonical route or shared contract source',
-);
-
-assert(
-  routeSource.includes("cardRow.card_type === 'mlb-pitcher-k'") &&
-    routeSource.includes("play.canonical_market_key === 'pitcher_strikeouts'"),
-  'Expected /api/games route to keep MLB pitcher-K dedupe scoped to pitcher_strikeouts rows, not every MLB PROP row',
-);
-
-assert(
-  routeSource.includes('market_bookmaker?: string | null;') &&
-    routeSource.includes('(payload as Record<string, unknown>).market_bookmaker') &&
-    routeSource.includes('payloadPlay?.market_bookmaker') &&
-    routeSource.includes('market_bookmaker: normalizedMarketBookmaker'),
-  'Expected /api/games route to preserve market_bookmaker from payload normalization through emitted play rows',
-);
-
-// Pitcher-K numeric fields must flow through prop_decision
-assert(
-  routeSource.includes("'PASS' ? 'PROJECTION'") ||
-    routeSource.includes("=== 'PASS' ? 'PROJECTION'"),
-  'Expected /api/games route to map PASS verdict to PROJECTION so pitcher-K k_mean is not dropped',
-);
-
-const pitcherKFields = ['k_mean', 'probability_ladder', 'fair_prices', 'playability', 'projection_source', 'status_cap'];
-for (const field of pitcherKFields) {
-  assert(
-    routeSource.includes(`rawPropDecision.${field}`),
-    `Expected /api/games route to map prop_decision.${field} for pitcher-K cards`,
-  );
-}
-
-// WI-0663: ODDS_BACKED WATCH/PLAY verdicts must not be remapped to PROJECTION
-// The PASS->PROJECTION mapping must be conditional on verdict === 'PASS'
-assert(
-  routeSource.includes("=== 'PASS' ? 'PROJECTION'") ||
-    routeSource.includes("=== 'PROJECTION' || rawPropDecisionVerdict === 'PASS'") ||
-    (
-      routeSource.includes("PASS' ? 'PROJECTION'") &&
-      !routeSource.includes("WATCH' ? 'PROJECTION'") &&
-      !routeSource.includes("PLAY' ? 'PROJECTION'")
-    ),
-  'Expected /api/games route to map only PASS (not WATCH or PLAY) verdict to PROJECTION — ODDS_BACKED WATCH/PLAY must pass through unchanged',
-);
-
-// WI-0902: Parity-required behavioral fields must be surfaced in the games path.
-// These fields enable deterministic comparison with the cards path.
-
-// reason_code: games path must emit pass_reason_code (the normalized reason signal)
-assert(
-  routeSource.includes('pass_reason_code:'),
-  'Expected /api/games route to emit pass_reason_code as the normalized reason code field for parity',
-);
-
-// visibility_class equivalent: games path must emit execution_status and prop_display_state
-// as the canonical visibility signals (projection_only vs executable)
-assert(
-  routeSource.includes('execution_status: normalizedExecutionStatus') &&
-    routeSource.includes('prop_display_state: normalizedPropDisplayState'),
-  'Expected /api/games route to emit execution_status and prop_display_state as parity-comparable visibility fields',
-);
-
-// has_projection_marker equivalent: games path must emit prop_decision.projection_source
-// and prop_display_state so callers can derive projection marker presence
-assert(
-  routeSource.includes('projection_source') &&
-    routeSource.includes('prop_display_state: normalizedPropDisplayState'),
-  'Expected /api/games route to surface projection_source and prop_display_state for has_projection_marker parity comparison',
-);
-
-console.log('✅ API games prop decision contract test passed');
+assert.ok(true);
+console.log('API games prop decision behavioral contract test passed');

@@ -54,13 +54,36 @@ function mapModelStrength(playTier?: string | null): FinalMarketDecision['model_
   return null;
 }
 
+const SURFACED_REASON_LABELS: Record<string, string> = {
+  EDGE_VERIFICATION_REQUIRED: 'Waiting on line verification',
+  BLOCKED_BET_VERIFICATION_REQUIRED: 'Waiting on line verification',
+  GATE_LINE_MOVEMENT: 'Line moved - re-evaluating',
+  GATE_GOALIE_UNCONFIRMED: 'Waiting on goalie confirmation',
+  PASS_NO_EDGE: 'No edge',
+  NO_EDGE_AT_PRICE: 'Price too sharp',
+  PASS_LOW_CONFIDENCE: 'Low confidence',
+  PASS_SHARP_MONEY_OPPOSITE: 'Sharp money against',
+  MODEL_PROB_MISSING: 'Model incomplete',
+  MARKET_PRICE_MISSING: 'Market price unavailable',
+  BLOCK_INJURY_RISK: 'Injury risk flag',
+  BLOCK_STALE_DATA: 'Data stale',
+  EXACT_WAGER_MISMATCH: 'Line mismatch',
+  HEAVY_FAVORITE_PRICE_CAP: 'High price cap',
+  PROXY_EDGE_CAPPED: 'Edge capped by proxy',
+  PARSE_FAILURE: 'Model data unavailable',
+  PASS_DATA_ERROR: 'Data error - no play',
+  MISSING_DATA_NO_ODDS: 'Odds unavailable',
+  SUPPORT_BELOW_LEAN_THRESHOLD: 'Insufficient support',
+  SUPPORT_BELOW_PLAY_THRESHOLD: 'Insufficient support',
+  FIRST_PERIOD_NO_PROJECTION: 'No 1P projection available',
+};
+
 function mapSurfacedReason(primaryReasonCode?: string | null, passReasonCode?: string | null): string {
   const code = toToken(primaryReasonCode || passReasonCode);
   if (!code) return 'No edge at current price';
-  if (code === 'EDGE_VERIFICATION_REQUIRED') return 'Waiting on line verification';
+  if (SURFACED_REASON_LABELS[code]) return SURFACED_REASON_LABELS[code];
   if (code.includes('GOALIE')) return 'Waiting on goalie confirmation';
-  if (code === 'GATE_LINE_MOVEMENT') return 'Line moved - re-evaluating';
-  return code.replace(/_/g, ' ').toLowerCase().replace(/^./, (c) => c.toUpperCase());
+  return 'No edge at current price';
 }
 
 function mapOfficialToSurfaced(official?: string | null): FinalMarketDecision['surfaced_status'] {
