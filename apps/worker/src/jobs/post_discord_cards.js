@@ -104,19 +104,71 @@ const REASON_CODE_LABELS = {
   BLOCK_STALE_DATA:            'Data stale — no play',
 };
 
-function humanReason(card) {
+function reasonTokens(card) {
   const payload = card?.payloadData || {};
-  const codes = [
+  return [
     normalizeToken(payload?.pass_reason_code),
     normalizeToken(payload?.pass_reason),
     ...(Array.isArray(payload?.reason_codes) ? payload.reason_codes.map(normalizeToken) : []),
     normalizeToken(payload?.blocked_reason_code),
   ].filter(Boolean);
+}
 
-  for (const code of codes) {
+function humanReason(card) {
+  for (const code of reasonTokens(card)) {
     if (REASON_CODE_LABELS[code]) return REASON_CODE_LABELS[code];
   }
   return 'No edge';
+}
+
+function lowercaseLeading(text) {
+  const value = String(text || '').trim();
+  if (!value) return '';
+  return value.charAt(0).toLowerCase() + value.slice(1);
+}
+
+function extractEdgeValue(card) {
+  const payload = card?.payloadData || {};
+  const raw = payload?.edge ?? payload?.edge_pct ?? payload?.edge_over_pp;
+  if (raw !== null && raw !== undefined) {
+    const val = Number(raw);
+    if (Number.isFinite(val)) return val;
+  }
+
+  const prediction = String(payload?.prediction || payload?.play?.pick_string || '');
+  const edgeMatch = prediction.match(/Edge[:\s]+([+-]?\d+\.?\d*)/i);
+  if (!edgeMatch) return null;
+
+  const val = Number(edgeMatch[1]);
+  return Number.isFinite(val) ? val : null;
+}
+
+function describeLeanStrength(card) {
+  const edge = extractEdgeValue(card);
+  if (!Number.isFinite(edge)) return null;
+  const edgeAbs = Math.abs(edge);
+  if (edgeAbs >= 0.5) return 'strong lean';
+  if (edgeAbs >= MIN_LEAN_EDGE_ABS) return 'thin lean';
+  return null;
+}
+
+function isBlockedWatchCard(card) {
+  const blockingReason = reasonTokens(card).some((token) =>
+    token.includes('BLOCK') ||
+    token.includes('GATE') ||
+    token.includes('VERIFICATION') ||
+    token.includes('GOALIE') ||
+    token.includes('LINE_MOVEMENT'),
+  );
+  if (!blockingReason) return false;
+
+  const payload = card?.payloadData || {};
+  const playTier = normalizeToken(payload?.decision_v2?.play_tier || payload?.play_tier || payload?.tier);
+  return (
+    extractEdgeValue(card) !== null ||
+    projectionValue(card) !== null ||
+    ['BEST', 'GOOD'].includes(playTier)
+  );
 }
 
 const TEAM_ABBREVIATIONS = {
@@ -504,7 +556,7 @@ function getNhlTotalConvictionTier(card) {
 }
 
 function resolveLeanSectionTitle(cards) {
-  return cards.length > 0 ? '🟡 Slight Edge' : '🟡 Slight Edge';
+  return cards.length > 0 ? '🟡 Slight Edge (Lean)' : '🟡 Slight Edge (Lean)';
 }
 
 function cardMatchesWebhookFilters(card, bucket) {
@@ -604,7 +656,11 @@ function priceSummary(card) {
   const price = payload?.price ?? payload?.market_price_over ?? payload?.market_price_under;
   if (price === null || price === undefined || String(price).trim() === '') return '';
   const value = String(price).trim();
-  return value.startsWith('+') || value.startsWith('-') ? value : `${value}`;
+  if (value.startsWith('+') || value.startsWith('-')) return value;
+
+  const numeric = Number(value);
+  if (Number.isFinite(numeric) && numeric > 0) return `+${numeric}`;
+  return `${value}`;
 }
 
 function decisionReason(card) {
@@ -627,6 +683,18 @@ function summarizeReasoning(card) {
     payload?.analysis_reason ||
     '';
   return compactToken(why);
+}
+
+function resolveWhyLine(card, bucket) {
+  const why = summarizeReasoning(card);
+  if (bucket === 'blocked_watch') {
+    const reason = humanReason(card);
+    if (reason && reason !== 'No edge') {
+      return `Would be PLAY, but ${lowercaseLeading(reason)}`;
+    }
+  }
+  if (why) return why;
+  return null;
 }
 
 // Format a numeric edge value as +0.17 / -0.70 (2dp, always signed)
@@ -679,7 +747,7 @@ function renderDecisionLine(card, bucket) {
     );
     const pickStr = rawPick.replace(/^(lean|fire|watch|hold|play)\s+/i, '').trim();
     const priceVal = priceSummary(card);
-    const why = summarizeReasoning(card);
+    const why = resolveWhyLine(card, bucket);
 
     const proj = projectionValue(card);
     const priced = pickStr
@@ -687,11 +755,12 @@ function renderDecisionLine(card, bucket) {
       : 'No selection';
 
     // Second line: projection | edge
-    const edgeRawProp = safeScalar(payload?.edge ?? payload?.edge_pct ?? payload?.edge_over_pp);
+    const edgeRawProp = extractEdgeValue(card);
     const edgeProp = edgeRawProp !== null ? formatEdgeValue(edgeRawProp) : null;
+    const leanStrength = bucket === 'lean' ? describeLeanStrength(card) : null;
     const propMetricParts = [];
     if (proj) propMetricParts.push(proj);
-    if (edgeProp) propMetricParts.push(`Edge: ${edgeProp}`);
+    if (edgeProp) propMetricParts.push(`Edge: ${edgeProp}${leanStrength ? ` (${leanStrength})` : ''}`);
     const propMetricsLine = propMetricParts.join(' | ');
 
     const lines = [`PROP | ${priced}`];
@@ -722,14 +791,15 @@ function renderDecisionLine(card, bucket) {
   const betCore = [selection, line].filter(Boolean).join(' ').trim() || 'TBD';
   const priced  = price ? `${betCore} (${price})` : betCore;
   const proj    = projectionValue(card);
-  const why     = summarizeReasoning(card);
+  const why     = resolveWhyLine(card, bucket);
 
   // Second line: projection | edge (line is already embedded in the pick string)
-  const edgeRaw2 = safeScalar(payload?.edge ?? payload?.edge_pct ?? payload?.edge_over_pp);
+  const edgeRaw2 = extractEdgeValue(card);
   const edgeFormatted2 = edgeRaw2 !== null ? formatEdgeValue(edgeRaw2) : null;
+  const leanStrength = bucket === 'lean' ? describeLeanStrength(card) : null;
   const metricParts2 = [];
   if (proj) metricParts2.push(proj);
-  if (edgeFormatted2) metricParts2.push(`Edge: ${edgeFormatted2}`);
+  if (edgeFormatted2) metricParts2.push(`Edge: ${edgeFormatted2}${leanStrength ? ` (${leanStrength})` : ''}`);
   const metricsLine2 = metricParts2.join(' | ');
 
   const lines = [`${market} | ${priced}`];
@@ -894,21 +964,9 @@ function passesLeanThreshold(card) {
   const eligible = card?.payloadData?.webhook_lean_eligible;
   if (typeof eligible === 'boolean') return eligible;
   const payload = card?.payloadData || {};
-  const raw = payload?.edge ?? payload?.edge_pct ?? payload?.edge_over_pp;
-
-  if (raw !== null && raw !== undefined) {
-    const val = Number(raw);
-    if (Number.isFinite(val)) {
-      return isWebhookLeanEligible(payload, MIN_LEAN_EDGE_ABS);
-    }
-  }
-
-  // Fallback: parse edge from prediction string ("... Edge +0.9" or "Edge: -0.4")
-  const prediction = String(payload?.prediction || payload?.play?.pick_string || '');
-  const edgeMatch  = prediction.match(/Edge[:\s]+([+-]?\d+\.?\d*)/i);
-  if (edgeMatch) {
-    const val = Number(edgeMatch[1]);
-    if (Number.isFinite(val)) return Math.abs(val) >= MIN_LEAN_EDGE_ABS;
+  const val = extractEdgeValue(card);
+  if (Number.isFinite(val)) {
+    return isWebhookLeanEligible(payload, MIN_LEAN_EDGE_ABS);
   }
 
   return true; // no parseable edge → allow through (don't drop unknowns)
@@ -948,13 +1006,14 @@ function buildDiscordSnapshot({ now = new Date(), cards = [] } = {}) {
       (c) =>
         classifyDecisionBucket(c) === 'pass_blocked' && cardMatchesWebhookFilters(c, 'pass_blocked'),
     );
+    const blockedWatch = passBlocked.filter(isBlockedWatchCard);
 
     sectionCounts.official    += official.length;
     sectionCounts.lean        += leans.length;
     sectionCounts.passBlocked += passBlocked.length;
 
     // Hard send filter — skip games with nothing actionable
-    if (official.length === 0 && leans.length === 0) continue;
+    if (official.length === 0 && leans.length === 0 && blockedWatch.length === 0) continue;
 
     const shortMatchup = abbreviateMatchup(seed.matchup || 'Unknown');
     const startEt      = formatEtTime(seed?.gameTimeUtc);
@@ -969,13 +1028,15 @@ function buildDiscordSnapshot({ now = new Date(), cards = [] } = {}) {
     const officialLines = sectionLines('🟢 PLAY', official, 'official');
     if (officialLines.length > 0) headerLines.push('', ...officialLines);
 
+    const blockedLines = sectionLines('⚠️ WATCH (Would be PLAY)', blockedWatch, 'blocked_watch');
+    if (blockedLines.length > 0) headerLines.push('', ...blockedLines);
+
     const leanLines = sectionLines(resolveLeanSectionTitle(leans), leans, 'lean');
     if (leanLines.length > 0) headerLines.push('', ...leanLines);
 
-    // PASS block only when nothing was rendered — avoids contradicting a lean
-    const hasRenderedContent = officialLines.length > 0 || leanLines.length > 0;
+    const hasRenderedContent = officialLines.length > 0 || blockedLines.length > 0 || leanLines.length > 0;
     if (!hasRenderedContent) {
-      continue; // no plays, no leans rendered — skip entirely (dead game to bettor)
+      continue; // no bettor-usable content rendered — skip entirely
     }
 
     headerLines.push('─────────────────');

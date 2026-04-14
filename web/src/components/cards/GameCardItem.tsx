@@ -135,7 +135,7 @@ export default function GameCardItem({
     priceFlags: [],
     updatedAt: card.updatedAt,
     whyCode: fallbackDecision.whyReason,
-    whyText: fallbackDecision.whyReason.replace(/_/g, ' '),
+    whyText: formatReasonCode(fallbackDecision.whyReason),
     market_key: undefined,
     decision:
       fallbackDecision.status === 'FIRE'

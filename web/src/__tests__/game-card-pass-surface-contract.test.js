@@ -179,6 +179,45 @@ console.log('🧪 final_market_decision contract tests');
 
 {
   const game = buildGame({
+    action: 'PASS',
+    classification: 'PASS',
+    status: 'PASS',
+    decision_v2: {
+      official_status: 'PASS',
+      sharp_price_status: 'CHEDDAR',
+      primary_reason_code: 'PASS_NO_EDGE',
+      play_tier: null,
+      edge_delta_pct: null,
+    },
+  });
+  const card = transformToGameCard(game);
+  const decision = card.play?.final_market_decision;
+  assert.equal(decision?.surfaced_status, 'PASS');
+  assert.equal(decision?.surfaced_reason, 'No edge');
+}
+
+{
+  const game = buildGame({
+    action: 'PASS',
+    classification: 'PASS',
+    status: 'PASS',
+    decision_v2: {
+      official_status: 'PASS',
+      sharp_price_status: 'CHEDDAR',
+      primary_reason_code: 'UNMAPPED_INTERNAL_REASON',
+      play_tier: null,
+      edge_delta_pct: null,
+    },
+  });
+  const card = transformToGameCard(game);
+  const decision = card.play?.final_market_decision;
+  assert.equal(decision?.surfaced_status, 'PASS');
+  assert.equal(decision?.surfaced_reason, 'No edge at current price');
+  assert.doesNotMatch(decision?.surfaced_reason || '', /UNMAPPED|INTERNAL|REASON/);
+}
+
+{
+  const game = buildGame({
     goalie_home_status: 'CONFIRMED',
     goalie_away_status: 'CONFIRMED',
     decision_v2: {

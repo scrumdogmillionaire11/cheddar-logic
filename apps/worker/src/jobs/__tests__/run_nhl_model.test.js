@@ -429,7 +429,7 @@ describe('run_nhl_model job', () => {
       results.forEach((row) => {
         const parsed = JSON.parse(row.payload_data);
         if (parsed.raw_data !== undefined && parsed.raw_data !== null) {
-          expect(['computed', 'fallback']).toContain(parsed.raw_data.sigma_source);
+          expect(['calibrated', 'default']).toContain(parsed.raw_data.sigma_source);
           const sampled = parsed.raw_data.sigma_games_sampled;
           expect(sampled === null || typeof sampled === 'number').toBe(true);
         }

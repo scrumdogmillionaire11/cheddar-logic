@@ -1,45 +1,31 @@
 /*
- * Verifies props-mode default filtering keeps PASS-backed prop rows visible.
+ * Behavioral contract: props-mode defaults keep PASS-backed rows visible.
  */
 
-import assert from 'node:assert';
-import fs from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const filtersSource = fs.readFileSync(
-  path.resolve('web/src/lib/game-card/filters.ts'),
-  'utf8',
-);
-const presetsSource = fs.readFileSync(
-  path.resolve('web/src/lib/game-card/presets.ts'),
-  'utf8',
-);
-const cardsPageSource = fs.readFileSync(
-  path.resolve('web/src/components/cards/shared.ts'),
-  'utf8',
-);
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const repoRoot = path.resolve(__dirname, '../../..');
+const webRoot = path.resolve(repoRoot, 'web');
 
-console.log('🧪 Props filter defaults contract source tests');
+console.log('Behavior props filter defaults contract tests');
 
-assert(
-  filtersSource.includes('export const DEFAULT_PROPS_FILTERS') &&
-    filtersSource.includes("statuses: ['FIRE', 'WATCH', 'PASS']"),
-  'props mode defaults should include PASS so NO PLAY / PROJECTION rows are visible by default',
-);
+execFileSync(process.execPath, ['--import', 'tsx/esm', 'src/__tests__/game-card-filters.test.js'], {
+  cwd: webRoot,
+  stdio: 'inherit',
+});
 
-assert(
-  presetsSource.includes('props_shots') &&
-    presetsSource.includes('props_points') &&
-    presetsSource.includes('...DEFAULT_FILTERS_BY_MODE.props') &&
-    presetsSource.includes("statuses: FIRE_WATCH"),
-  'props presets should inherit PASS-inclusive defaults unless they explicitly opt into actionable-only statuses',
-);
+execFileSync(process.execPath, ['--import', 'tsx/esm', 'src/__tests__/filters-pass-play-main-view-regression.test.js'], {
+  cwd: webRoot,
+  stdio: 'inherit',
+});
 
-assert(
-  cardsPageSource.includes("viewMode !== 'game'") &&
-    cardsPageSource.includes("return 'PASS';") &&
-    cardsPageSource.includes('filters.statuses.includes(mapPropStatusToExpression(row.status))'),
-  'props filtering should keep PASS-mapped prop rows when PASS is present and lifecycle status stripping must stay game-mode-only',
-);
+execFileSync(process.execPath, ['--import', 'tsx/esm', 'src/__tests__/game-card-transform-hardening.test.js'], {
+  cwd: webRoot,
+  stdio: 'inherit',
+});
 
-console.log('✅ Props filter defaults contract source tests passed');
+console.log('Behavior props filter defaults contract tests passed');
