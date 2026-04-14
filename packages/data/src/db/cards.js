@@ -4,11 +4,6 @@ const {
   normalizeMarketPeriod,
   toRecommendedBetType,
 } = require('../market-contract');
-const {
-  isOfficialStatusActionable,
-  normalizeOfficialStatus,
-  rankOfficialStatus,
-} = require('@cheddar-logic/models');
 const { normalizeCardTitle } = require('../normalize');
 const {
   getDatabase,
@@ -189,6 +184,26 @@ function deleteCardPayloadsForGame(gameId, cardType, options = {}) {
 function toUpperToken(value) {
   if (value === null || value === undefined) return '';
   return String(value).trim().toUpperCase();
+}
+
+function normalizeOfficialStatus(value) {
+  const status = toUpperToken(value);
+  if (status === 'PLAY' || status === 'LEAN' || status === 'PASS') {
+    return status;
+  }
+  return '';
+}
+
+function isOfficialStatusActionable(value) {
+  const status = normalizeOfficialStatus(value);
+  return status === 'PLAY' || status === 'LEAN';
+}
+
+function rankOfficialStatus(value) {
+  const status = normalizeOfficialStatus(value);
+  if (status === 'PLAY') return 2;
+  if (status === 'LEAN') return 1;
+  return 0;
 }
 
 function toFiniteNumberOrNull(value) {
