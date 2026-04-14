@@ -4,8 +4,10 @@ const {
   deriveWebhookBucket,
   deriveWebhookReasonCode,
   isOfficialStatusActionable,
+  isWebhookLeanEligible,
   normalizeOfficialStatus,
   rankOfficialStatus,
+  resolveWebhookDisplaySide,
 } = require('../decision-policy');
 
 describe('decision-policy helpers', () => {
@@ -70,5 +72,37 @@ describe('decision-policy helpers', () => {
 
     expect(deriveWebhookReasonCode(payload, 'pass_blocked')).toBe('PASS_POLICY_GATE');
     expect(deriveWebhookReasonCode(payload, 'official')).toBeNull();
+  });
+
+  test('resolveWebhookDisplaySide prefers nhl_1p projection side then selection then prediction', () => {
+    expect(
+      resolveWebhookDisplaySide({
+        nhl_1p_decision: { projection: { side: 'over' } },
+        selection: { side: 'under' },
+        prediction: 'under',
+      }),
+    ).toBe('OVER');
+
+    expect(
+      resolveWebhookDisplaySide({
+        selection: { side: 'under' },
+        prediction: 'over',
+      }),
+    ).toBe('UNDER');
+
+    expect(resolveWebhookDisplaySide({ prediction: 'over' })).toBe('OVER');
+    expect(resolveWebhookDisplaySide({})).toBeNull();
+  });
+
+  test('isWebhookLeanEligible enforces absolute edge threshold when edge exists', () => {
+    expect(isWebhookLeanEligible({ edge: 0.2 }, 0.15)).toBe(true);
+    expect(isWebhookLeanEligible({ edge: -0.2 }, 0.15)).toBe(true);
+    expect(isWebhookLeanEligible({ edge: 0.1 }, 0.15)).toBe(false);
+  });
+
+  test('isWebhookLeanEligible falls back to true when edge is missing or non-finite', () => {
+    expect(isWebhookLeanEligible({}, 0.15)).toBe(true);
+    expect(isWebhookLeanEligible({ edge_pct: null }, 0.15)).toBe(true);
+    expect(isWebhookLeanEligible({ edge_over_pp: 'abc' }, 0.15)).toBe(true);
   });
 });

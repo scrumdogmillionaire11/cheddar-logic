@@ -7,11 +7,13 @@ const {
   deriveWebhookBucket,
   deriveWebhookReasonCode,
   getSideFamily,
+  isWebhookLeanEligible,
   isWave1EligiblePayload,
   normalizeOfficialStatus,
   isRecommendationPayload,
   normalizeMarketType,
   normalizePeriod,
+  resolveWebhookDisplaySide,
   shouldFlip,
 } = require('@cheddar-logic/models');
 
@@ -640,19 +642,8 @@ function computeWebhookFields(payload) {
   const isNhlTotal = sport === 'NHL' && period === 'full_game' && market === 'total';
   const is1P = period === '1p';
   const bucket = deriveWebhookBucket(payload, { isNhlTotal, is1P });
-
-  const rawSide =
-    payload.nhl_1p_decision?.projection?.side ||
-    payload.selection?.side ||
-    payload.prediction ||
-    null;
-  const displaySide = rawSide ? String(rawSide).toUpperCase() : null;
-
-  const edgeRaw = payload.edge ?? payload.edge_pct ?? payload.edge_over_pp;
-  const leanEligible =
-    edgeRaw !== null && edgeRaw !== undefined && Number.isFinite(Number(edgeRaw))
-      ? Math.abs(Number(edgeRaw)) >= WEBHOOK_MIN_LEAN_EDGE
-      : true;
+  const displaySide = resolveWebhookDisplaySide(payload);
+  const leanEligible = isWebhookLeanEligible(payload, WEBHOOK_MIN_LEAN_EDGE);
 
   const reasonCode = deriveWebhookReasonCode(payload, bucket);
 

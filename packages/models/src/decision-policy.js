@@ -92,9 +92,28 @@ function deriveWebhookReasonCode(payload, bucket) {
   );
 }
 
+function resolveWebhookDisplaySide(payload) {
+  const rawSide =
+    payload?.nhl_1p_decision?.projection?.side ||
+    payload?.selection?.side ||
+    payload?.prediction ||
+    null;
+  return rawSide ? toUpperToken(rawSide) : null;
+}
+
+function isWebhookLeanEligible(payload, minEdge = 0.15) {
+  const edgeRaw = payload?.edge ?? payload?.edge_pct ?? payload?.edge_over_pp;
+  if (edgeRaw !== null && edgeRaw !== undefined && Number.isFinite(Number(edgeRaw))) {
+    return Math.abs(Number(edgeRaw)) >= Number(minEdge);
+  }
+  return true;
+}
+
 module.exports = {
   deriveWebhookBucket,
   deriveWebhookReasonCode,
+  isWebhookLeanEligible,
+  resolveWebhookDisplaySide,
   normalizeOfficialStatus,
   normalizeOfficialStatusFromPayload,
   isOfficialStatusActionable,
