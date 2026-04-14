@@ -83,6 +83,7 @@ import {
   hasPlaceholderText,
   toDiagnosticToken,
 } from './title-inference';
+import { buildFinalMarketDecision } from './decision-surface';
 
 const ENABLE_WELCOME_HOME =
   process.env.NEXT_PUBLIC_ENABLE_WELCOME_HOME === 'true';
@@ -1272,6 +1273,14 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
       pass_reason_code:
         officialStatus === 'PASS' ? effectiveDecisionV2.primary_reason_code : null,
       decision_v2: effectiveDecisionV2,
+      final_market_decision: buildFinalMarketDecision({
+        decisionV2: effectiveDecisionV2,
+        reasonCodes: mergedReasonCodes,
+        passReasonCode: officialStatus === 'PASS' ? effectiveDecisionV2.primary_reason_code : null,
+        edge: edgePct,
+        goalieHomeStatus: wave1DecisionPlay.goalie_home_status,
+        goalieAwayStatus: wave1DecisionPlay.goalie_away_status,
+      }),
       status,
       market,
       pick,
@@ -1463,6 +1472,12 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
       },
       reason_codes: [missingDataCode],
       tags: [],
+      final_market_decision: buildFinalMarketDecision({
+        decisionV2: null,
+        reasonCodes: [missingDataCode],
+        passReasonCode: missingDataCode,
+        edge: null,
+      }),
     };
   }
 
@@ -2600,6 +2615,14 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
     classification: resolvedDisplayDecision.classification,
     action: resolvedDisplayDecision.action,
     pass_reason_code: resolvedPassReasonCode,
+    final_market_decision: buildFinalMarketDecision({
+      decisionV2: sourcePlay?.decision_v2,
+      reasonCodes: reasonCodesUnique,
+      passReasonCode: resolvedPassReasonCode,
+      edge: edgePct,
+      goalieHomeStatus: sourcePlay?.goalie_home_status,
+      goalieAwayStatus: sourcePlay?.goalie_away_status,
+    }),
     // Legacy compatibility (keep until UI migration complete)
     status: hardPass ? 'PASS' : resolvedDisplayDecision.status,
     market,

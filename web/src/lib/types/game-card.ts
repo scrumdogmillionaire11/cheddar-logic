@@ -236,6 +236,19 @@ export interface DecisionV2 {
   decided_at: string;
 }
 
+export interface FinalMarketDecision {
+  surfaced_status: 'PLAY' | 'SLIGHT EDGE' | 'PASS';
+  surfaced_reason: string;
+  model_strength: 'BEST' | 'GOOD' | 'WATCH' | null;
+  model_edge_pct: number | null;
+  fair_price: string | null;
+  verification_state: 'VERIFIED' | 'PENDING' | 'FAILED';
+  certainty_state: 'CONFIRMED' | 'PARTIAL' | 'UNCONFIRMED';
+  market_stable: boolean;
+  line_verified: boolean;
+  show_model_context: boolean;
+}
+
 export type CardQuality = 'OK' | 'DEGRADED' | 'BROKEN';
 
 export type ProjectionSource =
@@ -434,6 +447,7 @@ export interface Play {
   action?: 'FIRE' | 'HOLD' | 'PASS';
   pass_reason_code?: string | null;
   decision_v2?: DecisionV2;
+  final_market_decision?: FinalMarketDecision;
 
   // Legacy compatibility fields (historical rows only)
   status: ExpressionStatus;
