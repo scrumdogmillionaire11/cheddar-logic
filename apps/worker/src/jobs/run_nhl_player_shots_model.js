@@ -333,6 +333,29 @@ function deriveLegacyActionFromVerdict(verdict) {
   };
 }
 
+function extractLegacyDecisionFields(decision) {
+  return {
+    action: decision.action,
+    status: decision.status,
+    classification: decision.classification,
+  };
+}
+
+function buildDecisionV2Payload({
+  officialStatus,
+  direction,
+  projection,
+  marketLine,
+  fairLine,
+}) {
+  return {
+    official_status: officialStatus,
+    direction,
+    edge_delta_pct: computeEdgePct(projection, marketLine),
+    fair_line: fairLine,
+  };
+}
+
 function buildCanonicalPropDecision({
   projection,
   marketLine,
@@ -3057,6 +3080,16 @@ async function runNHLPlayerShotsModel() {
             const legacyDecisionFromProp = deriveLegacyActionFromVerdict(
               fullPropDecision.verdict,
             );
+            const fullLegacyFields = extractLegacyDecisionFields(
+              legacyDecisionFromProp,
+            );
+            const fullDecisionV2 = buildDecisionV2Payload({
+              officialStatus: legacyDecisionFromProp.officialStatus,
+              direction: fullPropDecision.lean_side ?? fullGameEdge.direction,
+              projection: effectiveMuContract,
+              marketLine: syntheticLine,
+              fairLine,
+            });
             const fullVerdictPrefix =
               fullPropDecision.verdict === 'PLAY'
                 ? 'Play'
@@ -3079,9 +3112,7 @@ async function runNHLPlayerShotsModel() {
                 card_status: 'active',
                 model_name: 'nhl-player-shots-v1',
                 model_version: '1.0.0',
-                action: legacyDecisionFromProp.action,
-                status: legacyDecisionFromProp.status,
-                classification: legacyDecisionFromProp.classification,
+                ...fullLegacyFields,
                 prediction: `${fullVerdictPrefix} ${playerName} ${fullPropDecision.lean_side ?? fullDirectionLabel} ${syntheticLine} SOG | Proj ${effectiveMuContract.toFixed(1)} · Fair ${fairLine} · Edge ${formatSignedEdge(matchupEdge)}`,
                 confidence: confidence,
                 confidence_tier: projectionContract.confidence,
@@ -3089,24 +3120,12 @@ async function runNHLPlayerShotsModel() {
                 generated_at: timestamp,
                 suggested_line: fairLine,
                 threshold: fairLine,
-                decision_v2: {
-                  official_status: legacyDecisionFromProp.officialStatus,
-                  direction: fullPropDecision.lean_side ?? fullGameEdge.direction,
-                  edge_delta_pct: computeEdgePct(effectiveMuContract, syntheticLine),
-                  fair_line: fairLine,
-                },
+                decision_v2: fullDecisionV2,
                 prop_decision: fullPropDecision,
                 breakout: buildBreakoutPayload(breakoutContext),
                 play: {
-                  action: legacyDecisionFromProp.action,
-                  status: legacyDecisionFromProp.status,
-                  classification: legacyDecisionFromProp.classification,
-                  decision_v2: {
-                    official_status: legacyDecisionFromProp.officialStatus,
-                    direction: fullPropDecision.lean_side ?? fullGameEdge.direction,
-                    edge_delta_pct: computeEdgePct(effectiveMuContract, syntheticLine),
-                    fair_line: fairLine,
-                  },
+                  ...fullLegacyFields,
+                  decision_v2: fullDecisionV2,
                   prop_decision: fullPropDecision,
                   pick_string: `${fullVerdictPrefix} ${playerName} ${fullPropDecision.lean_side ?? fullDirectionLabel} ${syntheticLine} SOG | Proj ${effectiveMuContract.toFixed(1)} · Fair ${fairLine} · Edge ${formatSignedEdge(matchupEdge)}`,
                   market_type: 'PROP',
@@ -3344,6 +3363,13 @@ async function runNHLPlayerShotsModel() {
                   : firstPeriodDecision.action === 'HOLD'
                     ? 'Lean'
                     : 'Pass';
+              const firstPeriodDecisionV2 = buildDecisionV2Payload({
+                officialStatus: firstPeriodDecision.officialStatus,
+                direction: firstPeriodEdge.direction,
+                projection: mu1p,
+                marketLine: syntheticLine1p,
+                fairLine: fairLine1p,
+              });
               const firstPeriodFlags = [
                 ...(firstPeriodV2Projection.flags ?? []),
                 ...sharedPropFlags,
@@ -3379,24 +3405,14 @@ async function runNHLPlayerShotsModel() {
                   generated_at: timestamp,
                   suggested_line: fairLine1p,
                   threshold: fairLine1p,
-                  decision_v2: {
-                    // Projection-delta percent vs. line; pricing edge lives in edge_over_pp / edge_under_pp.
-                    official_status: firstPeriodDecision.officialStatus,
-                    direction: firstPeriodEdge.direction,
-                    edge_delta_pct: computeEdgePct(mu1p, syntheticLine1p),
-                    fair_line: fairLine1p,
-                  },
+                  // Projection-delta percent vs. line; pricing edge lives in edge_over_pp / edge_under_pp.
+                  decision_v2: firstPeriodDecisionV2,
                   // PROP-specific
                   play: {
                     action: firstPeriodDecision.action,
                     status: firstPeriodDecision.status,
                     classification: firstPeriodDecision.classification,
-                    decision_v2: {
-                      official_status: firstPeriodDecision.officialStatus,
-                      direction: firstPeriodEdge.direction,
-                      edge_delta_pct: computeEdgePct(mu1p, syntheticLine1p),
-                      fair_line: fairLine1p,
-                    },
+                    decision_v2: firstPeriodDecisionV2,
                     pick_string: `${firstPeriodRecommendationPrefix} ${playerName} ${firstPeriodDirectionLabel} ${syntheticLine1p} SOG (1P) | Proj ${mu1p.toFixed(1)} · Fair ${fairLine1p} · Edge ${formatSignedEdge(matchupEdge1p)}`,
                     market_type: 'PROP',
                     player_name: playerName,
@@ -3719,8 +3735,16 @@ async function runNHLPlayerShotsModel() {
                 const blkLegacyDecision = deriveLegacyActionFromVerdict(
                   blkPropDecision.verdict,
                 );
+                const blkLegacyFields = extractLegacyDecisionFields(blkLegacyDecision);
                 const blkResolvedLean = blkPropDecision.lean_side || blkLeanSide;
                 const blkFairLine = roundToHalfLine(blkProjection.blk_mu) ?? blkMarket.line;
+                const blkDecisionV2 = buildDecisionV2Payload({
+                  officialStatus: blkLegacyDecision.officialStatus,
+                  direction: blkResolvedLean,
+                  projection: blkProjection.blk_mu,
+                  marketLine: blkMarket.line,
+                  fairLine: blkFairLine,
+                });
                 const blkPrediction = `${playerName} ${blkResolvedLean} ${blkMarket.line} BLK | Proj ${blkProjection.blk_mu.toFixed(1)} · Fair ${blkFairLine}`;
                 const blkCardId = `nhl-player-blk-${player.player_id}-${resolvedGameId}-${uuidV4().slice(0, 8)}`;
                 const payloadDataBlk = {
@@ -3740,9 +3764,7 @@ async function runNHLPlayerShotsModel() {
                   card_status: 'active',
                   model_name: 'nhl-player-blk-v1',
                   model_version: '1.0.0',
-                  action: blkLegacyDecision.action,
-                  status: blkLegacyDecision.status,
-                  classification: blkLegacyDecision.classification,
+                  ...blkLegacyFields,
                   prediction: blkPrediction,
                   confidence: blkConfidence,
                   recommended_bet_type: 'unknown',
@@ -3769,22 +3791,10 @@ async function runNHLPlayerShotsModel() {
                   player_id: player.player_id.toString(),
                   team_abbr: player.team_abbrev ?? null,
                   reasoning: blkPropDecision.why,
-                  decision_v2: {
-                    official_status: blkLegacyDecision.officialStatus,
-                    direction: blkResolvedLean,
-                    edge_delta_pct: computeEdgePct(blkProjection.blk_mu, blkMarket.line),
-                    fair_line: blkFairLine,
-                  },
+                  decision_v2: blkDecisionV2,
                   play: {
-                    action: blkLegacyDecision.action,
-                    status: blkLegacyDecision.status,
-                    classification: blkLegacyDecision.classification,
-                    decision_v2: {
-                      official_status: blkLegacyDecision.officialStatus,
-                      direction: blkResolvedLean,
-                      edge_delta_pct: computeEdgePct(blkProjection.blk_mu, blkMarket.line),
-                      fair_line: blkFairLine,
-                    },
+                    ...blkLegacyFields,
+                    decision_v2: blkDecisionV2,
                     prop_decision: blkPropDecision,
                     pick_string: blkPrediction,
                     market_type: 'PROP',
@@ -3932,7 +3942,15 @@ async function runNHLPlayerShotsModel() {
                       usingRealLine: true,
                     });
                     const extraLegacy = deriveLegacyActionFromVerdict(extraPropDecision.verdict);
+                    const extraLegacyFields = extractLegacyDecisionFields(extraLegacy);
                     const extraFairLine = roundToHalfLine(blkProjection.blk_mu) ?? extraLine;
+                    const extraDecisionV2 = buildDecisionV2Payload({
+                      officialStatus: extraLegacy.officialStatus,
+                      direction: extraLeanSide,
+                      projection: blkProjection.blk_mu,
+                      marketLine: extraLine,
+                      fairLine: extraFairLine,
+                    });
                     const extraPrediction = `${playerName} ${extraLeanSide} ${extraLine} BLK | Proj ${blkProjection.blk_mu.toFixed(1)} · Fair ${extraFairLine}`;
                     const extraPayload = {
                       ...payloadDataBlk,
@@ -3943,9 +3961,7 @@ async function runNHLPlayerShotsModel() {
                       price: extraLeanSide === 'OVER'
                         ? extraCandidate.over_price : extraCandidate.under_price,
                       prediction: extraPrediction,
-                      action: extraLegacy.action,
-                      status: extraLegacy.status,
-                      classification: extraLegacy.classification,
+                      ...extraLegacyFields,
                       tier: extraPropDecision.verdict === 'PLAY'
                         ? 'HOT' : extraPropDecision.verdict === 'WATCH' ? 'WATCH' : 'COLD',
                       prop_decision: extraPropDecision,
@@ -3953,23 +3969,11 @@ async function runNHLPlayerShotsModel() {
                       suggested_line: extraFairLine,
                       threshold: extraFairLine,
                       reasoning: extraPropDecision.why,
-                      decision_v2: {
-                        official_status: extraLegacy.officialStatus,
-                        direction: extraLeanSide,
-                        edge_delta_pct: computeEdgePct(blkProjection.blk_mu, extraLine),
-                        fair_line: extraFairLine,
-                      },
+                      decision_v2: extraDecisionV2,
                       play: {
                         ...payloadDataBlk.play,
-                        action: extraLegacy.action,
-                        status: extraLegacy.status,
-                        classification: extraLegacy.classification,
-                        decision_v2: {
-                          official_status: extraLegacy.officialStatus,
-                          direction: extraLeanSide,
-                          edge_delta_pct: computeEdgePct(blkProjection.blk_mu, extraLine),
-                          fair_line: extraFairLine,
-                        },
+                        ...extraLegacyFields,
+                        decision_v2: extraDecisionV2,
                         prop_decision: extraPropDecision,
                         pick_string: extraPrediction,
                         selection: {
