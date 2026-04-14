@@ -150,6 +150,40 @@ describe('decision publisher v2 pipeline', () => {
     expect(payload.decision_v2.official_status).toBe('PLAY');
   });
 
+  test('ui_display_status treats lowercase official_status lean as WATCH', () => {
+    const payload = {
+      kind: 'PLAY',
+      execution_status: 'EXECUTABLE',
+      classification: 'LEAN',
+      action: 'HOLD',
+      status: 'WATCH',
+      decision_v2: {
+        official_status: 'lean',
+      },
+    };
+
+    applyUiActionFields(payload);
+
+    expect(payload.ui_display_status).toBe('WATCH');
+  });
+
+  test('ui_display_status treats unknown official_status as PASS', () => {
+    const payload = {
+      kind: 'PLAY',
+      execution_status: 'EXECUTABLE',
+      classification: 'BASE',
+      action: 'FIRE',
+      status: 'FIRE',
+      decision_v2: {
+        official_status: 'MAYBE',
+      },
+    };
+
+    applyUiActionFields(payload);
+
+    expect(payload.ui_display_status).toBe('PASS');
+  });
+
   test('FIRST_PERIOD cards are always projection-only even when executable is requested', () => {
     const payload = buildWave1Payload({
       sport: 'NHL',

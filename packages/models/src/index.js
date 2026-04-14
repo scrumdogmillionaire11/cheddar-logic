@@ -4,6 +4,7 @@ const edgeCalculator = require('./edge-calculator');
 const decisionGate = require('./decision-gate');
 const decisionPipelineV2 = require('./decision-pipeline-v2');
 const decisionPipelineV2Patch = require('./decision-pipeline-v2-edge-config');
+const decisionPolicy = require('./decision-policy');
 const nhlSog = require('./nhl-sog/projection');
 const marketStructure = require('./market-structure');
 const { generateCard, buildMarketCallCard } = require('./card-factory');
@@ -15,6 +16,7 @@ module.exports = {
   ...decisionGate,
   ...decisionPipelineV2,
   ...decisionPipelineV2Patch,
+  ...decisionPolicy,
   ...nhlSog,
   ...marketStructure,
   generateCard,

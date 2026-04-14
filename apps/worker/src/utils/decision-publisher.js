@@ -6,6 +6,7 @@ const {
   computeInputsHash,
   getSideFamily,
   isWave1EligiblePayload,
+  normalizeOfficialStatus,
   isRecommendationPayload,
   normalizeMarketType,
   normalizePeriod,
@@ -421,9 +422,7 @@ function finalizeDecisionFields(payload, context = {}) {
 
 function deriveUiDisplayStatus(payload) {
   const executionStatus = String(payload?.execution_status || '').toUpperCase();
-  const officialStatus = String(
-    payload?.decision_v2?.official_status || '',
-  ).toUpperCase();
+  const officialStatus = normalizeOfficialStatus(payload?.decision_v2?.official_status);
   if (executionStatus === 'PROJECTION_ONLY') return 'WATCH';
   if (executionStatus === 'BLOCKED') return 'PASS';
   if (executionStatus === 'EXECUTABLE' && officialStatus === 'PLAY') {

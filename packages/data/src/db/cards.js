@@ -4,6 +4,11 @@ const {
   normalizeMarketPeriod,
   toRecommendedBetType,
 } = require('../market-contract');
+const {
+  isOfficialStatusActionable,
+  normalizeOfficialStatus,
+  rankOfficialStatus,
+} = require('@cheddar-logic/models');
 const { normalizeCardTitle } = require('../normalize');
 const {
   getDatabase,
@@ -245,12 +250,7 @@ function recordCalibrationPredictionForCard({ db, card, payloadData, lockedMarke
 }
 
 function resolveOfficialPlayStatus(payloadData) {
-  const officialStatus = toUpperToken(payloadData?.decision_v2?.official_status);
-  if (officialStatus === 'PLAY' || officialStatus === 'LEAN' || officialStatus === 'PASS') {
-    return officialStatus;
-  }
-
-  return '';
+  return normalizeOfficialStatus(payloadData?.decision_v2?.official_status);
 }
 
 function normalizeMarketTypeForTracking(rawValue) {
@@ -326,7 +326,7 @@ function shouldTrackDisplayedPlay(payloadData, context = {}) {
       ? toFiniteNumberOrNull(context.price)
       : toFiniteNumberOrNull(payloadData?.price);
   const officialStatus = resolveOfficialPlayStatus(payloadData);
-  const isActionable = officialStatus === 'PLAY' || officialStatus === 'LEAN';
+  const isActionable = isOfficialStatusActionable(officialStatus);
   if (!isActionable) return false;
 
   if (!sport || !marketType) return false;
@@ -366,12 +366,6 @@ function hasCardDisplayLogTable(db) {
     )
     .get();
   return Boolean(row);
-}
-
-function rankOfficialStatus(statusToken) {
-  if (statusToken === 'PLAY') return 2;
-  if (statusToken === 'LEAN') return 1;
-  return 0;
 }
 
 function safeTimestampMs(value) {
