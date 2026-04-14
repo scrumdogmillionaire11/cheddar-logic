@@ -13,6 +13,7 @@ const {
   getDatabase,
   createJob,
 } = require('@cheddar-logic/data');
+const { isWebhookLeanEligible } = require('@cheddar-logic/models');
 const { classifyNhlTotalsStatus } = require('../models/nhl-totals-status');
 
 const JOB_NAME = 'post_discord_cards';
@@ -898,7 +899,9 @@ function passesLeanThreshold(card) {
 
   if (raw !== null && raw !== undefined) {
     const val = Number(raw);
-    if (Number.isFinite(val)) return Math.abs(val) >= MIN_LEAN_EDGE_ABS;
+    if (Number.isFinite(val)) {
+      return isWebhookLeanEligible(payload, MIN_LEAN_EDGE_ABS);
+    }
   }
 
   // Fallback: parse edge from prediction string ("... Edge +0.9" or "Edge: -0.4")
