@@ -27,6 +27,39 @@ function rankOfficialStatus(value) {
   return 0;
 }
 
+function deriveLegacyDecisionEnvelope(officialStatus) {
+  const normalized = normalizeOfficialStatus(officialStatus);
+  if (normalized === 'PLAY') {
+    return {
+      classification: 'BASE',
+      action: 'FIRE',
+      status: 'FIRE',
+      passReasonCode: null,
+    };
+  }
+  if (normalized === 'LEAN') {
+    return {
+      classification: 'LEAN',
+      action: 'HOLD',
+      status: 'WATCH',
+      passReasonCode: null,
+    };
+  }
+  return {
+    classification: 'PASS',
+    action: 'PASS',
+    status: 'PASS',
+    passReasonCode: null,
+  };
+}
+
+function mapActionToClassification(action) {
+  const normalizedAction = toUpperToken(action);
+  if (normalizedAction === 'FIRE') return 'BASE';
+  if (normalizedAction === 'HOLD') return 'LEAN';
+  return 'PASS';
+}
+
 function deriveWebhookBucket(payload, context = {}) {
   const isNhlTotal = context?.isNhlTotal === true;
   const is1P = context?.is1P === true;
@@ -112,7 +145,9 @@ function isWebhookLeanEligible(payload, minEdge = 0.15) {
 module.exports = {
   deriveWebhookBucket,
   deriveWebhookReasonCode,
+  deriveLegacyDecisionEnvelope,
   isWebhookLeanEligible,
+  mapActionToClassification,
   resolveWebhookDisplaySide,
   normalizeOfficialStatus,
   normalizeOfficialStatusFromPayload,

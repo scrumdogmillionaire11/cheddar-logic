@@ -5,10 +5,12 @@ const {
   computeCandidateHash,
   computeInputsHash,
   deriveWebhookBucket,
+  deriveLegacyDecisionEnvelope,
   deriveWebhookReasonCode,
   getSideFamily,
   isWebhookLeanEligible,
   isWave1EligiblePayload,
+  mapActionToClassification,
   normalizeOfficialStatus,
   isRecommendationPayload,
   normalizeMarketType,
@@ -73,38 +75,6 @@ function syncSelectionCompatibilityFields(payload, updates = {}) {
   if (nextTeam !== undefined) {
     payload.selection.team = nextTeam;
   }
-}
-
-function mapOfficialStatusToLegacyDecision(officialStatus) {
-  if (officialStatus === 'PLAY') {
-    return {
-      classification: 'BASE',
-      action: 'FIRE',
-      status: 'FIRE',
-      passReasonCode: null,
-    };
-  }
-  if (officialStatus === 'LEAN') {
-    return {
-      classification: 'LEAN',
-      action: 'HOLD',
-      status: 'WATCH',
-      passReasonCode: null,
-    };
-  }
-  return {
-    classification: 'PASS',
-    action: 'PASS',
-    status: 'PASS',
-    passReasonCode: null,
-  };
-}
-
-function mapActionToClassification(action) {
-  const normalizedAction = String(action || '').toUpperCase();
-  if (normalizedAction === 'FIRE') return 'BASE';
-  if (normalizedAction === 'HOLD') return 'LEAN';
-  return 'PASS';
 }
 
 function applyDecisionVeto(cardOrDecision, vetoReason) {
@@ -388,7 +358,7 @@ function finalizeDecisionFields(payload, context = {}) {
     const decisionV2 = buildDecisionV2(payload, context);
     if (decisionV2) {
       payload.decision_v2 = decisionV2;
-      const legacyDecision = mapOfficialStatusToLegacyDecision(
+      const legacyDecision = deriveLegacyDecisionEnvelope(
         decisionV2.official_status,
       );
       payload.classification = legacyDecision.classification;

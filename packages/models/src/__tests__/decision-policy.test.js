@@ -1,10 +1,12 @@
 'use strict';
 
 const {
+  deriveLegacyDecisionEnvelope,
   deriveWebhookBucket,
   deriveWebhookReasonCode,
   isOfficialStatusActionable,
   isWebhookLeanEligible,
+  mapActionToClassification,
   normalizeOfficialStatus,
   rankOfficialStatus,
   resolveWebhookDisplaySide,
@@ -35,6 +37,40 @@ describe('decision-policy helpers', () => {
     expect(rankOfficialStatus('LEAN')).toBe(1);
     expect(rankOfficialStatus('PASS')).toBe(0);
     expect(rankOfficialStatus('UNKNOWN')).toBe(0);
+  });
+
+  test('deriveLegacyDecisionEnvelope maps official status to legacy fields', () => {
+    expect(deriveLegacyDecisionEnvelope('PLAY')).toEqual({
+      classification: 'BASE',
+      action: 'FIRE',
+      status: 'FIRE',
+      passReasonCode: null,
+    });
+    expect(deriveLegacyDecisionEnvelope('LEAN')).toEqual({
+      classification: 'LEAN',
+      action: 'HOLD',
+      status: 'WATCH',
+      passReasonCode: null,
+    });
+    expect(deriveLegacyDecisionEnvelope('PASS')).toEqual({
+      classification: 'PASS',
+      action: 'PASS',
+      status: 'PASS',
+      passReasonCode: null,
+    });
+    expect(deriveLegacyDecisionEnvelope('wat')).toEqual({
+      classification: 'PASS',
+      action: 'PASS',
+      status: 'PASS',
+      passReasonCode: null,
+    });
+  });
+
+  test('mapActionToClassification keeps legacy action contract', () => {
+    expect(mapActionToClassification('FIRE')).toBe('BASE');
+    expect(mapActionToClassification('hold')).toBe('LEAN');
+    expect(mapActionToClassification('PASS')).toBe('PASS');
+    expect(mapActionToClassification('UNKNOWN')).toBe('PASS');
   });
 
   test('deriveWebhookBucket maps NHL totals status using canonical policy', () => {
