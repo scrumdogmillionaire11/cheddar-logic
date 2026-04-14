@@ -452,6 +452,127 @@ function getLatestOddsSnapshot(db, gameId) {
     .get(gameId);
 }
 
+const MLB_REJECT_REASON_FAMILIES = Object.freeze([
+  'DATA_STALENESS',
+  'NO_EDGE',
+  'INPUT_FAILURE',
+  'EXECUTION_POLICY',
+  'UNCATEGORIZED',
+]);
+
+const MLB_REJECT_MARKETS = Object.freeze([
+  'f5_total',
+  'full_game_total',
+  'full_game_ml',
+]);
+
+function mapMlbCardTypeToRejectMarket(cardType) {
+  if (cardType === 'mlb-f5') return 'f5_total';
+  if (cardType === 'mlb-full-game') return 'full_game_total';
+  if (cardType === 'mlb-full-game-ml') return 'full_game_ml';
+  return null;
+}
+
+function classifyMlbRejectReasonFamily(reasonCode) {
+  const code = String(reasonCode || '').toUpperCase();
+  if (!code) return 'UNCATEGORIZED';
+  if (code.includes('STALE') || code.includes('SNAPSHOT_AGE') || code.includes('SNAPSHOT_MISSING')) {
+    return 'DATA_STALENESS';
+  }
+  if (code.includes('NO_EDGE') || code.includes('EDGE_INSUFFICIENT') || code.includes('PASS_NO_EDGE')) {
+    return 'NO_EDGE';
+  }
+  if (
+    code.includes('INPUT') ||
+    code.includes('MISSING') ||
+    code.includes('UNAVAILABLE') ||
+    code.includes('NO_MARKET') ||
+    code.includes('CONTRACT')
+  ) {
+    return 'INPUT_FAILURE';
+  }
+  if (
+    code.includes('PROJECTION_ONLY') ||
+    code.includes('ROLL') ||
+    code.includes('DISABLED') ||
+    code.includes('QUARANTINE') ||
+    code.includes('POLICY')
+  ) {
+    return 'EXECUTION_POLICY';
+  }
+  return 'UNCATEGORIZED';
+}
+
+function summarizeMlbRejectReasonFamilies(db, lookbackHours = 24) {
+  const reasonFamilyCounts = MLB_REJECT_MARKETS.reduce((acc, market) => {
+    acc[market] = MLB_REJECT_REASON_FAMILIES.reduce((families, family) => {
+      families[family] = 0;
+      return families;
+    }, {});
+    return acc;
+  }, {});
+
+  const rows = db
+    .prepare(
+      `SELECT
+         card_type,
+         json_extract(payload_data, '$.decision_v2.primary_reason_code') AS decision_reason,
+         json_extract(payload_data, '$.pass_reason_code') AS pass_reason,
+         json_extract(payload_data, '$.reason_codes') AS reason_codes_json,
+         COUNT(*) AS cnt
+       FROM card_payloads
+       WHERE sport = 'MLB'
+         AND card_type IN ('mlb-f5', 'mlb-full-game', 'mlb-full-game-ml')
+         AND created_at > datetime('now', ?)
+       GROUP BY 1, 2, 3, 4`,
+    )
+    .all(`-${lookbackHours} hours`);
+
+  for (const row of rows) {
+    const market = mapMlbCardTypeToRejectMarket(row.card_type);
+    if (!market) continue;
+
+    const codes = [];
+    if (typeof row.decision_reason === 'string' && row.decision_reason.length > 0) {
+      codes.push(row.decision_reason);
+    }
+    if (typeof row.pass_reason === 'string' && row.pass_reason.length > 0) {
+      codes.push(row.pass_reason);
+    }
+
+    if (typeof row.reason_codes_json === 'string' && row.reason_codes_json.length > 0) {
+      try {
+        const parsed = JSON.parse(row.reason_codes_json);
+        if (Array.isArray(parsed)) {
+          for (const code of parsed) {
+            if (typeof code === 'string' && code.length > 0) {
+              codes.push(code);
+            }
+          }
+        }
+      } catch (_error) {
+        // Keep deterministic fallback to UNCATEGORIZED when reason_codes is malformed.
+      }
+    }
+
+    const family = codes.length > 0
+      ? classifyMlbRejectReasonFamily(codes[0])
+      : 'UNCATEGORIZED';
+    reasonFamilyCounts[market][family] += Number(row.cnt || 0);
+  }
+
+  const uncategorizedCount = MLB_REJECT_MARKETS.reduce(
+    (sum, market) => sum + Number(reasonFamilyCounts[market].UNCATEGORIZED || 0),
+    0,
+  );
+
+  return {
+    lookback_hours: lookbackHours,
+    reason_family_counts: reasonFamilyCounts,
+    uncategorized_count: uncategorizedCount,
+  };
+}
+
 /**
  * Check 4: MLB F5 market availability
  * For upcoming MLB games in the near T-minus window, report F5 total
@@ -525,6 +646,7 @@ function checkMlbF5MarketAvailability({ expectF5Ml = false } = {}) {
   const missingFullGameTotal = [];
   const missingF5Ml = [];
   let expectedF5MlCount = 0;
+  const rejectReasonDiagnostics = summarizeMlbRejectReasonFamilies(db);
 
   for (const game of upcomingGames) {
     const latestOdds = getLatestOddsSnapshot(db, game.game_id);
@@ -581,6 +703,9 @@ function checkMlbF5MarketAvailability({ expectF5Ml = false } = {}) {
       `${missingF5Ml.length}/${expectedF5MlCount} missing F5 ML`,
     );
   }
+  reasonParts.push(
+    `reason families uncategorized=${rejectReasonDiagnostics.uncategorized_count}`,
+  );
 
   const reason = reasonParts.join('; ');
 
@@ -610,6 +735,7 @@ function checkMlbF5MarketAvailability({ expectF5Ml = false } = {}) {
     expected_f5_ml_count: expectedF5MlCount,
     missing_f5_ml_count: missingF5Ml.length,
     missing_f5_ml_games: missingF5Ml,
+    reject_reason_diagnostics: rejectReasonDiagnostics,
   };
 }
 
@@ -1016,6 +1142,7 @@ module.exports = {
   checkPipelineHealth,
   checkCardsFreshness,
   checkMlbF5MarketAvailability,
+  summarizeMlbRejectReasonFamilies,
   checkMlbSeedFreshness,
   checkOddsFreshness,
   checkCalibrationKillSwitches,

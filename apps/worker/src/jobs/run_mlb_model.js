@@ -445,8 +445,14 @@ function resolveMlbF5MoneylineContext(oddsSnapshot) {
 function resolveMlbFullGameTotalContext(oddsSnapshot) {
   const rawData = parseMlbRawData(oddsSnapshot);
   const rawEntry = getMarketEntry(rawData, ['totals']);
+  const mlb = rawData?.mlb && typeof rawData.mlb === 'object' ? rawData.mlb : {};
 
-  const line = pickFirstFinite(oddsSnapshot?.total, rawEntry?.line, rawEntry?.total);
+  const line = pickFirstFinite(
+    oddsSnapshot?.total,
+    mlb?.full_game_line,
+    rawEntry?.line,
+    rawEntry?.total,
+  );
   const overPrice = pickFirstFinite(
     oddsSnapshot?.total_price_over,
     rawEntry?.over,
@@ -459,6 +465,28 @@ function resolveMlbFullGameTotalContext(oddsSnapshot) {
   );
 
   return { line, over_price: overPrice, under_price: underPrice };
+}
+
+function hydrateCanonicalMlbMarketLines(
+  oddsSnapshot,
+  existingMlb = {},
+  { useF5ProjectionFloor = false } = {},
+) {
+  const mlb = existingMlb && typeof existingMlb === 'object' ? { ...existingMlb } : {};
+  const canonicalFullGameLine = pickFirstFinite(
+    oddsSnapshot?.total,
+    mlb.full_game_line,
+    mlb.total_line,
+  );
+
+  mlb.full_game_line = canonicalFullGameLine;
+  delete mlb.total_line;
+  mlb.f5_line =
+    oddsSnapshot?.total_f5 ??
+    mlb.f5_line ??
+    (useF5ProjectionFloor ? computeProjectionFloorF5(oddsSnapshot) : null);
+
+  return mlb;
 }
 
 function buildMlbMarketAvailability(oddsSnapshot, { expectF5Ml = false, withoutOddsMode = false, projectionFloorF5 = null } = {}) {
@@ -1718,12 +1746,13 @@ function enrichMlbPitcherData(
 
     const mlb = existingRaw.mlb ?? {};
 
-    // Attach market lines from odds snapshot to raw_data.mlb
-    mlb.total_line = oddsSnapshot.total ?? mlb.total_line ?? null;
-    mlb.f5_line =
-      oddsSnapshot.total_f5 ??
-      mlb.f5_line ??
-      (useF5ProjectionFloor ? computeProjectionFloorF5(oddsSnapshot) : null);
+    // Canonical contract: hydrate full-game totals as mlb.full_game_line.
+    const hydratedMlb = hydrateCanonicalMlbMarketLines(
+      oddsSnapshot,
+      mlb,
+      { useF5ProjectionFloor },
+    );
+    Object.assign(mlb, hydratedMlb);
     mlb.home_offense_profile =
       mlb.home_offense_profile ?? resolveMlbF5OffenseProfile(homeTeam);
     mlb.away_offense_profile =
@@ -2964,6 +2993,7 @@ module.exports = {
   runMLBModel,
   buildMlbProjectionOnlyRuntimeContext,
   applyMlbProjectionOnlyGuards,
+  hydrateCanonicalMlbMarketLines,
   generateMLBCard,
   buildMlbDualRunRecord,
   buildMlbF5OddsContext,

@@ -183,3 +183,17 @@ Plans:
 Plans:
 - [ ] ui-decision-contract-01-PLAN.md — Canonical `final_market_decision` transform contract + precedence helper + contract tests (Wave 1)
 - [ ] ui-decision-contract-02-PLAN.md — GameCardItem surfaced-status-first rendering + legacy contradictory path removal + regression tests (Wave 2)
+
+---
+
+### Phase: market-board - The Wedge + Cheddar Board
+
+**Goal**: Split picks and market intelligence into sibling surfaces: The Wedge (/wedge) for model-driven picks and Cheddar Board (/board) for market-state intelligence.
+
+**Requirements:** [WEDGE-01, BOARD-01, BOARD-02, BOARD-03, BOARD-04]
+
+**Plans:** 2 plans in 2 waves
+
+Plans:
+- [ ] market-board-01-PLAN.md - The Wedge route rename and /cards redirect (Wave 1)
+- [ ] market-board-02-PLAN.md - Cheddar Board API + 4-tab UI + nav integration (Wave 2)

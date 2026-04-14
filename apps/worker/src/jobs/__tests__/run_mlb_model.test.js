@@ -42,6 +42,7 @@ const {
   applyExecutionGateToMlbPayload,
   applyMlbProjectionOnlyGuards,
   buildMlbMarketAvailability,
+  hydrateCanonicalMlbMarketLines,
   buildMlbPipelineState,
   buildPitcherKLineContract,
   buildMlbPitcherKPayloadFields,
@@ -301,6 +302,60 @@ describe('buildMlbMarketAvailability projection-only totals guard', () => {
 
     expect(availability.full_game_total_ok).toBe(false);
     expect(availability.blocking_reason_codes).toContain('PROJECTION_ONLY_NO_TOTALS');
+  });
+
+  test('canonical full-game line contract maps snapshot total to mlb.full_game_line', () => {
+    const hydrated = hydrateCanonicalMlbMarketLines(
+      {
+        total: 8.5,
+        total_f5: 4.0,
+      },
+      {
+        total_line: 8.0,
+      },
+    );
+
+    expect(hydrated.full_game_line).toBe(8.5);
+    expect(hydrated.total_line).toBeUndefined();
+    expect(hydrated.f5_line).toBe(4.0);
+  });
+
+  test('computeMLBDriverCards emits full_game_total only from canonical mlb.full_game_line', () => {
+    const snapshotWithCanonicalLine = {
+      raw_data: {
+        mlb: {
+          full_game_line: 8.5,
+          f5_line: 4.5,
+          home_pitcher: { ...f5HomePitcher },
+          away_pitcher: { ...f5AwayPitcher },
+          home_offense_profile: { ...f5FullContext.home_offense_profile },
+          away_offense_profile: { ...f5FullContext.away_offense_profile },
+          park_run_factor: f5FullContext.park_run_factor,
+          temp_f: f5FullContext.temp_f,
+          wind_mph: f5FullContext.wind_mph,
+          wind_dir: f5FullContext.wind_dir,
+          roof: f5FullContext.roof,
+        },
+      },
+      h2h_home: -120,
+      h2h_away: 110,
+    };
+    const snapshotWithLegacyAliasOnly = {
+      ...snapshotWithCanonicalLine,
+      raw_data: {
+        mlb: {
+          ...snapshotWithCanonicalLine.raw_data.mlb,
+          full_game_line: null,
+          total_line: 8.5,
+        },
+      },
+    };
+
+    const canonicalCards = computeMLBDriverCards('g-mlb-1', snapshotWithCanonicalLine);
+    const aliasOnlyCards = computeMLBDriverCards('g-mlb-2', snapshotWithLegacyAliasOnly);
+
+    expect(canonicalCards.some((card) => card.market === 'full_game_total')).toBe(true);
+    expect(aliasOnlyCards.some((card) => card.market === 'full_game_total')).toBe(false);
   });
 });
 
