@@ -14,7 +14,6 @@ const {
   createJob,
 } = require('@cheddar-logic/data');
 const { isWebhookLeanEligible } = require('@cheddar-logic/models');
-const { classifyNhlTotalsStatus } = require('../models/nhl-totals-status');
 
 const JOB_NAME = 'post_discord_cards';
 const DEFAULT_CHAR_LIMIT = 1800;
@@ -1152,9 +1151,14 @@ module.exports = {
   postDiscordCards,
   isNonPassCard,
   isDisplayableWebhookCard,
+  isDisplayableWebhookCardLegacy,
   isPlayerPropCard,
   isFirstPeriodCard,
   buildDiscordSnapshot,
   chunkDiscordContent,
   sendDiscordMessages,
+  classifyDecisionBucket,
+  classifyDecisionBucketLegacy,
+  selectionSummary,
+  passesLeanThreshold,
 };
