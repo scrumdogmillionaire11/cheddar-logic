@@ -7,6 +7,7 @@ const {
   deriveWebhookBucket,
   deriveLegacyDecisionEnvelope,
   deriveWebhookReasonCode,
+  deriveUiDisplayStatus,
   getSideFamily,
   isWebhookLeanEligible,
   isWave1EligiblePayload,
@@ -394,21 +395,6 @@ function finalizeDecisionFields(payload, context = {}) {
   return payload;
 }
 
-function deriveUiDisplayStatus(payload) {
-  const executionStatus = String(payload?.execution_status || '').toUpperCase();
-  const officialStatus = normalizeOfficialStatus(payload?.decision_v2?.official_status);
-  if (executionStatus === 'PROJECTION_ONLY') return 'WATCH';
-  if (executionStatus === 'BLOCKED') return 'PASS';
-  if (executionStatus === 'EXECUTABLE' && officialStatus === 'PLAY') {
-    return 'PLAY';
-  }
-  if (executionStatus === 'EXECUTABLE' && officialStatus === 'LEAN') {
-    return 'WATCH';
-  }
-  if (officialStatus === 'LEAN') return 'WATCH';
-  return 'PASS';
-}
-
 /**
  * Backward-compatible wrapper:
  * - Pre-publish payloads: finalize semantic decision fields, then decorate UI
@@ -432,7 +418,10 @@ function applyUiActionFields(payload, context = {}) {
     finalizeDecisionFields(payload, context);
   }
 
-  payload.ui_display_status = deriveUiDisplayStatus(payload);
+  payload.ui_display_status = deriveUiDisplayStatus(
+    payload?.execution_status,
+    payload?.decision_v2?.official_status,
+  );
 
   if (strictDecisionSnapshot) {
     assertNoDecisionMutation(payload, strictDecisionSnapshot, {

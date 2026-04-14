@@ -60,6 +60,28 @@ function mapActionToClassification(action) {
   return 'PASS';
 }
 
+function deriveUiDisplayStatus(executionStatus, officialStatus) {
+  const normalizedExecutionStatus = toUpperToken(executionStatus);
+  const normalizedOfficialStatus = normalizeOfficialStatus(officialStatus);
+
+  if (normalizedExecutionStatus === 'PROJECTION_ONLY') return 'WATCH';
+  if (normalizedExecutionStatus === 'BLOCKED') return 'PASS';
+  if (
+    normalizedExecutionStatus === 'EXECUTABLE' &&
+    normalizedOfficialStatus === 'PLAY'
+  ) {
+    return 'PLAY';
+  }
+  if (
+    normalizedExecutionStatus === 'EXECUTABLE' &&
+    normalizedOfficialStatus === 'LEAN'
+  ) {
+    return 'WATCH';
+  }
+  if (normalizedOfficialStatus === 'LEAN') return 'WATCH';
+  return 'PASS';
+}
+
 function deriveWebhookBucket(payload, context = {}) {
   const isNhlTotal = context?.isNhlTotal === true;
   const is1P = context?.is1P === true;
@@ -146,6 +168,7 @@ module.exports = {
   deriveWebhookBucket,
   deriveWebhookReasonCode,
   deriveLegacyDecisionEnvelope,
+  deriveUiDisplayStatus,
   isWebhookLeanEligible,
   mapActionToClassification,
   resolveWebhookDisplaySide,

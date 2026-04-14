@@ -2,6 +2,7 @@
 
 const {
   deriveLegacyDecisionEnvelope,
+  deriveUiDisplayStatus,
   deriveWebhookBucket,
   deriveWebhookReasonCode,
   isOfficialStatusActionable,
@@ -71,6 +72,16 @@ describe('decision-policy helpers', () => {
     expect(mapActionToClassification('hold')).toBe('LEAN');
     expect(mapActionToClassification('PASS')).toBe('PASS');
     expect(mapActionToClassification('UNKNOWN')).toBe('PASS');
+  });
+
+  test('deriveUiDisplayStatus preserves execution-status and official-status mapping', () => {
+    expect(deriveUiDisplayStatus('PROJECTION_ONLY', 'PLAY')).toBe('WATCH');
+    expect(deriveUiDisplayStatus('BLOCKED', 'PLAY')).toBe('PASS');
+    expect(deriveUiDisplayStatus('EXECUTABLE', 'PLAY')).toBe('PLAY');
+    expect(deriveUiDisplayStatus('EXECUTABLE', 'LEAN')).toBe('WATCH');
+    expect(deriveUiDisplayStatus('EXECUTABLE', 'PASS')).toBe('PASS');
+    expect(deriveUiDisplayStatus('', 'LEAN')).toBe('WATCH');
+    expect(deriveUiDisplayStatus('', 'UNKNOWN')).toBe('PASS');
   });
 
   test('deriveWebhookBucket maps NHL totals status using canonical policy', () => {
