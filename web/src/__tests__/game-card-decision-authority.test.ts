@@ -3,6 +3,43 @@
  * Run: node --import tsx/esm web/src/__tests__/game-card-decision-authority.test.ts
  */
 
+
+{
+  const game = buildGame(undefined, 0.2);
+  game.consistency = { total_bias: 'INSUFFICIENT_DATA' };
+  game.plays = [
+    {
+      cardType: 'mlb-full-game',
+      cardTitle: 'Full Game Total UNDER: KANSAS CITY ROYALS @ DETROIT TIGERS',
+      prediction: 'UNDER' as const,
+      confidence: 0.6,
+      tier: 'WATCH' as const,
+      reasoning: 'FG TOTAL DEGRADED_MODEL mean 6.23 vs line 8.5 edge -2.27',
+      evPassed: true,
+      driverKey: 'driver-native-total',
+      edge: 0.28,
+      edge_pct: 0.28,
+      edge_points: -2.27,
+      model_prob: 0.8,
+      market_type: 'TOTAL' as const,
+      selection: { side: 'UNDER', team: 'DETROIT TIGERS' },
+      kind: 'PLAY' as const,
+      line: 8.5,
+      price: -105,
+      status: 'WATCH' as const,
+      classification: 'LEAN' as const,
+      action: 'HOLD' as const,
+      created_at: '2026-04-15T19:09:03.000Z',
+      reason_codes: ['MODEL_DEGRADED_INPUTS'],
+    },
+  ];
+  game.true_play = game.plays[0];
+
+  const card = transformToGameCard(game);
+  assert.strictEqual(card.play?.action, 'HOLD');
+  assert.strictEqual(card.play?.classification, 'LEAN');
+  assert.ok(!card.play?.reason_codes?.includes('PASS_TOTAL_INSUFFICIENT_DATA'));
+}
 import assert from 'node:assert';
 
 import { transformToGameCard } from '../lib/game-card/transform/index';

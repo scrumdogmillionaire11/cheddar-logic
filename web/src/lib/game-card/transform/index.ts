@@ -1975,8 +1975,8 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
   let whyCode = getPlayWhyCode(betAction, whyMarket, drivers, priceFlags);
   let whyText = whyCode.replace(/_/g, ' ');
   const totalBias =
-    game.consistency?.total_bias ??
     sourcePlay?.consistency?.total_bias ??
+    game.consistency?.total_bias ??
     'UNKNOWN';
 
   const riskTags = getRiskTagsFromText(
@@ -2360,6 +2360,9 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
     decision.action === 'PASS'
       ? decision.action
       : 'PASS';
+  const canonicalTruePlayStatus = canonicalTruePlay
+    ? resolveCanonicalOfficialStatus(canonicalTruePlay)
+    : null;
   let finalDecision: DecisionLabel = decisionFromAction(decisionAction);
   if (sourceExplicitPass) {
     finalDecision = 'PASS';
@@ -2394,6 +2397,13 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
     finalDecision === 'PASS'
   ) {
     finalDecision = 'WATCH';
+  }
+  if (
+    !hardPass &&
+    !hasExplicitTotalsConsistencyBlock &&
+    (canonicalTruePlayStatus === 'PLAY' || canonicalTruePlayStatus === 'LEAN')
+  ) {
+    finalDecision = canonicalTruePlayStatus === 'PLAY' ? 'FIRE' : 'WATCH';
   }
   if (hardPass) finalDecision = 'PASS';
 
