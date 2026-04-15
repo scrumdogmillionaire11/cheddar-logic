@@ -2,7 +2,11 @@
 // WI-0820: Input gate regression tests for mlb-model.js
 // Verifies NO_BET / DEGRADED paths wired into projectF5Total and projectStrikeouts.
 
-const { projectF5Total, projectStrikeouts } = require('../mlb-model');
+const {
+  projectF5Total,
+  projectStrikeouts,
+  projectFullGameTotalCard,
+} = require('../mlb-model');
 
 // ---------------------------------------------------------------------------
 // Fixtures — mirrors shapes from run_mlb_model.test.js
@@ -138,5 +142,108 @@ describe('projectStrikeouts — WI-0820 input gate', () => {
     const result = projectStrikeouts({ k_per_9: 9.4 }, 7.5);
     expect(result.status).not.toBe('NO_BET');
     expect(result.projected).toBeDefined();
+  });
+});
+
+describe('projectFullGameTotalCard — WI-0944 gate semantics', () => {
+  const baseFgContext = {
+    home_offense_profile: {
+      wrc_plus_vs_lhp: 118,
+      xwoba_vs_lhp: 0.341,
+      rolling_14d_wrc_plus_vs_lhp: 112,
+    },
+    away_offense_profile: {
+      wrc_plus_vs_rhp: 94,
+      xwoba_vs_rhp: 0.308,
+      rolling_14d_wrc_plus_vs_rhp: 91,
+    },
+    park_run_factor: 1.04,
+    temp_f: 82,
+    wind_mph: 12,
+    wind_dir: 'OUT',
+    roof: 'OPEN',
+    home_bullpen_era: 4.2,
+    away_bullpen_era: 4.3,
+    home_bullpen_fatigue_index: 0.5,
+    away_bullpen_fatigue_index: 0.5,
+    home_leverage_availability: 0.7,
+    away_leverage_availability: 0.7,
+    home_recent_usage: 0.5,
+    away_recent_usage: 0.5,
+    f5_line: 4.5,
+  };
+
+  test('edge below threshold remains PASS and preserves PASS reason continuity', () => {
+    const result = projectFullGameTotalCard(
+      validHome,
+      validAway,
+      8.5,
+      baseFgContext,
+    );
+
+    expect(result).toBeTruthy();
+    expect(result.status).toBe('PASS');
+    expect(result.pass_reason_code).toBe('PASS_NO_EDGE');
+    expect(result.reason_codes).toEqual(
+      expect.arrayContaining(['PASS_NO_EDGE']),
+    );
+  });
+
+  test('confidence below threshold remains PASS with PASS_CONFIDENCE_GATE', () => {
+    const lowConfidenceContext = {
+      ...baseFgContext,
+      // Force DEGRADED_MODEL confidence cap path (max confidence 6/10),
+      // then keep edge strong enough that confidence is the deciding hard gate.
+      temp_f: null,
+      wind_mph: null,
+      wind_dir: null,
+      roof: null,
+      f5_line: 4.2,
+    };
+
+    const result = projectFullGameTotalCard(
+      validHome,
+      validAway,
+      7.0,
+      lowConfidenceContext,
+    );
+
+    expect(result).toBeTruthy();
+    expect(result.status).toBe('PASS');
+    expect(result.reason_codes).toEqual(
+      expect.arrayContaining(['PASS_CONFIDENCE_GATE']),
+    );
+    expect(result.pass_reason_code).toBe('PASS_CONFIDENCE_GATE');
+  });
+
+  test('contradiction path is soft: candidate can still emit non-PASS when edge survives', () => {
+    const contradictionContext = {
+      ...baseFgContext,
+      // Push F5 edge positive while forcing full-game edge negative.
+      f5_line: 4.0,
+      // Increase bullpen asymmetry to trigger contradiction flag path.
+      home_bullpen_era: 2.8,
+      away_bullpen_era: 6.4,
+      home_bullpen_fatigue_index: 0.1,
+      away_bullpen_fatigue_index: 0.95,
+      home_leverage_availability: 0.95,
+      away_leverage_availability: 0.1,
+      home_recent_usage: 0.1,
+      away_recent_usage: 0.95,
+    };
+
+    const result = projectFullGameTotalCard(
+      validHome,
+      validAway,
+      11.2,
+      contradictionContext,
+    );
+
+    expect(result).toBeTruthy();
+    expect(result.reason_codes).toEqual(
+      expect.arrayContaining(['SOFT_F5_CONTRADICTION']),
+    );
+    expect(result.status).not.toBe('PASS');
+    expect(result.ev_threshold_passed).toBe(true);
   });
 });
