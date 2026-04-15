@@ -488,7 +488,7 @@ function formatMlbDualRunLog(record = {}) {
     : 'none';
   const rejected = record.rejected && typeof record.rejected === 'object'
     ? Object.entries(record.rejected)
-        .map(([market, reasons]) => `${market}:${reasons || 'none'}`)
+        .map(([market, reasons]) => `${market}:${JSON.stringify(reasons || 'none')}`)
         .join('|') || 'none'
     : 'none';
 
