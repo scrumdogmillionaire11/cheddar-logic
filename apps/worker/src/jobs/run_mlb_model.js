@@ -739,6 +739,157 @@ function evaluateMlbFullGameFunnelCandidate(driver = {}, isOfficialPlay = false)
   };
 }
 
+/**
+ * Killshot audit: measures what % of pre-gate overs survive each gate.
+ * This shows explicitly: "If we turn off gate X, how many overs pass?"
+ */
+function buildMlbKillshotGateAudit(samples = []) {
+  const ordered = Array.isArray(samples)
+    ? samples.slice(-1000) // Use larger window for audit
+    : [];
+  
+  const directional = ordered.filter(
+    (sample) => sample?.directionalSide === 'OVER' || sample?.directionalSide === 'UNDER',
+  );
+  
+  if (directional.length === 0) {
+    return {
+      audit_type: 'KILLSHOT_GATE_ANALYSIS',
+      sample_size: 0,
+      pre_gate: { OVER: 0, UNDER: 0 },
+      post_gate: { OVER: 0, UNDER: 0 },
+      gate_analysis: {},
+      insights: [],
+    };
+  }
+
+  const gateChain = [
+    { name: 'passed_projection', fieldName: 'passedProjection' },
+    { name: 'passed_edge_threshold', fieldName: 'passedEdgeThreshold' },
+    { name: 'passed_volatility_threshold', fieldName: 'passedVolatilityThreshold' },
+    { name: 'passed_driver_support', fieldName: 'passedDriverSupport' },
+    { name: 'passed_f5_contradiction', fieldName: 'passedF5Contradiction' },
+    { name: 'passed_confidence', fieldName: 'passedConfidence' },
+    { name: 'final_official_play', fieldName: 'finalOfficialPlay' },
+  ];
+
+  // Pre-gate: all candidates by side
+  const preGate = {
+    OVER: directional.filter((s) => s.directionalSide === 'OVER').length,
+    UNDER: directional.filter((s) => s.directionalSide === 'UNDER').length,
+  };
+
+  // Post-gate: candidates that pass ALL gates
+  const postGate = {
+    OVER: directional.filter(
+      (s) =>
+        s.directionalSide === 'OVER' &&
+        s.passedProjection &&
+        s.passedEdgeThreshold &&
+        s.passedVolatilityThreshold &&
+        s.passedDriverSupport &&
+        s.passedF5Contradiction &&
+        s.passedConfidence &&
+        s.finalOfficialPlay,
+    ).length,
+    UNDER: directional.filter(
+      (s) =>
+        s.directionalSide === 'UNDER' &&
+        s.passedProjection &&
+        s.passedEdgeThreshold &&
+        s.passedVolatilityThreshold &&
+        s.passedDriverSupport &&
+        s.passedF5Contradiction &&
+        s.passedConfidence &&
+        s.finalOfficialPlay,
+    ).length,
+  };
+
+  // For each gate: how many overs would exist if we removed JUST this gate?
+  const gateAnalysis = {};
+  for (const gate of gateChain) {
+    const withoutThisGate = {
+      OVER: directional.filter((s) => {
+        if (s.directionalSide !== 'OVER') return false;
+        // Check all gates EXCEPT this one
+        for (const g of gateChain) {
+          if (g.name === gate.name) continue; // Skip the gate we're removing
+          if (!s[g.fieldName]) return false;
+        }
+        return true;
+      }).length,
+      UNDER: directional.filter((s) => {
+        if (s.directionalSide !== 'UNDER') return false;
+        // Check all gates EXCEPT this one
+        for (const g of gateChain) {
+          if (g.name === gate.name) continue; // Skip the gate we're removing
+          if (!s[g.fieldName]) return false;
+        }
+        return true;
+      }).length,
+    };
+
+    const currentlyBlocking = {
+      OVER: preGate.OVER - withoutThisGate.OVER,
+      UNDER: preGate.UNDER - withoutThisGate.UNDER,
+    };
+
+    gateAnalysis[gate.name] = {
+      would_pass_without_this_gate: withoutThisGate,
+      currently_blocking: currentlyBlocking,
+      blocking_pct: {
+        OVER: preGate.OVER > 0 ? ((currentlyBlocking.OVER / preGate.OVER) * 100).toFixed(1) : '0',
+        UNDER: preGate.UNDER > 0 ? ((currentlyBlocking.UNDER / preGate.UNDER) * 100).toFixed(1) : '0',
+      },
+    };
+  }
+
+  // Identify the biggest over-killers
+  const overKillers = Object.entries(gateAnalysis)
+    .map(([gateName, analysis]) => ({
+      gate: gateName,
+      blocking: analysis.currently_blocking.OVER,
+      pct: parseFloat(analysis.blocking_pct.OVER),
+    }))
+    .sort((a, b) => b.blocking - a.blocking)
+    .slice(0, 3);
+
+  const insights = [];
+  if (preGate.OVER === 0 && preGate.UNDER > 0) {
+    insights.push('CRITICAL: Zero OVER candidates pre-gate. Model is entirely biased toward UNDER.');
+  } else if (preGate.OVER < preGate.UNDER * 0.1) {
+    insights.push(`WARNING: OVER is only ${((preGate.OVER / (preGate.OVER + preGate.UNDER)) * 100).toFixed(1)}% of candidates. Heavy directional bias.`);
+  }
+
+  if (postGate.OVER === 0 && postGate.UNDER > 0) {
+    insights.push(`All ${preGate.OVER} OVER candidates killed by pipeline. See top killers below.`);
+    for (const killer of overKillers) {
+      insights.push(`  - ${killer.gate}: blocks ${killer.blocking} overs (${killer.pct}%)`);
+    }
+  }
+
+  const overToUnderRatio = preGate.OVER > 0 ? (preGate.UNDER / preGate.OVER).toFixed(2) : 'Inf';
+
+  return {
+    audit_type: 'KILLSHOT_GATE_ANALYSIS',
+    sample_size: directional.length,
+    directional_bias: {
+      pre_gate_over_to_under_ratio: overToUnderRatio,
+      over_pct_pre_gate: preGate.OVER > 0 || preGate.UNDER > 0
+        ? ((preGate.OVER / (preGate.OVER + preGate.UNDER)) * 100).toFixed(1)
+        : '0',
+      over_pct_post_gate: postGate.OVER > 0 || postGate.UNDER > 0
+        ? ((postGate.OVER / (postGate.OVER + postGate.UNDER)) * 100).toFixed(1)
+        : '0',
+    },
+    pre_gate: preGate,
+    post_gate: postGate,
+    gate_analysis: gateAnalysis,
+    top_over_killers: overKillers,
+    insights,
+  };
+}
+
 function buildMlbFullGameDirectionalFunnelReport(samples = []) {
   const ordered = Array.isArray(samples)
     ? samples.slice(-MLB_FULL_GAME_DIRECTIONAL_FUNNEL_WINDOW)
@@ -3625,6 +3776,12 @@ async function runMLBModel({
       console.log(
         `[MLB_DIRECTIONAL_FUNNEL] ${JSON.stringify(directionalFunnel)}`,
       );
+      
+      // Killshot audit: show exactly where overs die
+      const killshotAudit = buildMlbKillshotGateAudit(mlbFullGameFunnelSamples);
+      console.log(
+        `[MLB_KILLSHOT_GATE_AUDIT] ${JSON.stringify(killshotAudit)}`,
+      );
 
       if (errors.length > 0) {
         console.error('[MLBModel] Errors:');
@@ -3712,6 +3869,7 @@ module.exports = {
   // Exported for WI-0944 funnel instrumentation
   buildMlbFullGameSuppressionFunnelReport,
   buildMlbFullGameDirectionalFunnelReport,
+  buildMlbKillshotGateAudit,
   evaluateMlbFullGameFunnelCandidate,
   getMlbFullGameMarketKey,
   normalizeReasonCodeSet,

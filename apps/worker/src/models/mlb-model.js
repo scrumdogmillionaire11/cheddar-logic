@@ -1242,8 +1242,9 @@ function projectF5TotalCard(homePitcher, awayPitcher, f5Line, context = {}) {
   const fallbackProjection = proj.projection_source === 'SYNTHETIC_FALLBACK';
   const degradedProjection = proj.projection_source === 'DEGRADED_MODEL';
   const hasEdge = Math.abs(edge) >= MLB_F5_EDGE_THRESHOLD;
-  const isOver = !fallbackProjection && edge >= MLB_F5_EDGE_THRESHOLD && proj.confidence >= 7;
-  const isUnder = !fallbackProjection && edge <= -MLB_F5_EDGE_THRESHOLD && proj.confidence >= 7;
+  // WI-?: Using absolute edge for consistency across all totals models
+  const isOver = !fallbackProjection && Math.abs(edge) >= MLB_F5_EDGE_THRESHOLD && edge >= 0 && proj.confidence >= 7;
+  const isUnder = !fallbackProjection && Math.abs(edge) >= MLB_F5_EDGE_THRESHOLD && edge < 0 && proj.confidence >= 7;
   const prediction = isOver ? 'OVER' : isUnder ? 'UNDER' : leanSide;
   const evThresholdPassed = isOver || isUnder;
   const sourceLabel = proj.projection_source === 'FULL_MODEL'
