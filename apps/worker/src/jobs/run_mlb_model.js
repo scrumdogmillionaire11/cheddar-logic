@@ -495,7 +495,7 @@ function formatMlbDualRunLog(record = {}) {
   return [
     `game_id=${record.game_id ?? 'unknown'}`,
     `chosen_market=${record.chosen_market ?? 'UNKNOWN'}`,
-    `why_this_market="${String(record.why_this_market ?? '').replace(/"/g, '\\"')}"`,
+    `why_this_market="${String(record.why_this_market ?? '').replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`,
     `markets=${markets}`,
     `rejected=${rejected}`,
   ].join(' ');
