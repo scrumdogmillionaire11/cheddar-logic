@@ -444,9 +444,10 @@ function projectStrikeouts(pitcherStats, line, overlays = {}) {
     };
   }
 
-  // Thresholds (backtest validated)
-  const isOver = edge >= 1.0 && confidence >= 8;
-  const isUnder = edge <= -1.0 && confidence >= 8;
+  // Thresholds. Original backtest used >= 8; lowered to >= 7 to align with
+  // the full-game total model threshold and reduce asymmetric suppression.
+  const isOver = edge >= 1.0 && confidence >= 7;
+  const isUnder = edge <= -1.0 && confidence >= 7;
   const prediction = isOver ? 'OVER' : isUnder ? 'UNDER' : 'PASS';
 
   return {
@@ -1259,9 +1260,10 @@ function projectFullGameTotalCard(homePitcher, awayPitcher, fullGameLine, contex
 /**
  * Project F5 total card with OVER/UNDER/PASS signal.
  *
- * Thresholds (backtest validated):
- *   OVER: edge >= +0.5 AND confidence >= 8
- *   UNDER: edge <= -0.7 AND confidence >= 8
+ * Thresholds. Original backtest used confidence >= 8; lowered to >= 7 to
+ * align with the full-game total model and reduce asymmetric suppression:
+ *   OVER: edge >= +0.5 AND confidence >= 7
+ *   UNDER: edge <= -0.7 AND confidence >= 7
  *
  * @param {object} homePitcher
  * @param {object} awayPitcher
@@ -1280,8 +1282,8 @@ function projectF5TotalCard(homePitcher, awayPitcher, f5Line, context = {}) {
   const fallbackProjection = proj.projection_source === 'SYNTHETIC_FALLBACK';
   const degradedProjection = proj.projection_source === 'DEGRADED_MODEL';
   const hasEdge = Math.abs(edge) >= MLB_F5_EDGE_THRESHOLD;
-  const isOver = !fallbackProjection && edge >= MLB_F5_EDGE_THRESHOLD && proj.confidence >= 8;
-  const isUnder = !fallbackProjection && edge <= -MLB_F5_EDGE_THRESHOLD && proj.confidence >= 8;
+  const isOver = !fallbackProjection && edge >= MLB_F5_EDGE_THRESHOLD && proj.confidence >= 7;
+  const isUnder = !fallbackProjection && edge <= -MLB_F5_EDGE_THRESHOLD && proj.confidence >= 7;
   const prediction = isOver ? 'OVER' : isUnder ? 'UNDER' : leanSide;
   const evThresholdPassed = isOver || isUnder;
   const sourceLabel = proj.projection_source === 'FULL_MODEL'

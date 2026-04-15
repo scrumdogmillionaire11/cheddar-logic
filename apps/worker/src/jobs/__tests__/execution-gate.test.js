@@ -56,16 +56,36 @@ describe('evaluateExecution', () => {
     expect(result.blocked_by).toContain('STALE_SNAPSHOT:360s');
   });
 
-  test('blocks when confidence is below threshold', () => {
+  test('blocks when confidence is below 0.55 threshold', () => {
     const result = evaluateExecution({
       modelStatus: 'MODEL_OK',
       rawEdge: 0.1,
-      confidence: 0.5,
+      confidence: 0.549,
       snapshotAgeMs: 30_000,
     });
 
     expect(result.shouldBet).toBe(false);
-    expect(result.blocked_by).toContain('CONFIDENCE_BELOW_THRESHOLD:0.500');
+    expect(result.blocked_by).toContain('CONFIDENCE_BELOW_THRESHOLD:0.549');
+  });
+
+  // DEGRADED coupling test: input-gate caps DEGRADED confidence at 0.55.
+  // The execution floor must be <=0.55 so DEGRADED plays surface as WATCH-tier.
+  // If this test breaks, input-gate.js DEGRADED_CONSTRAINTS.MAX_CONFIDENCE and
+  // the execution-gate default minConfidence are out of sync — fix both together.
+  test('allows DEGRADED play at confidence=0.55 (DEGRADED cap) through execution gate', () => {
+    const result = evaluateExecution({
+      modelStatus: 'DEGRADED',
+      rawEdge: 0.1,
+      confidence: 0.55,
+      snapshotAgeMs: 30_000,
+    });
+
+    // MODEL_STATUS_DEGRADED blocks the gate — but confidence alone should NOT
+    // add a CONFIDENCE_BELOW_THRESHOLD block, so the only blocker is the model
+    // status. Callers that allow DEGRADED plays through model-status gating
+    // will not be double-blocked on confidence.
+    expect(result.blocked_by).not.toContain('CONFIDENCE_BELOW_THRESHOLD:0.550');
+    expect(result.blocked_by).toContain('MODEL_STATUS_DEGRADED');
   });
 
   test('blocks mixed-book line/price source mismatches before executable status', () => {

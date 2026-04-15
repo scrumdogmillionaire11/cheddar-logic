@@ -22,7 +22,7 @@ export default function CardsHeader() {
 
   return (
     <div className="mb-8 space-y-2">
-      <h1 className="text-4xl font-bold">🧀 The Cheddar Board 🧀</h1>
+      <h1 className="text-4xl font-bold">🧀 The Wedge 🧀</h1>
       <p className="text-cloud/70">
         {totalCardsInView} game{totalCardsInView !== 1 ? 's' : ''} total,
         showing {displayedCardsInView} (updates in background every 60s)

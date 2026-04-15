@@ -318,7 +318,7 @@ export default function PlayOfTheDayClient({
           </div>
           <div className="flex items-center gap-3">
             <Link
-              href="/cards"
+              href="/wedge"
               className="rounded-full border border-white/15 px-4 py-2 text-sm font-medium text-cloud/80 transition hover:border-white/30 hover:text-cloud"
             >
               View Cards

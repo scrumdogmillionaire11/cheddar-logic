@@ -276,7 +276,7 @@ function filterByOddsFreshness(
 ): boolean {
   if (!filters.hideStaleOdds) return true;
 
-  // Hide if stale by 5+ minutes
+  // Hide if stale by configured warning threshold (default: 60+ minutes)
   return !card.tags.includes(GAME_TAGS.STALE_5M);
 }
 
