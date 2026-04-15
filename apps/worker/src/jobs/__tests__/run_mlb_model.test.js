@@ -2336,10 +2336,18 @@ describe('multi-market insertion (IME-01-03)', () => {
     };
   }
 
-  async function runImeScenario({ gameDriverCards, snapshot = BASE_SNAPSHOT } = {}) {
+  async function runImeScenario({
+    gameDriverCards,
+    snapshot = BASE_SNAPSHOT,
+    projectF5MLResult = null,
+    insertCardPayloadImpl = null,
+  } = {}) {
     jest.resetModules();
 
     const dataMocks = buildImeDataMocks(snapshot);
+    if (typeof insertCardPayloadImpl === 'function') {
+      dataMocks.insertCardPayload.mockImplementation(insertCardPayloadImpl);
+    }
 
     jest.doMock('@cheddar-logic/data', () => dataMocks);
     jest.doMock('@cheddar-logic/adapters', () => ({
@@ -2379,7 +2387,7 @@ describe('multi-market insertion (IME-01-03)', () => {
       const actual = jest.requireActual('../../models/mlb-model');
       return {
         ...actual,
-        projectF5ML: jest.fn(() => null),
+        projectF5ML: jest.fn(() => projectF5MLResult),
         projectTeamF5RunsAgainstStarter: jest.fn(() => ({
           f5_runs: null,
           degraded_inputs: [],
@@ -2602,6 +2610,60 @@ describe('multi-market insertion (IME-01-03)', () => {
     warnSpy.mockRestore();
     infoSpy.mockRestore();
     errorSpy.mockRestore();
+  });
+
+  test('skips invalid PASS F5 ML projection instead of attempting moneyline write', async () => {
+    const gameDriverCards = [
+      {
+        market: 'f5_total',
+        prediction: 'OVER',
+        confidence: 0.85,
+        ev_threshold_passed: true,
+        status: 'FIRE',
+        action: 'FIRE',
+        classification: 'BASE',
+        reasoning: 'F5 edge qualifies',
+        reason_codes: [],
+        missing_inputs: [],
+        projection: { projected_total: 5.6 },
+        drivers: [{ projected: 5.6, edge: 1.1 }],
+      },
+    ];
+
+    const { result, dataMocks } = await runImeScenario({
+      gameDriverCards,
+      projectF5MLResult: {
+        prediction: 'PASS',
+        confidence: 6,
+        ev_threshold_passed: false,
+        edge: 0,
+        projected_win_prob_home: 0.5,
+        reasoning: 'No edge at current price',
+      },
+      insertCardPayloadImpl: (card) => {
+        if (
+          card.cardType === 'mlb-f5-ml' &&
+          String(card.payloadData?.selection?.side || '').toUpperCase() !== 'HOME' &&
+          String(card.payloadData?.selection?.side || '').toUpperCase() !== 'AWAY'
+        ) {
+          throw new Error(
+            'Invalid moneyline selection "' +
+              String(card.payloadData?.selection?.side) +
+              '"',
+          );
+        }
+      },
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.cardsFailed).toBe(0);
+    expect(result.cardsGenerated).toBe(1);
+
+    const insertedCardTypes = dataMocks.insertCardPayload.mock.calls.map(
+      ([card]) => card.cardType,
+    );
+    expect(insertedCardTypes).toEqual(['mlb-f5']);
+    expect(insertedCardTypes).not.toContain('mlb-f5-ml');
   });
 });
 

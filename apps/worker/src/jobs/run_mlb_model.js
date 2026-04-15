@@ -986,6 +986,11 @@ function resolveMlbMoneylineExecutionInputs({
   };
 }
 
+function isMlbMoneylineSelection(selection) {
+  const side = String(selection || '').toUpperCase();
+  return side === 'HOME' || side === 'AWAY';
+}
+
 function resolveMlbMarketGroup(driver = {}) {
   const market = String(driver.market || '').toLowerCase();
   if (market === 'full_game_total') return MLB_MARKET_GROUP.FULL_GAME_TOTAL;
@@ -2526,11 +2531,21 @@ async function runMLBModel({
               },
             );
             if (f5MlResult) {
+              const normalizedSelection = String(
+                f5MlResult.prediction ?? '',
+              ).toUpperCase();
+              if (!isMlbMoneylineSelection(normalizedSelection)) {
+                console.log(
+                  '[MLBModel] F5 ML projection skipped (invalid selection prediction=' +
+                    normalizedSelection +
+                    ')',
+                );
+              } else {
               const confidence = f5MlResult.confidence / 10;
               const isStrongProjection = f5MlResult.ev_threshold_passed === true;
               f5MlDriverCard = {
                 market: 'f5_ml',
-                prediction: f5MlResult.prediction,
+                prediction: normalizedSelection,
                 confidence,
                 ev_threshold_passed: isStrongProjection,
                 status: isStrongProjection ? 'FIRE' : 'WATCH',
@@ -2551,6 +2566,7 @@ async function runMLBModel({
                 ml_f5_home: f5MlHomePrice,
                 ml_f5_away: f5MlAwayPrice,
               };
+              }
             }
           } else {
             console.log('[MLBModel] NO_F5_ML_PRICE_CONTEXT: ' + gameId + ' — F5 ML projection skipped (no dedicated F5 or full-game ML prices)');
