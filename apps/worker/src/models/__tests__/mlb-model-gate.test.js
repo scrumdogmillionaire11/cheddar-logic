@@ -1,10 +1,9 @@
 'use strict';
 // WI-0820: Input gate regression tests for mlb-model.js
-// Verifies NO_BET / DEGRADED paths wired into projectF5Total and projectStrikeouts.
+// Verifies NO_BET / DEGRADED paths wired into projectF5Total.
 
 const {
   projectF5Total,
-  projectStrikeouts,
   projectFullGameTotalCard,
 } = require('../mlb-model');
 
@@ -121,30 +120,6 @@ describe('projectF5Total — WI-0820 input gate', () => {
 });
 
 // ---------------------------------------------------------------------------
-// projectStrikeouts gate tests
-// ---------------------------------------------------------------------------
-describe('projectStrikeouts — WI-0820 input gate', () => {
-  test('missing k_per_9 → NO_BET (was null return)', () => {
-    const result = projectStrikeouts({}, 7.5);
-    expect(result.status).toBe('NO_BET');
-    expect(result.missingCritical).toContain('k_per_9');
-    expect(result.projection_source).toBe('NO_BET');
-    expect(result.sport).toBe('mlb');
-    expect(result.market).toBe('strikeouts');
-  });
-
-  test('k_per_9 explicitly null → NO_BET', () => {
-    const result = projectStrikeouts({ k_per_9: null }, 7.5);
-    expect(result.status).toBe('NO_BET');
-  });
-
-  test('valid k_per_9 → produces a real projection (not NO_BET)', () => {
-    const result = projectStrikeouts({ k_per_9: 9.4 }, 7.5);
-    expect(result.status).not.toBe('NO_BET');
-    expect(result.projected).toBeDefined();
-  });
-});
-
 describe('projectFullGameTotalCard — WI-0944 gate semantics', () => {
   const baseFgContext = {
     home_offense_profile: {

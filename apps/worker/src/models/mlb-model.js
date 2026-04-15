@@ -18,7 +18,7 @@ const scoreEngine = require('../utils/score-engine');
  *   projectF5Total(homePitcher, awayPitcher, context) → raw F5 projection
  *   projectF5TotalCard(home, away, f5Line)            → F5 card with thresholds
  *   computeMLBDriverCards(gameId, oddsSnapshot)       → F5-only game market candidates
- *   evaluateMlbGameMarkets(cards, ctx)               → deterministic MLB market evaluation
+ *   evaluateMlbGameMarkets(cards, ctx)                → deterministic MLB market evaluation
  */
 
 const MLB_F5_EDGE_THRESHOLD = 0.5;
@@ -51,10 +51,6 @@ function toFiniteNumberOrNull(value) {
 
 function clampValue(value, min, max) {
   return Math.max(min, Math.min(max, value));
-}
-
-function zScore(value, mean, sd) {
-  return (value - mean) / sd;
 }
 
 function roundToTenth(value) {
@@ -380,87 +376,6 @@ function buildF5SyntheticFallbackProjection(homePitcher, awayPitcher) {
 }
 
 /**
- * Project strikeout total for a pitcher vs a given line.
- *
- * Formula: weighted K/9 (70/30 season/recent) × expectedIP / 9 × opponentFactor
- * Overlays: umpire factor, trend, wind, temperature.
- *
- * @param {object} pitcherStats
- * @param {number} line
- * @param {object} [overlays={}]
- * @returns {object|null}
- */
-function projectStrikeouts(pitcherStats, line, overlays = {}) {
-  // Weighted K/9
-  const seasonK9 = pitcherStats.k_per_9 ?? null;
-  const strikeoutGate = classifyModelStatus({ k_per_9: seasonK9 }, ['k_per_9']);
-  if (strikeoutGate.status === 'NO_BET') {
-    return buildNoBetResult(strikeoutGate.missingCritical, { projection_source: 'NO_BET', sport: 'mlb', market: 'strikeouts' });
-  }
-  const recentK9 = pitcherStats.recent_k_per_9 ?? seasonK9;
-
-  const k9 = 0.7 * seasonK9 + 0.3 * recentK9;
-  const expectedIp = pitcherStats.recent_ip ?? 5.5;
-  const opponentFactor = overlays.opponent_factor ?? 1.0;
-  let base = (k9 * expectedIp) / 9 * opponentFactor;
-
-  // Overlays (multiplicative, applied to base)
-  const umpireFactor = overlays.umpire_factor ?? 1.0;
-  if (umpireFactor > 1.08) base *= 1.05;
-  else if (umpireFactor < 0.92) base *= 0.95;
-
-  const trend = recentK9 / seasonK9; // recent vs season ratio
-  if (trend > 1.15) base *= 1.03;
-  else if (trend < 0.85) base *= 0.97;
-
-  const wind = overlays.wind_mph ?? 0;
-  if (wind > 15) base *= 1.02;
-
-  const temp = overlays.temp_f ?? 72;
-  if (temp < 50) base *= 1.02;
-  else if (temp > 85) base *= 0.98;
-
-  const edge = base - line;
-
-  // Confidence 1-10
-  let confidence = 5;
-  const absEdge = Math.abs(edge);
-  if (absEdge > 2.0) confidence += 3;
-  else if (absEdge > 1.0) confidence += 2;
-  else if (absEdge > 0.5) confidence += 1;
-
-  const activeOverlays = [umpireFactor !== 1.0, trend > 1.15 || trend < 0.85, wind > 15, temp < 50 || temp > 85].filter(Boolean).length;
-  confidence += Math.min(activeOverlays, 2);
-
-  // Low-line caution
-  if (line < 5.0) {
-    return {
-      prediction: 'PASS',
-      edge,
-      projected: base,
-      confidence,
-      ev_threshold_passed: false,
-      reasoning: `CAUTION: low line (${line}) — accuracy degrades below 5.0K`,
-    };
-  }
-
-  // Thresholds. Original backtest used >= 8; lowered to >= 7 to align with
-  // the full-game total model threshold and reduce asymmetric suppression.
-  const isOver = edge >= 1.0 && confidence >= 7;
-  const isUnder = edge <= -1.0 && confidence >= 7;
-  const prediction = isOver ? 'OVER' : isUnder ? 'UNDER' : 'PASS';
-
-  return {
-    prediction,
-    edge,
-    projected: base,
-    confidence,
-    ev_threshold_passed: isOver || isUnder,
-    reasoning: `K/9=${k9.toFixed(2)} × IP=${expectedIp} → projected ${base.toFixed(1)} vs line ${line} (edge ${edge >= 0 ? '+' : ''}${edge.toFixed(1)}, conf ${confidence}/10)`,
-  };
-}
-
-/**
  * Project raw F5 total given two starting pitchers.
  *
  * FULL_MODEL formula:
@@ -634,6 +549,11 @@ function erfApprox(x) {
 
 function normalCdf(x) {
   return 0.5 * (1 + erfApprox(x / Math.sqrt(2)));
+}
+
+function _mlToImplied(ml) {
+  if (!Number.isFinite(ml)) return null;
+  return ml < 0 ? (-ml) / (-ml + 100) : 100 / (ml + 100);
 }
 
 function probabilityToFairMl(probability) {
@@ -1507,12 +1427,8 @@ function projectF5ML(
   const winProbHome = 1 / (1 + Math.exp(-0.8 * runDiff));
 
   // Raw implied probability — intermediate only; normalized via two-sided devig below
-  function mlToImplied(ml) {
-    if (!Number.isFinite(ml)) return null;
-    return ml < 0 ? (-ml) / (-ml + 100) : 100 / (ml + 100);
-  }
-  const rawHome = mlToImplied(mlF5Home);
-  const rawAway = mlToImplied(mlF5Away);
+  const rawHome = _mlToImplied(mlF5Home);
+  const rawAway = _mlToImplied(mlF5Away);
   if (rawHome === null || rawAway === null) return null;
   const total = rawHome + rawAway;
   const impliedHome = rawHome / total;
@@ -1630,12 +1546,8 @@ function projectFullGameML(homePitcher, awayPitcher, mlHome, mlAway, context = {
     0.99,
   );
 
-  function mlToImplied(ml) {
-    if (!Number.isFinite(ml)) return null;
-    return ml < 0 ? (-ml) / (-ml + 100) : 100 / (ml + 100);
-  }
-  const rawHome = mlToImplied(mlHome);
-  const rawAway = mlToImplied(mlAway);
+  const rawHome = _mlToImplied(mlHome);
+  const rawAway = _mlToImplied(mlAway);
   if (rawHome === null || rawAway === null) return null;
   const total = rawHome + rawAway;
   const impliedHome = rawHome / total;
@@ -1772,54 +1684,6 @@ function projectFullGameML(homePitcher, awayPitcher, mlHome, mlAway, context = {
     ev_threshold_passed: side !== 'PASS',
     reasoning: `FullGameML: homeProj=${homeProj.toFixed(2)} awayProj=${awayProj.toFixed(2)} runDiff=${runDiff >= 0 ? '+' : ''}${runDiff.toFixed(2)} var=${variance.run_diff_variance.toFixed(2)} pWin(H)=${(winProbHome * 100).toFixed(1)}% implH=${(impliedHome * 100).toFixed(1)}% implA=${(impliedAway * 100).toFixed(1)}% edgeH=${homeEdge >= 0 ? '+' : ''}${(homeEdge * 100).toFixed(1)}pp edgeA=${awayEdge >= 0 ? '+' : ''}${(awayEdge * 100).toFixed(1)}pp support=${supportCount} conf=${confidence}/10`,
   };
-}
-
-/**
- * Compute pitcher K/9 and recent IP as-of a specific date.
- * Uses only game logs WHERE game_date < asOfDate — true walk-forward simulation.
- * Anti-look-ahead: same guarantee as Python BacktestEngine.get_pitcher_data_as_of_date().
- *
- * @param {number} mlbPitcherId
- * @param {string} asOfDate - 'YYYY-MM-DD'
- * @param {object} db - better-sqlite3 database instance
- * @param {number} recentStarts - number of recent starts for recent_k_per_9 (default 5)
- * @returns {{ k_per_9, recent_k_per_9, recent_ip, era, whip, starts } | null}
- */
-function computePitcherStatsAsOf(mlbPitcherId, asOfDate, db, recentStarts = 5) {
-  // All starts before asOfDate in current season
-  const season = new Date(asOfDate).getFullYear();
-  const allStarts = db.prepare(`
-    SELECT innings_pitched, strikeouts, walks, hits, earned_runs, game_date
-    FROM mlb_pitcher_game_logs
-    WHERE mlb_pitcher_id = ?
-      AND season = ?
-      AND game_date < ?
-      AND innings_pitched > 0
-    ORDER BY game_date DESC
-  `).all(mlbPitcherId, season, asOfDate);
-
-  if (allStarts.length === 0) return null;
-
-  // Season totals
-  const totalIp = allStarts.reduce((s, r) => s + (r.innings_pitched ?? 0), 0);
-  const totalK  = allStarts.reduce((s, r) => s + (r.strikeouts ?? 0), 0);
-  const totalBb = allStarts.reduce((s, r) => s + (r.walks ?? 0), 0);
-  const totalH  = allStarts.reduce((s, r) => s + (r.hits ?? 0), 0);
-  const totalEr = allStarts.reduce((s, r) => s + (r.earned_runs ?? 0), 0);
-
-  const k_per_9 = totalIp > 0 ? (totalK / totalIp) * 9 : null;
-  const era = totalIp > 0 ? (totalEr / totalIp) * 9 : null;
-  const whip = totalIp > 0 ? (totalBb + totalH) / totalIp : null;
-
-  // Recent starts
-  const recent = allStarts.slice(0, recentStarts);
-  const recentIpSum = recent.reduce((s, r) => s + (r.innings_pitched ?? 0), 0);
-  const recentKSum  = recent.reduce((s, r) => s + (r.strikeouts ?? 0), 0);
-
-  const recent_k_per_9 = recentIpSum > 0 ? (recentKSum / recentIpSum) * 9 : k_per_9;
-  const recent_ip = recent.length > 0 ? recentIpSum / recent.length : null;
-
-  return { k_per_9, recent_k_per_9, recent_ip, era, whip, starts: allStarts.length };
 }
 
 /**
@@ -1986,11 +1850,6 @@ function computeMLBDriverCards(gameId, oddsSnapshot) {
   }
 
   return cards;
-}
-
-function roundScore(value) {
-  if (typeof value !== 'number' || !Number.isFinite(value)) return null;
-  return Math.round(value * 1000) / 1000;
 }
 
 /**
@@ -3578,13 +3437,11 @@ function resolveMLBModelSignal(game) {
 }
 
 module.exports = {
-  projectStrikeouts,
   projectF5Total,
   projectF5TotalCard,
   projectF5ML,
   computeMLBDriverCards,
   evaluateMlbGameMarkets,
-  computePitcherStatsAsOf,
   // Sharp Cheddar K pipeline
   scorePitcherK,
   scorePitcherKUnder,
