@@ -573,6 +573,154 @@ function summarizeMlbRejectReasonFamilies(db, lookbackHours = 24) {
   };
 }
 
+// ---------------------------------------------------------------------------
+// TD-04: NHL market-call reject reason-family diagnostics
+// ---------------------------------------------------------------------------
+
+const NHL_REJECT_REASON_FAMILIES = Object.freeze([
+  'DATA_STALENESS',
+  'NO_EDGE',
+  'INTEGRITY_VETO',
+  'SUPPORT_FAIL',
+  'CONTRACT_MISMATCH',
+  'UNCATEGORIZED',
+]);
+
+const NHL_MARKET_CALL_CARD_TYPES = Object.freeze([
+  'nhl-totals-call',
+  'nhl-spread-call',
+  'nhl-moneyline-call',
+]);
+
+function classifyNhlRejectReasonFamily(reasonCode) {
+  const code = String(reasonCode || '').toUpperCase();
+  if (!code) return 'UNCATEGORIZED';
+  if (code.includes('STALE') || code.includes('SNAPSHOT_AGE') || code.includes('SNAPSHOT_MISSING')) {
+    return 'DATA_STALENESS';
+  }
+  if (
+    code.includes('NO_EDGE') ||
+    code.includes('EDGE_INSUFFICIENT') ||
+    code.includes('PASS_NO_EDGE') ||
+    code.includes('PASS_EXECUTION_GATE') ||
+    code.includes('EDGE_VERIFICATION')
+  ) {
+    return 'NO_EDGE';
+  }
+  if (
+    code.includes('GOALIE') ||
+    code.includes('INJURY') ||
+    code.includes('UNCERTAINTY') ||
+    code.includes('INTEGRITY') ||
+    code.includes('VETO') ||
+    code.includes('VERIFICATION_REQUIRED') ||
+    code.includes('CAUTION')
+  ) {
+    return 'INTEGRITY_VETO';
+  }
+  if (
+    code.includes('SUPPORT') ||
+    code.includes('INSUFFICIENT_DATA') ||
+    code.includes('TOTAL_INSUFFICIENT')
+  ) {
+    return 'SUPPORT_FAIL';
+  }
+  if (
+    code.includes('CONTRACT') ||
+    code.includes('MARKET_UNAVAILABLE') ||
+    code.includes('PROJECTION_ONLY') ||
+    code.includes('NO_ODDS_MODE') ||
+    code.includes('MISSING')
+  ) {
+    return 'CONTRACT_MISMATCH';
+  }
+  return 'UNCATEGORIZED';
+}
+
+function summarizeNhlRejectReasonFamilies(db, lookbackHours = 24) {
+  const reasonFamilyCounts = NHL_MARKET_CALL_CARD_TYPES.reduce((acc, cardType) => {
+    acc[cardType] = NHL_REJECT_REASON_FAMILIES.reduce((families, family) => {
+      families[family] = 0;
+      return families;
+    }, {});
+    return acc;
+  }, {});
+
+  const rows = db
+    .prepare(
+      `SELECT
+         card_type,
+         json_extract(payload_data, '$.decision_v2.primary_reason_code') AS decision_reason,
+         json_extract(payload_data, '$.pass_reason_code') AS pass_reason,
+         json_extract(payload_data, '$.reason_codes') AS reason_codes_json,
+         COUNT(*) AS cnt
+       FROM card_payloads
+       WHERE sport = 'NHL'
+         AND card_type IN ('nhl-totals-call', 'nhl-spread-call', 'nhl-moneyline-call')
+         AND created_at > datetime('now', ?)
+       GROUP BY 1, 2, 3, 4`,
+    )
+    .all(`-${lookbackHours} hours`);
+
+  for (const row of rows) {
+    const cardType = row.card_type;
+    if (!reasonFamilyCounts[cardType]) continue;
+
+    const codes = [];
+    if (typeof row.decision_reason === 'string' && row.decision_reason.length > 0) {
+      codes.push(row.decision_reason);
+    }
+    if (typeof row.pass_reason === 'string' && row.pass_reason.length > 0) {
+      codes.push(row.pass_reason);
+    }
+    if (typeof row.reason_codes_json === 'string' && row.reason_codes_json.length > 0) {
+      try {
+        const parsed = JSON.parse(row.reason_codes_json);
+        if (Array.isArray(parsed)) {
+          for (const code of parsed) {
+            if (typeof code === 'string' && code.length > 0) {
+              codes.push(code);
+            }
+          }
+        }
+      } catch (_error) {
+        // deterministic fallback to UNCATEGORIZED when reason_codes is malformed
+      }
+    }
+
+    const family = codes.length > 0
+      ? classifyNhlRejectReasonFamily(codes[0])
+      : 'UNCATEGORIZED';
+    reasonFamilyCounts[cardType][family] += Number(row.cnt || 0);
+  }
+
+  const uncategorizedCount = NHL_MARKET_CALL_CARD_TYPES.reduce(
+    (sum, ct) => sum + Number(reasonFamilyCounts[ct].UNCATEGORIZED || 0),
+    0,
+  );
+
+  return {
+    lookback_hours: lookbackHours,
+    reason_family_counts: reasonFamilyCounts,
+    uncategorized_count: uncategorizedCount,
+  };
+}
+
+function checkNhlMarketCallDiagnostics() {
+  const db = getDatabase();
+  const diag = summarizeNhlRejectReasonFamilies(db);
+  const ok = diag.uncategorized_count === 0;
+  const parts = NHL_MARKET_CALL_CARD_TYPES.map((ct) => {
+    const counts = diag.reason_family_counts[ct];
+    return `${ct}:[${Object.entries(counts).map(([k, v]) => `${k}=${v}`).join(',')}]`;
+  });
+  const reason = ok
+    ? `NHL market call diagnostics: all blockers categorized (${parts.join(' ')})`
+    : `NHL market call diagnostics: ${diag.uncategorized_count} uncategorized blocker(s) (${parts.join(' ')})`;
+  writePipelineHealth('nhl', 'market_call_blockers', ok ? 'ok' : 'warning', reason);
+  return { ok, reason, diagnostics: diag };
+}
+
 /**
  * Check 4: MLB F5 market availability
  * For upcoming MLB games in the near T-minus window, report F5 total
@@ -1040,6 +1188,7 @@ async function checkPipelineHealth({ jobKey, dryRun }) {
       // Per-sport model freshness (only fires when upcoming games exist for that sport)
       nhl_model_freshness: () =>
         checkSportModelFreshness('nhl', 'run_nhl_model', 'model_freshness', MODEL_FRESHNESS_MAX_AGE_MINUTES),
+      nhl_market_call_diagnostics: checkNhlMarketCallDiagnostics,
       nhl_shots_model_freshness: () =>
         checkSportModelFreshness('nhl', 'run-nhl-player-shots-model', 'shots_model_freshness', MODEL_FRESHNESS_MAX_AGE_MINUTES),
       nba_model_freshness: () =>
@@ -1074,6 +1223,7 @@ async function checkPipelineHealth({ jobKey, dryRun }) {
         mlb_seed_freshness: ['mlb', 'seed_freshness'],
         settlement_backlog: ['settlement', 'backlog'],
         nhl_model_freshness: ['nhl', 'model_freshness'],
+        nhl_market_call_diagnostics: ['nhl', 'market_call_blockers'],
         nhl_shots_model_freshness: ['nhl', 'shots_model_freshness'],
         nba_model_freshness: ['nba', 'model_freshness'],
         mlb_model_freshness: ['mlb', 'model_freshness'],
@@ -1149,4 +1299,6 @@ module.exports = {
   checkWatchdogHeartbeat,
   shouldSendAlert,
   buildHealthAlertMessage,
+  summarizeNhlRejectReasonFamilies,
+  checkNhlMarketCallDiagnostics,
 };
