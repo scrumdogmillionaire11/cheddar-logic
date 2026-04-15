@@ -211,3 +211,18 @@ Plans:
 - [ ] WI-0944-02-PLAN.md — Full-game total de-suppression retune + capped volatility threshold + gate regression tests (Wave 2)
 - [ ] WI-0944-03-PLAN.md — Full-game moneyline adjustment layer + fresh-odds surfacing regression coverage (Wave 3)
 
+
+---
+
+### Phase: nhl-odds-backed-01 — NHL ML + Totals Odds-Backed Surfacing Recovery
+
+**Goal**: Surface NHL moneyline and totals market-call cards as fully odds-backed plays in gamelines/cards by removing PROJECTION_ONLY contamination in totals, ensuring moneyline decision_v2 pricing completeness, and adding regression/health coverage to prevent silent drops.
+
+**Requirements:** [NHR-TOTALS-01, NHR-TOTALS-02, NHR-ML-01, NHR-ML-02, NHR-API-01, NHR-OBS-01, NHR-DOCS-01]
+
+**Plans:** 3 plans in 2 waves
+
+Plans:
+- [ ] nhl-odds-backed-01-01-PLAN.md — Totals execution status contamination fix (goalie guard + canonical status sync) (Wave 1)
+- [ ] nhl-odds-backed-01-02-PLAN.md — Moneyline decision_v2 pricing completeness + model_prob fallback hardening (Wave 1)
+- [ ] nhl-odds-backed-01-03-PLAN.md — Gamelines regression coverage + pipeline health NHL ML counters + registry updates (Wave 2)

@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Model Integrity & Betting Execution Hardening
 status: active
-last_updated: "2026-04-13T23:25:00Z"
-last_activity: "2026-04-13 - Completed discord-3layer-02-PLAN.md (Layer B: Discord reads canonical webhook fields)"
+last_updated: "2026-04-15T00:00:00Z"
+last_activity: "2026-04-15 - Completed WI-0944-02-PLAN.md (MLB full-game total gate retune + gate-stage regression coverage)"
 ---
 
 # Project State
