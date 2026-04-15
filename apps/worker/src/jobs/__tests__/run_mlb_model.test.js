@@ -3061,18 +3061,22 @@ describe('WI-0943 MLB runner log schema cleanup', () => {
  */
 describe('MLB Full-Game Suppression Funnel (WI-0944)', () => {
   let buildMlbFullGameSuppressionFunnelReport;
+  let buildMlbFullGameDirectionalFunnelReport;
   let evaluateMlbFullGameFunnelCandidate;
   let getMlbFullGameMarketKey;
   let normalizeReasonCodeSet;
   let MLB_FULL_GAME_FUNNEL_WINDOW;
+  let MLB_FULL_GAME_DIRECTIONAL_FUNNEL_WINDOW;
 
   beforeAll(() => {
     ({
       buildMlbFullGameSuppressionFunnelReport,
+      buildMlbFullGameDirectionalFunnelReport,
       evaluateMlbFullGameFunnelCandidate,
       getMlbFullGameMarketKey,
       normalizeReasonCodeSet,
       MLB_FULL_GAME_FUNNEL_WINDOW,
+      MLB_FULL_GAME_DIRECTIONAL_FUNNEL_WINDOW,
     } = require('../run_mlb_model'));
   });
 
@@ -3388,6 +3392,96 @@ describe('MLB Full-Game Suppression Funnel (WI-0944)', () => {
     const lastOnly = samples.slice(-50);
     const reportLastOnly = buildMlbFullGameSuppressionFunnelReport(lastOnly);
     expect(report.counts).toEqual(reportLastOnly.counts);
+  });
+
+  test('builds directional OVER/UNDER report with pre/post rates and stage drop percentages', () => {
+    const samples = [];
+
+    for (let i = 0; i < 6; i++) {
+      samples.push(
+        evaluateMlbFullGameFunnelCandidate(
+          {
+            market: 'full_game_total',
+            prediction: 'OVER',
+            confidence: 0.72,
+            projection_source: 'FULL_MODEL',
+            projection: { projected_total: 9.4 },
+            drivers: [{ projected: 9.4, edge: 1.1 }],
+            reason_codes: [],
+          },
+          true,
+        ),
+      );
+    }
+
+    for (let i = 0; i < 4; i++) {
+      samples.push(
+        evaluateMlbFullGameFunnelCandidate(
+          {
+            market: 'full_game_total',
+            prediction: 'UNDER',
+            confidence: 0.66,
+            projection_source: 'FULL_MODEL',
+            projection: { projected_total: 7.1 },
+            drivers: [{ projected: 7.1, edge: -0.9 }],
+            reason_codes: ['PASS_NO_EDGE'],
+          },
+          false,
+        ),
+      );
+    }
+
+    const report = buildMlbFullGameDirectionalFunnelReport(samples);
+
+    expect(report.sample_size).toBe(10);
+    expect(report.window_size).toBe(MLB_FULL_GAME_DIRECTIONAL_FUNNEL_WINDOW);
+    expect(report.averages).toEqual(
+      expect.objectContaining({
+        average_model_total: expect.any(Number),
+        average_market_total: expect.any(Number),
+      }),
+    );
+    expect(report.pre_gate.over_count).toBe(6);
+    expect(report.pre_gate.under_count).toBe(4);
+    expect(report.pre_gate.over_pct).toBe(60);
+    expect(report.pre_gate.under_pct).toBe(40);
+    expect(report.post_gate.over_count).toBe(6);
+    expect(report.post_gate.under_count).toBe(0);
+    expect(report.stage_side_counts).toHaveProperty('passed_edge_threshold');
+    expect(report.stage_side_counts.passed_edge_threshold.OVER).toBe(6);
+    expect(report.stage_side_counts.passed_edge_threshold.UNDER).toBe(0);
+    expect(report.stage_drop_pct_by_side).toHaveProperty('passed_edge_threshold');
+    expect(typeof report.stage_drop_pct_by_side.passed_edge_threshold.OVER).toBe('number');
+    expect(typeof report.stage_drop_pct_by_side.passed_edge_threshold.UNDER).toBe('number');
+  });
+
+  test('directional report respects 200-sample window using latest full-game total entries', () => {
+    const samples = [];
+    for (let i = 0; i < 240; i++) {
+      const isOver = i % 2 === 0;
+      samples.push(
+        evaluateMlbFullGameFunnelCandidate(
+          {
+            market: 'full_game_total',
+            prediction: isOver ? 'OVER' : 'UNDER',
+            confidence: 0.7,
+            projection_source: 'FULL_MODEL',
+            projection: { projected_total: isOver ? 9.2 : 7.6 },
+            drivers: [{ projected: isOver ? 9.2 : 7.6, edge: isOver ? 0.8 : -0.8 }],
+            reason_codes: [],
+          },
+          true,
+        ),
+      );
+    }
+
+    const report = buildMlbFullGameDirectionalFunnelReport(samples);
+    expect(report.sample_size).toBe(200);
+
+    const lastOnly = samples.slice(-200);
+    const reportLastOnly = buildMlbFullGameDirectionalFunnelReport(lastOnly);
+    expect(report.stage_side_counts).toEqual(reportLastOnly.stage_side_counts);
+    expect(report.pre_gate).toEqual(reportLastOnly.pre_gate);
   });
 });
 

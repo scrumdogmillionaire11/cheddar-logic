@@ -590,6 +590,7 @@ function summarizeMlbPipelineStates(gamePipelineStates = {}) {
 }
 
 const MLB_FULL_GAME_FUNNEL_WINDOW = 50;
+const MLB_FULL_GAME_DIRECTIONAL_FUNNEL_WINDOW = 200;
 
 function roundPct(value) {
   if (!Number.isFinite(value)) return 0;
@@ -603,6 +604,32 @@ function getMlbFullGameMarketKey(driver = {}) {
   return null;
 }
 
+function resolveDirectionalTotalSide(driver = {}) {
+  const prediction = String(driver?.prediction || '').toUpperCase();
+  if (prediction === 'OVER' || prediction === 'UNDER') return prediction;
+  const edge = Number(driver?.drivers?.[0]?.edge);
+  if (Number.isFinite(edge)) return edge >= 0 ? 'OVER' : 'UNDER';
+  return null;
+}
+
+function resolveDirectionalModelTotal(driver = {}) {
+  const projectedTotal = Number(
+    driver?.projection?.projected_total ?? driver?.drivers?.[0]?.projected,
+  );
+  return Number.isFinite(projectedTotal) ? projectedTotal : null;
+}
+
+function resolveDirectionalMarketTotal(driver = {}, modelTotal = null) {
+  const explicitLine = Number(driver?.line);
+  if (Number.isFinite(explicitLine)) return explicitLine;
+
+  const edge = Number(driver?.drivers?.[0]?.edge);
+  if (Number.isFinite(modelTotal) && Number.isFinite(edge)) {
+    return modelTotal - edge;
+  }
+  return null;
+}
+
 function normalizeReasonCodeSet(driver = {}) {
   const reasonCodes = Array.isArray(driver?.reason_codes)
     ? driver.reason_codes
@@ -611,6 +638,16 @@ function normalizeReasonCodeSet(driver = {}) {
 }
 
 function evaluateMlbFullGameFunnelCandidate(driver = {}, isOfficialPlay = false) {
+  const marketKey = getMlbFullGameMarketKey(driver);
+  const directionalSide = marketKey === 'FULL_GAME_TOTAL'
+    ? resolveDirectionalTotalSide(driver)
+    : null;
+  const directionalModelTotal = marketKey === 'FULL_GAME_TOTAL'
+    ? resolveDirectionalModelTotal(driver)
+    : null;
+  const directionalMarketTotal = marketKey === 'FULL_GAME_TOTAL'
+    ? resolveDirectionalMarketTotal(driver, directionalModelTotal)
+    : null;
   const reasonCodes = normalizeReasonCodeSet(driver);
   const confidence = Number(driver?.confidence ?? 0);
 
@@ -641,6 +678,9 @@ function evaluateMlbFullGameFunnelCandidate(driver = {}, isOfficialPlay = false)
   else if (!finalOfficialPlay) suppressor = 'NOT_IN_OFFICIAL_PLAYS';
 
   return {
+    directionalSide,
+    directionalModelTotal,
+    directionalMarketTotal,
     passedProjection,
     passedEdgeThreshold,
     passedVolatilityThreshold,
@@ -649,6 +689,104 @@ function evaluateMlbFullGameFunnelCandidate(driver = {}, isOfficialPlay = false)
     passedConfidence,
     finalOfficialPlay,
     suppressor,
+  };
+}
+
+function buildMlbFullGameDirectionalFunnelReport(samples = []) {
+  const ordered = Array.isArray(samples)
+    ? samples.slice(-MLB_FULL_GAME_DIRECTIONAL_FUNNEL_WINDOW)
+    : [];
+  const directional = ordered.filter(
+    (sample) => sample?.directionalSide === 'OVER' || sample?.directionalSide === 'UNDER',
+  );
+
+  const stageOrder = [
+    ['total_candidates_created', null],
+    ['passed_projection', 'passedProjection'],
+    ['passed_edge_threshold', 'passedEdgeThreshold'],
+    ['passed_volatility_threshold', 'passedVolatilityThreshold'],
+    ['passed_driver_support', 'passedDriverSupport'],
+    ['passed_f5_contradiction', 'passedF5Contradiction'],
+    ['passed_confidence', 'passedConfidence'],
+    ['final_official_plays', 'finalOfficialPlay'],
+  ];
+
+  const stageSideCounts = Object.fromEntries(
+    stageOrder.map(([stageName]) => [stageName, { OVER: 0, UNDER: 0 }]),
+  );
+
+  let modelTotalSum = 0;
+  let modelTotalCount = 0;
+  let marketTotalSum = 0;
+  let marketTotalCount = 0;
+
+  for (const sample of directional) {
+    const side = sample.directionalSide;
+    stageOrder.forEach(([stageName, sampleKey]) => {
+      const include = sampleKey === null ? true : sample[sampleKey] === true;
+      if (include) stageSideCounts[stageName][side] += 1;
+    });
+
+    if (Number.isFinite(sample.directionalModelTotal)) {
+      modelTotalSum += sample.directionalModelTotal;
+      modelTotalCount += 1;
+    }
+    if (Number.isFinite(sample.directionalMarketTotal)) {
+      marketTotalSum += sample.directionalMarketTotal;
+      marketTotalCount += 1;
+    }
+  }
+
+  const preGateTotal = stageSideCounts.total_candidates_created.OVER + stageSideCounts.total_candidates_created.UNDER;
+  const postGateTotal = stageSideCounts.final_official_plays.OVER + stageSideCounts.final_official_plays.UNDER;
+
+  const dropBySide = {};
+  for (let idx = 1; idx < stageOrder.length; idx += 1) {
+    const prevStage = stageOrder[idx - 1][0];
+    const currStage = stageOrder[idx][0];
+    const prevOver = stageSideCounts[prevStage].OVER;
+    const prevUnder = stageSideCounts[prevStage].UNDER;
+    const currOver = stageSideCounts[currStage].OVER;
+    const currUnder = stageSideCounts[currStage].UNDER;
+
+    dropBySide[currStage] = {
+      OVER: prevOver > 0 ? roundPct(((prevOver - currOver) / prevOver) * 100) : 0,
+      UNDER: prevUnder > 0 ? roundPct(((prevUnder - currUnder) / prevUnder) * 100) : 0,
+    };
+  }
+
+  const avgModelTotal = modelTotalCount > 0 ? roundPct(modelTotalSum / modelTotalCount) : null;
+  const avgMarketTotal = marketTotalCount > 0 ? roundPct(marketTotalSum / marketTotalCount) : null;
+
+  return {
+    sample_size: directional.length,
+    window_size: MLB_FULL_GAME_DIRECTIONAL_FUNNEL_WINDOW,
+    averages: {
+      average_model_total: avgModelTotal,
+      average_market_total: avgMarketTotal,
+    },
+    pre_gate: {
+      over_count: stageSideCounts.total_candidates_created.OVER,
+      under_count: stageSideCounts.total_candidates_created.UNDER,
+      over_pct: preGateTotal > 0
+        ? roundPct((stageSideCounts.total_candidates_created.OVER / preGateTotal) * 100)
+        : 0,
+      under_pct: preGateTotal > 0
+        ? roundPct((stageSideCounts.total_candidates_created.UNDER / preGateTotal) * 100)
+        : 0,
+    },
+    post_gate: {
+      over_count: stageSideCounts.final_official_plays.OVER,
+      under_count: stageSideCounts.final_official_plays.UNDER,
+      over_pct: postGateTotal > 0
+        ? roundPct((stageSideCounts.final_official_plays.OVER / postGateTotal) * 100)
+        : 0,
+      under_pct: postGateTotal > 0
+        ? roundPct((stageSideCounts.final_official_plays.UNDER / postGateTotal) * 100)
+        : 0,
+    },
+    stage_side_counts: stageSideCounts,
+    stage_drop_pct_by_side: dropBySide,
   };
 }
 
@@ -3353,8 +3491,14 @@ async function runMLBModel({
       const suppressionFunnel = buildMlbFullGameSuppressionFunnelReport(
         mlbFullGameFunnelSamples,
       );
+      const directionalFunnel = buildMlbFullGameDirectionalFunnelReport(
+        mlbFullGameFunnelSamples,
+      );
       console.log(
         `[MLB_SUPPRESSION_FUNNEL] ${JSON.stringify(suppressionFunnel)}`,
+      );
+      console.log(
+        `[MLB_DIRECTIONAL_FUNNEL] ${JSON.stringify(directionalFunnel)}`,
       );
 
       if (errors.length > 0) {
@@ -3442,8 +3586,10 @@ module.exports = {
   MIN_MLB_GAMES_FOR_RECAL,
   // Exported for WI-0944 funnel instrumentation
   buildMlbFullGameSuppressionFunnelReport,
+  buildMlbFullGameDirectionalFunnelReport,
   evaluateMlbFullGameFunnelCandidate,
   getMlbFullGameMarketKey,
   normalizeReasonCodeSet,
   MLB_FULL_GAME_FUNNEL_WINDOW,
+  MLB_FULL_GAME_DIRECTIONAL_FUNNEL_WINDOW,
 };
