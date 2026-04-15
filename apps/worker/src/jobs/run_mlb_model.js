@@ -1873,13 +1873,40 @@ function enrichMlbPitcherData(
   try {
     const db = getDatabase();
 
-    // K mode: query without date filter so we can distinguish STALE vs MISSING.
-    // Standard mode: keep today-only filter (existing behavior).
-    const byTeam = forKEngine
-      ? db.prepare('SELECT * FROM mlb_pitcher_stats WHERE team = ? ORDER BY updated_at DESC LIMIT 1')
-      : db.prepare("SELECT * FROM mlb_pitcher_stats WHERE team = ? AND date(updated_at) = date('now') LIMIT 1");
+    // Get existing pitcher data (if already populated in raw_data.mlb)
+    const existingRaw =
+      typeof oddsSnapshot.raw_data === 'string'
+        ? JSON.parse(oddsSnapshot.raw_data)
+        : (oddsSnapshot.raw_data ?? {});
+    const mlb = existingRaw.mlb ?? {};
+    const existingHomePitcher = mlb.home_pitcher ?? null;
+    const existingAwayPitcher = mlb.away_pitcher ?? null;
 
-    function getPitcherRowForTeam(team) {
+    // Query by specific pitcher ID first, then by name, finally fallback to team
+    function getPitcherRow(team, existingPitcher) {
+      // Priority 1: match by mlb_id if available
+      if (existingPitcher?.mlb_id != null) {
+        const byId = forKEngine
+          ? db.prepare('SELECT * FROM mlb_pitcher_stats WHERE mlb_id = ?')
+          : db.prepare("SELECT * FROM mlb_pitcher_stats WHERE mlb_id = ? AND date(updated_at) = date('now')");
+        const row = byId.get(existingPitcher.mlb_id);
+        if (row) return row;
+      }
+
+      // Priority 2: match by full_name if available
+      if (existingPitcher?.full_name != null) {
+        const byName = forKEngine
+          ? db.prepare('SELECT * FROM mlb_pitcher_stats WHERE full_name = ? COLLATE NOCASE')
+          : db.prepare("SELECT * FROM mlb_pitcher_stats WHERE full_name = ? COLLATE NOCASE AND date(updated_at) = date('now')");
+        const row = byName.get(existingPitcher.full_name);
+        if (row) return row;
+      }
+
+      // Priority 3: fallback to team lookup (last resort)
+      const byTeam = forKEngine
+        ? db.prepare('SELECT * FROM mlb_pitcher_stats WHERE team = ? ORDER BY updated_at DESC LIMIT 1')
+        : db.prepare("SELECT * FROM mlb_pitcher_stats WHERE team = ? AND date(updated_at) = date('now') LIMIT 1");
+      
       for (const key of resolveMlbTeamLookupKeys(team)) {
         const row = byTeam.get(key);
         if (row) return row;
@@ -1887,15 +1914,8 @@ function enrichMlbPitcherData(
       return null;
     }
 
-    const homeRow = getPitcherRowForTeam(homeTeam);
-    const awayRow = getPitcherRowForTeam(awayTeam);
-
-    const existingRaw =
-      typeof oddsSnapshot.raw_data === 'string'
-        ? JSON.parse(oddsSnapshot.raw_data)
-        : (oddsSnapshot.raw_data ?? {});
-
-    const mlb = existingRaw.mlb ?? {};
+    const homeRow = getPitcherRow(homeTeam, existingHomePitcher);
+    const awayRow = getPitcherRow(awayTeam, existingAwayPitcher);
 
     // Canonical contract: hydrate full-game totals as mlb.full_game_line.
     const hydratedMlb = hydrateCanonicalMlbMarketLines(
