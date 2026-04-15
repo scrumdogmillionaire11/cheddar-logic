@@ -478,6 +478,28 @@ describe('projectFullGameTotal (WI-0872)', () => {
     expect(passCardA.status).toBe('PASS');
     expect(passCardB.status).toBe('PASS');
   });
+
+  test('WI-0944 transition: already-valid full-game total remains non-PASS', () => {
+    const baseline = projectFullGameTotalCard(avgPitcher, avgPitcher, 7.0, {
+      ...baseContext,
+      roof: 'OPEN',
+      wind_mph: 8,
+      home_bullpen_era: 4.1,
+      away_bullpen_era: 4.2,
+    });
+
+    const retunedInputs = projectFullGameTotalCard(avgPitcher, avgPitcher, 6.9, {
+      ...baseContext,
+      roof: 'OPEN',
+      wind_mph: 10,
+      home_bullpen_era: 4.0,
+      away_bullpen_era: 4.2,
+    });
+
+    expect(baseline.status).not.toBe('PASS');
+    expect(retunedInputs.status).not.toBe('PASS');
+    expect(retunedInputs.ev_threshold_passed).toBe(true);
+  });
 });
 
 describe('computeMLBDriverCards full_game_total card (WI-0872)', () => {
