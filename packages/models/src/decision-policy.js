@@ -86,6 +86,10 @@ function deriveWebhookBucket(payload, context = {}) {
   const isNhlTotal = context?.isNhlTotal === true;
   const is1P = context?.is1P === true;
 
+  // EVIDENCE cards are context drivers — never standalone bet rows.
+  // Non-1P EVIDENCE cards are always pass_blocked regardless of action/classification.
+  if (payload?.kind === 'EVIDENCE' && !is1P) return 'pass_blocked';
+
   let bucket;
   if (isNhlTotal && payload?.nhl_totals_status && typeof payload.nhl_totals_status === 'object') {
     const status = toUpperToken(payload.nhl_totals_status.status);

@@ -486,6 +486,15 @@ interface Play {
     sharp_price_status: 'CHEDDAR' | 'COTTAGE' | 'UNPRICED' | 'PENDING_VERIFICATION';
     price_reason_codes: string[];
     official_status: 'PLAY' | 'LEAN' | 'PASS';
+    canonical_envelope_v2?: {
+      official_status?: 'PLAY' | 'LEAN' | 'PASS';
+      terminal_reason_family?: string;
+      primary_reason_code?: string;
+      reason_codes?: string[];
+      is_actionable?: boolean;
+      execution_status?: 'EXECUTABLE' | 'PROJECTION_ONLY' | 'BLOCKED';
+      publish_ready?: boolean;
+    };
     play_tier: 'BEST' | 'GOOD' | 'OK' | 'BAD';
     primary_reason_code: string;
     pipeline_version: 'v2';
@@ -555,7 +564,21 @@ type DropReasonMeta = {
   drop_reason_layer: string;
 };
 
+function getCanonicalEnvelope(play: Play) {
+  const envelope = play?.decision_v2?.canonical_envelope_v2;
+  if (!envelope || typeof envelope !== 'object') return null;
+  return envelope;
+}
+
 function resolveLiveOfficialStatus(play: Play): 'PLAY' | 'LEAN' | 'PASS' {
+  const envelopeOfficial = getCanonicalEnvelope(play)?.official_status;
+  if (
+    envelopeOfficial === 'PLAY' ||
+    envelopeOfficial === 'LEAN' ||
+    envelopeOfficial === 'PASS'
+  ) {
+    return envelopeOfficial;
+  }
   const explicit = play.decision_v2?.official_status;
   if (explicit === 'PLAY' || explicit === 'LEAN' || explicit === 'PASS') {
     return explicit;
@@ -1138,8 +1161,26 @@ function resolveDerivedDropReason({
   decisionV2: Play['decision_v2'] | undefined;
   passReasonCode: string | null;
 }): DropReasonMeta | null {
+  const canonicalEnvelope =
+    decisionV2 && typeof decisionV2 === 'object'
+      ? decisionV2.canonical_envelope_v2
+      : null;
   const explicitDropReason = normalizeDropReasonMeta(executionGate?.drop_reason);
   if (explicitDropReason) return explicitDropReason;
+
+  const envelopePrimaryReason = normalizeReasonCodeToken(
+    canonicalEnvelope?.primary_reason_code,
+  );
+  if (
+    (canonicalEnvelope?.official_status === 'PASS' ||
+      canonicalEnvelope?.official_status === 'LEAN') &&
+    envelopePrimaryReason
+  ) {
+    return {
+      drop_reason_code: envelopePrimaryReason,
+      drop_reason_layer: 'decision_canonical_envelope',
+    };
+  }
 
   const watchdogReasonCode =
     Array.isArray(decisionV2?.watchdog_reason_codes) &&
@@ -1161,7 +1202,9 @@ function resolveDerivedDropReason({
           .find((value) => value != null && value !== 'EDGE_CLEAR') ?? null
       : null;
   if (
-    (decisionV2?.official_status === 'PASS' ||
+    ((canonicalEnvelope?.official_status === 'PASS' ||
+      canonicalEnvelope?.official_status === 'LEAN') ||
+      decisionV2?.official_status === 'PASS' ||
       decisionV2?.official_status === 'LEAN') &&
     priceReasonCode
   ) {
@@ -1181,7 +1224,9 @@ function resolveDerivedDropReason({
 
   const primaryReasonCode = normalizeReasonCodeToken(decisionV2?.primary_reason_code);
   if (
-    (decisionV2?.official_status === 'PASS' ||
+    ((canonicalEnvelope?.official_status === 'PASS' ||
+      canonicalEnvelope?.official_status === 'LEAN') ||
+      decisionV2?.official_status === 'PASS' ||
       decisionV2?.official_status === 'LEAN') &&
     primaryReasonCode
   ) {

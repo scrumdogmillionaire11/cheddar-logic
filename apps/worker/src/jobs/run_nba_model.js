@@ -70,6 +70,7 @@ const {
   publishDecisionForCard,
   capturePublishedDecisionState,
   assertNoDecisionMutation,
+  syncCanonicalDecisionEnvelope,
 } = require('../utils/decision-publisher');
 const { evaluateExecution } = require('./execution-gate');
 const {
@@ -629,6 +630,12 @@ function applyExecutionGateToNbaCard(card, { oddsSnapshot, nowMs = Date.now() } 
       payload.decision_v2.official_status = 'PASS';
       payload.decision_v2.primary_reason_code = passReasonCode;
     }
+    syncCanonicalDecisionEnvelope(payload, {
+      official_status: 'PASS',
+      primary_reason_code: passReasonCode,
+      execution_status: 'BLOCKED',
+      publish_ready: false,
+    });
     payload._publish_state = {
       ...(payload._publish_state && typeof payload._publish_state === 'object'
         ? payload._publish_state
@@ -1792,6 +1799,13 @@ async function runNBAModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
                   card.payloadData.decision_v2.primary_reason_code = 'NBA_NO_ODDS_MODE_LEAN';
                 }
               }
+              syncCanonicalDecisionEnvelope(card.payloadData, {
+                official_status: 'LEAN',
+                primary_reason_code:
+                  card.payloadData.decision_v2?.primary_reason_code || 'NBA_NO_ODDS_MODE_LEAN',
+                execution_status: 'PROJECTION_ONLY',
+                publish_ready: false,
+              });
             }
             const executionGateOutcome = applyExecutionGateToNbaCard(card, {
               oddsSnapshot,

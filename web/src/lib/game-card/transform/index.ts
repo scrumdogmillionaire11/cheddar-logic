@@ -349,11 +349,61 @@ function normalizeDropReasonMeta(
   };
 }
 
+function getCanonicalEnvelopeFromPlay(
+  play: ApiPlay | null | undefined
+): Record<string, unknown> | null {
+  if (!play || !play.decision_v2) return null;
+  const envelope = play.decision_v2.canonical_envelope_v2;
+  return envelope && typeof envelope === 'object'
+    ? (envelope as Record<string, unknown>)
+    : null;
+}
+
+function resolveCanonicalOfficialStatus(
+  play: ApiPlay | null | undefined
+): string | null {
+  if (!play) return null;
+  const canonicalEnvelope = getCanonicalEnvelopeFromPlay(play);
+  // Prefer canonical envelope status
+  if (
+    canonicalEnvelope?.official_status &&
+    typeof canonicalEnvelope.official_status === 'string'
+  ) {
+    return canonicalEnvelope.official_status;
+  }
+  // Fallback to legacy
+  if (
+    play.decision_v2?.official_status &&
+    typeof play.decision_v2.official_status === 'string'
+  ) {
+    return play.decision_v2.official_status;
+  }
+  return null;
+}
+
 function resolvePlayDropReason(play: ApiPlay | null | undefined): DropReasonMeta | null {
   if (!play) return null;
 
+  const canonicalEnvelope = getCanonicalEnvelopeFromPlay(play);
   const explicitDropReason = normalizeDropReasonMeta(play.execution_gate?.drop_reason);
   if (explicitDropReason) return explicitDropReason;
+
+  // Prefer canonical envelope primary reason if available
+  const envelopePrimary =
+    canonicalEnvelope &&
+    typeof canonicalEnvelope.primary_reason_code === 'string'
+      ? normalizeReasonCode(canonicalEnvelope.primary_reason_code)
+      : null;
+  if (
+    envelopePrimary &&
+    (canonicalEnvelope?.official_status === 'PASS' ||
+      canonicalEnvelope?.official_status === 'LEAN')
+  ) {
+    return {
+      drop_reason_code: envelopePrimary,
+      drop_reason_layer: 'decision_canonical_envelope',
+    };
+  }
 
   const watchdogReasonCode =
     Array.isArray(play.decision_v2?.watchdog_reason_codes) &&
@@ -1690,12 +1740,13 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
             }
           : null));
   const sourcePlay = selectedSource?.play ?? scopedPlayCandidates[0];
+  const sourceCanonicalStatus = resolveCanonicalOfficialStatus(sourcePlay);
   const sourceAction =
-    sourcePlay?.decision_v2?.official_status === 'PLAY'
+    sourceCanonicalStatus === 'PLAY'
       ? 'FIRE'
-      : sourcePlay?.decision_v2?.official_status === 'LEAN'
+      : sourceCanonicalStatus === 'LEAN'
         ? 'HOLD'
-        : sourcePlay?.decision_v2?.official_status === 'PASS'
+        : sourceCanonicalStatus === 'PASS'
           ? 'PASS'
           : getSourcePlayAction(sourcePlay);
   const sourceExplicitPass = sourceAction === 'PASS';
@@ -2119,7 +2170,7 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
   const baseDecision = derivePlayDecision(playForDecision, marketContext, {
     sport: playForDecision.sport,
   });
-  const storedStatus = sourcePlay?.decision_v2?.official_status;
+  const storedStatus = resolveCanonicalOfficialStatus(sourcePlay);
   const decision =
     storedStatus === 'PLAY' || storedStatus === 'LEAN' || storedStatus === 'PASS'
       ? {

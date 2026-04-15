@@ -78,6 +78,7 @@ const {
   publishDecisionForCard,
   applyUiActionFields,
   applyDecisionVeto,
+  syncCanonicalDecisionEnvelope,
 } = require('../utils/decision-publisher');
 const { 
   assertNoSilentMarketDrop,
@@ -613,6 +614,12 @@ function applyExecutionGateToNhlCard(card, { oddsSnapshot, nowMs = Date.now() } 
         payload.decision_v2.official_status = 'LEAN';
         payload.decision_v2.primary_reason_code = blockReasonCode;
       }
+      syncCanonicalDecisionEnvelope(payload, {
+        official_status: 'LEAN',
+        primary_reason_code: blockReasonCode,
+        execution_status: 'BLOCKED',
+        publish_ready: false,
+      });
     } else {
       const passReasonCode = toExecutionGatePassReasonCode(gateResult.reason);
       applyDecisionVeto(payload, passReasonCode);
@@ -989,6 +996,13 @@ function applyNhlUncertaintyHold(card, reasonCodes = []) {
     );
   }
 
+  syncCanonicalDecisionEnvelope(payload, {
+    official_status: 'LEAN',
+    primary_reason_code: primaryReason,
+    execution_status: 'BLOCKED',
+    publish_ready: false,
+  });
+
   return true;
 }
 
@@ -1076,6 +1090,15 @@ function applyCanonicalNhlTotalsStatus(card, context = {}) {
     payload.decision_v2.primary_reason_code =
       result.reasonCodes[0] || payload.decision_v2.primary_reason_code || null;
   }
+
+  syncCanonicalDecisionEnvelope(payload, {
+    official_status: mapped.officialStatus,
+    primary_reason_code:
+      result.reasonCodes[0] || payload.pass_reason_code || payload.decision_v2?.primary_reason_code,
+    execution_status:
+      mapped.officialStatus === 'PASS' ? 'BLOCKED' : payload.execution_status || 'EXECUTABLE',
+    publish_ready: mapped.officialStatus !== 'PASS',
+  });
 
   return result;
 }
@@ -2978,6 +3001,13 @@ async function runNHLModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
                   card.payloadData.decision_v2.primary_reason_code = 'NO_ODDS_MODE_LEAN';
                 }
               }
+              syncCanonicalDecisionEnvelope(card.payloadData, {
+                official_status: 'LEAN',
+                primary_reason_code:
+                  card.payloadData.decision_v2?.primary_reason_code || 'NO_ODDS_MODE_LEAN',
+                execution_status: 'PROJECTION_ONLY',
+                publish_ready: false,
+              });
             }
             applyNhlUncertaintyHold(card, uncertaintyHoldReasonCodes);
             const executionGateOutcome = applyExecutionGateToNhlCard(card, {

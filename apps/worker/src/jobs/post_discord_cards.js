@@ -313,6 +313,11 @@ function isNonPassCard(card) {
 }
 
 function isDisplayableWebhookCard(card) {
+  // EVIDENCE cards (non-1P) are context drivers — bypass the pre-stamped webhook_eligible shortcut
+  // so the legacy kind !== 'PLAY' gate applies instead.
+  if (normalizeToken(card?.payloadData?.kind) === 'EVIDENCE' && !isFirstPeriodCard(card)) {
+    return isDisplayableWebhookCardLegacy(card);
+  }
   const eligible = card?.payloadData?.webhook_eligible;
   if (typeof eligible === 'boolean') return eligible;
   return isDisplayableWebhookCardLegacy(card);
@@ -472,6 +477,9 @@ function summarizePick(card) {
 }
 
 function classifyDecisionBucket(card) {
+  // EVIDENCE cards are context drivers — never standalone bet rows.
+  // Override any pre-stamped webhook_bucket that may have been set when action=FIRE.
+  if (normalizeToken(card?.payloadData?.kind) === 'EVIDENCE' && !isFirstPeriodCard(card)) return 'pass_blocked';
   const bucket = normalizeWebhookBucketToken(card?.payloadData?.webhook_bucket);
   if (bucket === 'official' || bucket === 'lean' || bucket === 'pass_blocked') return bucket;
   return classifyDecisionBucketLegacy(card);

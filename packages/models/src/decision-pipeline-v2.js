@@ -1067,6 +1067,93 @@ function resolvePrimaryReason({
   return 'SUPPORT_BELOW_PLAY_THRESHOLD';
 }
 
+function resolveTerminalReasonFamily({
+  officialStatus,
+  watchdogStatus,
+  priceReasonCodes = [],
+  primaryReasonCode,
+}) {
+  if (officialStatus === 'PLAY' || officialStatus === 'LEAN') {
+    return 'PLAY_ELIGIBLE';
+  }
+
+  if (watchdogStatus === 'BLOCKED') {
+    return 'WATCHDOG_DATA_QUALITY';
+  }
+
+  if (priceReasonCodes.includes(PRICE_REASONS.EXACT_WAGER_MISMATCH)) {
+    return 'EXACT_WAGER_FAIL';
+  }
+
+  if (priceReasonCodes.includes(PRICE_REASONS.EDGE_VERIFICATION_REQUIRED)) {
+    return 'EDGE_VERIFICATION_REQUIRED';
+  }
+
+  if (
+    priceReasonCodes.some((code) =>
+      [
+        PRICE_REASONS.MARKET_PRICE_MISSING,
+        PRICE_REASONS.MODEL_PROB_MISSING,
+        PRICE_REASONS.MARKET_EDGE_UNAVAILABLE,
+        PRICE_REASONS.PROXY_EDGE_BLOCKED,
+        PRICE_REASONS.NO_PRIMARY_SUPPORT,
+      ].includes(code),
+    )
+  ) {
+    return 'PRICING_UNAVAILABLE';
+  }
+
+  if (
+    priceReasonCodes.some((code) =>
+      [
+        PRICE_REASONS.HEAVY_FAVORITE_PRICE_CAP,
+        PRICE_REASONS.FIRST_PERIOD_NO_PROJECTION,
+      ].includes(code),
+    )
+  ) {
+    return 'POLICY_BLOCK';
+  }
+
+  if (
+    primaryReasonCode === 'SUPPORT_BELOW_PLAY_THRESHOLD' ||
+    primaryReasonCode === 'SUPPORT_BELOW_LEAN_THRESHOLD' ||
+    priceReasonCodes.includes(PRICE_REASONS.NO_EDGE_AT_PRICE)
+  ) {
+    return 'EDGE_INSUFFICIENT';
+  }
+
+  return 'EXECUTION_GATE';
+}
+
+function buildCanonicalEnvelopeV2({
+  officialStatus,
+  watchdogStatus,
+  primaryReasonCode,
+  priceReasonCodes = [],
+  watchdogReasonCodes = [],
+  executionStatus,
+}) {
+  const reasonCodes = uniqueReasonCodes(
+    primaryReasonCode,
+    watchdogReasonCodes,
+    priceReasonCodes,
+  );
+  return {
+    official_status: officialStatus,
+    terminal_reason_family: resolveTerminalReasonFamily({
+      officialStatus,
+      watchdogStatus,
+      priceReasonCodes,
+      primaryReasonCode,
+    }),
+    primary_reason_code: primaryReasonCode,
+    reason_codes: reasonCodes,
+    is_actionable: officialStatus === 'PLAY' || officialStatus === 'LEAN',
+    execution_status: executionStatus,
+    publish_ready: executionStatus === 'EXECUTABLE',
+  };
+}
+
 function computeWatchdog(payload, context = {}) {
   const watchdogReasonCodes = [];
   const { consistency, sourceAttempts, missingFields } =
@@ -1594,6 +1681,15 @@ function buildDecisionV2(payload, context = {}) {
       primary_reason_code = PRICE_REASONS.HEAVY_FAVORITE_PRICE_CAP;
     }
 
+    const canonicalEnvelopeV2 = buildCanonicalEnvelopeV2({
+      officialStatus: finalOfficialStatus,
+      watchdogStatus: watchdog.watchdog_status,
+      primaryReasonCode: primary_reason_code,
+      priceReasonCodes: finalPriceReasonCodes,
+      watchdogReasonCodes: watchdog.watchdog_reason_codes,
+      executionStatus: finalOfficialStatus === 'PASS' ? 'BLOCKED' : 'EXECUTABLE',
+    });
+
     return {
       direction,
       support_score,
@@ -1660,6 +1756,7 @@ function buildDecisionV2(payload, context = {}) {
       official_status: finalOfficialStatus,
       play_tier,
       primary_reason_code,
+      canonical_envelope_v2: canonicalEnvelopeV2,
 
       pipeline_version: PIPELINE_VERSION,
       decided_at: new Date().toISOString(),
@@ -1712,6 +1809,14 @@ function buildDecisionV2(payload, context = {}) {
       official_status: 'PASS',
       play_tier: 'BAD',
       primary_reason_code: WATCHDOG_REASONS.PARSE_FAILURE,
+      canonical_envelope_v2: buildCanonicalEnvelopeV2({
+        officialStatus: 'PASS',
+        watchdogStatus: 'BLOCKED',
+        primaryReasonCode: WATCHDOG_REASONS.PARSE_FAILURE,
+        priceReasonCodes: [PRICE_REASONS.MARKET_PRICE_MISSING],
+        watchdogReasonCodes: [WATCHDOG_REASONS.PARSE_FAILURE],
+        executionStatus: 'BLOCKED',
+      }),
 
       pipeline_version: PIPELINE_VERSION,
       decided_at: new Date().toISOString(),

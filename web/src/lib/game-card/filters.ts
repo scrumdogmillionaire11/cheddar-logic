@@ -133,6 +133,42 @@ export interface PropsModeFilters extends CommonFilters {
 
 export type GameFilters = GameModeFilters | PropsModeFilters;
 
+function getCanonicalEnvelope(play: GameCard['play']) {
+  if (!play || !play.decision_v2) return null;
+  const envelope = play.decision_v2.canonical_envelope_v2;
+  return envelope && typeof envelope === 'object'
+    ? (envelope as Record<string, unknown>)
+    : null;
+}
+
+function resolveCanonicalOfficialStatus(
+  play: GameCard['play'],
+): 'PLAY' | 'LEAN' | 'PASS' | null {
+  const envelope = getCanonicalEnvelope(play);
+  const fromEnvelope = envelope?.official_status;
+  if (
+    fromEnvelope === 'PLAY' ||
+    fromEnvelope === 'LEAN' ||
+    fromEnvelope === 'PASS'
+  ) {
+    return fromEnvelope;
+  }
+  const explicit = play?.decision_v2?.official_status;
+  return explicit === 'PLAY' || explicit === 'LEAN' || explicit === 'PASS'
+    ? explicit
+    : null;
+}
+
+function resolveCanonicalIsActionable(play: GameCard['play']): boolean | null {
+  const envelope = getCanonicalEnvelope(play);
+  if (typeof envelope?.is_actionable === 'boolean') {
+    return envelope.is_actionable;
+  }
+  const official = resolveCanonicalOfficialStatus(play);
+  if (official) return official !== 'PASS';
+  return null;
+}
+
 /**
  * Default filter state
  */
@@ -351,7 +387,7 @@ function filterByActionability(
     displayAction === 'PASS' ||
     card.play?.action === 'PASS' ||
     card.play?.classification === 'PASS' ||
-    card.play?.decision_v2?.official_status === 'PASS';
+    resolveCanonicalOfficialStatus(card.play) === 'PASS';
 
   // Allow expressionChoice to override a PASS display action, but never driver
   // tags: HAS_FIRE / HAS_WATCH are derived from the same pipeline that produced
@@ -469,11 +505,14 @@ function hasActionablePlayCall(card: GameCard): boolean {
   const play = card.play;
   if (!play) return false;
 
+  const canonicalActionable = resolveCanonicalIsActionable(play);
+  if (canonicalActionable === false) return false;
+
   // Explicit PASS signals are never actionable, checked before pick text inspection.
   // Edge-verification blocked cards can carry non-'NO PLAY' pick text (e.g.
   // "Team ML -110 (Verification Required)") while still being PASS decisions.
   if (play.action === 'PASS' || play.classification === 'PASS') return false;
-  if (play.decision_v2?.official_status === 'PASS') return false;
+  if (resolveCanonicalOfficialStatus(play) === 'PASS') return false;
 
   const canonicalMarket = canonicalToLegacyMarket(play.market_type);
   if (!canonicalMarket) return false;
@@ -491,7 +530,7 @@ function hasActionablePlayCall(card: GameCard): boolean {
   const displayAction = getPlayDisplayAction(play);
   if (displayAction === 'PASS') return false;
 
-  const officialStatus = play.decision_v2?.official_status;
+  const officialStatus = resolveCanonicalOfficialStatus(play);
   if (officialStatus) {
     return officialStatus === 'PLAY' || officialStatus === 'LEAN';
   }

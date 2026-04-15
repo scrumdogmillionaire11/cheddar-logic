@@ -325,6 +325,83 @@ describe('post_discord_cards helpers', () => {
     expect(message).not.toContain('⚪ PASS');
   });
 
+  test('buildDiscordSnapshot suppresses game where all bet calls are blocked and only EVIDENCE cards are FIRE', () => {
+    // Regression: WSH@CBJ pattern where nhl-model-output / nhl-base-projection / nhl-rest-advantage /
+    // nhl-goalie-certainty all had kind=EVIDENCE, action=FIRE, webhook_bucket='official', webhook_eligible=true
+    // — causing a false 🟢 PLAY section when all real bet calls (nhl-moneyline-call, nhl-totals-call) were PASS.
+    const gameTimeUtc = '2026-04-14T23:10:00.000Z';
+    const cards = [
+      // Real bet calls — all blocked
+      makeCard({
+        id: 'ml-blocked',
+        matchup: 'Washington Capitals @ Columbus Blue Jackets',
+        gameTimeUtc,
+        cardType: 'nhl-moneyline-call',
+        payloadData: {
+          kind: 'PLAY',
+          action: 'PASS',
+          classification: 'PASS',
+          webhook_bucket: 'pass_blocked',
+          webhook_eligible: false,
+          market_type: 'MONEYLINE',
+          selection: { side: 'AWAY' },
+          pass_reason_code: 'EDGE_VERIFICATION_REQUIRED',
+        },
+      }),
+      // EVIDENCE context drivers — FIRE action but must not appear as bet rows
+      makeCard({
+        id: 'nhl-model-output-evidence',
+        matchup: 'Washington Capitals @ Columbus Blue Jackets',
+        gameTimeUtc,
+        cardType: 'nhl-model-output',
+        payloadData: {
+          kind: 'EVIDENCE',
+          action: 'FIRE',
+          webhook_bucket: 'official',
+          webhook_eligible: true,
+          prediction: 'NEUTRAL',
+          selection: null,
+        },
+      }),
+      makeCard({
+        id: 'nhl-base-proj-evidence',
+        matchup: 'Washington Capitals @ Columbus Blue Jackets',
+        gameTimeUtc,
+        cardType: 'nhl-base-projection',
+        payloadData: {
+          kind: 'EVIDENCE',
+          action: 'FIRE',
+          webhook_bucket: 'official',
+          webhook_eligible: true,
+          prediction: 'AWAY',
+          selection: null,
+        },
+      }),
+      makeCard({
+        id: 'nhl-rest-evidence',
+        matchup: 'Washington Capitals @ Columbus Blue Jackets',
+        gameTimeUtc,
+        cardType: 'nhl-rest-advantage',
+        payloadData: {
+          kind: 'EVIDENCE',
+          action: 'FIRE',
+          webhook_bucket: 'official',
+          webhook_eligible: true,
+          prediction: 'NEUTRAL',
+          selection: null,
+        },
+      }),
+    ];
+
+    const snapshot = buildDiscordSnapshot({ cards, now: new Date('2026-04-14T22:07:00.000Z') });
+
+    // No PLAY or lean — game must be completely suppressed
+    expect(snapshot.totalGames).toBe(0);
+    expect(snapshot.messages).toHaveLength(0);
+    expect(snapshot.sectionCounts.official).toBe(0);
+    expect(snapshot.sectionCounts.lean).toBe(0);
+  });
+
   test('buildDiscordSnapshot surfaces blocked high-signal passes as WATCH with explicit reason', () => {
     const cards = [
       makeCard({
@@ -1192,6 +1269,22 @@ describe('canonical webhook fields path', () => {
     expect(classifyDecisionBucket(card)).toBe('official');
   });
 
+  it('classifyDecisionBucket returns pass_blocked for EVIDENCE card with pre-stamped webhook_bucket=official', () => {
+    // Regression: nhl-base-projection / nhl-model-output EVIDENCE cards had action=FIRE
+    // and computeWebhookFields stamped webhook_bucket='official'. Formatter must ignore that.
+    const card = makeCard({
+      cardType: 'nhl-base-projection',
+      payloadData: {
+        kind: 'EVIDENCE',
+        action: 'FIRE',
+        webhook_bucket: 'official',
+        webhook_eligible: true,
+        prediction: 'AWAY',
+      },
+    });
+    expect(classifyDecisionBucket(card)).toBe('pass_blocked');
+  });
+
   // isDisplayableWebhookCard reads webhook_eligible
   it('isDisplayableWebhookCard returns true when webhook_eligible=true', () => {
     const card = makeCard({ payloadData: { webhook_eligible: true } });
@@ -1200,6 +1293,24 @@ describe('canonical webhook fields path', () => {
 
   it('isDisplayableWebhookCard returns false when webhook_eligible=false', () => {
     const card = makeCard({ payloadData: { webhook_eligible: false } });
+    expect(isDisplayableWebhookCard(card)).toBe(false);
+  });
+
+  it('isDisplayableWebhookCard returns false for EVIDENCE card with pre-stamped webhook_eligible=true', () => {
+    // Regression: EVIDENCE cards (nhl-rest-advantage, nhl-goalie-certainty, etc.) were written
+    // with webhook_eligible=true and webhook_bucket='official' when action=FIRE, causing false
+    // PLAY sections to appear in Discord for games where all real bet calls were blocked.
+    const card = makeCard({
+      cardType: 'nhl-rest-advantage',
+      payloadData: {
+        kind: 'EVIDENCE',
+        action: 'FIRE',
+        webhook_eligible: true,
+        webhook_bucket: 'official',
+        prediction: 'NEUTRAL',
+        selection: null,
+      },
+    });
     expect(isDisplayableWebhookCard(card)).toBe(false);
   });
 
