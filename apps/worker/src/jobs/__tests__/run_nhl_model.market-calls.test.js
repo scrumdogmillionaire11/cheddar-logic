@@ -12,7 +12,7 @@ const {
   applyNhlUncertaintyHold,
   isHardProjectionInputBlock,
 } = require('../run_nhl_model');
-const { publishDecisionForCard } = require('../../utils/decision-publisher');
+const { finalizeDecisionFields } = require('../../utils/decision-publisher');
 const { validateCardPayload } = require('@cheddar-logic/data');
 
 function loadResolveThresholdProfile() {
@@ -391,7 +391,7 @@ describe('run_nhl_model market call generation', () => {
     expect(mlCard.payloadData.p_fair).toBeCloseTo(0.38, 4);
   });
 
-  test('publishDecisionForCard resolves priced decision_v2 for live-odds nhl-moneyline-call', () => {
+  test('finalizeDecisionFields resolves priced decision_v2 for live-odds nhl-moneyline-call', () => {
     const oddsSnapshot = buildBaseOddsSnapshot();
     const cards = generateNHLMarketCallCards(
       'nhl-test-game',
@@ -402,7 +402,7 @@ describe('run_nhl_model market call generation', () => {
 
     expect(mlCard).toBeDefined();
 
-    publishDecisionForCard({ card: mlCard, oddsSnapshot });
+    finalizeDecisionFields(mlCard.payloadData, { oddsSnapshot });
 
     expect(mlCard.payloadData.decision_v2).toBeDefined();
     expect(mlCard.payloadData.decision_v2.sharp_price_status).not.toBe('UNPRICED');
