@@ -1566,7 +1566,7 @@ describe('WI-0720 MLB execution envelope', () => {
   });
 
   // WI-0944: MLB full-game ML execution gate relaxation tests
-  test('mlb-full-game-ml with large edge (>=0.06) + conf=0.50 passes the gate', () => {
+  test('mlb-full-game-ml with large edge (>=0.06) + conf=0.50 is downgraded to LEAN (not PASS)', () => {
     // Scenario: Boston @ Minnesota — pWin 56.1%, edge +9.5pp, conf=5/10=0.50
     // With the old global minConfidence=0.55 this would be BLOCKED; with the MLB
     // full-game ML large-edge override (minConfidence=0.45) it must pass.
@@ -1591,12 +1591,14 @@ describe('WI-0720 MLB execution envelope', () => {
     const result = applyExecutionGateToMlbPayload(payload, { oddsSnapshot, nowMs });
 
     expect(result).toEqual({ evaluated: true, blocked: false });
-    expect(payload.status).toBe('FIRE');
+    expect(payload.status).toBe('LEAN');
+    expect(payload.action).toBe('LEAN');
+    expect(payload.classification).toBe('LEAN');
     expect(payload.execution_gate.should_bet).toBe(true);
     expect(payload.execution_gate.blocked_by).toHaveLength(0);
   });
 
-  test('mlb-full-game-ml with standard edge (0.07) + conf=0.50 passes relaxed threshold', () => {
+  test('mlb-full-game-ml with standard high edge (0.07) + conf=0.50 is downgraded to LEAN', () => {
     // Scenario: Blue Jays @ Brewers — edge +7pp, conf=5/10=0.50
     // Old global thresholds: minNetEdge=0.025, minConfidence=0.55 → BLOCKED (net=0.02 AND conf 0.50<0.55)
     // New MLB relaxed: minNetEdge=0.02, minConfidence=0.50 → net=0.02 passes (>=), conf=0.50 passes (>=)
@@ -1621,7 +1623,9 @@ describe('WI-0720 MLB execution envelope', () => {
     const result = applyExecutionGateToMlbPayload(payload, { oddsSnapshot, nowMs });
 
     expect(result).toEqual({ evaluated: true, blocked: false });
-    expect(payload.status).toBe('FIRE');
+    expect(payload.status).toBe('LEAN');
+    expect(payload.action).toBe('LEAN');
+    expect(payload.classification).toBe('LEAN');
   });
 
   test('non-full-game-ml card with conf=0.50 still gets blocked (override is type-specific)', () => {
@@ -1651,6 +1655,48 @@ describe('WI-0720 MLB execution envelope', () => {
     expect(payload.execution_gate.blocked_by).toContain(
       'CONFIDENCE_BELOW_THRESHOLD:0.500',
     );
+  });
+
+  test('high-edge MLB full-game moneyline is downgraded to LEAN even when payload.card_type is missing', () => {
+    // Regression for live payload shape: card_type may be null in payload_data while
+    // market_type/recommended_bet_type still indicate FULL GAME ML.
+    const payload = {
+      execution_status: 'EXECUTABLE',
+      sport: 'MLB',
+      card_title: 'Full Game ML HOME: CHICAGO CUBS @ PHILADELPHIA PHILLIES',
+      market_type: 'MONEYLINE',
+      recommended_bet_type: 'moneyline',
+      period: null,
+      edge: 0.061,
+      confidence: 0.5,
+      model_status: 'MODEL_OK',
+      status: 'FIRE',
+      action: 'FIRE',
+      classification: 'BASE',
+      ev_passed: true,
+      reason_codes: ['SOFT_WEAK_DRIVER_SUPPORT'],
+      actionable: true,
+      publish_ready: true,
+      _publish_state: {
+        publish_ready: true,
+        emit_allowed: true,
+        execution_status: 'EXECUTABLE',
+      },
+    };
+    const oddsSnapshot = { captured_at: '2026-04-15T17:00:00Z' };
+    const nowMs = new Date(oddsSnapshot.captured_at).getTime() + 60_000;
+
+    const result = applyExecutionGateToMlbPayload(payload, { oddsSnapshot, nowMs });
+
+    expect(result).toEqual({ evaluated: true, blocked: false });
+    expect(payload.status).toBe('LEAN');
+    expect(payload.action).toBe('LEAN');
+    expect(payload.classification).toBe('LEAN');
+    expect(payload.execution_gate).toMatchObject({
+      should_bet: true,
+      overridden_by_edge: true,
+    });
+    expect(payload.execution_gate.blocked_by).toEqual([]);
   });
 });
 

@@ -1075,8 +1075,27 @@ function applyExecutionGateToMlbPayload(payload, { oddsSnapshot, nowMs = Date.no
   // nullify a +9-11pp model call.
   // Standard relaxed (rawEdge < 0.06): lower but still meaningful floors.
   const _rawEdgeForGate = Number.isFinite(payload.edge) ? payload.edge : 0;
+  const _sportToken = String(payload.sport || 'MLB').toUpperCase();
+  const _cardTypeToken = String(payload.card_type || '').toLowerCase();
+  const _marketTypeToken = String(payload.market_type || '').toUpperCase();
+  const _recommendedBetTypeToken = String(payload.recommended_bet_type || '').toUpperCase();
+  const _periodToken = String(payload.period ?? payload.market?.period ?? '').toUpperCase();
+  const _cardTitleToken = String(payload.card_title || payload.title || '').toUpperCase();
+  const _isFullGamePeriod =
+    _periodToken === '' ||
+    _periodToken === 'NA' ||
+    _periodToken === 'FULL_GAME' ||
+    _periodToken === 'GAME';
+  const _isMlbMoneylineLike =
+    _marketTypeToken === 'MONEYLINE' &&
+    (_recommendedBetTypeToken === 'MONEYLINE' || _cardTitleToken.includes('FULL GAME ML'));
   const _isMlbFullGameMl =
-    payload.card_type === 'mlb-full-game-ml' || payload.card_type === 'mlb-full-game';
+    _sportToken === 'MLB' &&
+    (
+      _cardTypeToken === 'mlb-full-game-ml' ||
+      _cardTypeToken === 'mlb-full-game' ||
+      (_isMlbMoneylineLike && _isFullGamePeriod)
+    );
   const _mlbGateOverrides = _isMlbFullGameMl
     ? {
         minNetEdge: _rawEdgeForGate >= 0.06 ? 0.01 : 0.02,
@@ -1098,18 +1117,87 @@ function applyExecutionGateToMlbPayload(payload, { oddsSnapshot, nowMs = Date.no
     ..._mlbGateOverrides,
   });
 
+  const edgeOverrideEligible =
+    _isMlbFullGameMl &&
+    _rawEdgeForGate >= 0.06 &&
+    resolvedModelStatus === 'MODEL_OK';
+  const edgeOverrideBlockers = new Set([
+    'CONFIDENCE_BELOW_THRESHOLD',
+    'NET_EDGE_INSUFFICIENT',
+  ]);
+  const blockedByOnlySoftEdgeOrConfidence =
+    Array.isArray(gateResult.blocked_by) &&
+    gateResult.blocked_by.length > 0 &&
+    gateResult.blocked_by.every((reason) =>
+      edgeOverrideBlockers.has(String(reason || '').split(':')[0]),
+    );
+  const applyHighEdgeOverride =
+    !gateResult.shouldBet && edgeOverrideEligible && blockedByOnlySoftEdgeOrConfidence;
+
+  const gateShouldBet = applyHighEdgeOverride ? true : gateResult.shouldBet;
+  const gateBlockedBy = applyHighEdgeOverride ? [] : gateResult.blocked_by;
+  const gateDropReason = applyHighEdgeOverride ? null : gateResult.drop_reason;
+  const reasonCodes = Array.isArray(payload.reason_codes) ? payload.reason_codes : [];
+  const hasWeakSupportSignal = reasonCodes.some((code) => {
+    const token = String(code || '').toUpperCase();
+    return token === 'SOFT_WEAK_DRIVER_SUPPORT' || token === 'PASS_DRIVER_SUPPORT_WEAK';
+  });
+  const hasLowConfidenceSignal = Number.isFinite(payload.confidence) && payload.confidence < 0.55;
+  const downgradeHighEdgeToLean =
+    _isMlbFullGameMl &&
+    _rawEdgeForGate >= 0.06 &&
+    resolvedModelStatus === 'MODEL_OK' &&
+    gateShouldBet &&
+    (hasWeakSupportSignal || hasLowConfidenceSignal);
+
   payload.execution_gate = {
     evaluated: true,
-    should_bet: gateResult.shouldBet,
+    should_bet: gateShouldBet,
     net_edge: gateResult.netEdge,
-    blocked_by: gateResult.blocked_by,
+    blocked_by: gateBlockedBy,
     model_status: resolvedModelStatus,
     snapshot_age_ms: snapshotAgeMs,
     evaluated_at: new Date(nowMs).toISOString(),
-    drop_reason: gateResult.drop_reason,
+    drop_reason: gateDropReason,
+    overridden_by_edge: applyHighEdgeOverride || downgradeHighEdgeToLean,
+    override_context: applyHighEdgeOverride || downgradeHighEdgeToLean
+      ? {
+          raw_edge: _rawEdgeForGate,
+          threshold: 0.06,
+          original_blocked_by: gateResult.blocked_by,
+          resolution: 'DOWNGRADED_TO_LEAN',
+        }
+      : null,
   };
 
-  if (!gateResult.shouldBet) {
+  if (applyHighEdgeOverride || downgradeHighEdgeToLean) {
+    payload.status = 'LEAN';
+    payload.action = 'LEAN';
+    payload.classification = 'LEAN';
+    payload.ev_passed = true;
+    payload.execution_status = 'EXECUTABLE';
+    payload.actionable = true;
+    payload.publish_ready = true;
+    payload.pass_reason_code = null;
+    payload.reason_codes = Array.from(
+      new Set(
+        (Array.isArray(payload.reason_codes) ? payload.reason_codes : []).filter(
+          (code) => !String(code || '').startsWith('PASS_EXECUTION_GATE_'),
+        ),
+      ),
+    ).sort();
+    payload._publish_state = {
+      ...(payload._publish_state && typeof payload._publish_state === 'object'
+        ? payload._publish_state
+        : {}),
+      publish_ready: true,
+      emit_allowed: true,
+      execution_status: 'EXECUTABLE',
+      block_reason: null,
+    };
+  }
+
+  if (!gateShouldBet) {
     const passReasonCode = toExecutionGatePassReasonCode(gateResult.reason);
     payload.status = 'PASS';
     payload.action = 'PASS';
@@ -1135,7 +1223,7 @@ function applyExecutionGateToMlbPayload(payload, { oddsSnapshot, nowMs = Date.no
 
   return {
     evaluated: true,
-    blocked: !gateResult.shouldBet,
+    blocked: !gateShouldBet,
   };
 }
 
@@ -2986,6 +3074,7 @@ async function runMLBModel({
             });
             driver.execution_envelope = executionEnvelope;
             Object.assign(payloadData, executionEnvelope);
+            payloadData.card_type = cardType;
             payloadData.market_contract = buildMlbMarketContract({
               driver,
               oddsSnapshot: gameOddsSnapshot,
