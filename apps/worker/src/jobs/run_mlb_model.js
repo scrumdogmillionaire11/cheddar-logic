@@ -611,6 +611,50 @@ function evaluateMlbFullGameFunnelCandidate(driver = {}, isOfficialPlay = false)
   };
 }
 
+/**
+ * WI-0944: Build MLB Full-Game Suppression Funnel Report (Operator Contract)
+ *
+ * Generates a deterministic, operator-facing report that shows how MLB full-game
+ * candidates flow through each suppression gate over the most recent N=50 samples.
+ *
+ * OUTPUT SHAPE (locked for WI-0944 and later):
+ *
+ * {
+ *   "sample_size": number,        // N (max 50), total candidates processed
+ *   "counts": {                   // Raw counts (not ratios) at each stage
+ *     "total_candidates_created": number,
+ *     "passed_projection": number,
+ *     "passed_edge_threshold": number,
+ *     "passed_volatility_threshold": number,
+ *     "passed_driver_support": number,
+ *     "passed_f5_contradiction": number,
+ *     "passed_confidence": number,
+ *     "final_official_plays": number
+ *   },
+ *   "drop_pct": {                // Percentage drop from previous stage (not cascading)
+ *     "passed_projection": number,           // % of total_candidates that didn't pass
+ *     "passed_edge_threshold": number,       // % of total_candidates that didn't pass
+ *     ... (same pattern for each stage)
+ *     "final_official_plays": number
+ *   },
+ *   "top_suppressors": [          // Top 2 suppressors ordered by impact
+ *     {
+ *       "condition": string,      // e.g., "PASS_NO_EDGE_OR_RUN_DIFF", "PASS_CONFIDENCE_GATE"
+ *       "count": number,          // How many candidates were suppressed by this condition
+ *       "impact_pct": number      // (count / sample_size) * 100
+ *     },
+ *     ...
+ *   ]
+ * }
+ *
+ * OPERATOR USE:
+ * - High drop_pct at a stage → investigate that gate (e.g., edge_threshold at 40% → many low-edge candidates)
+ * - top_suppressors → names the most common suppressors without parsing candidate payloads
+ * - Reproducible output across runs with same sample → enables before/after threshold testing
+ *
+ * @param {Array} samples - Array of evaluation results from evaluateMlbFullGameFunnelCandidate
+ * @returns {Object} Operator-facing report with sample_size, counts, drop_pct, top_suppressors
+ */
 function buildMlbFullGameSuppressionFunnelReport(samples = []) {
   const ordered = Array.isArray(samples) ? samples.slice(-MLB_FULL_GAME_FUNNEL_WINDOW) : [];
   const total = ordered.length;
