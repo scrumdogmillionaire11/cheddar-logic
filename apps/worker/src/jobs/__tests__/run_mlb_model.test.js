@@ -360,6 +360,78 @@ describe('buildMlbMarketAvailability projection-only totals guard', () => {
     expect(canonicalCards.some((card) => card.market === 'full_game_total')).toBe(true);
     expect(aliasOnlyCards.some((card) => card.market === 'full_game_total')).toBe(false);
   });
+
+  describe('WI-0944: F5 decoupling from full-game markets', () => {
+    test('full_game_total availability is independent of F5 total', () => {
+      // Missing F5, but has full-game total -> full_game_total_ok should be true
+      const availability = buildMlbMarketAvailability(
+        {
+          total: 8.5, // full-game total
+          total_f5: null, // no F5 total
+        },
+        { expectF5Ml: true },
+      );
+
+      expect(availability.full_game_total_ok).toBe(true);
+      expect(availability.f5_line_ok).toBe(false);
+      expect(availability.blocking_reason_codes).toContain('F5_TOTAL_UNAVAILABLE');
+      // Should NOT have MARKET_UNAVAILABLE since full-game total is present
+      expect(availability.blocking_reason_codes).not.toContain('MARKET_UNAVAILABLE');
+    });
+
+    test('full_game_ml availability is independent of F5 moneyline', () => {
+      // Missing F5 ML, but has full-game ML (h2h_home/h2h_away) -> full_game_ml_ok should be true
+      const availability = buildMlbMarketAvailability(
+        {
+          h2h_home: -120,
+          h2h_away: 110,
+          total_f5: null, // no F5 total
+          // no dedicated F5 ML prices
+        },
+        { expectF5Ml: true },
+      );
+
+      expect(availability.full_game_ml_ok).toBe(true);
+      expect(availability.f5_line_ok).toBe(false);
+      expect(availability.f5_ml_ok).toBe(false);
+      expect(availability.blocking_reason_codes).toContain('F5_TOTAL_UNAVAILABLE');
+      expect(availability.blocking_reason_codes).toContain('F5_ML_UNAVAILABLE');
+      // Should NOT have MARKET_UNAVAILABLE since full-game ML is present
+      expect(availability.blocking_reason_codes).not.toContain('MARKET_UNAVAILABLE');
+    });
+
+    test('only blocks entire game if NO full-game prices and NO F5 prices', () => {
+      // Missing everything -> MARKET_UNAVAILABLE
+      const availability = buildMlbMarketAvailability(
+        {
+          // no full-game total
+          // no full-game ML
+          total_f5: null, // no F5 total
+          // no F5 ML
+        },
+        { expectF5Ml: true },
+      );
+
+      expect(availability.full_game_total_ok).toBe(false);
+      expect(availability.full_game_ml_ok).toBe(false);
+      expect(availability.f5_line_ok).toBe(false);
+      expect(availability.f5_ml_ok).toBe(false);
+      expect(availability.blocking_reason_codes).toContain('WATCHDOG_MARKET_UNAVAILABLE');
+    });
+
+    test('full_game_ml is available when h2h prices exist, regardless of F5', () => {
+      const availability = buildMlbMarketAvailability(
+        {
+          h2h_home: -110,
+          h2h_away: 100,
+          total_f5: null,
+        },
+      );
+
+      expect(availability.full_game_ml_ok).toBe(true);
+      expect(availability.f5_line_ok).toBe(false);
+    });
+  });
 });
 
 describe('MLB F5 full-model projection', () => {
