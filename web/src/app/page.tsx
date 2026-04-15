@@ -42,10 +42,10 @@ export default function Home() {
           </Link>
 
           <Link
-            href="/cards"
+            href="/wedge"
             className="rounded-xl border border-white/20 bg-surface/80 px-8 py-6 text-lg font-semibold transition hover:border-white/40 hover:bg-surface"
           >
-            🧀 The Cheddar Board 🧀
+            🧀 The Wedge 🧀
           </Link>
 
           <Link

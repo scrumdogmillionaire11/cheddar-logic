@@ -59,6 +59,125 @@ function normalizeStrictReasonCodes(reasonCodes) {
   return Array.from(new Set(reasonCodes.filter(Boolean))).sort();
 }
 
+function deriveTerminalReasonFamilyForPayload({
+  officialStatus,
+  watchdogStatus,
+  reasonCodes = [],
+}) {
+  if (officialStatus === 'PLAY' || officialStatus === 'LEAN') {
+    return 'PLAY_ELIGIBLE';
+  }
+  if (watchdogStatus === 'BLOCKED') return 'WATCHDOG_DATA_QUALITY';
+  if (reasonCodes.includes('EXACT_WAGER_MISMATCH')) return 'EXACT_WAGER_FAIL';
+  if (reasonCodes.includes('EDGE_VERIFICATION_REQUIRED')) {
+    return 'EDGE_VERIFICATION_REQUIRED';
+  }
+  if (
+    reasonCodes.some((code) =>
+      [
+        'MARKET_PRICE_MISSING',
+        'MODEL_PROB_MISSING',
+        'MARKET_EDGE_UNAVAILABLE',
+        'PROXY_EDGE_BLOCKED',
+        'NO_PRIMARY_SUPPORT',
+      ].includes(code),
+    )
+  ) {
+    return 'PRICING_UNAVAILABLE';
+  }
+  if (
+    reasonCodes.some((code) =>
+      ['HEAVY_FAVORITE_PRICE_CAP', 'FIRST_PERIOD_NO_PROJECTION'].includes(code),
+    )
+  ) {
+    return 'POLICY_BLOCK';
+  }
+  if (
+    reasonCodes.includes('NO_EDGE_AT_PRICE') ||
+    reasonCodes.includes('SUPPORT_BELOW_PLAY_THRESHOLD') ||
+    reasonCodes.includes('SUPPORT_BELOW_LEAN_THRESHOLD')
+  ) {
+    return 'EDGE_INSUFFICIENT';
+  }
+  return 'EXECUTION_GATE';
+}
+
+function syncCanonicalDecisionEnvelope(payload, overrides = {}) {
+  if (!payload || typeof payload !== 'object') return payload;
+
+  if (!payload.decision_v2 || typeof payload.decision_v2 !== 'object') {
+    payload.decision_v2 = {};
+  }
+
+  const officialStatus =
+    String(
+      overrides.official_status ||
+        payload.decision_v2.official_status ||
+        payload.status ||
+        'PASS',
+    ).toUpperCase() === 'FIRE'
+      ? 'PLAY'
+      : String(
+          overrides.official_status ||
+            payload.decision_v2.official_status ||
+            payload.status ||
+            'PASS',
+        ).toUpperCase() === 'WATCH'
+        ? 'LEAN'
+        : String(
+            overrides.official_status ||
+              payload.decision_v2.official_status ||
+              payload.status ||
+              'PASS',
+          ).toUpperCase();
+
+  const primaryReasonCode =
+    overrides.primary_reason_code ||
+    payload.decision_v2.primary_reason_code ||
+    payload.pass_reason_code ||
+    'UNKNOWN_REASON';
+
+  const reasonCodes = normalizeStrictReasonCodes([
+    primaryReasonCode,
+    ...(Array.isArray(payload.reason_codes) ? payload.reason_codes : []),
+    ...(Array.isArray(payload.decision_v2.price_reason_codes)
+      ? payload.decision_v2.price_reason_codes
+      : []),
+    ...(Array.isArray(payload.decision_v2.watchdog_reason_codes)
+      ? payload.decision_v2.watchdog_reason_codes
+      : []),
+  ]);
+
+  const executionStatus =
+    overrides.execution_status ||
+    payload.execution_status ||
+    (officialStatus === 'PASS' ? 'BLOCKED' : 'EXECUTABLE');
+
+  const watchdogStatus = payload.decision_v2.watchdog_status || 'READY';
+  const isActionable =
+    officialStatus === 'PLAY' || officialStatus === 'LEAN';
+
+  payload.decision_v2.canonical_envelope_v2 = {
+    official_status: officialStatus,
+    terminal_reason_family: deriveTerminalReasonFamilyForPayload({
+      officialStatus,
+      watchdogStatus,
+      reasonCodes,
+    }),
+    primary_reason_code: primaryReasonCode,
+    reason_codes: reasonCodes,
+    is_actionable: isActionable,
+    execution_status: executionStatus,
+    publish_ready:
+      overrides.publish_ready != null
+        ? overrides.publish_ready === true
+        : payload.publish_ready === true ||
+          (isActionable && executionStatus === 'EXECUTABLE'),
+  };
+
+  return payload;
+}
+
 function syncSelectionCompatibilityFields(payload, updates = {}) {
   if (!payload || typeof payload !== 'object') return;
   const nextSide = updates.side || payload?.selection?.side || payload?.prediction || null;
@@ -104,6 +223,13 @@ function applyDecisionVeto(cardOrDecision, vetoReason) {
     cardOrDecision.decision_v2.is_settleable = false;
     cardOrDecision.decision_v2.veto_reason = vetoReason;
   }
+
+  syncCanonicalDecisionEnvelope(cardOrDecision, {
+    official_status: 'PASS',
+    primary_reason_code: vetoReason,
+    execution_status: 'BLOCKED',
+    publish_ready: false,
+  });
 
   return cardOrDecision;
 }
@@ -152,6 +278,7 @@ function capturePublishedDecisionState(payload) {
     pass_reason_code: payload.pass_reason_code ?? null,
     reason_codes: normalizeStrictReasonCodes(payload.reason_codes),
     decision_v2_official_status: payload.decision_v2?.official_status ?? null,
+    canonical_envelope_v2: payload.decision_v2?.canonical_envelope_v2 ?? null,
   };
 }
 
@@ -168,6 +295,7 @@ function buildDecisionMutationDiffs(payload, expectedSnapshot) {
     pass_reason_code: 'pass_reason_code',
     reason_codes: 'reason_codes',
     decision_v2_official_status: 'decision_v2.official_status',
+    canonical_envelope_v2: 'decision_v2.canonical_envelope_v2',
   };
 
   for (const [key, fieldPath] of Object.entries(fieldPathMap)) {
@@ -327,6 +455,7 @@ function finalizeDecisionFields(payload, context = {}) {
       pipeline_version: payload.decision_v2?.pipeline_version || 'v2',
     };
     payload.execution_status = resolveExecutionStatus(payload);
+    syncCanonicalDecisionEnvelope(payload);
     syncSelectionCompatibilityFields(payload);
     return payload;
   }
@@ -351,6 +480,7 @@ function finalizeDecisionFields(payload, context = {}) {
       payload.decision_v2.primary_reason_code,
     ]);
     payload.execution_status = resolveExecutionStatus(payload);
+    syncCanonicalDecisionEnvelope(payload, { publish_ready: false });
     return payload;
   }
 
@@ -373,6 +503,7 @@ function finalizeDecisionFields(payload, context = {}) {
         decisionV2.primary_reason_code,
       ]);
       payload.execution_status = resolveExecutionStatus(payload);
+      syncCanonicalDecisionEnvelope(payload);
       syncSelectionCompatibilityFields(payload);
       return payload;
     }
@@ -390,6 +521,10 @@ function finalizeDecisionFields(payload, context = {}) {
     action === 'FIRE' ? 'FIRE' : action === 'HOLD' ? 'WATCH' : 'PASS';
   payload.classification = mapActionToClassification(action);
   payload.execution_status = resolveExecutionStatus(payload);
+  // Only sync canonical envelope if decision_v2 already exists
+  if (payload.decision_v2) {
+    syncCanonicalDecisionEnvelope(payload);
+  }
   syncSelectionCompatibilityFields(payload);
 
   return payload;
@@ -818,6 +953,7 @@ module.exports = {
   finalizeDecisionFields,
   capturePublishedDecisionState,
   assertNoDecisionMutation,
+  syncCanonicalDecisionEnvelope,
   deriveAction,
   deriveVolEnv,
 };

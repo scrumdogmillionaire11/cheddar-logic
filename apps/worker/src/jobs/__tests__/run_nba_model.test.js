@@ -225,8 +225,6 @@ describe('run_nba_model job', () => {
     };
     const nowMs = new Date(baseOdds.captured_at).getTime() + 90_000;
 
-    const decisionStatusBeforeGate =
-      card.payloadData.decision_v2?.official_status ?? null;
     const result = applyExecutionGateToNbaCard(card, {
       oddsSnapshot: baseOdds,
       nowMs,
@@ -249,8 +247,10 @@ describe('run_nba_model job', () => {
     expect(card.payloadData.pass_reason_code).toBe(
       'PASS_EXECUTION_GATE_NET_EDGE_INSUFFICIENT',
     );
-    expect(card.payloadData.decision_v2?.official_status).toBe(
-      decisionStatusBeforeGate,
+    // WI-0941 TD-01: Execution gate now stamps decision_v2.official_status to PASS for consistency
+    expect(card.payloadData.decision_v2?.official_status).toBe('PASS');
+    expect(card.payloadData.decision_v2?.primary_reason_code).toBe(
+      'PASS_EXECUTION_GATE_NET_EDGE_INSUFFICIENT',
     );
     expect(result.strictDecisionSnapshot).toMatchObject({
       classification: 'PASS',
@@ -258,7 +258,7 @@ describe('run_nba_model job', () => {
       status: 'PASS',
       execution_status: 'BLOCKED',
       pass_reason_code: 'PASS_EXECUTION_GATE_NET_EDGE_INSUFFICIENT',
-      decision_v2_official_status: decisionStatusBeforeGate,
+      decision_v2_official_status: 'PASS',
     });
   });
 
@@ -602,5 +602,131 @@ describe('run_nba_model job', () => {
         }
       });
     }
+  });
+});
+
+describe('WI-0941 quarantine and execution-gate regression', () => {
+  const gameId = 'game-wI-0941';
+
+  function makeOddsSnapshot() {
+    return {
+      home_team: 'LAL',
+      away_team: 'GSW',
+      game_time_utc: new Date(Date.now() + 3 * 60 * 60 * 1000).toISOString(),
+      total: 224.5,
+      total_price_over: -110,
+      total_price_under: -110,
+      spread_home: -4.5,
+      spread_away: 4.5,
+      spread_price_home: -110,
+      spread_price_away: -110,
+      h2h_home: -180,
+      h2h_away: 155,
+      captured_at: new Date().toISOString(),
+    };
+  }
+
+  function makeTotalFireDecision(overrides = {}) {
+    return {
+      status: 'FIRE',
+      edge: 0.08,
+      edge_points: 2.4,
+      best_candidate: { side: 'OVER', line: 224.5 },
+      drivers: [],
+      reasoning: 'test reasoning',
+      score: 0.7,
+      net: 0.6,
+      conflict: 0.1,
+      coverage: 0.8,
+      // p_fair=0.595 at price=-110 gives edge≈0.071 which clears NBA TOTAL play_edge_min=0.062
+      p_fair: 0.595,
+      p_implied: 0.524,
+      projection: { projected_total: 226.5 },
+      line_source: 'odds_snapshot',
+      price_source: 'odds_snapshot',
+      ...overrides,
+    };
+  }
+
+  test('Test A (quarantine path): generateNBAMarketCallCards with QUARANTINE_NBA_TOTAL=true produces totals card demoted by quarantine after publish', () => {
+    jest.resetModules();
+    process.env.QUARANTINE_NBA_TOTAL = 'true';
+    const { generateNBAMarketCallCards: genCards } = require('../run_nba_model');
+    const { publishDecisionForCard: pubCard } = require('../../utils/decision-publisher');
+    const odds = makeOddsSnapshot();
+
+    const cards = genCards(gameId, { TOTAL: makeTotalFireDecision() }, odds, {
+      withoutOddsMode: false,
+    });
+
+    const totalCard = cards.find((c) => c.cardType === 'nba-totals-call');
+    expect(totalCard).toBeDefined();
+    expect(totalCard.payloadData.execution_status).toBe('EXECUTABLE');
+
+    pubCard({ card: totalCard, oddsSnapshot: odds });
+
+    // Quarantine demotes PLAY → LEAN for NBA TOTAL, and records reason in price_reason_codes
+    expect(totalCard.payloadData.decision_v2?.official_status).toBe('LEAN');
+    expect(
+      totalCard.payloadData.decision_v2?.price_reason_codes,
+    ).toContain('NBA_TOTAL_QUARANTINE_DEMOTE');
+
+    delete process.env.QUARANTINE_NBA_TOTAL;
+  });
+
+  test('Test B (non-quarantine path): generateNBAMarketCallCards with QUARANTINE_NBA_TOTAL=false produces totals card with decision_v2.official_status=PLAY', () => {
+    jest.resetModules();
+    process.env.QUARANTINE_NBA_TOTAL = 'false';
+    const { generateNBAMarketCallCards: genCards } = require('../run_nba_model');
+    const { publishDecisionForCard: pubCard } = require('../../utils/decision-publisher');
+    const odds = makeOddsSnapshot();
+
+    const cards = genCards(gameId, { TOTAL: makeTotalFireDecision() }, odds, {
+      withoutOddsMode: false,
+    });
+
+    const totalCard = cards.find((c) => c.cardType === 'nba-totals-call');
+    expect(totalCard).toBeDefined();
+
+    pubCard({ card: totalCard, oddsSnapshot: odds });
+
+    // Without quarantine, FIRE total card should surface as PLAY
+    expect(totalCard.payloadData.decision_v2?.official_status).toBe('PLAY');
+    expect(
+      totalCard.payloadData.decision_v2?.price_reason_codes ?? [],
+    ).not.toContain('NBA_TOTAL_QUARANTINE_DEMOTE');
+
+    delete process.env.QUARANTINE_NBA_TOTAL;
+  });
+
+  test('Test C (execution gate parity): card blocked by applyExecutionGateToNbaCard has decision_v2.official_status=PASS and primary_reason_code=pass_reason_code', () => {
+    const passCard = {
+      cardType: 'nba-totals-call',
+      payloadData: {
+        execution_status: 'EXECUTABLE',
+        edge: 0.005, // below threshold → will be blocked
+        confidence: 0.55,
+        model_status: 'MODEL_OK',
+        status: 'FIRE',
+        action: 'FIRE',
+        classification: 'BASE',
+        pass_reason_code: null,
+        reason_codes: [],
+        decision_v2: {
+          official_status: 'PLAY',
+        },
+      },
+    };
+    const odds = makeOddsSnapshot();
+    const nowMs = new Date(odds.captured_at).getTime() + 90_000;
+
+    const result = applyExecutionGateToNbaCard(passCard, { oddsSnapshot: odds, nowMs });
+
+    expect(result.evaluated).toBe(true);
+    expect(result.blocked).toBe(true);
+    expect(passCard.payloadData.decision_v2?.official_status).toBe('PASS');
+    expect(passCard.payloadData.decision_v2?.primary_reason_code).toBe(
+      passCard.payloadData.pass_reason_code,
+    );
   });
 });

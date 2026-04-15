@@ -3,10 +3,13 @@
 const { getDatabase } = require('@cheddar-logic/data');
 
 const CACHE_TTL_MS = 60 * 1000;
+// minSamples: all markets use 50 as the standard — enough statistical signal
+// before the kill switch can fire. MLB_F5_TOTAL was previously 30 which was
+// a hair-trigger at the start of the season; raised to 50 to match the others.
 const THRESHOLDS = Object.freeze({
   NHL_TOTAL: Object.freeze({ ece: 0.06, minSamples: 50 }),
   NBA_TOTAL: Object.freeze({ ece: 0.06, minSamples: 50 }),
-  MLB_F5_TOTAL: Object.freeze({ ece: 0.07, minSamples: 30 }),
+  MLB_F5_TOTAL: Object.freeze({ ece: 0.07, minSamples: 50 }),
   SPREAD: Object.freeze({ ece: 0.07, minSamples: 50 }),
   ML: Object.freeze({ ece: 0.08, minSamples: 50 }),
 });

@@ -1,0 +1,269 @@
+'use strict';
+
+// TD-04: Tests for summarizeNhlRejectReasonFamilies and checkNhlMarketCallDiagnostics
+// Follows the same fixture-based pattern as check-pipeline-health.mlb.test.js
+
+describe('summarizeNhlRejectReasonFamilies', () => {
+  let rejectReasonRows;
+  let summarizeNhlRejectReasonFamilies;
+
+  beforeEach(() => {
+    jest.resetModules();
+    rejectReasonRows = [];
+
+    jest.doMock('@cheddar-logic/data', () => ({
+      getDatabase: jest.fn(() => ({
+        prepare: jest.fn((sql) => {
+          if (
+            sql.includes("card_type IN ('nhl-totals-call', 'nhl-spread-call', 'nhl-moneyline-call')")
+          ) {
+            return { all: () => rejectReasonRows };
+          }
+          throw new Error(`Unhandled SQL in NHL health test: ${sql}`);
+        }),
+      })),
+      insertJobRun: jest.fn(() => 1),
+      markJobRunSuccess: jest.fn(),
+      markJobRunFailure: jest.fn(),
+      createJob: jest.fn(),
+      wasJobRecentlySuccessful: jest.fn(() => false),
+    }));
+
+    ({ summarizeNhlRejectReasonFamilies } = require('../jobs/check_pipeline_health'));
+  });
+
+  test('returns zero counts with no rows', () => {
+    const db = require('@cheddar-logic/data').getDatabase();
+    const result = summarizeNhlRejectReasonFamilies(db);
+
+    expect(result.uncategorized_count).toBe(0);
+    expect(result.reason_family_counts['nhl-totals-call']).toBeDefined();
+    expect(result.reason_family_counts['nhl-spread-call']).toBeDefined();
+    expect(result.reason_family_counts['nhl-moneyline-call']).toBeDefined();
+    // all counts zero
+    for (const ct of ['nhl-totals-call', 'nhl-spread-call', 'nhl-moneyline-call']) {
+      const counts = result.reason_family_counts[ct];
+      for (const v of Object.values(counts)) {
+        expect(v).toBe(0);
+      }
+    }
+  });
+
+  test('classifies NO_EDGE family from primary_reason_code', () => {
+    rejectReasonRows = [
+      {
+        card_type: 'nhl-totals-call',
+        decision_reason: 'PASS_NO_EDGE',
+        pass_reason: null,
+        reason_codes_json: '["PASS_NO_EDGE"]',
+        cnt: 4,
+      },
+    ];
+
+    const db = require('@cheddar-logic/data').getDatabase();
+    const result = summarizeNhlRejectReasonFamilies(db);
+
+    expect(result.reason_family_counts['nhl-totals-call'].NO_EDGE).toBe(4);
+    expect(result.uncategorized_count).toBe(0);
+  });
+
+  test('classifies DATA_STALENESS family from pass_reason_code', () => {
+    rejectReasonRows = [
+      {
+        card_type: 'nhl-moneyline-call',
+        decision_reason: null,
+        pass_reason: 'BLOCK_STALE_DATA',
+        reason_codes_json: '["BLOCK_STALE_DATA"]',
+        cnt: 2,
+      },
+    ];
+
+    const db = require('@cheddar-logic/data').getDatabase();
+    const result = summarizeNhlRejectReasonFamilies(db);
+
+    expect(result.reason_family_counts['nhl-moneyline-call'].DATA_STALENESS).toBe(2);
+    expect(result.uncategorized_count).toBe(0);
+  });
+
+  test('classifies INTEGRITY_VETO from goalie reason code', () => {
+    rejectReasonRows = [
+      {
+        card_type: 'nhl-spread-call',
+        decision_reason: 'GATE_GOALIE_UNCONFIRMED',
+        pass_reason: null,
+        reason_codes_json: '["GATE_GOALIE_UNCONFIRMED"]',
+        cnt: 1,
+      },
+    ];
+
+    const db = require('@cheddar-logic/data').getDatabase();
+    const result = summarizeNhlRejectReasonFamilies(db);
+
+    expect(result.reason_family_counts['nhl-spread-call'].INTEGRITY_VETO).toBe(1);
+    expect(result.uncategorized_count).toBe(0);
+  });
+
+  test('classifies CONTRACT_MISMATCH from NO_ODDS_MODE_LEAN', () => {
+    rejectReasonRows = [
+      {
+        card_type: 'nhl-totals-call',
+        decision_reason: null,
+        pass_reason: null,
+        reason_codes_json: '["NO_ODDS_MODE_LEAN"]',
+        cnt: 3,
+      },
+    ];
+
+    const db = require('@cheddar-logic/data').getDatabase();
+    const result = summarizeNhlRejectReasonFamilies(db);
+
+    expect(result.reason_family_counts['nhl-totals-call'].CONTRACT_MISMATCH).toBe(3);
+    expect(result.uncategorized_count).toBe(0);
+  });
+
+  test('returns UNCATEGORIZED for unknown reason codes and non-zero uncategorized_count', () => {
+    rejectReasonRows = [
+      {
+        card_type: 'nhl-moneyline-call',
+        decision_reason: 'SOME_UNKNOWN_CODE_XYZ',
+        pass_reason: null,
+        reason_codes_json: '["SOME_UNKNOWN_CODE_XYZ"]',
+        cnt: 1,
+      },
+    ];
+
+    const db = require('@cheddar-logic/data').getDatabase();
+    const result = summarizeNhlRejectReasonFamilies(db);
+
+    expect(result.reason_family_counts['nhl-moneyline-call'].UNCATEGORIZED).toBe(1);
+    expect(result.uncategorized_count).toBe(1);
+  });
+
+  test('returns deterministic per-market buckets for all three card types', () => {
+    rejectReasonRows = [
+      {
+        card_type: 'nhl-totals-call',
+        decision_reason: 'PASS_NO_EDGE',
+        pass_reason: null,
+        reason_codes_json: '["PASS_NO_EDGE"]',
+        cnt: 5,
+      },
+      {
+        card_type: 'nhl-spread-call',
+        decision_reason: 'BLOCK_STALE_DATA',
+        pass_reason: null,
+        reason_codes_json: '["BLOCK_STALE_DATA"]',
+        cnt: 2,
+      },
+      {
+        card_type: 'nhl-moneyline-call',
+        decision_reason: 'GATE_GOALIE_UNCONFIRMED',
+        pass_reason: null,
+        reason_codes_json: '["GATE_GOALIE_UNCONFIRMED"]',
+        cnt: 3,
+      },
+    ];
+
+    const db = require('@cheddar-logic/data').getDatabase();
+    const result = summarizeNhlRejectReasonFamilies(db);
+
+    expect(result.uncategorized_count).toBe(0);
+    expect(result.reason_family_counts['nhl-totals-call'].NO_EDGE).toBe(5);
+    expect(result.reason_family_counts['nhl-spread-call'].DATA_STALENESS).toBe(2);
+    expect(result.reason_family_counts['nhl-moneyline-call'].INTEGRITY_VETO).toBe(3);
+  });
+
+  test('handles malformed reason_codes_json gracefully as UNCATEGORIZED', () => {
+    rejectReasonRows = [
+      {
+        card_type: 'nhl-totals-call',
+        decision_reason: null,
+        pass_reason: null,
+        reason_codes_json: 'NOT_VALID_JSON',
+        cnt: 1,
+      },
+    ];
+
+    const db = require('@cheddar-logic/data').getDatabase();
+    const result = summarizeNhlRejectReasonFamilies(db);
+
+    expect(result.reason_family_counts['nhl-totals-call'].UNCATEGORIZED).toBe(1);
+    expect(result.uncategorized_count).toBe(1);
+  });
+});
+
+describe('checkNhlMarketCallDiagnostics', () => {
+  let rejectReasonRows;
+  let pipelineWrites;
+  let checkNhlMarketCallDiagnostics;
+
+  beforeEach(() => {
+    jest.resetModules();
+    rejectReasonRows = [];
+    pipelineWrites = [];
+
+    jest.doMock('@cheddar-logic/data', () => ({
+      getDatabase: jest.fn(() => ({
+        prepare: jest.fn((sql) => {
+          if (sql.includes('INSERT INTO pipeline_health')) {
+            return { run: (...args) => { pipelineWrites.push(args); } };
+          }
+          if (
+            sql.includes("card_type IN ('nhl-totals-call', 'nhl-spread-call', 'nhl-moneyline-call')")
+          ) {
+            return { all: () => rejectReasonRows };
+          }
+          throw new Error(`Unhandled SQL in NHL diagnostics test: ${sql}`);
+        }),
+      })),
+      insertJobRun: jest.fn(() => 1),
+      markJobRunSuccess: jest.fn(),
+      markJobRunFailure: jest.fn(),
+      createJob: jest.fn(),
+      wasJobRecentlySuccessful: jest.fn(() => false),
+    }));
+
+    ({ checkNhlMarketCallDiagnostics } = require('../jobs/check_pipeline_health'));
+  });
+
+  test('returns ok=true and writes ok status when all blockers are categorized', () => {
+    rejectReasonRows = [
+      {
+        card_type: 'nhl-totals-call',
+        decision_reason: 'PASS_NO_EDGE',
+        pass_reason: null,
+        reason_codes_json: '["PASS_NO_EDGE"]',
+        cnt: 2,
+      },
+    ];
+
+    const result = checkNhlMarketCallDiagnostics();
+
+    expect(result.ok).toBe(true);
+    expect(result.reason).toContain('all blockers categorized');
+    expect(result.diagnostics).toBeDefined();
+    expect(result.diagnostics.uncategorized_count).toBe(0);
+    expect(pipelineWrites.length).toBe(1);
+    expect(pipelineWrites[0][0]).toBe('nhl');
+    expect(pipelineWrites[0][1]).toBe('market_call_blockers');
+    expect(pipelineWrites[0][2]).toBe('ok');
+  });
+
+  test('returns ok=false and writes warning status when uncategorized blockers exist', () => {
+    rejectReasonRows = [
+      {
+        card_type: 'nhl-moneyline-call',
+        decision_reason: 'WEIRD_UNKNOWN_REASON',
+        pass_reason: null,
+        reason_codes_json: '["WEIRD_UNKNOWN_REASON"]',
+        cnt: 1,
+      },
+    ];
+
+    const result = checkNhlMarketCallDiagnostics();
+
+    expect(result.ok).toBe(false);
+    expect(result.reason).toContain('uncategorized');
+    expect(pipelineWrites[0][2]).toBe('warning');
+  });
+});

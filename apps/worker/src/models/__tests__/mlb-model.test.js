@@ -422,11 +422,11 @@ describe('projectFullGameTotal (WI-0872)', () => {
 
     expect(card.status).toBe('PASS');
     expect(card.reason_codes).toEqual(
-      expect.arrayContaining(['PASS_NO_SUPPORTING_DRIVERS']),
+      expect.arrayContaining(['SOFT_NO_SUPPORTING_DRIVERS']),
     );
   });
 
-  test('high-volatility bucket requires larger edge than low-volatility bucket', () => {
+  test('high-volatility bucket uses capped dynamic threshold while preserving edge discipline', () => {
     const lowVolCard = projectFullGameTotalCard(avgPitcher, avgPitcher, 8.9, {
       ...baseContext,
       roof: 'CLOSED',
@@ -448,9 +448,35 @@ describe('projectFullGameTotal (WI-0872)', () => {
       away_leverage_availability: 0.15,
     });
 
-    expect(highVolCard.status).toBe('PASS');
-    expect(highVolCard.reason_codes).toContain('PASS_NO_SUPPORTING_DRIVERS');
+    expect(highVolCard.projection.volatility_bucket).toBe('HIGH_VOL');
     expect(lowVolCard.projection.volatility_bucket).toBe('LOW_VOL');
+    expect(highVolCard.drivers[0].threshold).toBeGreaterThan(lowVolCard.drivers[0].threshold);
+    expect(highVolCard.drivers[0].threshold).toBeLessThanOrEqual(0.65);
+  });
+
+  test('WI-0944 transition: PASS->PLAY for full-game totals when edge widens', () => {
+    const passCard = projectFullGameTotalCard(avgPitcher, avgPitcher, 9.1, baseContext);
+    const playCard = projectFullGameTotalCard(avgPitcher, avgPitcher, 7.2, baseContext);
+
+    expect(passCard.status).toBe('PASS');
+    expect(playCard.status).not.toBe('PASS');
+    expect(playCard.ev_threshold_passed).toBe(true);
+  });
+
+  test('WI-0944 transition: PASS->PASS remains deterministic under degraded full-game totals inputs', () => {
+    const passCardA = projectFullGameTotalCard(avgPitcher, avgPitcher, 8.5, {
+      ...baseContext,
+      home_bullpen_era: null,
+      away_bullpen_era: null,
+    });
+    const passCardB = projectFullGameTotalCard(avgPitcher, avgPitcher, 9.0, {
+      ...baseContext,
+      home_bullpen_era: null,
+      away_bullpen_era: null,
+    });
+
+    expect(passCardA.status).toBe('PASS');
+    expect(passCardB.status).toBe('PASS');
   });
 });
 
@@ -600,13 +626,14 @@ describe('projectFullGameML (WI-0873)', () => {
       away_bullpen_era: 4.3,
     });
 
-    expect(nearCoinflip.side).toBe('PASS');
+    expect(nearCoinflip.side).toBe('HOME');
     expect(nearCoinflip.reason_codes).toEqual(
       expect.arrayContaining([
-        'PASS_RUN_DIFF_TOO_SMALL',
-        'PASS_WEAK_DRIVER_SUPPORT',
+        'SOFT_RUN_DIFF_SMALL',
+        'SOFT_WEAK_DRIVER_SUPPORT',
       ]),
     );
+    expect(nearCoinflip.confidence_gate).toBeLessThanOrEqual(6);
   });
 
   test('high-variance context lowers confidence for close-run edges', () => {
@@ -630,6 +657,25 @@ describe('projectFullGameML (WI-0873)', () => {
     });
 
     expect(highVariance.run_diff_variance).toBeGreaterThan(lowVariance.run_diff_variance);
+  });
+
+  test('WI-0944 transition: PLAY unchanged for strong full-game ML mismatch despite context adjustments', () => {
+    const baseline = projectFullGameML(elitePitcher, avgPitcher, -110, -110, {
+      ...cleanContext,
+      home_bullpen_era: 3.3,
+      away_bullpen_era: 5.1,
+    });
+    const adjusted = projectFullGameML(elitePitcher, avgPitcher, -110, -110, {
+      ...cleanContext,
+      home_bullpen_era: 3.3,
+      away_bullpen_era: 5.1,
+      home_field_runs: 0.16,
+    });
+
+    expect(baseline.side).not.toBe('PASS');
+    expect(adjusted.side).toBe(baseline.side);
+    expect(baseline.ev_threshold_passed).toBe(true);
+    expect(adjusted.ev_threshold_passed).toBe(true);
   });
 });
 

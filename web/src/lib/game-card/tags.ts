@@ -8,6 +8,16 @@ import { GAME_TAGS } from '../types';
 import { getPlayDisplayAction } from './decision';
 import { computeSupportScores } from './driver-scoring';
 import { hasEdgeVerificationSignals } from '../play-decision/decision-logic';
+import { isWelcomeHomeCardType } from './welcome-home';
+
+const ODDS_STALE_WARNING_MINUTES = Math.max(
+  5,
+  parseInt(process.env.NEXT_PUBLIC_ODDS_STALE_WARNING_MINUTES ?? '60', 10) || 60,
+);
+const ODDS_STALE_SEVERE_MINUTES = Math.max(
+  ODDS_STALE_WARNING_MINUTES,
+  parseInt(process.env.NEXT_PUBLIC_ODDS_STALE_SEVERE_MINUTES ?? '90', 10) || 90,
+);
 
 /**
  * Derive expression status from drivers if not explicitly provided
@@ -163,11 +173,12 @@ export function deriveTags(card: GameCard): GameTag[] {
     tags.add(GAME_TAGS.HAS_LOW_COVERAGE);
   }
 
-  // Odds freshness
+  // Odds freshness: hourly fetch cadence means stale starts at 60m and severe stale at 90m.
   const updatedDiff = getTimeDiff(card.updatedAt);
   const oneMinute = 60 * 1000;
   const fiveMinutes = 5 * oneMinute;
-  const thirtyMinutes = 30 * oneMinute;
+  const staleWarningMs = ODDS_STALE_WARNING_MINUTES * oneMinute;
+  const staleSevereMs = ODDS_STALE_SEVERE_MINUTES * oneMinute;
 
   if (updatedDiff <= oneMinute) {
     tags.add(GAME_TAGS.UPDATED_WITHIN_60S);
@@ -175,10 +186,10 @@ export function deriveTags(card: GameCard): GameTag[] {
   if (updatedDiff <= fiveMinutes) {
     tags.add(GAME_TAGS.UPDATED_WITHIN_5M);
   }
-  if (updatedDiff > fiveMinutes) {
+  if (updatedDiff > staleWarningMs) {
     tags.add(GAME_TAGS.STALE_5M);
   }
-  if (updatedDiff > thirtyMinutes) {
+  if (updatedDiff > staleSevereMs) {
     tags.add(GAME_TAGS.STALE_30M);
   }
 
@@ -220,8 +231,8 @@ export function deriveTags(card: GameCard): GameTag[] {
 
   // Situational signals
   if (
-    card.drivers.some((d) => d.cardType === 'welcome-home' || d.cardType === 'welcome-home-v2') ||
-    (card.evidence?.some((e) => e.cardType === 'welcome-home' || e.cardType === 'welcome-home-v2') ?? false)
+    card.drivers.some((d) => isWelcomeHomeCardType(d.cardType)) ||
+    (card.evidence?.some((e) => isWelcomeHomeCardType(e.cardType)) ?? false)
   ) {
     tags.add(GAME_TAGS.WELCOME_HOME_FADE);
   }

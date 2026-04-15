@@ -5,6 +5,7 @@ const { DateTime } = require('luxon');
 describe('checkMlbF5MarketAvailability', () => {
   let upcomingGames;
   let latestOddsByGame;
+  let rejectReasonRows;
   let pipelineWrites;
   let checkMlbF5MarketAvailability;
 
@@ -12,6 +13,7 @@ describe('checkMlbF5MarketAvailability', () => {
     jest.resetModules();
     upcomingGames = [];
     latestOddsByGame = {};
+    rejectReasonRows = [];
     pipelineWrites = [];
 
     jest.doMock('@cheddar-logic/odds/src/config', () => ({
@@ -48,6 +50,15 @@ describe('checkMlbF5MarketAvailability', () => {
         ) {
           return {
             get: (gameId) => latestOddsByGame[gameId] ?? null,
+          };
+        }
+
+        if (
+          sql.includes('FROM card_payloads') &&
+          sql.includes("card_type IN ('mlb-f5', 'mlb-full-game', 'mlb-full-game-ml')")
+        ) {
+          return {
+            all: () => rejectReasonRows,
           };
         }
 
@@ -98,6 +109,7 @@ describe('checkMlbF5MarketAvailability', () => {
     expect(result.missing_f5_total_count).toBe(0);
     expect(result.missing_full_game_total_count).toBe(1);
     expect(result.reason).toContain('missing full-game totals');
+    expect(result.reason).toContain('reason families uncategorized=0');
     expect(pipelineWrites).toHaveLength(1);
     expect(pipelineWrites[0][0]).toBe('mlb');
     expect(pipelineWrites[0][1]).toBe('f5_market_availability');
@@ -165,6 +177,57 @@ describe('checkMlbF5MarketAvailability', () => {
     expect(result.expected_f5_ml_count).toBe(0);
     expect(result.missing_f5_ml_count).toBe(0);
     expect(result.reason).not.toContain('missing');
+  });
+
+  test('returns deterministic reject reason-family buckets for MLB markets', () => {
+    upcomingGames = [
+      {
+        game_id: 'mlb-game-004',
+        game_time_utc: '2026-03-28T00:00:00.000Z',
+        home_team: 'Cubs',
+        away_team: 'Cardinals',
+      },
+    ];
+    latestOddsByGame['mlb-game-004'] = {
+      game_id: 'mlb-game-004',
+      captured_at: '2026-03-27T18:00:00.000Z',
+      total: 8.0,
+      total_price_over: -110,
+      total_price_under: -110,
+      total_f5: 4.0,
+      total_price_over_f5: -108,
+      total_price_under_f5: -112,
+    };
+    rejectReasonRows = [
+      {
+        card_type: 'mlb-full-game',
+        decision_reason: 'PASS_NO_EDGE',
+        pass_reason: null,
+        reason_codes_json: '["PASS_NO_EDGE"]',
+        cnt: 3,
+      },
+      {
+        card_type: 'mlb-full-game-ml',
+        decision_reason: 'STALE_ODDS_SNAPSHOT',
+        pass_reason: null,
+        reason_codes_json: '["STALE_ODDS_SNAPSHOT"]',
+        cnt: 2,
+      },
+    ];
+
+    const result = checkMlbF5MarketAvailability();
+
+    expect(result.reject_reason_diagnostics).toBeDefined();
+    expect(result.reject_reason_diagnostics.uncategorized_count).toBe(0);
+    expect(
+      result.reject_reason_diagnostics.reason_family_counts.full_game_total.NO_EDGE,
+    ).toBe(3);
+    expect(
+      result.reject_reason_diagnostics.reason_family_counts.full_game_ml.DATA_STALENESS,
+    ).toBe(2);
+    expect(
+      result.reject_reason_diagnostics.reason_family_counts.f5_total.UNCATEGORIZED,
+    ).toBe(0);
   });
 });
 

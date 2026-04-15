@@ -6,6 +6,7 @@ import {
   getSportCardTypeContract,
   isEvidenceItem,
   isPlayItem,
+  isWelcomeHomePlay,
   resolveSourceModelProb,
 } from './legacy-repair';
 
@@ -68,4 +69,17 @@ test('legacy-repair smoke', () => {
     true,
   );
   assert.equal(resolveSourceModelProb({ model_prob: 0.62 } as never), 0.62);
+  assert.equal(
+    isWelcomeHomePlay({
+      cardType: 'WELCOME-HOME-V2',
+      cardTitle: 'Welcome Home',
+      prediction: 'HOME',
+      confidence: 0.7,
+      tier: 'WATCH',
+      reasoning: 'situational',
+      evPassed: true,
+      driverKey: 'welcome-home-v2',
+    } as never),
+    true,
+  );
 });

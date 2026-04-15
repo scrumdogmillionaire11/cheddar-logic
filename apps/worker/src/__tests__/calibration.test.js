@@ -8,6 +8,7 @@ const {
   clearCalibrationGateCache,
   resolveCalibrationMarketKey,
   isMarketCalibrationEnabled,
+  THRESHOLDS,
 } = require('../calibration/calibration-gate');
 
 describe('computeBrier', () => {
@@ -106,6 +107,25 @@ describe('evaluateExecution calibration kill switch', () => {
     expect(result.should_bet).toBe(false);
     expect(result.block_reason).toBe('CALIBRATION_KILL_SWITCH');
     expect(result.blocked_by).toContain('CALIBRATION_KILL_SWITCH');
+  });
+});
+
+// MLB_F5_TOTAL kill switch n threshold regression test.
+// Previously minSamples=30 — the kill switch could fire with as few as 30 samples,
+// which is statistically noisy at the start of the season. Raised to 50 to match
+// all other markets. This test guards against regression back to 30.
+describe('MLB_F5_TOTAL kill switch sample-size guard', () => {
+  beforeEach(() => clearCalibrationGateCache());
+  afterEach(() => clearCalibrationGateCache());
+
+  test('all markets require minSamples=50 (MLB_F5_TOTAL raised from 30)', () => {
+    // MLB_F5_TOTAL was previously 30 — a hair-trigger at the start of the season.
+    // Raised to 50 to match all other markets and prevent false-positive kill switches.
+    expect(THRESHOLDS.MLB_F5_TOTAL.minSamples).toBe(50);
+    expect(THRESHOLDS.NHL_TOTAL.minSamples).toBe(50);
+    expect(THRESHOLDS.NBA_TOTAL.minSamples).toBe(50);
+    expect(THRESHOLDS.SPREAD.minSamples).toBe(50);
+    expect(THRESHOLDS.ML.minSamples).toBe(50);
   });
 });
 

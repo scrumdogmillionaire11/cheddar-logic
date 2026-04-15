@@ -61,7 +61,7 @@ export default function GlobalStaleAssetGuard() {
     };
   }, []);
 
-  if (!error || pathname?.startsWith('/cards')) {
+  if (!error || pathname?.startsWith('/wedge') || pathname?.startsWith('/cards')) {
     return null;
   }
 

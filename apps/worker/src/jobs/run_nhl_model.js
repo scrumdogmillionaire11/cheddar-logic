@@ -78,6 +78,7 @@ const {
   publishDecisionForCard,
   applyUiActionFields,
   applyDecisionVeto,
+  syncCanonicalDecisionEnvelope,
 } = require('../utils/decision-publisher');
 const { 
   assertNoSilentMarketDrop,
@@ -613,6 +614,12 @@ function applyExecutionGateToNhlCard(card, { oddsSnapshot, nowMs = Date.now() } 
         payload.decision_v2.official_status = 'LEAN';
         payload.decision_v2.primary_reason_code = blockReasonCode;
       }
+      syncCanonicalDecisionEnvelope(payload, {
+        official_status: 'LEAN',
+        primary_reason_code: blockReasonCode,
+        execution_status: 'BLOCKED',
+        publish_ready: false,
+      });
     } else {
       const passReasonCode = toExecutionGatePassReasonCode(gateResult.reason);
       applyDecisionVeto(payload, passReasonCode);
@@ -989,6 +996,13 @@ function applyNhlUncertaintyHold(card, reasonCodes = []) {
     );
   }
 
+  syncCanonicalDecisionEnvelope(payload, {
+    official_status: 'LEAN',
+    primary_reason_code: primaryReason,
+    execution_status: 'BLOCKED',
+    publish_ready: false,
+  });
+
   return true;
 }
 
@@ -1076,6 +1090,15 @@ function applyCanonicalNhlTotalsStatus(card, context = {}) {
     payload.decision_v2.primary_reason_code =
       result.reasonCodes[0] || payload.decision_v2.primary_reason_code || null;
   }
+
+  syncCanonicalDecisionEnvelope(payload, {
+    official_status: mapped.officialStatus,
+    primary_reason_code:
+      result.reasonCodes[0] || payload.pass_reason_code || payload.decision_v2?.primary_reason_code,
+    execution_status:
+      mapped.officialStatus === 'PASS' ? 'BLOCKED' : payload.execution_status || 'EXECUTABLE',
+    publish_ready: mapped.officialStatus !== 'PASS',
+  });
 
   return result;
 }
@@ -2164,6 +2187,26 @@ function generateNHLMarketCallCards(
         is_primary_display: primaryDisplayMarket?.candidate_id === `${gameId}::spread`,
       };
 
+      // TD-01: Stamp canonical decision fields at construction so the publish
+      // pipeline has consistent initial state to work from. Without this,
+      // publishDecisionForCard + applyUiActionFields can produce undefined action/classification.
+      {
+        const spreadInitStatus = spreadDecision.status === 'FIRE' ? 'PLAY' : 'LEAN';
+        payloadData.action = spreadInitStatus === 'PLAY' ? 'FIRE' : 'HOLD';
+        payloadData.classification = spreadInitStatus === 'PLAY' ? 'BASE' : 'LEAN';
+        payloadData.pass_reason_code = null;
+        payloadData.decision_v2 = {
+          official_status: spreadInitStatus,
+          primary_reason_code: null,
+          watchdog_reason_codes: [],
+          price_reason_codes: [],
+          support_score: null,
+          edge_pct: spreadDecision.edge ?? null,
+          sharp_price_status: 'UNPRICED',
+          threshold_profile: null,
+        };
+      }
+
       cards.push(
         buildMarketCallCard({
           sport: 'NHL',
@@ -2357,6 +2400,26 @@ function generateNHLMarketCallCards(
         primary_display_market: primaryDisplayMarket?.market_type ?? null,
         is_primary_display: primaryDisplayMarket?.candidate_id === `${gameId}::ml`,
       };
+
+      // TD-01: Stamp canonical decision fields at construction so the publish
+      // pipeline has consistent initial state to work from. Without this,
+      // publishDecisionForCard + applyUiActionFields can produce undefined action/classification.
+      {
+        const mlInitStatus = mlStatus === 'FIRE' ? 'PLAY' : 'LEAN';
+        payloadData.action = mlInitStatus === 'PLAY' ? 'FIRE' : 'HOLD';
+        payloadData.classification = mlInitStatus === 'PLAY' ? 'BASE' : 'LEAN';
+        payloadData.pass_reason_code = null;
+        payloadData.decision_v2 = {
+          official_status: mlInitStatus,
+          primary_reason_code: null,
+          watchdog_reason_codes: [],
+          price_reason_codes: [],
+          support_score: null,
+          edge_pct: moneylineDecision.edge ?? null,
+          sharp_price_status: 'UNPRICED',
+          threshold_profile: null,
+        };
+      }
 
       cards.push(
         buildMarketCallCard({
@@ -2915,8 +2978,8 @@ async function runNHLModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
               nhlPaceAuditContext?.paceResult,
             );
             applyUiActionFields(card.payloadData, { oddsSnapshot });
-            // Without Odds Mode: buildDecisionV2 always returns PASS when edgePct=null.
-            // Override to LEAN AFTER applyUiActionFields so the last write wins.
+            // Without Odds Mode: buildDecisionV2 returns PASS when edgePct=null; re-stamp
+            // to LEAN so projection-only market calls surface as leans, not silently dropped.
             if (
               withoutOddsMode &&
               Array.isArray(card.payloadData.tags) &&
@@ -2926,9 +2989,25 @@ async function runNHLModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
               card.payloadData.action = 'HOLD';
               card.payloadData.status = 'WATCH';
               card.payloadData.pass_reason_code = null;
+              if (!Array.isArray(card.payloadData.reason_codes)) {
+                card.payloadData.reason_codes = [];
+              }
+              if (!card.payloadData.reason_codes.includes('NO_ODDS_MODE_LEAN')) {
+                card.payloadData.reason_codes.push('NO_ODDS_MODE_LEAN');
+              }
               if (card.payloadData.decision_v2) {
                 card.payloadData.decision_v2.official_status = 'LEAN';
+                if (!card.payloadData.decision_v2.primary_reason_code) {
+                  card.payloadData.decision_v2.primary_reason_code = 'NO_ODDS_MODE_LEAN';
+                }
               }
+              syncCanonicalDecisionEnvelope(card.payloadData, {
+                official_status: 'LEAN',
+                primary_reason_code:
+                  card.payloadData.decision_v2?.primary_reason_code || 'NO_ODDS_MODE_LEAN',
+                execution_status: 'PROJECTION_ONLY',
+                publish_ready: false,
+              });
             }
             applyNhlUncertaintyHold(card, uncertaintyHoldReasonCodes);
             const executionGateOutcome = applyExecutionGateToNhlCard(card, {

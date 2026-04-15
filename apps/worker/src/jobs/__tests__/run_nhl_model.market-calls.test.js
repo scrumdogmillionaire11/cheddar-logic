@@ -845,4 +845,115 @@ describe('run_nhl_model market call generation', () => {
       expect(card.payloadData.decision_v2.watchdog_reason_codes).toContain('GOALIE_UNCONFIRMED');
     });
   });
+
+  // TD-01 parity assertions: spread-call and moneyline-call must have canonical
+  // decision_v2 stamped at construction so publish pipeline has consistent
+  // initial state and no undefined action/classification can be persisted.
+  describe('TD-01: initial canonical decision_v2 stamp on spread-call and moneyline-call', () => {
+    test('nhl-spread-call payload has action, classification, and decision_v2 at construction', () => {
+      const oddsSnapshot = buildBaseOddsSnapshot();
+      const marketDecisions = {
+        ...buildBaseDecisions(),
+        SPREAD: {
+          status: 'WATCH',
+          best_candidate: { side: 'HOME', line: -1.5 },
+          edge: 0.04,
+          p_fair: 0.54,
+          p_implied: 0.5,
+          line_source: 'odds_snapshot',
+          price_source: 'odds_snapshot',
+          drivers: [],
+          score: 0.3,
+          net: 0.3,
+          conflict: 0.1,
+          coverage: 0.7,
+          reasoning: 'Spread edge',
+          projection: { projected_margin: 1.2 },
+        },
+      };
+
+      const cards = generateNHLMarketCallCards('nhl-test-spread', marketDecisions, oddsSnapshot);
+      const spreadCard = cards.find((c) => c.cardType === 'nhl-spread-call');
+
+      expect(spreadCard).toBeDefined();
+      // action and classification must never be undefined at construction
+      expect(spreadCard.payloadData.action).toBeDefined();
+      expect(['FIRE', 'HOLD', 'PASS']).toContain(spreadCard.payloadData.action);
+      expect(spreadCard.payloadData.classification).toBeDefined();
+      expect(['BASE', 'LEAN', 'PASS']).toContain(spreadCard.payloadData.classification);
+      // decision_v2 must be stamped at construction with official_status
+      expect(spreadCard.payloadData.decision_v2).toBeDefined();
+      expect(['PLAY', 'LEAN', 'PASS']).toContain(spreadCard.payloadData.decision_v2.official_status);
+      // action and decision_v2.official_status must be internally consistent
+      const action = spreadCard.payloadData.action;
+      const officialStatus = spreadCard.payloadData.decision_v2.official_status;
+      if (action === 'FIRE') expect(officialStatus).toBe('PLAY');
+      if (action === 'HOLD') expect(['LEAN']).toContain(officialStatus);
+      if (action === 'PASS') expect(officialStatus).toBe('PASS');
+    });
+
+    test('nhl-moneyline-call payload has action, classification, and decision_v2 at construction', () => {
+      const oddsSnapshot = buildBaseOddsSnapshot();
+      const marketDecisions = buildBaseDecisions(); // ML.status = 'FIRE'
+
+      const cards = generateNHLMarketCallCards('nhl-test-ml', marketDecisions, oddsSnapshot);
+      const mlCard = cards.find((c) => c.cardType === 'nhl-moneyline-call');
+
+      expect(mlCard).toBeDefined();
+      expect(mlCard.payloadData.action).toBeDefined();
+      expect(['FIRE', 'HOLD', 'PASS']).toContain(mlCard.payloadData.action);
+      expect(mlCard.payloadData.classification).toBeDefined();
+      expect(['BASE', 'LEAN', 'PASS']).toContain(mlCard.payloadData.classification);
+      expect(mlCard.payloadData.decision_v2).toBeDefined();
+      expect(['PLAY', 'LEAN', 'PASS']).toContain(mlCard.payloadData.decision_v2.official_status);
+      // FIRE → PLAY consistency
+      expect(mlCard.payloadData.action).toBe('FIRE');
+      expect(mlCard.payloadData.decision_v2.official_status).toBe('PLAY');
+    });
+
+    test('nhl-moneyline-call WATCH maps to LEAN initial status', () => {
+      const oddsSnapshot = buildBaseOddsSnapshot();
+      const marketDecisions = {
+        ...buildBaseDecisions(),
+        ML: {
+          ...buildBaseDecisions().ML,
+          status: 'WATCH',
+        },
+      };
+
+      const cards = generateNHLMarketCallCards('nhl-test-ml-watch', marketDecisions, oddsSnapshot);
+      const mlCard = cards.find((c) => c.cardType === 'nhl-moneyline-call');
+
+      expect(mlCard).toBeDefined();
+      expect(mlCard.payloadData.action).toBe('HOLD');
+      expect(mlCard.payloadData.classification).toBe('LEAN');
+      expect(mlCard.payloadData.decision_v2.official_status).toBe('LEAN');
+    });
+  });
+
+  // TD-02 parity: no-odds-mode override must stamp NO_ODDS_MODE_LEAN reason code
+  describe('TD-02: no-odds-mode reason code on market-call override', () => {
+    test('applyNhlUncertaintyHold stamps reason code and does not leave reason_codes empty', () => {
+      const card = {
+        cardType: 'nhl-moneyline-call',
+        payloadData: {
+          action: 'FIRE',
+          status: 'FIRE',
+          classification: 'BASE',
+          execution_status: 'EXECUTABLE',
+          reason_codes: [],
+          pass_reason_code: null,
+          decision_v2: { official_status: 'PLAY', watchdog_reason_codes: [] },
+        },
+      };
+
+      applyNhlUncertaintyHold(card, ['GATE_GOALIE_UNCONFIRMED']);
+
+      // After uncertainty hold, reason_codes must be non-empty and decision_v2 must agree
+      expect(card.payloadData.reason_codes.length).toBeGreaterThan(0);
+      expect(card.payloadData.decision_v2.official_status).toBe('LEAN');
+      expect(card.payloadData.classification).toBe('LEAN');
+      expect(card.payloadData.action).toBe('HOLD');
+    });
+  });
 });

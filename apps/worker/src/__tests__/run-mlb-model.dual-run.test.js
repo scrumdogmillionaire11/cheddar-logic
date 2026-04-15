@@ -825,6 +825,70 @@ describe('runMLBModel dual-run orchestration', () => {
     });
   });
 
+  test('execution-gate-demoted full_game_ml payload keeps terminal status fields in parity', async () => {
+    const fullGameMlDriver = {
+      market: 'full_game_ml',
+      prediction: 'HOME',
+      status: 'FIRE',
+      action: 'FIRE',
+      classification: 'BASE',
+      confidence: 0.72,
+      ev_threshold_passed: true,
+      reasoning: 'Full-game ML edge',
+      projection_source: 'FULL_MODEL',
+      reason_codes: [],
+      missing_inputs: [],
+      pass_reason_code: null,
+      drivers: [{
+        type: 'mlb-full-game-ml',
+        edge: 0.055,
+        projected_win_prob_home: 0.542,
+        win_prob_home: 0.542,
+        side: 'HOME',
+      }],
+    };
+
+    const selection = {
+      chosen_market: 'FULL_GAME_ML',
+      why_this_market: 'ML edge qualified',
+      markets: [
+        {
+          market: 'FULL_GAME_ML',
+          status: 'FIRE',
+          prediction: 'HOME',
+          score: 0.72,
+          edge: 0.055,
+        },
+      ],
+      rejected: {},
+      selected_driver: fullGameMlDriver,
+    };
+
+    const { runMLBModel, mocks } = loadRunMlbModel({
+      mode: 'ODDS_BACKED',
+      gameDriverCards: [fullGameMlDriver],
+      pitcherKDriverCards: [],
+      selection,
+    });
+    jest.spyOn(console, 'log').mockImplementation(() => {});
+    jest.spyOn(console, 'error').mockImplementation(() => {});
+    jest.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const result = await runMLBModel();
+
+    expect(result.success).toBe(true);
+    expect(
+      mocks.insertCardPayload.mock.calls.map(([card]) => card.cardType),
+    ).toEqual(['mlb-full-game-ml']);
+
+    const payload = mocks.insertCardPayload.mock.calls[0][0].payloadData;
+    expect(payload.status).toBe('PASS');
+    expect(payload.action).toBe('PASS');
+    expect(payload.classification).toBe('PASS');
+    expect(payload.execution_status).toBe('BLOCKED');
+    expect(payload.pass_reason_code).toBe('PASS_EXECUTION_GATE_NET_EDGE_INSUFFICIENT');
+  });
+
   test('active F5 ML expectation emits F5_ML_UNAVAILABLE in pipeline state', async () => {
     const selection = {
       chosen_market: 'F5_TOTAL',

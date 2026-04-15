@@ -13,7 +13,7 @@ const repoRoot = path.resolve(__dirname, '../../../..');
 
 const routePath = path.join(repoRoot, 'web/src/app/api/games/route.ts');
 const resultsRoutePath = path.join(repoRoot, 'web/src/app/api/results/route.ts');
-const transformPath = path.join(repoRoot, 'web/src/lib/game-card/transform.ts');
+const transformPath = path.join(repoRoot, 'web/src/lib/game-card/transform/index.ts');
 const cardsPath = path.join(
   repoRoot,
   'web/src/components/cards/GameCardItem.tsx',
@@ -24,27 +24,30 @@ const displayVerdictPath = path.join(
   'web/src/lib/game-card/display-verdict.ts',
 );
 
+const routeHandlerPath = path.join(repoRoot, 'web/src/lib/games/route-handler.ts');
+
 const routeSource = fs.readFileSync(routePath, 'utf8');
 const resultsRouteSource = fs.readFileSync(resultsRoutePath, 'utf8');
 const transformSource = fs.readFileSync(transformPath, 'utf8');
 const cardsSource = fs.readFileSync(cardsPath, 'utf8');
 const resultsPageSource = fs.readFileSync(resultsPagePath, 'utf8');
 const displayVerdictSource = fs.readFileSync(displayVerdictPath, 'utf8');
+const routeHandlerSource = fs.readFileSync(routeHandlerPath, 'utf8');
 
 console.log('🧪 Games pipeline v2 source contract tests');
 
 assert.ok(
-  routeSource.includes('const wave1Eligible = isWave1EligibleRow(') &&
-    routeSource.includes('if (!play.decision_v2) {') &&
-    routeSource.includes('applyWave1DecisionFields(play);') &&
-    routeSource.includes('true_play: truePlayMap.get(row.game_id) ?? null'),
+  routeHandlerSource.includes('const wave1Eligible = isWave1EligibleRow(') &&
+    routeHandlerSource.includes('if (!play.decision_v2) {') &&
+    routeHandlerSource.includes('applyWave1DecisionFields(play);') &&
+    routeHandlerSource.includes('true_play: truePlayMap.get(row.game_id) ?? null'),
   'API route must require decision_v2 for wave-1 and map verdict fields from worker output',
 );
 
 assert.ok(
-  !routeSource.includes('repair_applied') &&
-    !routeSource.includes('repair_rule_id') &&
-    !routeSource.includes('repair_stats:'),
+  !routeHandlerSource.includes('repair_applied') &&
+    !routeHandlerSource.includes('repair_rule_id') &&
+    !routeHandlerSource.includes('repair_stats:'),
   'API route must not expose legacy repair metadata',
 );
 
@@ -64,8 +67,8 @@ assert.ok(
 
 assert.ok(
   resultsPageSource.includes('segmentFamilies') &&
-    resultsPageSource.includes('NHL 1P Totals') &&
-    resultsPageSource.includes('NHL Totals'),
+    resultsPageSource.includes('NHL 1P Total') &&
+    resultsPageSource.includes("sport === 'NHL'"),
   'results page must render same-page segment sections for game, 1P total, and player shots props',
 );
 
@@ -108,11 +111,29 @@ assert.ok(
 );
 
 assert.ok(
-  routeSource.includes("'PROP'") &&
-    routeSource.includes("'MONEYLINE'") &&
-    routeSource.includes("'SPREAD'") &&
-    routeSource.includes("'FIRST_PERIOD'"),
+  routeHandlerSource.includes("'PROP'") &&
+    routeHandlerSource.includes("'MONEYLINE'") &&
+    routeHandlerSource.includes("'SPREAD'") &&
+    routeHandlerSource.includes("'FIRST_PERIOD'"),
   'WAVE1_MARKETS must include PROP alongside existing market keys so V2 can override V1 for player prop cards (WI-0580)',
+);
+
+// TD-03: NHL market-call cards must consume the canonical persisted decision_v2.official_status
+// directly — resolveLiveOfficialStatus must check decision_v2 first before any legacy fallback.
+assert.ok(
+  routeHandlerSource.includes(
+    "const explicit = play.decision_v2?.official_status;",
+  ) &&
+    routeHandlerSource.includes(
+      "if (explicit === 'PLAY' || explicit === 'LEAN' || explicit === 'PASS') {",
+    ) &&
+    routeHandlerSource.includes('return explicit;') &&
+    routeHandlerSource.includes(
+      "const TRUE_PLAY_AUTHORITY_SOURCE = 'CARD_PAYLOADS_DECISION_V2'",
+    ) &&
+    !routeHandlerSource.includes('repair_applied') &&
+    !routeHandlerSource.includes('nhl_market_call_fallback'),
+  'TD-03: route-handler must gate official_status on decision_v2 first (no legacy reconstruction for NHL market-call cards)',
 );
 
 console.log('✅ Games pipeline v2 source contract tests passed');

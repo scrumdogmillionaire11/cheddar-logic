@@ -70,6 +70,7 @@ const {
   publishDecisionForCard,
   capturePublishedDecisionState,
   assertNoDecisionMutation,
+  syncCanonicalDecisionEnvelope,
 } = require('../utils/decision-publisher');
 const { evaluateExecution } = require('./execution-gate');
 const {
@@ -624,6 +625,17 @@ function applyExecutionGateToNbaCard(card, { oddsSnapshot, nowMs = Date.now() } 
     payload.reason_codes = Array.from(
       new Set([passReasonCode, ...(Array.isArray(payload.reason_codes) ? payload.reason_codes : [])]),
     ).sort();
+    // WI-0941 TD-01: Stamp decision_v2 at execution gate demotion so official_status remains consistent
+    if (payload.decision_v2 && typeof payload.decision_v2 === 'object') {
+      payload.decision_v2.official_status = 'PASS';
+      payload.decision_v2.primary_reason_code = passReasonCode;
+    }
+    syncCanonicalDecisionEnvelope(payload, {
+      official_status: 'PASS',
+      primary_reason_code: passReasonCode,
+      execution_status: 'BLOCKED',
+      publish_ready: false,
+    });
     payload._publish_state = {
       ...(payload._publish_state && typeof payload._publish_state === 'object'
         ? payload._publish_state
@@ -1766,6 +1778,34 @@ async function runNBAModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
               console.log(
                 `  [gate] ${gameId} [${card.cardType}]: ${decisionOutcome.reasonCode}`,
               );
+            }
+            // WI-0941 TD-02: Post-publish TOTAL no-odds-mode LEAN reason-code stamping
+            // Match NHL WI-0940 pattern: after publishDecisionForCard normalizes reason_codes,
+            // detect TOTAL card with withoutOddsMode and status=LEAN, then stamp NBA_NO_ODDS_MODE_LEAN
+            if (
+              card.cardType === 'nba-totals-call' &&
+              withoutOddsMode &&
+              card.payloadData?.status === 'LEAN'
+            ) {
+              if (!Array.isArray(card.payloadData.reason_codes)) {
+                card.payloadData.reason_codes = [];
+              }
+              if (!card.payloadData.reason_codes.includes('NBA_NO_ODDS_MODE_LEAN')) {
+                card.payloadData.reason_codes.push('NBA_NO_ODDS_MODE_LEAN');
+              }
+              if (card.payloadData.decision_v2) {
+                card.payloadData.decision_v2.official_status = 'LEAN';
+                if (!card.payloadData.decision_v2.primary_reason_code) {
+                  card.payloadData.decision_v2.primary_reason_code = 'NBA_NO_ODDS_MODE_LEAN';
+                }
+              }
+              syncCanonicalDecisionEnvelope(card.payloadData, {
+                official_status: 'LEAN',
+                primary_reason_code:
+                  card.payloadData.decision_v2?.primary_reason_code || 'NBA_NO_ODDS_MODE_LEAN',
+                execution_status: 'PROJECTION_ONLY',
+                publish_ready: false,
+              });
             }
             const executionGateOutcome = applyExecutionGateToNbaCard(card, {
               oddsSnapshot,

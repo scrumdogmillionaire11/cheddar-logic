@@ -70,7 +70,11 @@ function evaluateExecution(params) {
     vigCost = VIG_COST_STANDARD,
     slippageCost = SLIPPAGE_ESTIMATE,
     minNetEdge = 0.025,
-    minConfidence = 0.60,
+    // COUPLING: input-gate.js DEGRADED_CONSTRAINTS.MAX_CONFIDENCE = 0.55.
+    // These two values must stay in sync: DEGRADED plays are capped at 0.55, so
+    // this floor must be <=0.55 for DEGRADED plays to reach the UI as WATCH-tier.
+    // If you change DEGRADED_CONSTRAINTS.MAX_CONFIDENCE, update this value too.
+    minConfidence = 0.55,
   } = params;
 
   const blocked_by = [];

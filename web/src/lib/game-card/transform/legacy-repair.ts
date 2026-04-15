@@ -7,6 +7,7 @@ import type { CanonicalMarketType, ExpressionStatus } from '../../types';
 import type { DecisionV2 } from '../../types';
 import { resolvePlayDisplayDecision } from '../decision';
 import { getSportCardTypeContract as getSharedSportCardTypeContract } from '../../games/market-inference';
+import { isWelcomeHomeCardType } from '../welcome-home';
 
 // NOTE: ApiPlay is redefined here as a local interface to avoid circular imports.
 // It must stay structurally compatible with the ApiPlay interface in transform/index.ts.
@@ -136,7 +137,7 @@ export function isEvidenceItem(play: ApiPlay, sport?: string): boolean {
 }
 
 export function isWelcomeHomePlay(play: ApiPlay): boolean {
-  return play.cardType === 'welcome-home' || play.cardType === 'welcome-home-v2';
+  return isWelcomeHomeCardType(play.cardType);
 }
 
 export function getSourcePlayAction(

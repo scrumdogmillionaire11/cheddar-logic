@@ -198,6 +198,6 @@ Notable: WI-0797 (pipeline health Discord watchdog), WI-0798 (NHL season key fix
 
 ## Review Cadence
 
-- Last reviewed: **2026-04-06**
-- Next action: Begin Sprint 1. Claim **WI-0820 first** (Critical — gates Sprints 2–5). WI-0812, WI-0817, WI-0816, WI-0835 may be claimed in parallel.
-- Next sprint review: After Sprint 1 closes (~2026-04-13).
+- Last reviewed: **2026-04-15**
+- Next action: WI-0941 complete. All acceptance criteria met. Next available: WI-0939 deps or any Sprint items.
+- Last session: **2026-04-15T01:13:00Z** — Completed WI-0941 (NBA blocking remediation: decision_v2 consistency, NBA diagnostics, quarantine closure)

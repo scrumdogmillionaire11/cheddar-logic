@@ -234,6 +234,16 @@ export interface DecisionV2 {
 
   pipeline_version: 'v2';
   decided_at: string;
+
+  canonical_envelope_v2?: {
+    official_status?: 'PLAY' | 'LEAN' | 'PASS';
+    terminal_reason_family?: string;
+    primary_reason_code?: string;
+    reason_codes?: string[];
+    is_actionable?: boolean;
+    execution_status?: 'EXECUTABLE' | 'PROJECTION_ONLY' | 'BLOCKED';
+    publish_ready?: boolean;
+  };
 }
 
 export interface FinalMarketDecision {
