@@ -1103,11 +1103,13 @@ function projectFullGameTotalCard(homePitcher, awayPitcher, fullGameLine, contex
   // Keep hard gates explicit and minimal: edge + confidence.
   // Full-model paths retain the 6/10 floor, while degraded projections require
   // strictly above 6 so capped degraded confidence (6) does not auto-pass.
+  // WI-0944: DEGRADED_MODEL confidence gate — use the same floor (6) as FULL_MODEL.
+  // The previous +0.1 bump meant a confidence of exactly 6 always failed for degraded
+  // projections, silently vetoing every game where bullpen data was sparse (the common
+  // case in early-season MLB). DEGRADED_MODEL already forces status to WATCH regardless,
+  // so the extra confidence floor is double-penalising the same data gap.
   const confidenceGate = 6;
-  const confidenceFloor = proj.projection_source === 'DEGRADED_MODEL'
-    ? confidenceGate + 0.1
-    : confidenceGate;
-  const confidenceBelowGate = proj.confidence < confidenceFloor;
+  const confidenceBelowGate = proj.confidence < confidenceGate;
 
   const reasonCodes = [];
   let softPenaltyPoints = 0;
@@ -1139,12 +1141,18 @@ function projectFullGameTotalCard(homePitcher, awayPitcher, fullGameLine, contex
   if (!hasEdge) reasonCodes.push('PASS_NO_EDGE');
   if (confidenceBelowGate) reasonCodes.push('PASS_CONFIDENCE_GATE');
 
-  const canPlay = hasEdge && !confidenceBelowGate;
+  // WI-0944: DEGRADED_MODEL with edge present — surface as WATCH (LEAN) rather than hard PASS.
+  // Confidence gate remains a hard veto only for FULL_MODEL paths; degraded projections
+  // with a real edge should downgrade to LEAN/WATCH, not disappear entirely.
+  const isDegraded = proj.projection_source === 'DEGRADED_MODEL';
+  const canPlay = hasEdge && (!confidenceBelowGate || isDegraded);
 
   const prediction = canPlay ? (edge >= 0 ? 'OVER' : 'UNDER') : leanSide;
   let status = 'PASS';
   if (canPlay) {
-    status = softPenaltyPoints >= 2 || proj.projection_source !== 'FULL_MODEL'
+    // DEGRADED_MODEL always caps at WATCH regardless of other signals.
+    // FULL_MODEL with 2+ soft penalties also becomes WATCH.
+    status = isDegraded || softPenaltyPoints >= 2
       ? 'WATCH'
       : 'FIRE';
   }

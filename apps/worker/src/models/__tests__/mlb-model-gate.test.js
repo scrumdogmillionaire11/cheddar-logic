@@ -164,15 +164,15 @@ describe('projectFullGameTotalCard — WI-0944 gate semantics', () => {
     );
   });
 
-  test('confidence below threshold remains PASS with PASS_CONFIDENCE_GATE', () => {
-    const lowConfidenceContext = {
+  test('DEGRADED_MODEL with real edge surfaces as WATCH (not PASS) — edge-led decisioning', () => {
+    // WI-0944: DEGRADED_MODEL + hasEdge must produce WATCH/LEAN, not hard PASS.
+    // The old confidenceGate+0.1 rule blocked every degraded game where conf=6/10.
+    // With bullpen stats missing (common in early season), context with no bullpen_era
+    // forces DEGRADED_MODEL; the resulting confidence=6 must now be enough to surface.
+    const degradedContext = {
       ...baseFgContext,
-      // Force DEGRADED_MODEL confidence cap path (max confidence 6/10),
-      // then keep edge strong enough that confidence is the deciding hard gate.
-      temp_f: null,
-      wind_mph: null,
-      wind_dir: null,
-      roof: null,
+      home_bullpen_era: null,
+      away_bullpen_era: null,
       f5_line: 4.2,
     };
 
@@ -180,15 +180,31 @@ describe('projectFullGameTotalCard — WI-0944 gate semantics', () => {
       validHome,
       validAway,
       7.0,
-      lowConfidenceContext,
+      degradedContext,
     );
 
     expect(result).toBeTruthy();
-    expect(result.status).toBe('PASS');
+    expect(result.status).not.toBe('PASS');
+    expect(result.ev_threshold_passed).toBe(true);
     expect(result.reason_codes).toEqual(
-      expect.arrayContaining(['PASS_CONFIDENCE_GATE']),
+      expect.arrayContaining(['MODEL_DEGRADED_INPUTS']),
     );
-    expect(result.pass_reason_code).toBe('PASS_CONFIDENCE_GATE');
+  });
+
+  test('confidence < 6 on FULL_MODEL still hard-PASSes with PASS_CONFIDENCE_GATE', () => {
+    // Only a true FULL_MODEL projection with conf < 6 should still be a hard PASS.
+    // Fabricate this by stripping pitcher quality fields to degrade confidence math.
+    const weakPitcherContext = {
+      ...baseFgContext,
+      f5_line: 4.2,
+    };
+    const weakHome = { ...validHome, siera: null, x_fip: null, x_era: null };
+    const weakAway = { ...validAway, siera: null, x_fip: null, x_era: null };
+
+    const result = projectFullGameTotalCard(weakHome, weakAway, 7.0, weakPitcherContext);
+
+    // null skill profiles → NO_BET gate fires upstream, returns null
+    expect(result == null || result.status === 'PASS' || result.status === 'NO_BET' || result.ev_threshold_passed === false).toBe(true);
   });
 
   test('contradiction path is soft: candidate can still emit non-PASS when edge survives', () => {

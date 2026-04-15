@@ -69,6 +69,15 @@ function buildNoBetResult(missingCritical, context = {}) {
  *   - Cap confidence to MAX_CONFIDENCE (0.55) — overrides any computed value
  *   - Never emit a tier in FORBIDDEN_TIERS ('PLAY') — downgrade to 'LEAN' at most
  *
+ * This is a TIER CEILING, not a veto. A degraded projection that clears the
+ * edge threshold MUST still surface as WATCH/LEAN. It must NOT be silenced.
+ *
+ * CRITICAL: if a model has a confidence gate, that gate must be set strictly
+ * BELOW MAX_CONFIDENCE (scaled to the model's numeric range). Setting the gate
+ * at or above the cap creates an unconditional veto for all degraded projections
+ * regardless of edge — the capped confidence can never clear the gate.
+ * See ADR-0015.
+ *
  * The cross-market execution layer (cross-market.js) enforces these as a
  * hard block at card-emission time in addition to enforcement at the model level.
  *
