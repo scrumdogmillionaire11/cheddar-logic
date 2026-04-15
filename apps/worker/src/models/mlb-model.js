@@ -1939,6 +1939,12 @@ function computeMLBDriverCards(gameId, oddsSnapshot) {
       roof: mlb.roof ?? null,
       home_bullpen_era: mlb.home_bullpen_era ?? null,
       away_bullpen_era: mlb.away_bullpen_era ?? null,
+      home_bullpen_fatigue_index: mlb.home_bullpen_fatigue_index ?? null,
+      away_bullpen_fatigue_index: mlb.away_bullpen_fatigue_index ?? null,
+      home_leverage_availability: mlb.home_leverage_availability ?? null,
+      away_leverage_availability: mlb.away_leverage_availability ?? null,
+      home_recent_usage: mlb.home_recent_usage ?? null,
+      away_recent_usage: mlb.away_recent_usage ?? null,
     });
     if (mlResult) {
       const isDegraded = mlResult.projection_source === 'DEGRADED_MODEL';
