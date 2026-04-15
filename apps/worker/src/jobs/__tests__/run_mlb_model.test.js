@@ -31,6 +31,9 @@ const {
   checkPitcherFreshness,
   validatePitcherKInputs,
   buildPitcherKObject,
+  buildMlbDualRunRecord,
+  formatMlbDualRunLog,
+  buildMlbPitcherKAuditLog,
   resolveMlbTeamLookupKeys,
   buildPitcherStrikeoutLookback,
   computeProjectionFloorF5,
@@ -2647,6 +2650,76 @@ describe('runMLBModel without-odds mode selection', () => {
     jest.dontMock('../execution-gate');
     jest.dontMock('@cheddar-logic/models');
     jest.dontMock('@cheddar-logic/models/src/edge-calculator');
+  });
+});
+
+describe('WI-0943 MLB runner log schema cleanup', () => {
+  test('MLB_DUAL_RUN formatter emits fixed schema only', () => {
+    const record = buildMlbDualRunRecord('game-123', {}, {
+      chosen_market: 'QUALIFIED_OFFICIAL',
+      markets: [{ market: 'FULL_GAME_TOTAL', status: 'FIRE' }],
+      shadow_path: 'fallback_path',
+      delta_edge: 0.14,
+      delta_confidence: 0.6,
+      winner: 'picked',
+    });
+
+    const payload = JSON.parse(formatMlbDualRunLog(record));
+
+    expect(Object.keys(payload).sort()).toEqual([
+      'gameId',
+      'marketType',
+      'pickedPath',
+      'shadowPath',
+      'deltaEdge',
+      'deltaConfidence',
+      'winner',
+    ].sort());
+    expect(payload.gameId).toBe('game-123');
+    expect(payload.marketType).toBe('FULL_GAME_TOTAL');
+    expect(payload.pickedPath).toBe('QUALIFIED_OFFICIAL');
+    expect(payload.shadowPath).toBe('fallback_path');
+    expect(payload.deltaEdge).toBe(0.14);
+    expect(payload.deltaConfidence).toBe(0.6);
+    expect(payload.winner).toBe('picked');
+  });
+
+  test('MLB_K_AUDIT helper emits fixed schema and computes line age', () => {
+    const sixMinutesAgo = new Date(Date.now() - 6 * 60 * 1000).toISOString();
+    const payload = buildMlbPitcherKAuditLog({
+      gameId: 'game-abc',
+      driver: {
+        player_id: 'pitcher-1',
+        best_line_bookmaker: 'draftkings',
+        line_fetched_at: sixMinutesAgo,
+        status: 'WATCH',
+        prop_decision: { verdict: 'LEAN' },
+      },
+      starterQuality: 'PARTIAL_MODEL',
+      reasonCodes: ['statcast_swstr', 'leash_metric'],
+      pitcher: { id: 'fallback-id' },
+      marketType: 'PITCHER_K',
+    });
+
+    expect(Object.keys(payload).sort()).toEqual([
+      'gameId',
+      'pitcherId',
+      'starterQuality',
+      'bookmaker',
+      'lineAgeMinutes',
+      'marketType',
+      'decisionState',
+      'reasonCodes',
+    ].sort());
+    expect(payload.gameId).toBe('game-abc');
+    expect(payload.pitcherId).toBe('pitcher-1');
+    expect(payload.starterQuality).toBe('PARTIAL_MODEL');
+    expect(payload.bookmaker).toBe('draftkings');
+    expect(payload.marketType).toBe('PITCHER_K');
+    expect(payload.decisionState).toBe('WATCH');
+    expect(payload.reasonCodes).toEqual(['statcast_swstr', 'leash_metric']);
+    expect(typeof payload.lineAgeMinutes).toBe('number');
+    expect(payload.lineAgeMinutes).toBeGreaterThanOrEqual(5);
   });
 });
 
