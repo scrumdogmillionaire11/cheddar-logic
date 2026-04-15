@@ -12,6 +12,7 @@ const {
   applyNhlUncertaintyHold,
   isHardProjectionInputBlock,
 } = require('../run_nhl_model');
+const { publishDecisionForCard } = require('../../utils/decision-publisher');
 const { validateCardPayload } = require('@cheddar-logic/data');
 
 function loadResolveThresholdProfile() {
@@ -361,6 +362,51 @@ describe('run_nhl_model market call generation', () => {
     const mlCard = cards.find((card) => card.cardType === 'nhl-moneyline-call');
 
     expect(mlCard).toBeUndefined();
+  });
+
+  test('nhl-moneyline-call backfills model_prob from projection win_prob_home when p_fair is null', () => {
+    const oddsSnapshot = buildBaseOddsSnapshot();
+    const marketDecisions = {
+      ...buildBaseDecisions(),
+      ML: {
+        ...buildBaseDecisions().ML,
+        p_fair: null,
+        projection: {
+          ...buildBaseDecisions().ML.projection,
+          win_prob_home: 0.62,
+        },
+      },
+    };
+
+    const cards = generateNHLMarketCallCards(
+      'nhl-test-game',
+      marketDecisions,
+      oddsSnapshot,
+    );
+    const mlCard = cards.find((card) => card.cardType === 'nhl-moneyline-call');
+
+    expect(mlCard).toBeDefined();
+    expect(mlCard.payloadData.selection.side).toBe('AWAY');
+    expect(mlCard.payloadData.model_prob).toBeCloseTo(0.38, 4);
+    expect(mlCard.payloadData.p_fair).toBeCloseTo(0.38, 4);
+  });
+
+  test('publishDecisionForCard resolves priced decision_v2 for live-odds nhl-moneyline-call', () => {
+    const oddsSnapshot = buildBaseOddsSnapshot();
+    const cards = generateNHLMarketCallCards(
+      'nhl-test-game',
+      buildBaseDecisions(),
+      oddsSnapshot,
+    );
+    const mlCard = cards.find((card) => card.cardType === 'nhl-moneyline-call');
+
+    expect(mlCard).toBeDefined();
+
+    publishDecisionForCard({ card: mlCard, oddsSnapshot });
+
+    expect(mlCard.payloadData.decision_v2).toBeDefined();
+    expect(mlCard.payloadData.decision_v2.sharp_price_status).not.toBe('UNPRICED');
+    expect(mlCard.payloadData.execution_status).not.toBe('PROJECTION_ONLY');
   });
 
   test('legacy mode emits all actionable market cards while preserving orchestration metadata', () => {

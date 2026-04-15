@@ -2243,6 +2243,26 @@ function generateNHLMarketCallCards(
     const confidence = CONFIDENCE_MAP[mlRawStatus] ?? (withoutOddsMode ? 0.52 : 0.5);
     const tier = determineTier(confidence);
     const side = moneylineDecision.best_candidate?.side;
+    const projectionWinProbHome = toFiniteNumber(
+      moneylineDecision?.projection?.win_prob_home,
+    );
+    let resolvedModelProb = toFiniteNumber(moneylineDecision?.p_fair);
+    if (
+      resolvedModelProb === null &&
+      projectionWinProbHome !== null &&
+      (side === 'HOME' || side === 'AWAY')
+    ) {
+      resolvedModelProb = side === 'HOME'
+        ? projectionWinProbHome
+        : 1 - projectionWinProbHome;
+    }
+    if (resolvedModelProb !== null) {
+      resolvedModelProb = Number(
+        Math.min(1, Math.max(0, resolvedModelProb)).toFixed(4),
+      );
+    }
+    const resolvedFairProb =
+      toFiniteNumber(moneylineDecision?.p_fair) ?? resolvedModelProb;
     const moneylinePrice =
       side === 'HOME'
         ? (oddsSnapshot?.h2h_home ?? null)
@@ -2302,9 +2322,9 @@ function generateNHLMarketCallCards(
         reasoning: `${pickText}: ${moneylineDecision.reasoning}`,
         edge: moneylineDecision.edge ?? null,
         edge_pct: moneylineDecision.edge ?? null,
-        p_fair: moneylineDecision.p_fair ?? null,
+        p_fair: resolvedFairProb ?? null,
         p_implied: moneylineDecision.p_implied ?? null,
-        model_prob: moneylineDecision.p_fair ?? null,
+        model_prob: resolvedModelProb ?? null,
         projection: {
           total: null,
           margin_home: moneylineDecision?.projection?.projected_margin ?? null,
@@ -2418,7 +2438,6 @@ function generateNHLMarketCallCards(
           price_reason_codes: [],
           support_score: null,
           edge_pct: moneylineDecision.edge ?? null,
-          sharp_price_status: 'UNPRICED',
           threshold_profile: null,
         };
       }
