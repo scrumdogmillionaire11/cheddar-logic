@@ -27,8 +27,8 @@ This document is the single source of truth for which markets are supported per 
 
 | Market | Type | Status | Notes |
 | --- | --- | --- | --- |
-| Total (full game) | Game | ✅ | DUAL_RUN selected; primary market |
-| Moneyline | Game | ✅ | DUAL_RUN secondary; requires price + edge |
+| Total (full game) | Game | ✅ | DUAL_RUN selected; primary market; requires live totals line/price context for odds-backed execution |
+| Moneyline | Game | ✅ | DUAL_RUN secondary; requires h2h price + edge/fair-prob context |
 | Spread | Game | ✅ | DUAL_RUN tertiary; requires price + edge |
 | First Period Total (1P) | Game | ⚙️ | Projection-only lane for now; live 1P odds ingestion removed to avoid alternate-market token burn |
 | Player Shots on Goal | Player Prop | ⚙️ | Projection-only lane for now; model and card type stay active, Odds API prop ingestion removed |
@@ -38,6 +38,8 @@ This document is the single source of truth for which markets are supported per 
 
 - FIRST_PERIOD cards remain visible as a projection-only research lane; they do not consume live Odds API 1P pricing.
 - NHL player props remain independent of game-level DUAL_RUN selection, but they currently run without live prop-line ingestion.
+- NHL full-game Total and Moneyline are active odds-backed lanes; expected runtime statuses are `EXECUTABLE` or `BLOCKED` in live-odds mode (not `PROJECTION_ONLY`).
+- `ENABLE_WITHOUT_ODDS_MODE=true` intentionally degrades NHL game-line cards to non-actionable projection-mode semantics.
 
 ---
 
