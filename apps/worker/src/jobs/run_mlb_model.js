@@ -548,6 +548,136 @@ function summarizeMlbPipelineStates(gamePipelineStates = {}) {
   ].join(' ');
 }
 
+const MLB_FULL_GAME_FUNNEL_WINDOW = 50;
+
+function roundPct(value) {
+  if (!Number.isFinite(value)) return 0;
+  return Math.round(value * 10) / 10;
+}
+
+function getMlbFullGameMarketKey(driver = {}) {
+  const market = String(driver?.market || '').toLowerCase();
+  if (market === 'full_game_total') return 'FULL_GAME_TOTAL';
+  if (market === 'full_game_ml') return 'FULL_GAME_ML';
+  return null;
+}
+
+function normalizeReasonCodeSet(driver = {}) {
+  const reasonCodes = Array.isArray(driver?.reason_codes)
+    ? driver.reason_codes
+    : [];
+  return new Set(reasonCodes.map((code) => String(code || '').toUpperCase()));
+}
+
+function evaluateMlbFullGameFunnelCandidate(driver = {}, isOfficialPlay = false) {
+  const reasonCodes = normalizeReasonCodeSet(driver);
+  const confidence = Number(driver?.confidence ?? 0);
+
+  const passedProjection =
+    String(driver?.projection_source || '').toUpperCase() !== 'NO_BET';
+  const passedEdgeThreshold = !(
+    reasonCodes.has('PASS_NO_EDGE') || reasonCodes.has('PASS_RUN_DIFF_TOO_SMALL')
+  );
+  const passedVolatilityThreshold = !(
+    reasonCodes.has('PASS_PROBABILITY_EDGE_WEAK') || reasonCodes.has('PASS_MATH_ONLY_EDGE')
+  );
+  const passedDriverSupport = !(
+    reasonCodes.has('PASS_NO_SUPPORTING_DRIVERS') || reasonCodes.has('PASS_WEAK_DRIVER_SUPPORT')
+  );
+  const passedF5Contradiction = !(
+    reasonCodes.has('PASS_BULLPEN_CONTRADICTS_F5') || reasonCodes.has('PASS_EXPRESSION_MISMATCH_F5_PREF')
+  );
+  const passedConfidence = confidence >= 0.6;
+  const finalOfficialPlay = isOfficialPlay === true;
+
+  let suppressor = null;
+  if (!passedProjection) suppressor = 'PROJECTION_SOURCE_NO_BET';
+  else if (!passedEdgeThreshold) suppressor = 'PASS_NO_EDGE_OR_RUN_DIFF';
+  else if (!passedVolatilityThreshold) suppressor = 'PASS_PROBABILITY_EDGE_WEAK_OR_MATH_ONLY';
+  else if (!passedDriverSupport) suppressor = 'PASS_DRIVER_SUPPORT';
+  else if (!passedF5Contradiction) suppressor = 'PASS_F5_CONTRADICTION';
+  else if (!passedConfidence) suppressor = 'PASS_CONFIDENCE_GATE';
+  else if (!finalOfficialPlay) suppressor = 'NOT_IN_OFFICIAL_PLAYS';
+
+  return {
+    passedProjection,
+    passedEdgeThreshold,
+    passedVolatilityThreshold,
+    passedDriverSupport,
+    passedF5Contradiction,
+    passedConfidence,
+    finalOfficialPlay,
+    suppressor,
+  };
+}
+
+function buildMlbFullGameSuppressionFunnelReport(samples = []) {
+  const ordered = Array.isArray(samples) ? samples.slice(-MLB_FULL_GAME_FUNNEL_WINDOW) : [];
+  const total = ordered.length;
+  const counts = {
+    total_candidates_created: total,
+    passed_projection: 0,
+    passed_edge_threshold: 0,
+    passed_volatility_threshold: 0,
+    passed_driver_support: 0,
+    passed_f5_contradiction: 0,
+    passed_confidence: 0,
+    final_official_plays: 0,
+  };
+
+  const suppressorCounts = {};
+  for (const sample of ordered) {
+    if (sample.passedProjection) counts.passed_projection += 1;
+    if (sample.passedEdgeThreshold) counts.passed_edge_threshold += 1;
+    if (sample.passedVolatilityThreshold) counts.passed_volatility_threshold += 1;
+    if (sample.passedDriverSupport) counts.passed_driver_support += 1;
+    if (sample.passedF5Contradiction) counts.passed_f5_contradiction += 1;
+    if (sample.passedConfidence) counts.passed_confidence += 1;
+    if (sample.finalOfficialPlay) counts.final_official_plays += 1;
+    if (sample.suppressor) {
+      suppressorCounts[sample.suppressor] = (suppressorCounts[sample.suppressor] || 0) + 1;
+    }
+  }
+
+  const stageOrder = [
+    'total_candidates_created',
+    'passed_projection',
+    'passed_edge_threshold',
+    'passed_volatility_threshold',
+    'passed_driver_support',
+    'passed_f5_contradiction',
+    'passed_confidence',
+    'final_official_plays',
+  ];
+  const dropPct = {};
+  for (let idx = 1; idx < stageOrder.length; idx += 1) {
+    const prev = counts[stageOrder[idx - 1]];
+    const curr = counts[stageOrder[idx]];
+    dropPct[stageOrder[idx]] = prev > 0
+      ? roundPct(((prev - curr) / prev) * 100)
+      : 0;
+  }
+
+  const topSuppressors = Object.entries(suppressorCounts)
+    .sort((left, right) => {
+      if (right[1] !== left[1]) return right[1] - left[1];
+      return left[0].localeCompare(right[0]);
+    })
+    .slice(0, 2)
+    .map(([condition, count]) => ({
+      condition,
+      count,
+      impact_pct: total > 0 ? roundPct((count / total) * 100) : 0,
+    }));
+
+  return {
+    sample_size: total,
+    counts,
+    drop_pct: dropPct,
+    top_suppressors: topSuppressors,
+  };
+}
+
 function getLatestSuccessfulJobStartedAt(jobName) {
   const db = getDatabase();
   const row = db
@@ -2020,6 +2150,7 @@ async function runMLBModel({
       const errors = [];
       const gamePipelineStates = {};
       const pitcherPropSummary = {};
+      const mlbFullGameFunnelSamples = [];
       const rolloutState = resolveMlbPitcherPropRolloutState();
       let attemptedStatcastRefresh = false;
 
@@ -2194,6 +2325,22 @@ async function runMLBModel({
           const gameEval = evaluateMlbGameMarkets(gameDriverCards, { game_id: gameId });
           assertNoSilentMarketDrop(gameEval);
           logRejectedMarkets(gameEval.rejected);
+
+          const officialFullGameMarkets = new Set(
+            (Array.isArray(gameEval.official_plays) ? gameEval.official_plays : [])
+              .map((play) => String(play?.market_type || '').toUpperCase()),
+          );
+          for (const driver of gameDriverCards) {
+            const marketKey = getMlbFullGameMarketKey(driver);
+            if (!marketKey) continue;
+            mlbFullGameFunnelSamples.push(
+              evaluateMlbFullGameFunnelCandidate(
+                driver,
+                officialFullGameMarkets.has(marketKey),
+              ),
+            );
+          }
+
           const dualRunRecord = buildMlbDualRunRecord(
             gameId,
             gameOddsSnapshot,
@@ -2899,6 +3046,12 @@ async function runMLBModel({
       );
       console.log(
         `[MLBModel] Pipeline states: ${summarizeMlbPipelineStates(gamePipelineStates)}`,
+      );
+      const suppressionFunnel = buildMlbFullGameSuppressionFunnelReport(
+        mlbFullGameFunnelSamples,
+      );
+      console.log(
+        `[MLB_SUPPRESSION_FUNNEL] ${JSON.stringify(suppressionFunnel)}`,
       );
 
       if (errors.length > 0) {
