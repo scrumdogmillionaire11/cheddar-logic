@@ -1180,8 +1180,14 @@ function projectFullGameTotalCard(homePitcher, awayPitcher, fullGameLine, contex
   const bullpenShift = (proj.home_late_runs ?? 0) - (proj.away_late_runs ?? 0);
   const preferF5 = Number.isFinite(f5Edge) && Math.abs(f5Edge) >= MLB_F5_EDGE_THRESHOLD && Math.abs(bullpenShift) < 0.12;
   const fgContradictsF5 = Number.isFinite(f5Edge) && (Math.sign(edge) !== Math.sign(f5Edge)) && Math.abs(bullpenShift) > 0.14;
+  // Keep hard gates explicit and minimal: edge + confidence.
+  // Full-model paths retain the 6/10 floor, while degraded projections require
+  // strictly above 6 so capped degraded confidence (6) does not auto-pass.
   const confidenceGate = 6;
-  const confidenceBelowGate = proj.confidence < confidenceGate;
+  const confidenceFloor = proj.projection_source === 'DEGRADED_MODEL'
+    ? confidenceGate + 0.1
+    : confidenceGate;
+  const confidenceBelowGate = proj.confidence < confidenceFloor;
 
   const reasonCodes = [];
   let softPenaltyPoints = 0;

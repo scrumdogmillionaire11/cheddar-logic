@@ -291,7 +291,6 @@ const NHL_DRIVER_CARD_TYPES = [
 const NHL_SNAPSHOT_CARD_TYPES = new Set([
   'nhl-pace-totals',
   'nhl-pace-1p',
-  'nhl-totals-call',
 ]);
 
 /**
@@ -1091,12 +1090,15 @@ function applyCanonicalNhlTotalsStatus(card, context = {}) {
       result.reasonCodes[0] || payload.decision_v2.primary_reason_code || null;
   }
 
+  const canonicalExecutionStatus =
+    mapped.officialStatus === 'PASS' ? 'BLOCKED' : 'EXECUTABLE';
+  payload.execution_status = canonicalExecutionStatus;
+
   syncCanonicalDecisionEnvelope(payload, {
     official_status: mapped.officialStatus,
     primary_reason_code:
       result.reasonCodes[0] || payload.pass_reason_code || payload.decision_v2?.primary_reason_code,
-    execution_status:
-      mapped.officialStatus === 'PASS' ? 'BLOCKED' : payload.execution_status || 'EXECUTABLE',
+    execution_status: canonicalExecutionStatus,
     publish_ready: mapped.officialStatus !== 'PASS',
   });
 
@@ -2241,6 +2243,26 @@ function generateNHLMarketCallCards(
     const confidence = CONFIDENCE_MAP[mlRawStatus] ?? (withoutOddsMode ? 0.52 : 0.5);
     const tier = determineTier(confidence);
     const side = moneylineDecision.best_candidate?.side;
+    const projectionWinProbHome = toFiniteNumber(
+      moneylineDecision?.projection?.win_prob_home,
+    );
+    let resolvedModelProb = toFiniteNumber(moneylineDecision?.p_fair);
+    if (
+      resolvedModelProb === null &&
+      projectionWinProbHome !== null &&
+      (side === 'HOME' || side === 'AWAY')
+    ) {
+      resolvedModelProb = side === 'HOME'
+        ? projectionWinProbHome
+        : 1 - projectionWinProbHome;
+    }
+    if (resolvedModelProb !== null) {
+      resolvedModelProb = Number(
+        Math.min(1, Math.max(0, resolvedModelProb)).toFixed(4),
+      );
+    }
+    const resolvedFairProb =
+      toFiniteNumber(moneylineDecision?.p_fair) ?? resolvedModelProb;
     const moneylinePrice =
       side === 'HOME'
         ? (oddsSnapshot?.h2h_home ?? null)
@@ -2300,9 +2322,9 @@ function generateNHLMarketCallCards(
         reasoning: `${pickText}: ${moneylineDecision.reasoning}`,
         edge: moneylineDecision.edge ?? null,
         edge_pct: moneylineDecision.edge ?? null,
-        p_fair: moneylineDecision.p_fair ?? null,
+        p_fair: resolvedFairProb ?? null,
         p_implied: moneylineDecision.p_implied ?? null,
-        model_prob: moneylineDecision.p_fair ?? null,
+        model_prob: resolvedModelProb ?? null,
         projection: {
           total: null,
           margin_home: moneylineDecision?.projection?.projected_margin ?? null,
@@ -2416,7 +2438,6 @@ function generateNHLMarketCallCards(
           price_reason_codes: [],
           support_score: null,
           edge_pct: moneylineDecision.edge ?? null,
-          sharp_price_status: 'UNPRICED',
           threshold_profile: null,
         };
       }
@@ -3301,6 +3322,8 @@ module.exports = {
   attachNhlDriverContextToRawData,
   buildDualRunRecord,
   applyExecutionGateToNhlCard,
+  applyCanonicalNhlTotalsStatus,
+  applyNhlGoalieExecutionStatusGuard,
   deriveNhlUncertaintyHoldReasonCodes,
   applyNhlUncertaintyHold,
   applyNoBetGuard,

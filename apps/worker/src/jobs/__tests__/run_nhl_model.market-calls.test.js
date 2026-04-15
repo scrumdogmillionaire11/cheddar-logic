@@ -6,10 +6,13 @@ const {
   attachNhlDriverContextToRawData,
   buildDualRunRecord,
   applyExecutionGateToNhlCard,
+  applyCanonicalNhlTotalsStatus,
+  applyNhlGoalieExecutionStatusGuard,
   deriveNhlUncertaintyHoldReasonCodes,
   applyNhlUncertaintyHold,
   isHardProjectionInputBlock,
 } = require('../run_nhl_model');
+const { finalizeDecisionFields } = require('../../utils/decision-publisher');
 const { validateCardPayload } = require('@cheddar-logic/data');
 
 function loadResolveThresholdProfile() {
@@ -280,6 +283,70 @@ describe('run_nhl_model market call generation', () => {
     ).toThrow(/\[INVARIANT_BREACH\]\[LEVEL=CRITICAL\]/);
   });
 
+  test('goalie execution guard no longer marks nhl-totals-call cards as PROJECTION_ONLY', () => {
+    const oddsSnapshot = buildBaseOddsSnapshot();
+    const marketDecisions = buildBaseDecisions();
+    const cards = generateNHLMarketCallCards(
+      'nhl-test-game',
+      marketDecisions,
+      oddsSnapshot,
+    );
+    const totalsCard = cards.find((card) => card.cardType === 'nhl-totals-call');
+
+    expect(totalsCard).toBeDefined();
+    const statusBeforeGuard = totalsCard.payloadData.execution_status;
+
+    applyNhlGoalieExecutionStatusGuard(
+      totalsCard,
+      buildPaceResult({ homeGoalieCertainty: 'UNKNOWN' }),
+    );
+
+    expect(totalsCard.payloadData.execution_status).toBe(statusBeforeGuard);
+    expect(totalsCard.payloadData.execution_status).not.toBe('PROJECTION_ONLY');
+  });
+
+  test('canonical totals status now resets non-PASS cards to EXECUTABLE', () => {
+    const oddsSnapshot = buildBaseOddsSnapshot();
+    const marketDecisions = buildBaseDecisions();
+    const cards = generateNHLMarketCallCards(
+      'nhl-test-game',
+      marketDecisions,
+      oddsSnapshot,
+    );
+    const totalsCard = cards.find((card) => card.cardType === 'nhl-totals-call');
+
+    expect(totalsCard).toBeDefined();
+    totalsCard.payloadData.execution_status = 'PROJECTION_ONLY';
+    totalsCard.payloadData.selection = { side: 'OVER' };
+    totalsCard.payloadData.projection = { total: 7.4 };
+    totalsCard.payloadData.line = 6.0;
+    totalsCard.payloadData.reason_codes = [];
+    totalsCard.payloadData.blocked_reason_code = null;
+
+    applyCanonicalNhlTotalsStatus(totalsCard, {
+      homeGoalieState: { starter_state: 'CONFIRMED' },
+      awayGoalieState: { starter_state: 'CONFIRMED' },
+      uncertaintyHoldReasonCodes: [],
+    });
+
+    expect(totalsCard.payloadData.classification).not.toBe('PASS');
+    expect(totalsCard.payloadData.execution_status).toBe('EXECUTABLE');
+  });
+
+  test('pace snapshot cards still receive PROJECTION_ONLY from goalie execution guard', () => {
+    const paceCard = {
+      cardType: 'nhl-pace-totals',
+      payloadData: { execution_status: 'EXECUTABLE' },
+    };
+
+    applyNhlGoalieExecutionStatusGuard(
+      paceCard,
+      buildPaceResult({ homeGoalieCertainty: 'UNKNOWN' }),
+    );
+
+    expect(paceCard.payloadData.execution_status).toBe('PROJECTION_ONLY');
+  });
+
   test('does not emit nhl-moneyline-call when candidate price is unavailable', () => {
     const oddsSnapshot = {
       ...buildBaseOddsSnapshot(),
@@ -295,6 +362,51 @@ describe('run_nhl_model market call generation', () => {
     const mlCard = cards.find((card) => card.cardType === 'nhl-moneyline-call');
 
     expect(mlCard).toBeUndefined();
+  });
+
+  test('nhl-moneyline-call backfills model_prob from projection win_prob_home when p_fair is null', () => {
+    const oddsSnapshot = buildBaseOddsSnapshot();
+    const marketDecisions = {
+      ...buildBaseDecisions(),
+      ML: {
+        ...buildBaseDecisions().ML,
+        p_fair: null,
+        projection: {
+          ...buildBaseDecisions().ML.projection,
+          win_prob_home: 0.62,
+        },
+      },
+    };
+
+    const cards = generateNHLMarketCallCards(
+      'nhl-test-game',
+      marketDecisions,
+      oddsSnapshot,
+    );
+    const mlCard = cards.find((card) => card.cardType === 'nhl-moneyline-call');
+
+    expect(mlCard).toBeDefined();
+    expect(mlCard.payloadData.selection.side).toBe('AWAY');
+    expect(mlCard.payloadData.model_prob).toBeCloseTo(0.38, 4);
+    expect(mlCard.payloadData.p_fair).toBeCloseTo(0.38, 4);
+  });
+
+  test('finalizeDecisionFields resolves priced decision_v2 for live-odds nhl-moneyline-call', () => {
+    const oddsSnapshot = buildBaseOddsSnapshot();
+    const cards = generateNHLMarketCallCards(
+      'nhl-test-game',
+      buildBaseDecisions(),
+      oddsSnapshot,
+    );
+    const mlCard = cards.find((card) => card.cardType === 'nhl-moneyline-call');
+
+    expect(mlCard).toBeDefined();
+
+    finalizeDecisionFields(mlCard.payloadData, { oddsSnapshot });
+
+    expect(mlCard.payloadData.decision_v2).toBeDefined();
+    expect(mlCard.payloadData.decision_v2.sharp_price_status).not.toBe('UNPRICED');
+    expect(mlCard.payloadData.execution_status).not.toBe('PROJECTION_ONLY');
   });
 
   test('legacy mode emits all actionable market cards while preserving orchestration metadata', () => {

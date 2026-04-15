@@ -481,24 +481,50 @@ function formatMlbProjectionOnlyContextLog(runtimeContext) {
 }
 
 function formatMlbDualRunLog(record = {}) {
-  const markets = Array.isArray(record.markets)
-    ? record.markets
-        .map((market) => `${market.market ?? 'unknown'}:${market.status ?? 'UNKNOWN'}`)
-        .join('|') || 'none'
-    : 'none';
-  const rejected = record.rejected && typeof record.rejected === 'object'
-    ? Object.entries(record.rejected)
-        .map(([market, reasons]) => `${market}:${JSON.stringify(reasons || 'none')}`)
-        .join('|') || 'none'
-    : 'none';
+  return JSON.stringify({
+    gameId: record.gameId ?? 'unknown',
+    marketType: record.marketType ?? 'unknown',
+    pickedPath: record.pickedPath ?? 'unknown',
+    shadowPath: record.shadowPath ?? 'none',
+    deltaEdge: Number.isFinite(record.deltaEdge) ? record.deltaEdge : null,
+    deltaConfidence: Number.isFinite(record.deltaConfidence)
+      ? record.deltaConfidence
+      : null,
+    winner: record.winner ?? 'unknown',
+  });
+}
 
-  return [
-    `game_id=${record.game_id ?? 'unknown'}`,
-    `chosen_market=${record.chosen_market ?? 'UNKNOWN'}`,
-    `why_this_market="${String(record.why_this_market ?? '').replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`,
-    `markets=${markets}`,
-    `rejected=${rejected}`,
-  ].join(' ');
+function computeLineAgeMinutes(timestamp, now = Date.now()) {
+  if (!timestamp) return null;
+  const parsed = Date.parse(timestamp);
+  if (!Number.isFinite(parsed)) return null;
+  const ageMs = now - parsed;
+  if (!Number.isFinite(ageMs) || ageMs < 0) return null;
+  return Math.round((ageMs / (60 * 1000)) * 10) / 10;
+}
+
+function buildMlbPitcherKAuditLog({
+  gameId,
+  driver,
+  starterQuality,
+  reasonCodes,
+  pitcher,
+  marketType = 'PITCHER_K',
+}) {
+  return {
+    gameId: gameId ?? 'unknown',
+    pitcherId: driver?.player_id ?? pitcher?.id ?? null,
+    starterQuality: starterQuality ?? 'UNKNOWN',
+    bookmaker: driver?.best_line_bookmaker ?? null,
+    lineAgeMinutes: computeLineAgeMinutes(driver?.line_fetched_at),
+    marketType,
+    decisionState: driver?.status ?? driver?.prop_decision?.verdict ?? 'UNKNOWN',
+    reasonCodes: Array.isArray(reasonCodes) ? reasonCodes : [],
+  };
+}
+
+function formatMlbPitcherKAuditLog(payload = {}) {
+  return JSON.stringify(payload);
 }
 
 function formatMlbPipelineStateLog(gameId, pipelineState = {}) {
@@ -611,6 +637,50 @@ function evaluateMlbFullGameFunnelCandidate(driver = {}, isOfficialPlay = false)
   };
 }
 
+/**
+ * WI-0944: Build MLB Full-Game Suppression Funnel Report (Operator Contract)
+ *
+ * Generates a deterministic, operator-facing report that shows how MLB full-game
+ * candidates flow through each suppression gate over the most recent N=50 samples.
+ *
+ * OUTPUT SHAPE (locked for WI-0944 and later):
+ *
+ * {
+ *   "sample_size": number,        // N (max 50), total candidates processed
+ *   "counts": {                   // Raw counts (not ratios) at each stage
+ *     "total_candidates_created": number,
+ *     "passed_projection": number,
+ *     "passed_edge_threshold": number,
+ *     "passed_volatility_threshold": number,
+ *     "passed_driver_support": number,
+ *     "passed_f5_contradiction": number,
+ *     "passed_confidence": number,
+ *     "final_official_plays": number
+ *   },
+ *   "drop_pct": {                // Percentage drop from previous stage (not cascading)
+ *     "passed_projection": number,           // % of total_candidates that didn't pass
+ *     "passed_edge_threshold": number,       // % of total_candidates that didn't pass
+ *     ... (same pattern for each stage)
+ *     "final_official_plays": number
+ *   },
+ *   "top_suppressors": [          // Top 2 suppressors ordered by impact
+ *     {
+ *       "condition": string,      // e.g., "PASS_NO_EDGE_OR_RUN_DIFF", "PASS_CONFIDENCE_GATE"
+ *       "count": number,          // How many candidates were suppressed by this condition
+ *       "impact_pct": number      // (count / sample_size) * 100
+ *     },
+ *     ...
+ *   ]
+ * }
+ *
+ * OPERATOR USE:
+ * - High drop_pct at a stage → investigate that gate (e.g., edge_threshold at 40% → many low-edge candidates)
+ * - top_suppressors → names the most common suppressors without parsing candidate payloads
+ * - Reproducible output across runs with same sample → enables before/after threshold testing
+ *
+ * @param {Array} samples - Array of evaluation results from evaluateMlbFullGameFunnelCandidate
+ * @returns {Object} Operator-facing report with sample_size, counts, drop_pct, top_suppressors
+ */
 function buildMlbFullGameSuppressionFunnelReport(samples = []) {
   const ordered = Array.isArray(samples) ? samples.slice(-MLB_FULL_GAME_FUNNEL_WINDOW) : [];
   const total = ordered.length;
@@ -1606,8 +1676,21 @@ function computeSyntheticLineF5Driver(mlb, context, gameId) {
 }
 
 function buildMlbDualRunRecord(gameId, oddsSnapshot, selection) {
+  const markets = Array.isArray(selection?.markets) ? selection.markets : [];
+  const selectedMarket = markets[0]?.market ?? null;
+  const selectedStatus = markets[0]?.status ?? null;
+
   return {
-    game_id: gameId,
+    gameId: gameId,
+    marketType: selectedMarket ?? 'unknown',
+    pickedPath: selection?.chosen_market ?? selectedStatus ?? 'unknown',
+    shadowPath: selection?.shadow_path ?? 'none',
+    deltaEdge: Number.isFinite(selection?.delta_edge) ? selection.delta_edge : null,
+    deltaConfidence: Number.isFinite(selection?.delta_confidence)
+      ? selection.delta_confidence
+      : null,
+    winner: selection?.winner ?? 'unknown',
+    // Keep original fields for compatibility with any downstream debug tooling.
     matchup:
       selection?.matchup ??
       `${oddsSnapshot?.away_team ?? 'unknown'} @ ${oddsSnapshot?.home_team ?? 'unknown'}`,
@@ -1615,7 +1698,7 @@ function buildMlbDualRunRecord(gameId, oddsSnapshot, selection) {
     chosen_market: selection?.chosen_market ?? 'F5_TOTAL',
     why_this_market:
       selection?.why_this_market ?? 'Rule 1: only configured MLB game market',
-    markets: Array.isArray(selection?.markets) ? selection.markets : [],
+    markets,
     rejected:
       selection?.rejected && typeof selection.rejected === 'object'
         ? selection.rejected
@@ -2260,16 +2343,16 @@ async function runMLBModel({
                 ? JSON.parse(pitcherKOddsSnapshot.raw_data)
                 : pitcherKOddsSnapshot.raw_data) ?? {};
               const _pitcher = (_mlbRaw.mlb ?? {})[`${sideStr}_pitcher`];
-              console.log(`[MLB_K_AUDIT] ${JSON.stringify({
-                pitcher:                  _pitcher?.full_name ?? `${sideStr}_sp`,
-                starter_skill_status:     (missingInputs.includes('statcast_swstr') ||
-                                           missingInputs.includes('starter_k_pct')) ? 'PARTIAL' : 'COMPLETE',
-                opponent_contact_status:  missingInputs.includes('opponent_contact_profile') ? 'PARTIAL' : 'COMPLETE',
-                leash_status:             missingInputs.includes('leash_metric') ? 'PARTIAL' : 'COMPLETE',
-                missing_fields:           _qr.hardMissing,
-                proxy_fields:             _qr.proxies,
-                quality_before_projection: _qr.model_quality,
-              })}`);
+              const auditSummary = buildMlbPitcherKAuditLog({
+                gameId,
+                driver,
+                starterQuality: _qr.model_quality,
+                reasonCodes: [..._qr.hardMissing, ..._qr.proxies],
+                pitcher: _pitcher,
+              });
+              console.log(
+                `[MLB_K_AUDIT] ${formatMlbPitcherKAuditLog(auditSummary)}`,
+              );
             }
             // ────────────────────────────────────────────────────────────────────
 
@@ -3105,6 +3188,9 @@ module.exports = {
   applyMlbProjectionOnlyGuards,
   hydrateCanonicalMlbMarketLines,
   buildMlbDualRunRecord,
+  formatMlbDualRunLog,
+  buildMlbPitcherKAuditLog,
+  formatMlbPitcherKAuditLog,
   buildMlbF5OddsContext,
   buildMlbMarketAvailability,
   buildMlbPipelineState,
@@ -3133,4 +3219,10 @@ module.exports = {
   computeSyntheticLineF5Driver,
   // Exported for WI-0648 unit tests
   MIN_MLB_GAMES_FOR_RECAL,
+  // Exported for WI-0944 funnel instrumentation
+  buildMlbFullGameSuppressionFunnelReport,
+  evaluateMlbFullGameFunnelCandidate,
+  getMlbFullGameMarketKey,
+  normalizeReasonCodeSet,
+  MLB_FULL_GAME_FUNNEL_WINDOW,
 };

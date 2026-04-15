@@ -482,6 +482,8 @@ describe('NHL ML win probability calibration (WI-0538)', () => {
     };
     const decisions = computeNHLMarketDecisions(oddsSnapshot);
     const mlDecision = decisions.ML;
+    expect(mlDecision?.p_fair).not.toBeNull();
+    expect(mlDecision?.p_implied).not.toBeNull();
     // win_prob_home should not be near 0.5 (flat default) when margin is meaningful
     const projectedWinProb = mlDecision?.projection?.win_prob_home;
     if (projectedWinProb !== null && projectedWinProb !== undefined) {

@@ -197,3 +197,32 @@ Plans:
 Plans:
 - [ ] market-board-01-PLAN.md - The Wedge route rename and /cards redirect (Wave 1)
 - [ ] market-board-02-PLAN.md - Cheddar Board API + 4-tab UI + nav integration (Wave 2)
+
+### Phase: WI-0944 — MLB Full-Game Market De-Suppression (Totals + Moneyline)
+
+**Goal**: Reduce over-suppression in MLB full-game totals and moneyline so legitimate odds-backed full-game plays can surface, while preserving explicit edge discipline, deterministic reason codes, and runner-level observability.
+
+**Requirements:** [WI-0944-OBS-01, WI-0944-OBS-02, WI-0944-TOTAL-01, WI-0944-ML-01, WI-0944-GATE-01]
+
+**Plans:** 3 plans in 3 waves
+
+Plans:
+- [ ] WI-0944-01-PLAN.md — Full-game funnel instrumentation + suppressor report + runner coverage (Wave 1)
+- [ ] WI-0944-02-PLAN.md — Full-game total de-suppression retune + capped volatility threshold + gate regression tests (Wave 2)
+- [ ] WI-0944-03-PLAN.md — Full-game moneyline adjustment layer + fresh-odds surfacing regression coverage (Wave 3)
+
+
+---
+
+### Phase: nhl-odds-backed-01 — NHL ML + Totals Odds-Backed Surfacing Recovery
+
+**Goal**: Surface NHL moneyline and totals market-call cards as fully odds-backed plays in gamelines/cards by removing PROJECTION_ONLY contamination in totals, ensuring moneyline decision_v2 pricing completeness, and adding regression/health coverage to prevent silent drops.
+
+**Requirements:** [NHR-TOTALS-01, NHR-TOTALS-02, NHR-ML-01, NHR-ML-02, NHR-API-01, NHR-OBS-01, NHR-DOCS-01]
+
+**Plans:** 3 plans in 2 waves
+
+Plans:
+- [ ] nhl-odds-backed-01-01-PLAN.md — Totals execution status contamination fix (goalie guard + canonical status sync) (Wave 1)
+- [ ] nhl-odds-backed-01-02-PLAN.md — Moneyline decision_v2 pricing completeness + model_prob fallback hardening (Wave 1)
+- [ ] nhl-odds-backed-01-03-PLAN.md — Gamelines regression coverage + pipeline health NHL ML counters + registry updates (Wave 2)

@@ -267,3 +267,88 @@ describe('checkNhlMarketCallDiagnostics', () => {
     expect(pipelineWrites[0][2]).toBe('warning');
   });
 });
+
+describe('checkNhlMoneylineCoverage', () => {
+  let h2hGamesCount;
+  let moneylineCardsCount;
+  let pipelineWrites;
+  let checkNhlMoneylineCoverage;
+
+  beforeEach(() => {
+    jest.resetModules();
+    h2hGamesCount = 0;
+    moneylineCardsCount = 0;
+    pipelineWrites = [];
+
+    jest.doMock('@cheddar-logic/data', () => ({
+      getDatabase: jest.fn(() => ({
+        prepare: jest.fn((sql) => {
+          if (sql.includes('INSERT INTO pipeline_health')) {
+            return { run: (...args) => { pipelineWrites.push(args); } };
+          }
+          if (sql.includes('COUNT(DISTINCT g.game_id) AS cnt')) {
+            return { get: () => ({ cnt: h2hGamesCount }) };
+          }
+          if (sql.includes("card_type = 'nhl-moneyline-call'")) {
+            return { get: () => ({ cnt: moneylineCardsCount }) };
+          }
+          throw new Error(`Unhandled SQL in NHL ML coverage test: ${sql}`);
+        }),
+      })),
+      insertJobRun: jest.fn(() => 1),
+      markJobRunSuccess: jest.fn(),
+      markJobRunFailure: jest.fn(),
+      createJob: jest.fn(),
+      wasJobRecentlySuccessful: jest.fn(() => false),
+    }));
+
+    ({ checkNhlMoneylineCoverage } = require('../jobs/check_pipeline_health'));
+  });
+
+  test('returns ok=true when no h2h games are in lookahead window', () => {
+    h2hGamesCount = 0;
+    moneylineCardsCount = 0;
+
+    const result = checkNhlMoneylineCoverage();
+
+    expect(result.ok).toBe(true);
+    expect(result.reason).toContain('no games with h2h odds');
+    expect(result.diagnostics.nhl_games_with_h2h_odds).toBe(0);
+    expect(result.diagnostics.nhl_moneyline_cards_count).toBe(0);
+    expect(result.diagnostics.alert_code).toBeNull();
+    expect(pipelineWrites[0][0]).toBe('nhl');
+    expect(pipelineWrites[0][1]).toBe('moneyline_coverage');
+    expect(pipelineWrites[0][2]).toBe('ok');
+  });
+
+  test('returns ok=false with NHL_ML_SURFACING_GAP when h2h games exist but no ML cards', () => {
+    h2hGamesCount = 3;
+    moneylineCardsCount = 0;
+
+    const result = checkNhlMoneylineCoverage();
+
+    expect(result.ok).toBe(false);
+    expect(result.reason).toContain('NHL_ML_SURFACING_GAP');
+    expect(result.diagnostics.nhl_games_with_h2h_odds).toBe(3);
+    expect(result.diagnostics.nhl_moneyline_cards_count).toBe(0);
+    expect(result.diagnostics.alert_code).toBe('NHL_ML_SURFACING_GAP');
+    expect(pipelineWrites[0][0]).toBe('nhl');
+    expect(pipelineWrites[0][1]).toBe('moneyline_coverage');
+    expect(pipelineWrites[0][2]).toBe('failed');
+  });
+
+  test('returns ok=true when h2h games and moneyline cards are both present', () => {
+    h2hGamesCount = 2;
+    moneylineCardsCount = 6;
+
+    const result = checkNhlMoneylineCoverage();
+
+    expect(result.ok).toBe(true);
+    expect(result.reason).toContain('2 game(s) with h2h odds');
+    expect(result.reason).toContain('6 nhl-moneyline-call card(s)');
+    expect(result.diagnostics.nhl_games_with_h2h_odds).toBe(2);
+    expect(result.diagnostics.nhl_moneyline_cards_count).toBe(6);
+    expect(result.diagnostics.alert_code).toBeNull();
+    expect(pipelineWrites[0][2]).toBe('ok');
+  });
+});

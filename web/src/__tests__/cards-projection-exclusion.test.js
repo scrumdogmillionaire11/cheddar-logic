@@ -73,6 +73,16 @@ assert.ok(
 );
 
 assert.ok(
+  apiGamesSource.includes('const isProjectionSurfaceCardType =') &&
+    !apiGamesSource.includes("cardRow.card_type === 'nhl-moneyline-call'") &&
+    !apiGamesSource.includes("cardRow.card_type === 'nhl-totals-call'") &&
+    apiGamesSource.includes(
+      'if (isProjectionOnlyPlayPayload(play) && !isPropMarket && !isProjectionSurfaceCardType) {',
+    ),
+  '/api/games should allow NHL ML/totals through when EXECUTABLE and only drop them when explicitly PROJECTION_ONLY',
+);
+
+assert.ok(
   transformSource.includes('function isProjectionOnlyCardPlay(play: ApiPlay): boolean') &&
     transformSource.includes('!isProjectionOnlyCardPlay(game.true_play)') &&
     transformSource.includes('!isProjectionOnlyCardPlay(play) &&') &&

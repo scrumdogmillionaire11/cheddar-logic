@@ -721,6 +721,90 @@ function checkNhlMarketCallDiagnostics() {
   return { ok, reason, diagnostics: diag };
 }
 
+function checkNhlMoneylineCoverage({ lookaheadHours = 6, lookbackHours = 12 } = {}) {
+  const db = getDatabase();
+  const nowUtc = DateTime.utc();
+  const endUtc = nowUtc.plus({ hours: lookaheadHours });
+
+  const readSingleCount = (statement, ...args) => {
+    if (statement && typeof statement.get === 'function') {
+      const row = statement.get(...args);
+      return Number(row?.cnt || 0);
+    }
+    if (statement && typeof statement.all === 'function') {
+      const rows = statement.all(...args);
+      return Number(rows?.[0]?.cnt || 0);
+    }
+    return 0;
+  };
+
+  const h2hGamesStmt = db.prepare(
+    `SELECT COUNT(DISTINCT g.game_id) AS cnt
+     FROM games g
+     JOIN odds_snapshots o ON o.game_id = g.game_id
+     WHERE g.sport = 'NHL'
+       AND g.game_time_utc >= ?
+       AND g.game_time_utc <= ?
+       AND o.captured_at > datetime('now', ?)
+       AND (o.h2h_home IS NOT NULL OR o.h2h_away IS NOT NULL)`,
+  );
+  const h2hGamesCount = readSingleCount(
+    h2hGamesStmt,
+    nowUtc.toISO(),
+    endUtc.toISO(),
+    `-${lookbackHours} hours`,
+  );
+
+  const mlCardsStmt = db.prepare(
+    `SELECT COUNT(*) AS cnt
+     FROM card_payloads
+     WHERE sport = 'NHL'
+       AND card_type = 'nhl-moneyline-call'
+       AND created_at > datetime('now', ?)`,
+  );
+  const moneylineCardsCount = readSingleCount(mlCardsStmt, `-${lookbackHours} hours`);
+
+  if (h2hGamesCount === 0) {
+    const reason = `NHL moneyline coverage: no games with h2h odds in next ${lookaheadHours}h`;
+    writePipelineHealth('nhl', 'moneyline_coverage', 'ok', reason);
+    return {
+      ok: true,
+      reason,
+      diagnostics: {
+        nhl_games_with_h2h_odds: 0,
+        nhl_moneyline_cards_count: moneylineCardsCount,
+        alert_code: null,
+      },
+    };
+  }
+
+  if (moneylineCardsCount === 0) {
+    const reason = `NHL_ML_SURFACING_GAP: ${h2hGamesCount} game(s) with h2h odds in next ${lookaheadHours}h but 0 nhl-moneyline-call cards in last ${lookbackHours}h`;
+    writePipelineHealth('nhl', 'moneyline_coverage', 'failed', reason);
+    return {
+      ok: false,
+      reason,
+      diagnostics: {
+        nhl_games_with_h2h_odds: h2hGamesCount,
+        nhl_moneyline_cards_count: 0,
+        alert_code: 'NHL_ML_SURFACING_GAP',
+      },
+    };
+  }
+
+  const reason = `NHL moneyline coverage: ${h2hGamesCount} game(s) with h2h odds and ${moneylineCardsCount} nhl-moneyline-call card(s) in last ${lookbackHours}h`;
+  writePipelineHealth('nhl', 'moneyline_coverage', 'ok', reason);
+  return {
+    ok: true,
+    reason,
+    diagnostics: {
+      nhl_games_with_h2h_odds: h2hGamesCount,
+      nhl_moneyline_cards_count: moneylineCardsCount,
+      alert_code: null,
+    },
+  };
+}
+
 // ---------------------------------------------------------------------------
 // TD-04: NBA market-call reject reason-family diagnostics
 // ---------------------------------------------------------------------------
@@ -1339,6 +1423,7 @@ async function checkPipelineHealth({ jobKey, dryRun }) {
       nhl_model_freshness: () =>
         checkSportModelFreshness('nhl', 'run_nhl_model', 'model_freshness', MODEL_FRESHNESS_MAX_AGE_MINUTES),
       nhl_market_call_diagnostics: checkNhlMarketCallDiagnostics,
+      nhl_moneyline_coverage: checkNhlMoneylineCoverage,
       nhl_shots_model_freshness: () =>
         checkSportModelFreshness('nhl', 'run-nhl-player-shots-model', 'shots_model_freshness', MODEL_FRESHNESS_MAX_AGE_MINUTES),
       nba_model_freshness: () =>
@@ -1375,6 +1460,7 @@ async function checkPipelineHealth({ jobKey, dryRun }) {
         settlement_backlog: ['settlement', 'backlog'],
         nhl_model_freshness: ['nhl', 'model_freshness'],
         nhl_market_call_diagnostics: ['nhl', 'market_call_blockers'],
+        nhl_moneyline_coverage: ['nhl', 'moneyline_coverage'],
         nhl_shots_model_freshness: ['nhl', 'shots_model_freshness'],
         nba_model_freshness: ['nba', 'model_freshness'],
         nba_market_call_diagnostics: ['nba', 'market_call_blockers'],
@@ -1453,6 +1539,7 @@ module.exports = {
   buildHealthAlertMessage,
   summarizeNhlRejectReasonFamilies,
   checkNhlMarketCallDiagnostics,
+  checkNhlMoneylineCoverage,
   summarizeNbaRejectReasonFamilies,
   checkNbaMarketCallDiagnostics,
   NBA_MARKET_CALL_CARD_TYPES,
