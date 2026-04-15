@@ -13,6 +13,7 @@ import type {
 import { GAME_TAGS } from '../types';
 import { getPlayDisplayAction } from './decision';
 import { isNflSeason } from './season-gates';
+import { isWelcomeHomeCardType } from './welcome-home';
 
 // Season-gated sports list: NFL excluded during off-season (Mar–Aug)
 const NFL_SPORTS: Sport[] = isNflSeason()
@@ -558,8 +559,8 @@ function filterByWelcomeHome(
 
   // Check if any driver or evidence item is Welcome Home Fade
   const hasWHF =
-    card.drivers.some((d) => d.cardType === 'welcome-home' || d.cardType === 'welcome-home-v2') ||
-    (card.evidence?.some((e) => e.cardType === 'welcome-home' || e.cardType === 'welcome-home-v2') ?? false);
+    card.drivers.some((d) => isWelcomeHomeCardType(d.cardType)) ||
+    (card.evidence?.some((e) => isWelcomeHomeCardType(e.cardType)) ?? false);
   return hasWHF;
 }
 

@@ -8,6 +8,7 @@ import { GAME_TAGS } from '../types';
 import { getPlayDisplayAction } from './decision';
 import { computeSupportScores } from './driver-scoring';
 import { hasEdgeVerificationSignals } from '../play-decision/decision-logic';
+import { isWelcomeHomeCardType } from './welcome-home';
 
 /**
  * Derive expression status from drivers if not explicitly provided
@@ -220,8 +221,8 @@ export function deriveTags(card: GameCard): GameTag[] {
 
   // Situational signals
   if (
-    card.drivers.some((d) => d.cardType === 'welcome-home' || d.cardType === 'welcome-home-v2') ||
-    (card.evidence?.some((e) => e.cardType === 'welcome-home' || e.cardType === 'welcome-home-v2') ?? false)
+    card.drivers.some((d) => isWelcomeHomeCardType(d.cardType)) ||
+    (card.evidence?.some((e) => isWelcomeHomeCardType(e.cardType)) ?? false)
   ) {
     tags.add(GAME_TAGS.WELCOME_HOME_FADE);
   }

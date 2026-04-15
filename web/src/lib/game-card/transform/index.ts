@@ -59,6 +59,7 @@ import {
   normalizeCardType,
   resolveSourceModelProb,
 } from './legacy-repair';
+import { isWelcomeHomeCardType } from '../welcome-home';
 import {
   NO_ACTIONABLE_IGNORE_REASON_CODES,
   isExplicitNoEdgeReasonCode,
@@ -2723,7 +2724,7 @@ export function transformToGameCard(game: GameData): GameCard {
     .map(playToDriver);
   const scopedRawDrivers = ENABLE_WELCOME_HOME
     ? rawDrivers
-    : rawDrivers.filter((driver) => driver.cardType !== 'welcome-home' && driver.cardType !== 'welcome-home-v2');
+    : rawDrivers.filter((driver) => isWelcomeHomeCardType(driver.cardType) === false);
   const drivers = deduplicateDrivers(scopedRawDrivers);
   const evidenceSource = ENABLE_WELCOME_HOME
     ? game.plays.filter((play) => isEvidenceItem(play, game.sport))
