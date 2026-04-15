@@ -522,6 +522,7 @@ const MLB_FULL_GAME_EDGE_THRESHOLD_MED_VOL = 0.5;
 const MLB_FULL_GAME_EDGE_THRESHOLD_HIGH_VOL = 0.62;
 const MLB_FULL_GAME_EDGE_THRESHOLD_CAP = 0.65;
 const MLB_FULL_GAME_SANITY_BAND = 0.3;
+const MLB_PURE_SIGNAL_MODE = process.env.MLB_PURE_SIGNAL_MODE === 'true';
 
 const MLB_TOTAL_VOL_BUCKETS = Object.freeze({
   LOW: 'LOW_VOL',
@@ -1112,30 +1113,27 @@ function projectFullGameTotalCard(homePitcher, awayPitcher, fullGameLine, contex
   const confidenceBelowGate = proj.confidence < confidenceGate;
 
   const reasonCodes = [];
-  let softPenaltyPoints = 0;
-  if (proj.projection_source === 'DEGRADED_MODEL') {
+  const isDegraded = proj.projection_source === 'DEGRADED_MODEL';
+  if (isDegraded) {
     reasonCodes.push('MODEL_DEGRADED_INPUTS');
-    softPenaltyPoints += 1;
   }
-  if (!driverValidation.valid) {
-    reasonCodes.push('SOFT_NO_SUPPORTING_DRIVERS');
-    softPenaltyPoints += 1;
-  }
-  if (!marketAligned) {
-    reasonCodes.push('SOFT_MARKET_SANITY_FAIL');
-    softPenaltyPoints += 1;
-  }
-  if (probabilityPass) {
-    reasonCodes.push('SOFT_PROBABILITY_EDGE_WEAK');
-    softPenaltyPoints += 1;
-  }
-  if (preferF5) {
-    reasonCodes.push('SOFT_PREFER_F5_SP_DRIVEN');
-    softPenaltyPoints += 1;
-  }
-  if (fgContradictsF5) {
-    reasonCodes.push('SOFT_F5_CONTRADICTION');
-    softPenaltyPoints += 1;
+
+  if (!MLB_PURE_SIGNAL_MODE) {
+    if (!driverValidation.valid) {
+      reasonCodes.push('SOFT_NO_SUPPORTING_DRIVERS');
+    }
+    if (!marketAligned) {
+      reasonCodes.push('SOFT_MARKET_SANITY_FAIL');
+    }
+    if (probabilityPass) {
+      reasonCodes.push('SOFT_PROBABILITY_EDGE_WEAK');
+    }
+    if (preferF5) {
+      reasonCodes.push('SOFT_PREFER_F5_SP_DRIVEN');
+    }
+    if (fgContradictsF5) {
+      reasonCodes.push('SOFT_F5_CONTRADICTION');
+    }
   }
 
   if (!hasEdge) reasonCodes.push('PASS_NO_EDGE');
@@ -1144,15 +1142,14 @@ function projectFullGameTotalCard(homePitcher, awayPitcher, fullGameLine, contex
   // WI-0944: DEGRADED_MODEL with edge present — surface as WATCH (LEAN) rather than hard PASS.
   // Confidence gate remains a hard veto only for FULL_MODEL paths; degraded projections
   // with a real edge should downgrade to LEAN/WATCH, not disappear entirely.
-  const isDegraded = proj.projection_source === 'DEGRADED_MODEL';
   const canPlay = hasEdge && (!confidenceBelowGate || isDegraded);
 
   const prediction = canPlay ? (edge >= 0 ? 'OVER' : 'UNDER') : leanSide;
   let status = 'PASS';
   if (canPlay) {
-    // DEGRADED_MODEL always caps at WATCH regardless of other signals.
-    // FULL_MODEL with 2+ soft penalties also becomes WATCH.
-    status = isDegraded || softPenaltyPoints >= 2
+    const softReasonCount = reasonCodes.filter((code) => code.startsWith('SOFT_')).length;
+    // Pure mode keeps only signal gates (edge/confidence + degraded cap).
+    status = isDegraded || (!MLB_PURE_SIGNAL_MODE && softReasonCount >= 2)
       ? 'WATCH'
       : 'FIRE';
   }
@@ -1532,13 +1529,19 @@ function projectFullGameML(homePitcher, awayPitcher, mlHome, mlAway, context = {
     0,
     1,
   );
-  const bullpenAsymmetryAdj = clampValue(bullpenRunDiff * 0.52, -0.32, 0.32);
-  const homeInningEdgeAdj = clampValue(homeFieldRuns * 0.5, -0.1, 0.1);
-  const lateLeverageAdj = clampValue(
-    (homeLeverageAvailability - awayLeverageAvailability) * 0.2,
-    -0.12,
-    0.12,
-  );
+  const bullpenAsymmetryAdj = MLB_PURE_SIGNAL_MODE
+    ? 0
+    : clampValue(bullpenRunDiff * 0.52, -0.32, 0.32);
+  const homeInningEdgeAdj = MLB_PURE_SIGNAL_MODE
+    ? 0
+    : clampValue(homeFieldRuns * 0.5, -0.1, 0.1);
+  const lateLeverageAdj = MLB_PURE_SIGNAL_MODE
+    ? 0
+    : clampValue(
+      (homeLeverageAvailability - awayLeverageAvailability) * 0.2,
+      -0.12,
+      0.12,
+    );
 
   const diffMean =
     runDiff +
@@ -1581,10 +1584,12 @@ function projectFullGameML(homePitcher, awayPitcher, mlHome, mlAway, context = {
 
   const flags = [];
   const preliminaryEdge = Math.max(homeEdge, awayEdge);
-  if (Math.abs(runDiff) < 0.22) flags.push('RUN_DIFF_SMALL');
-  if (supportCount < 2) flags.push('WEAK_DRIVER_SUPPORT');
-  if (Math.abs(preliminaryEdge) >= LEAN_EDGE_MIN && Math.abs(runDiff) < 0.3) {
-    flags.push('MATH_EDGE_WITH_THIN_RUN_SUPPORT');
+  if (!MLB_PURE_SIGNAL_MODE) {
+    if (Math.abs(runDiff) < 0.22) flags.push('RUN_DIFF_SMALL');
+    if (supportCount < 2) flags.push('WEAK_DRIVER_SUPPORT');
+    if (Math.abs(preliminaryEdge) >= LEAN_EDGE_MIN && Math.abs(runDiff) < 0.3) {
+      flags.push('MATH_EDGE_WITH_THIN_RUN_SUPPORT');
+    }
   }
 
   const starterSide = signToken(f5RunDiff);
@@ -1592,18 +1597,22 @@ function projectFullGameML(homePitcher, awayPitcher, mlHome, mlAway, context = {
   const candidateSide = homeEdge >= awayEdge ? 'HOME' : 'AWAY';
   const preferF5 = Math.abs(f5RunDiff) >= 0.28 && Math.abs(bullpenRunDiff) < 0.1;
   const weakExpressionSupport = preferF5 && starterSide !== 'NEUTRAL' && candidateSide !== starterSide;
-  if (preferF5) flags.push('PREFER_F5_SP_DRIVEN');
-  if (weakExpressionSupport) flags.push('FG_EXPRESSION_MISMATCH');
+  if (!MLB_PURE_SIGNAL_MODE) {
+    if (preferF5) flags.push('PREFER_F5_SP_DRIVEN');
+    if (weakExpressionSupport) flags.push('FG_EXPRESSION_MISMATCH');
+  }
 
   const marketSanityFail =
     Math.abs(homeEdge - awayEdge) < LEAN_EDGE_MIN &&
     Math.abs(runDiff) < 0.24;
-  if (marketSanityFail) flags.push('MARKET_SANITY_FAIL');
+  if (!MLB_PURE_SIGNAL_MODE && marketSanityFail) flags.push('MARKET_SANITY_FAIL');
 
   let confidence = proj.confidence;
-  confidence += Math.min(2, supportCount - 1);
-  confidence -= Math.max(0, Math.round((variance.variance_multiplier - 1) * 10));
-  if (Math.abs(runDiff) < 0.3) confidence -= 1;
+  if (!MLB_PURE_SIGNAL_MODE) {
+    confidence += Math.min(2, supportCount - 1);
+    confidence -= Math.max(0, Math.round((variance.variance_multiplier - 1) * 10));
+    if (Math.abs(runDiff) < 0.3) confidence -= 1;
+  }
   confidence = clampValue(confidence, 1, 10);
 
   let side = 'PASS';
@@ -1618,25 +1627,27 @@ function projectFullGameML(homePitcher, awayPitcher, mlHome, mlAway, context = {
 
   const softReasons = [];
   let softPenaltyPoints = 0;
-  if (Math.abs(runDiff) < 0.22) {
-    softReasons.push('SOFT_RUN_DIFF_SMALL');
-    softPenaltyPoints += 1;
-  }
-  if (supportCount < 2) {
-    softReasons.push('SOFT_WEAK_DRIVER_SUPPORT');
-    softPenaltyPoints += 1;
-  }
-  if (weakExpressionSupport) {
-    softReasons.push('SOFT_EXPRESSION_MISMATCH_F5_PREF');
-    softPenaltyPoints += 1;
-  }
-  if (marketSanityFail) {
-    softReasons.push('SOFT_MARKET_SANITY_FAIL');
-    softPenaltyPoints += 1;
-  }
-  if (flags.includes('MATH_EDGE_WITH_THIN_RUN_SUPPORT')) {
-    softReasons.push('SOFT_MATH_ONLY_EDGE');
-    softPenaltyPoints += 1;
+  if (!MLB_PURE_SIGNAL_MODE) {
+    if (Math.abs(runDiff) < 0.22) {
+      softReasons.push('SOFT_RUN_DIFF_SMALL');
+      softPenaltyPoints += 1;
+    }
+    if (supportCount < 2) {
+      softReasons.push('SOFT_WEAK_DRIVER_SUPPORT');
+      softPenaltyPoints += 1;
+    }
+    if (weakExpressionSupport) {
+      softReasons.push('SOFT_EXPRESSION_MISMATCH_F5_PREF');
+      softPenaltyPoints += 1;
+    }
+    if (marketSanityFail) {
+      softReasons.push('SOFT_MARKET_SANITY_FAIL');
+      softPenaltyPoints += 1;
+    }
+    if (flags.includes('MATH_EDGE_WITH_THIN_RUN_SUPPORT')) {
+      softReasons.push('SOFT_MATH_ONLY_EDGE');
+      softPenaltyPoints += 1;
+    }
   }
 
   const isDegraded = proj.projection_source === 'DEGRADED_MODEL';
@@ -1646,6 +1657,7 @@ function projectFullGameML(homePitcher, awayPitcher, mlHome, mlAway, context = {
   }
 
   const reasonCodes = [
+    ...(MLB_PURE_SIGNAL_MODE ? ['PURE_SIGNAL_MODE'] : []),
     ...(isDegraded ? ['FULL_GAME_ML_DEGRADED'] : []),
     ...softReasons,
     ...(side === 'PASS' ? ['PASS_NO_EDGE'] : []),
