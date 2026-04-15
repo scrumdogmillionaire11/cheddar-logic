@@ -1564,6 +1564,94 @@ describe('WI-0720 MLB execution envelope', () => {
       },
     });
   });
+
+  // WI-0944: MLB full-game ML execution gate relaxation tests
+  test('mlb-full-game-ml with large edge (>=0.06) + conf=0.50 passes the gate', () => {
+    // Scenario: Boston @ Minnesota — pWin 56.1%, edge +9.5pp, conf=5/10=0.50
+    // With the old global minConfidence=0.55 this would be BLOCKED; with the MLB
+    // full-game ML large-edge override (minConfidence=0.45) it must pass.
+    const payload = {
+      card_type: 'mlb-full-game-ml',
+      execution_status: 'EXECUTABLE',
+      edge: 0.095,
+      confidence: 0.50,
+      model_status: 'MODEL_OK',
+      status: 'FIRE',
+      action: 'FIRE',
+      classification: 'BASE',
+      ev_passed: true,
+      reason_codes: ['SOFT_WEAK_DRIVER_SUPPORT'],
+      actionable: true,
+      publish_ready: true,
+      _publish_state: { publish_ready: true, emit_allowed: true, execution_status: 'EXECUTABLE' },
+    };
+    const oddsSnapshot = { captured_at: '2026-04-15T17:00:00Z' };
+    const nowMs = new Date(oddsSnapshot.captured_at).getTime() + 60_000;
+
+    const result = applyExecutionGateToMlbPayload(payload, { oddsSnapshot, nowMs });
+
+    expect(result).toEqual({ evaluated: true, blocked: false });
+    expect(payload.status).toBe('FIRE');
+    expect(payload.execution_gate.should_bet).toBe(true);
+    expect(payload.execution_gate.blocked_by).toHaveLength(0);
+  });
+
+  test('mlb-full-game-ml with standard edge (0.07) + conf=0.50 passes relaxed threshold', () => {
+    // Scenario: Blue Jays @ Brewers — edge +7pp, conf=5/10=0.50
+    // Old global thresholds: minNetEdge=0.025, minConfidence=0.55 → BLOCKED (net=0.02 AND conf 0.50<0.55)
+    // New MLB relaxed: minNetEdge=0.02, minConfidence=0.50 → net=0.02 passes (>=), conf=0.50 passes (>=)
+    const payload = {
+      card_type: 'mlb-full-game-ml',
+      execution_status: 'EXECUTABLE',
+      edge: 0.07,
+      confidence: 0.50,
+      model_status: 'MODEL_OK',
+      status: 'FIRE',
+      action: 'FIRE',
+      classification: 'BASE',
+      ev_passed: true,
+      reason_codes: ['SOFT_WEAK_DRIVER_SUPPORT'],
+      actionable: true,
+      publish_ready: true,
+      _publish_state: { publish_ready: true, emit_allowed: true, execution_status: 'EXECUTABLE' },
+    };
+    const oddsSnapshot = { captured_at: '2026-04-15T17:00:00Z' };
+    const nowMs = new Date(oddsSnapshot.captured_at).getTime() + 60_000;
+
+    const result = applyExecutionGateToMlbPayload(payload, { oddsSnapshot, nowMs });
+
+    expect(result).toEqual({ evaluated: true, blocked: false });
+    expect(payload.status).toBe('FIRE');
+  });
+
+  test('non-full-game-ml card with conf=0.50 still gets blocked (override is type-specific)', () => {
+    // Gate relaxation must not apply to pitcher-K or other card types.
+    const payload = {
+      card_type: 'mlb-pitcher-k',
+      execution_status: 'EXECUTABLE',
+      edge: 0.08,
+      confidence: 0.50,
+      model_status: 'MODEL_OK',
+      status: 'FIRE',
+      action: 'FIRE',
+      classification: 'BASE',
+      ev_passed: true,
+      reason_codes: [],
+      actionable: true,
+      publish_ready: true,
+      _publish_state: { publish_ready: true, emit_allowed: true, execution_status: 'EXECUTABLE' },
+    };
+    const oddsSnapshot = { captured_at: '2026-04-15T17:00:00Z' };
+    const nowMs = new Date(oddsSnapshot.captured_at).getTime() + 60_000;
+
+    const result = applyExecutionGateToMlbPayload(payload, { oddsSnapshot, nowMs });
+
+    expect(result).toEqual({ evaluated: true, blocked: true });
+    expect(payload.status).toBe('PASS');
+    expect(payload.execution_gate.blocked_by).toContain(
+      'CONFIDENCE_BELOW_THRESHOLD:0.500',
+    );
+  });
 });
 
 // ---------------------------------------------------------------------------

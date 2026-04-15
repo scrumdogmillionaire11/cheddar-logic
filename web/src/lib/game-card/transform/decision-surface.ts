@@ -61,6 +61,8 @@ const SURFACED_REASON_LABELS: Record<string, string> = {
   GATE_GOALIE_UNCONFIRMED: 'Waiting on goalie confirmation',
   PASS_NO_EDGE: 'No edge',
   NO_EDGE_AT_PRICE: 'Price too sharp',
+  PASS_EXECUTION_GATE_CONFIDENCE_BELOW_THRESHOLD: 'Model edge present, blocked by confidence gate',
+  PASS_EXECUTION_GATE_NET_EDGE_INSUFFICIENT: 'No edge at current price',
   PASS_LOW_CONFIDENCE: 'Low confidence',
   PASS_SHARP_MONEY_OPPOSITE: 'Sharp money against',
   MODEL_PROB_MISSING: 'Model incomplete',

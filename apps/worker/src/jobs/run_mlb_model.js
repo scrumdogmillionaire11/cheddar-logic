@@ -1067,6 +1067,23 @@ function applyExecutionGateToMlbPayload(payload, { oddsSnapshot, nowMs = Date.no
     return { evaluated: false, blocked: false };
   }
 
+  // WI-0944: MLB full-game ML uses relaxed execution thresholds.
+  // The model's confidence is structurally capped at 5-6/10 and raw edges of
+  // 6-11pp are meaningful signal. A positive ML edge must be the primary
+  // decision driver; support/confidence can downgrade tier but must not hard-veto.
+  // Large edge (rawEdge >= 0.06): near-bypass thresholds so conf=5/10 cannot
+  // nullify a +9-11pp model call.
+  // Standard relaxed (rawEdge < 0.06): lower but still meaningful floors.
+  const _rawEdgeForGate = Number.isFinite(payload.edge) ? payload.edge : 0;
+  const _isMlbFullGameMl =
+    payload.card_type === 'mlb-full-game-ml' || payload.card_type === 'mlb-full-game';
+  const _mlbGateOverrides = _isMlbFullGameMl
+    ? {
+        minNetEdge: _rawEdgeForGate >= 0.06 ? 0.01 : 0.02,
+        minConfidence: _rawEdgeForGate >= 0.06 ? 0.45 : 0.50,
+      }
+    : {};
+
   const gateResult = evaluateExecution({
     modelStatus: resolvedModelStatus,
     rawEdge: Number.isFinite(payload.edge) ? payload.edge : null,
@@ -1078,6 +1095,7 @@ function applyExecutionGateToMlbPayload(payload, { oddsSnapshot, nowMs = Date.no
     marketType: payload.market_type ?? null,
     period: payload.period ?? payload.market?.period ?? null,
     cardType: payload.card_type ?? null,
+    ..._mlbGateOverrides,
   });
 
   payload.execution_gate = {
