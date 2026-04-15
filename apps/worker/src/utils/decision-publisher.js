@@ -521,7 +521,10 @@ function finalizeDecisionFields(payload, context = {}) {
     action === 'FIRE' ? 'FIRE' : action === 'HOLD' ? 'WATCH' : 'PASS';
   payload.classification = mapActionToClassification(action);
   payload.execution_status = resolveExecutionStatus(payload);
-  syncCanonicalDecisionEnvelope(payload);
+  // Only sync canonical envelope if decision_v2 already exists
+  if (payload.decision_v2) {
+    syncCanonicalDecisionEnvelope(payload);
+  }
   syncSelectionCompatibilityFields(payload);
 
   return payload;
