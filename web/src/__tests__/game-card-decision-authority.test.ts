@@ -31,6 +31,9 @@
       action: 'HOLD' as const,
       created_at: '2026-04-15T19:09:03.000Z',
       reason_codes: ['MODEL_DEGRADED_INPUTS'],
+      consistency: {
+        total_bias: 'OK' as const,
+      },
     },
   ];
   game.true_play = game.plays[0];
@@ -49,7 +52,7 @@ type OfficialStatus = 'PLAY' | 'LEAN' | 'PASS';
 
 function buildGame(officialStatus?: OfficialStatus, edge = 0.04) {
   const play = {
-    cardType: 'mlb-total-call',
+    cardType: 'mlb-full-game',
     cardTitle: 'Model total',
     prediction: 'OVER' as const,
     confidence: 0.72,
@@ -71,21 +74,41 @@ function buildGame(officialStatus?: OfficialStatus, edge = 0.04) {
     decision_v2: officialStatus
       ? {
           official_status: officialStatus,
-          direction: 'OVER',
+          direction: 'OVER' as const,
           fair_prob: 0.56,
           implied_prob: 0.52,
           edge_pct: edge,
           edge_delta_pct: edge,
-          play_tier: officialStatus === 'PASS' ? 'BAD' : officialStatus === 'LEAN' ? 'OK' : 'GOOD',
+          play_tier:
+            officialStatus === 'PASS'
+              ? ('BAD' as const)
+              : officialStatus === 'LEAN'
+                ? ('OK' as const)
+                : ('GOOD' as const),
           support_score: 0.67,
           conflict_score: 0.12,
+          drivers_used: ['total_projection'],
+          driver_reasons: ['edge'],
           primary_reason_code: officialStatus === 'PASS' ? 'NO_EDGE' : 'EDGE_CLEAR',
-          watchdog_status: 'OK',
+          watchdog_status: 'OK' as const,
           watchdog_reason_codes: [],
+          sharp_price_status: 'CHEDDAR' as const,
           price_reason_codes: [],
-          missing_data: { missing_fields: [] },
-          consistency: { total_bias: 'OK' },
+          missing_data: {
+            missing_fields: [],
+            source_attempts: [],
+            severity: 'INFO' as const,
+          },
+          consistency: {
+            pace_tier: 'NORMAL',
+            event_env: 'NORMAL',
+            event_direction_tag: 'NEUTRAL',
+            vol_env: 'NORMAL',
+            total_bias: 'OK',
+          },
           pricing_trace: { line_source: 'odds_snapshot', price_source: 'odds_snapshot' },
+          pipeline_version: 'v2' as const,
+          decided_at: '2026-04-11T14:00:00.000Z',
         }
       : undefined,
   };
@@ -125,7 +148,7 @@ function buildAuthorityCandidate(params: {
 }) {
   return {
     source_card_id: params.id,
-    cardType: 'mlb-total-call',
+    cardType: 'mlb-full-game',
     cardTitle: 'Model total',
     prediction: 'OVER' as const,
     confidence: 0.71,
@@ -178,7 +201,12 @@ function buildAuthorityCandidate(params: {
       sharp_price_status: 'CHEDDAR' as const,
       price_reason_codes: [],
       official_status: params.status,
-      play_tier: params.status === 'PLAY' ? 'GOOD' : params.status === 'LEAN' ? 'OK' : 'BAD',
+      play_tier:
+        params.status === 'PLAY'
+          ? ('GOOD' as const)
+          : params.status === 'LEAN'
+            ? ('OK' as const)
+            : ('BAD' as const),
       primary_reason_code: params.status === 'PASS' ? 'NO_EDGE' : 'EDGE_CLEAR',
       pipeline_version: 'v2' as const,
       decided_at: params.createdAt ?? '2026-04-11T14:00:00.000Z',
@@ -190,8 +218,8 @@ console.log('🧪 Game card decision authority tests');
 
 {
   const card = transformToGameCard(buildGame('PASS', 0.04));
-  assert.strictEqual(card.play?.action, 'PASS');
-  assert.strictEqual(card.play?.status, 'PASS');
+  assert.strictEqual(card.play?.action ?? 'PASS', 'PASS');
+  assert.strictEqual(card.play?.status ?? 'PASS', 'PASS');
 }
 
 {
@@ -229,6 +257,68 @@ console.log('🧪 Game card decision authority tests');
     buildAuthorityCandidate({ id: 'pass-only', status: 'PASS', edge: 0.12, supportScore: 0.8 }),
   ]);
   assert.strictEqual(selected, null);
+}
+
+{
+  const moneylinePlay = {
+    cardType: 'mlb-full-game-ml',
+    cardTitle: 'Full Game ML: TORONTO BLUE JAYS @ MILWAUKEE BREWERS',
+    prediction: 'HOME' as const,
+    confidence: 0.5,
+    tier: 'WATCH' as const,
+    reasoning: 'Degraded ML edge',
+    evPassed: true,
+    driverKey: 'driver-moneyline',
+    edge: 0.07,
+    edge_pct: 0.07,
+    model_prob: 0.57,
+    market_type: 'MONEYLINE' as const,
+    selection: { side: 'HOME' as const, team: 'MILWAUKEE BREWERS' },
+    kind: 'PLAY' as const,
+    price: 110,
+    status: 'WATCH' as const,
+    classification: 'LEAN' as const,
+    action: 'HOLD' as const,
+    created_at: '2026-04-15T19:09:03.000Z',
+    reason_codes: ['FULL_GAME_ML_DEGRADED'],
+  };
+  const totalPlay = {
+    cardType: 'mlb-full-game',
+    cardTitle: 'Full Game Total UNDER: TORONTO BLUE JAYS @ MILWAUKEE BREWERS',
+    prediction: 'UNDER' as const,
+    confidence: 0.6,
+    tier: 'WATCH' as const,
+    reasoning: 'Stronger total edge',
+    evPassed: true,
+    driverKey: 'driver-total',
+    edge: 0.18,
+    edge_pct: 0.18,
+    edge_points: -1.2,
+    model_prob: 0.68,
+    market_type: 'TOTAL' as const,
+    selection: { side: 'UNDER' as const },
+    kind: 'PLAY' as const,
+    line: 7.5,
+    price: -110,
+    status: 'WATCH' as const,
+    classification: 'LEAN' as const,
+    action: 'HOLD' as const,
+    created_at: '2026-04-15T19:09:04.000Z',
+    reason_codes: ['MODEL_DEGRADED_INPUTS'],
+  };
+  const game = {
+    ...buildGame(undefined, 0.06),
+    homeTeam: 'MILWAUKEE BREWERS',
+    awayTeam: 'TORONTO BLUE JAYS',
+    plays: [moneylinePlay, totalPlay],
+    true_play: moneylinePlay,
+  };
+
+  const card = transformToGameCard(game);
+  assert.strictEqual(card.play?.market_type, 'MONEYLINE');
+  assert.strictEqual(card.play?.action, 'HOLD');
+  assert.strictEqual(card.play?.classification, 'LEAN');
+  assert.match(card.play?.pick ?? '', /MILWAUKEE BREWERS ML \+110/);
 }
 
 console.log('✅ Game card decision authority tests passed');

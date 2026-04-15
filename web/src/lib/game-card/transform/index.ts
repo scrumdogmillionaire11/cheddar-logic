@@ -1725,9 +1725,25 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
     marketAlignedPlayableCandidates.length > 0
       ? marketAlignedCandidates
       : rankedSourceCandidates;
+  const authoritativeCanonicalStatus = resolveCanonicalOfficialStatus(
+    canonicalTruePlay,
+  );
+  const authoritativeAction = getSourcePlayAction(canonicalTruePlay);
+  const authoritativeSelectedSource =
+    canonicalTruePlay &&
+    (authoritativeCanonicalStatus === 'PLAY' ||
+      authoritativeCanonicalStatus === 'LEAN' ||
+      authoritativeAction === 'FIRE' ||
+      authoritativeAction === 'HOLD')
+      ? {
+          play: canonicalTruePlay,
+          inference: inferMarketFromPlay(canonicalTruePlay),
+        }
+      : null;
 
   const selectedSource =
-    isPropMarket && propPlay
+    authoritativeSelectedSource ??
+    (isPropMarket && propPlay
       ? {
           play: propPlay,
           inference: inferMarketFromPlay(propPlay),
@@ -1739,7 +1755,7 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
               play: sourcePlayByTruthDriver,
               inference: inferMarketFromPlay(sourcePlayByTruthDriver),
             }
-          : null));
+          : null)));
   const sourcePlay = selectedSource?.play ?? scopedPlayCandidates[0];
   const sourceCanonicalStatus = resolveCanonicalOfficialStatus(sourcePlay);
   const sourceAction =
