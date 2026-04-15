@@ -3133,4 +3133,10 @@ module.exports = {
   computeSyntheticLineF5Driver,
   // Exported for WI-0648 unit tests
   MIN_MLB_GAMES_FOR_RECAL,
+  // Exported for WI-0944 funnel instrumentation
+  buildMlbFullGameSuppressionFunnelReport,
+  evaluateMlbFullGameFunnelCandidate,
+  getMlbFullGameMarketKey,
+  normalizeReasonCodeSet,
+  MLB_FULL_GAME_FUNNEL_WINDOW,
 };

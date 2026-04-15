@@ -2649,3 +2649,341 @@ describe('runMLBModel without-odds mode selection', () => {
     jest.dontMock('@cheddar-logic/models/src/edge-calculator');
   });
 });
+
+/**
+ * WI-0944: MLB Full-Game Suppression Funnel Tests
+ *
+ * Validates that the funnel correctly accounts for full-game candidates
+ * through each stage, tracks suppressors, and produces deterministic output.
+ */
+describe('MLB Full-Game Suppression Funnel (WI-0944)', () => {
+  let buildMlbFullGameSuppressionFunnelReport;
+  let evaluateMlbFullGameFunnelCandidate;
+  let getMlbFullGameMarketKey;
+  let normalizeReasonCodeSet;
+  let MLB_FULL_GAME_FUNNEL_WINDOW;
+
+  beforeAll(() => {
+    ({
+      buildMlbFullGameSuppressionFunnelReport,
+      evaluateMlbFullGameFunnelCandidate,
+      getMlbFullGameMarketKey,
+      normalizeReasonCodeSet,
+      MLB_FULL_GAME_FUNNEL_WINDOW,
+    } = require('../run_mlb_model'));
+  });
+
+  /**
+   * Test 1: A mixed sample of full_game_total and full_game_ml candidates
+   * produces the exact required stage keys and deterministic counts.
+   */
+  test('produces deterministic funnel stage keys and counts for mixed full-game candidates', () => {
+    // Build a sample of 20 mixed candidates with varied suppressors
+    const samples = [];
+    
+    // 10 full_game_total candidates
+    for (let i = 0; i < 10; i++) {
+      samples.push(
+        evaluateMlbFullGameFunnelCandidate(
+          {
+            market: 'full_game_total',
+            confidence: 0.65,
+            projection_source: 'FULL_MODEL',
+            reason_codes: [],
+          },
+          true, // isOfficialPlay
+        ),
+      );
+    }
+
+    // 5 full_game_ml candidates with PASS_NO_EDGE
+    for (let i = 0; i < 5; i++) {
+      samples.push(
+        evaluateMlbFullGameFunnelCandidate(
+          {
+            market: 'full_game_ml',
+            confidence: 0.6,
+            projection_source: 'FULL_MODEL',
+            reason_codes: ['PASS_NO_EDGE'],
+          },
+          false, // isOfficialPlay
+        ),
+      );
+    }
+
+    // 3 full_game_ml candidates with PASS_PROBABILITY_EDGE_WEAK
+    for (let i = 0; i < 3; i++) {
+      samples.push(
+        evaluateMlbFullGameFunnelCandidate(
+          {
+            market: 'full_game_ml',
+            confidence: 0.6,
+            projection_source: 'FULL_MODEL',
+            reason_codes: ['PASS_PROBABILITY_EDGE_WEAK'],
+          },
+          false,
+        ),
+      );
+    }
+
+    // 2 full_game_total with low confidence
+    for (let i = 0; i < 2; i++) {
+      samples.push(
+        evaluateMlbFullGameFunnelCandidate(
+          {
+            market: 'full_game_total',
+            confidence: 0.55,
+            projection_source: 'FULL_MODEL',
+            reason_codes: [],
+          },
+          false,
+        ),
+      );
+    }
+
+    // Build report
+    const report = buildMlbFullGameSuppressionFunnelReport(samples);
+
+    // Verify required stage keys
+    const requiredStages = [
+      'total_candidates_created',
+      'passed_projection',
+      'passed_edge_threshold',
+      'passed_volatility_threshold',
+      'passed_driver_support',
+      'passed_f5_contradiction',
+      'passed_confidence',
+      'final_official_plays',
+    ];
+
+    for (const stage of requiredStages) {
+      expect(report.counts).toHaveProperty(stage);
+      expect(typeof report.counts[stage]).toBe('number');
+    }
+
+    // Verify deterministic counts
+    // Note: counts are independent checks per candidate, not cascading filters
+    expect(report.counts.total_candidates_created).toBe(20);
+    expect(report.counts.passed_projection).toBe(20); // All have valid projection_source
+    expect(report.counts.passed_edge_threshold).toBe(15); // 20 - 5 with PASS_NO_EDGE
+    expect(report.counts.passed_volatility_threshold).toBe(17); // 20 - 3 with PASS_PROBABILITY_EDGE_WEAK
+    expect(report.counts.passed_driver_support).toBe(20); // No driver support suppressors
+    expect(report.counts.passed_f5_contradiction).toBe(20); // No F5 contradiction suppressors
+    expect(report.counts.passed_confidence).toBe(18); // 20 - 2 with low confidence
+    expect(report.counts.final_official_plays).toBe(10); // Only 10 marked as official plays
+  });
+
+  /**
+   * Test 2: Stage percentages are reproducible from the same sample
+   * and ordered consistently.
+   */
+  test('produces reproducible stage percentages and consistent suppressor ordering', () => {
+    // Create a fixed sample with a simpler structure
+    const samples = [];
+
+    // 25 candidates pass all gates
+    for (let i = 0; i < 25; i++) {
+      samples.push(
+        evaluateMlbFullGameFunnelCandidate(
+          {
+            market: 'full_game_total',
+            projection_source: 'FULL_MODEL',
+            confidence: 0.65,
+            reason_codes: [],
+          },
+          true,
+        ),
+      );
+    }
+
+    // 15 fail at edge threshold
+    for (let i = 0; i < 15; i++) {
+      samples.push(
+        evaluateMlbFullGameFunnelCandidate(
+          {
+            market: 'full_game_total',
+            projection_source: 'FULL_MODEL',
+            confidence: 0.65,
+            reason_codes: ['PASS_NO_EDGE'],
+          },
+          false,
+        ),
+      );
+    }
+
+    // 10 fail at confidence
+    for (let i = 0; i < 10; i++) {
+      samples.push(
+        evaluateMlbFullGameFunnelCandidate(
+          {
+            market: 'full_game_total',
+            projection_source: 'FULL_MODEL',
+            confidence: 0.55,
+            reason_codes: [],
+          },
+          false,
+        ),
+      );
+    }
+
+    // Generate report twice from same samples
+    const report1 = buildMlbFullGameSuppressionFunnelReport(samples);
+    const report2 = buildMlbFullGameSuppressionFunnelReport(samples);
+
+    // Percentages must be identical
+    expect(report1.drop_pct).toEqual(report2.drop_pct);
+
+    // Top suppressors must be identical and ordered
+    expect(report1.top_suppressors).toEqual(report2.top_suppressors);
+
+    // Sample size should match window or input size
+    expect(report1.sample_size).toBe(Math.min(samples.length, MLB_FULL_GAME_FUNNEL_WINDOW));
+
+    // Verify drop_pct keys exist
+    const stageKeys = [
+      'passed_projection',
+      'passed_edge_threshold',
+      'passed_volatility_threshold',
+      'passed_driver_support',
+      'passed_f5_contradiction',
+      'passed_confidence',
+      'final_official_plays',
+    ];
+
+    for (const stage of stageKeys) {
+      expect(report1.drop_pct).toHaveProperty(stage);
+      expect(typeof report1.drop_pct[stage]).toBe('number');
+    }
+  });
+
+  /**
+   * Test 3: The top two suppressors are derived from actual drop buckets,
+   * not hardcoded labels.
+   */
+  test('derives top suppressors from actual candidate drops and orders by impact', () => {
+    const samples = [];
+
+    // Create a scenario with clear suppressor dominance
+    // 20 candidates with PASS_NO_EDGE (most common suppressor)
+    for (let i = 0; i < 20; i++) {
+      samples.push(
+        evaluateMlbFullGameFunnelCandidate(
+          {
+            market: 'full_game_total',
+            projection_source: 'FULL_MODEL',
+            confidence: 0.65,
+            reason_codes: ['PASS_NO_EDGE'],
+          },
+          false,
+        ),
+      );
+    }
+
+    // 8 candidates with PASS_CONFIDENCE_GATE (second most common)
+    for (let i = 0; i < 8; i++) {
+      samples.push(
+        evaluateMlbFullGameFunnelCandidate(
+          {
+            market: 'full_game_total',
+            projection_source: 'FULL_MODEL',
+            confidence: 0.55,
+            reason_codes: [],
+          },
+          false,
+        ),
+      );
+    }
+
+    // 4 candidates with PASS_PROBABILITY_EDGE_WEAK
+    for (let i = 0; i < 4; i++) {
+      samples.push(
+        evaluateMlbFullGameFunnelCandidate(
+          {
+            market: 'full_game_total',
+            projection_source: 'FULL_MODEL',
+            confidence: 0.65,
+            reason_codes: ['PASS_PROBABILITY_EDGE_WEAK'],
+          },
+          false,
+        ),
+      );
+    }
+
+    const report = buildMlbFullGameSuppressionFunnelReport(samples);
+
+    // Verify exactly two suppressors in top_suppressors
+    expect(report.top_suppressors).toHaveLength(2);
+
+    // Verify ordering by count (first should have highest impact)
+    expect(report.top_suppressors[0].count).toBeGreaterThanOrEqual(
+      report.top_suppressors[1].count,
+    );
+
+    // Verify suppressors are from actual drop categories
+    const allowedSuppressors = [
+      'PASS_NO_EDGE_OR_RUN_DIFF',
+      'PASS_PROBABILITY_EDGE_WEAK_OR_MATH_ONLY',
+      'PASS_CONFIDENCE_GATE',
+      'PASS_F5_CONTRADICTION',
+      'PASS_DRIVER_SUPPORT',
+      'PROJECTION_SOURCE_NO_BET',
+      'NOT_IN_OFFICIAL_PLAYS',
+    ];
+
+    expect(allowedSuppressors).toContain(report.top_suppressors[0].condition);
+    expect(allowedSuppressors).toContain(report.top_suppressors[1].condition);
+
+    // Verify impact percentages sum and are reasonable
+    const topImpactSum = report.top_suppressors.reduce(
+      (sum, s) => sum + s.impact_pct,
+      0,
+    );
+    expect(topImpactSum).toBeGreaterThan(50); // Top 2 should account for >50%
+    expect(topImpactSum).toBeLessThanOrEqual(100);
+  });
+
+  /**
+   * Test: getMlbFullGameMarketKey correctly identifies market types
+   */
+  test('getMlbFullGameMarketKey returns correct market identifiers', () => {
+    expect(getMlbFullGameMarketKey({ market: 'full_game_total' })).toBe(
+      'FULL_GAME_TOTAL',
+    );
+    expect(getMlbFullGameMarketKey({ market: 'full_game_ml' })).toBe('FULL_GAME_ML');
+    expect(getMlbFullGameMarketKey({ market: 'f5_total' })).toBeNull();
+    expect(getMlbFullGameMarketKey({ market: 'pitcher_k' })).toBeNull();
+    expect(getMlbFullGameMarketKey({})).toBeNull();
+  });
+
+  /**
+   * Test: Funnel window respects MLB_FULL_GAME_FUNNEL_WINDOW limit
+   */
+  test('respects funnel window size limit of 50 samples', () => {
+    // Create 100 samples
+    const samples = [];
+    for (let i = 0; i < 100; i++) {
+      samples.push(
+        evaluateMlbFullGameFunnelCandidate(
+          {
+            market: 'full_game_total',
+            projection_source: 'FULL_MODEL',
+            confidence: 0.65,
+            reason_codes: [],
+          },
+          true,
+        ),
+      );
+    }
+
+    const report = buildMlbFullGameSuppressionFunnelReport(samples);
+
+    // Sample size should be capped at window limit
+    expect(report.sample_size).toBe(MLB_FULL_GAME_FUNNEL_WINDOW);
+    expect(report.sample_size).toBe(50);
+
+    // Should use the last 50 samples
+    const lastOnly = samples.slice(-50);
+    const reportLastOnly = buildMlbFullGameSuppressionFunnelReport(lastOnly);
+    expect(report.counts).toEqual(reportLastOnly.counts);
+  });
+});
