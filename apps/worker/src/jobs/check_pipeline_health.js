@@ -726,32 +726,43 @@ function checkNhlMoneylineCoverage({ lookaheadHours = 6, lookbackHours = 12 } = 
   const nowUtc = DateTime.utc();
   const endUtc = nowUtc.plus({ hours: lookaheadHours });
 
-  const h2hGamesCount = Number(
-    db
-      .prepare(
-        `SELECT COUNT(DISTINCT g.game_id) AS cnt
-         FROM games g
-         JOIN odds_snapshots o ON o.game_id = g.game_id
-         WHERE g.sport = 'NHL'
-           AND g.game_time_utc >= ?
-           AND g.game_time_utc <= ?
-           AND o.captured_at > datetime('now', ?)
-           AND (o.h2h_home IS NOT NULL OR o.h2h_away IS NOT NULL)`,
-      )
-      .get(nowUtc.toISO(), endUtc.toISO(), `-${lookbackHours} hours`)?.cnt || 0,
+  const readSingleCount = (statement, ...args) => {
+    if (statement && typeof statement.get === 'function') {
+      const row = statement.get(...args);
+      return Number(row?.cnt || 0);
+    }
+    if (statement && typeof statement.all === 'function') {
+      const rows = statement.all(...args);
+      return Number(rows?.[0]?.cnt || 0);
+    }
+    return 0;
+  };
+
+  const h2hGamesStmt = db.prepare(
+    `SELECT COUNT(DISTINCT g.game_id) AS cnt
+     FROM games g
+     JOIN odds_snapshots o ON o.game_id = g.game_id
+     WHERE g.sport = 'NHL'
+       AND g.game_time_utc >= ?
+       AND g.game_time_utc <= ?
+       AND o.captured_at > datetime('now', ?)
+       AND (o.h2h_home IS NOT NULL OR o.h2h_away IS NOT NULL)`,
+  );
+  const h2hGamesCount = readSingleCount(
+    h2hGamesStmt,
+    nowUtc.toISO(),
+    endUtc.toISO(),
+    `-${lookbackHours} hours`,
   );
 
-  const moneylineCardsCount = Number(
-    db
-      .prepare(
-        `SELECT COUNT(*) AS cnt
-         FROM card_payloads
-         WHERE sport = 'NHL'
-           AND card_type = 'nhl-moneyline-call'
-           AND created_at > datetime('now', ?)`,
-      )
-      .get(`-${lookbackHours} hours`)?.cnt || 0,
+  const mlCardsStmt = db.prepare(
+    `SELECT COUNT(*) AS cnt
+     FROM card_payloads
+     WHERE sport = 'NHL'
+       AND card_type = 'nhl-moneyline-call'
+       AND created_at > datetime('now', ?)`,
   );
+  const moneylineCardsCount = readSingleCount(mlCardsStmt, `-${lookbackHours} hours`);
 
   if (h2hGamesCount === 0) {
     const reason = `NHL moneyline coverage: no games with h2h odds in next ${lookaheadHours}h`;
