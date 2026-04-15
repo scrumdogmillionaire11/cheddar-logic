@@ -225,8 +225,6 @@ describe('run_nba_model job', () => {
     };
     const nowMs = new Date(baseOdds.captured_at).getTime() + 90_000;
 
-    const decisionStatusBeforeGate =
-      card.payloadData.decision_v2?.official_status ?? null;
     const result = applyExecutionGateToNbaCard(card, {
       oddsSnapshot: baseOdds,
       nowMs,
@@ -249,8 +247,10 @@ describe('run_nba_model job', () => {
     expect(card.payloadData.pass_reason_code).toBe(
       'PASS_EXECUTION_GATE_NET_EDGE_INSUFFICIENT',
     );
-    expect(card.payloadData.decision_v2?.official_status).toBe(
-      decisionStatusBeforeGate,
+    // WI-0941 TD-01: Execution gate now stamps decision_v2.official_status to PASS for consistency
+    expect(card.payloadData.decision_v2?.official_status).toBe('PASS');
+    expect(card.payloadData.decision_v2?.primary_reason_code).toBe(
+      'PASS_EXECUTION_GATE_NET_EDGE_INSUFFICIENT',
     );
     expect(result.strictDecisionSnapshot).toMatchObject({
       classification: 'PASS',
@@ -258,7 +258,7 @@ describe('run_nba_model job', () => {
       status: 'PASS',
       execution_status: 'BLOCKED',
       pass_reason_code: 'PASS_EXECUTION_GATE_NET_EDGE_INSUFFICIENT',
-      decision_v2_official_status: decisionStatusBeforeGate,
+      decision_v2_official_status: 'PASS',
     });
   });
 
