@@ -6,6 +6,8 @@ const {
   attachNhlDriverContextToRawData,
   buildDualRunRecord,
   applyExecutionGateToNhlCard,
+  applyCanonicalNhlTotalsStatus,
+  applyNhlGoalieExecutionStatusGuard,
   deriveNhlUncertaintyHoldReasonCodes,
   applyNhlUncertaintyHold,
   isHardProjectionInputBlock,
@@ -278,6 +280,70 @@ describe('run_nhl_model market call generation', () => {
         sigmaTotal: 1.8,
       }),
     ).toThrow(/\[INVARIANT_BREACH\]\[LEVEL=CRITICAL\]/);
+  });
+
+  test('goalie execution guard no longer marks nhl-totals-call cards as PROJECTION_ONLY', () => {
+    const oddsSnapshot = buildBaseOddsSnapshot();
+    const marketDecisions = buildBaseDecisions();
+    const cards = generateNHLMarketCallCards(
+      'nhl-test-game',
+      marketDecisions,
+      oddsSnapshot,
+    );
+    const totalsCard = cards.find((card) => card.cardType === 'nhl-totals-call');
+
+    expect(totalsCard).toBeDefined();
+    const statusBeforeGuard = totalsCard.payloadData.execution_status;
+
+    applyNhlGoalieExecutionStatusGuard(
+      totalsCard,
+      buildPaceResult({ homeGoalieCertainty: 'UNKNOWN' }),
+    );
+
+    expect(totalsCard.payloadData.execution_status).toBe(statusBeforeGuard);
+    expect(totalsCard.payloadData.execution_status).not.toBe('PROJECTION_ONLY');
+  });
+
+  test('canonical totals status now resets non-PASS cards to EXECUTABLE', () => {
+    const oddsSnapshot = buildBaseOddsSnapshot();
+    const marketDecisions = buildBaseDecisions();
+    const cards = generateNHLMarketCallCards(
+      'nhl-test-game',
+      marketDecisions,
+      oddsSnapshot,
+    );
+    const totalsCard = cards.find((card) => card.cardType === 'nhl-totals-call');
+
+    expect(totalsCard).toBeDefined();
+    totalsCard.payloadData.execution_status = 'PROJECTION_ONLY';
+    totalsCard.payloadData.selection = { side: 'OVER' };
+    totalsCard.payloadData.projection = { total: 7.4 };
+    totalsCard.payloadData.line = 6.0;
+    totalsCard.payloadData.reason_codes = [];
+    totalsCard.payloadData.blocked_reason_code = null;
+
+    applyCanonicalNhlTotalsStatus(totalsCard, {
+      homeGoalieState: { starter_state: 'CONFIRMED' },
+      awayGoalieState: { starter_state: 'CONFIRMED' },
+      uncertaintyHoldReasonCodes: [],
+    });
+
+    expect(totalsCard.payloadData.classification).not.toBe('PASS');
+    expect(totalsCard.payloadData.execution_status).toBe('EXECUTABLE');
+  });
+
+  test('pace snapshot cards still receive PROJECTION_ONLY from goalie execution guard', () => {
+    const paceCard = {
+      cardType: 'nhl-pace-totals',
+      payloadData: { execution_status: 'EXECUTABLE' },
+    };
+
+    applyNhlGoalieExecutionStatusGuard(
+      paceCard,
+      buildPaceResult({ homeGoalieCertainty: 'UNKNOWN' }),
+    );
+
+    expect(paceCard.payloadData.execution_status).toBe('PROJECTION_ONLY');
   });
 
   test('does not emit nhl-moneyline-call when candidate price is unavailable', () => {

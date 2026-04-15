@@ -291,7 +291,6 @@ const NHL_DRIVER_CARD_TYPES = [
 const NHL_SNAPSHOT_CARD_TYPES = new Set([
   'nhl-pace-totals',
   'nhl-pace-1p',
-  'nhl-totals-call',
 ]);
 
 /**
@@ -1091,12 +1090,15 @@ function applyCanonicalNhlTotalsStatus(card, context = {}) {
       result.reasonCodes[0] || payload.decision_v2.primary_reason_code || null;
   }
 
+  const canonicalExecutionStatus =
+    mapped.officialStatus === 'PASS' ? 'BLOCKED' : 'EXECUTABLE';
+  payload.execution_status = canonicalExecutionStatus;
+
   syncCanonicalDecisionEnvelope(payload, {
     official_status: mapped.officialStatus,
     primary_reason_code:
       result.reasonCodes[0] || payload.pass_reason_code || payload.decision_v2?.primary_reason_code,
-    execution_status:
-      mapped.officialStatus === 'PASS' ? 'BLOCKED' : payload.execution_status || 'EXECUTABLE',
+    execution_status: canonicalExecutionStatus,
     publish_ready: mapped.officialStatus !== 'PASS',
   });
 
@@ -3301,6 +3303,8 @@ module.exports = {
   attachNhlDriverContextToRawData,
   buildDualRunRecord,
   applyExecutionGateToNhlCard,
+  applyCanonicalNhlTotalsStatus,
+  applyNhlGoalieExecutionStatusGuard,
   deriveNhlUncertaintyHoldReasonCodes,
   applyNhlUncertaintyHold,
   applyNoBetGuard,
