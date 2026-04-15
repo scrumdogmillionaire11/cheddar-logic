@@ -3483,6 +3483,57 @@ describe('MLB Full-Game Suppression Funnel (WI-0944)', () => {
     expect(report.stage_side_counts).toEqual(reportLastOnly.stage_side_counts);
     expect(report.pre_gate).toEqual(reportLastOnly.pre_gate);
   });
+
+  test('never emits negative drop percentages for non-cascading stage counts', () => {
+    const samples = [];
+
+    for (let i = 0; i < 10; i += 1) {
+      samples.push(
+        evaluateMlbFullGameFunnelCandidate(
+          {
+            market: 'full_game_total',
+            prediction: 'UNDER',
+            confidence: 0.7,
+            projection_source: 'FULL_MODEL',
+            projection: { projected_total: 7.1 },
+            line: 8.5,
+            drivers: [{ projected: 7.1, edge: -1.4 }],
+            reason_codes: ['PASS_PROBABILITY_EDGE_WEAK'],
+          },
+          false,
+        ),
+      );
+    }
+
+    for (let i = 0; i < 8; i += 1) {
+      samples.push(
+        evaluateMlbFullGameFunnelCandidate(
+          {
+            market: 'full_game_total',
+            prediction: 'UNDER',
+            confidence: 0.7,
+            projection_source: 'FULL_MODEL',
+            projection: { projected_total: 7.4 },
+            line: 8.5,
+            drivers: [{ projected: 7.4, edge: -1.1 }],
+            reason_codes: ['PASS_NO_EDGE'],
+          },
+          false,
+        ),
+      );
+    }
+
+    const suppressionReport = buildMlbFullGameSuppressionFunnelReport(samples);
+    Object.values(suppressionReport.drop_pct).forEach((value) => {
+      expect(value).toBeGreaterThanOrEqual(0);
+    });
+
+    const directionalReport = buildMlbFullGameDirectionalFunnelReport(samples);
+    Object.values(directionalReport.stage_drop_pct_by_side).forEach((stageDrop) => {
+      expect(stageDrop.OVER).toBeGreaterThanOrEqual(0);
+      expect(stageDrop.UNDER).toBeGreaterThanOrEqual(0);
+    });
+  });
 });
 
 /**

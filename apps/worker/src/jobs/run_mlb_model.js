@@ -597,6 +597,15 @@ function roundPct(value) {
   return Math.round(value * 10) / 10;
 }
 
+function computeStageDropPct(previousCount, currentCount) {
+  const prev = Number(previousCount);
+  const curr = Number(currentCount);
+  if (!Number.isFinite(prev) || prev <= 0) return 0;
+  if (!Number.isFinite(curr)) return 0;
+  const dropped = Math.max(0, prev - curr);
+  return roundPct((dropped / prev) * 100);
+}
+
 function getMlbFullGameMarketKey(driver = {}) {
   const market = String(driver?.market || '').toLowerCase();
   if (market === 'full_game_total') return 'FULL_GAME_TOTAL';
@@ -750,8 +759,8 @@ function buildMlbFullGameDirectionalFunnelReport(samples = []) {
     const currUnder = stageSideCounts[currStage].UNDER;
 
     dropBySide[currStage] = {
-      OVER: prevOver > 0 ? roundPct(((prevOver - currOver) / prevOver) * 100) : 0,
-      UNDER: prevUnder > 0 ? roundPct(((prevUnder - currUnder) / prevUnder) * 100) : 0,
+      OVER: computeStageDropPct(prevOver, currOver),
+      UNDER: computeStageDropPct(prevUnder, currUnder),
     };
   }
 
@@ -876,9 +885,7 @@ function buildMlbFullGameSuppressionFunnelReport(samples = []) {
   for (let idx = 1; idx < stageOrder.length; idx += 1) {
     const prev = counts[stageOrder[idx - 1]];
     const curr = counts[stageOrder[idx]];
-    dropPct[stageOrder[idx]] = prev > 0
-      ? roundPct(((prev - curr) / prev) * 100)
-      : 0;
+    dropPct[stageOrder[idx]] = computeStageDropPct(prev, curr);
   }
 
   const topSuppressors = Object.entries(suppressorCounts)
