@@ -2679,6 +2679,12 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
     pass_reason_code: resolvedPassReasonCode,
     final_market_decision: buildFinalMarketDecision({
       decisionV2: sourcePlay?.decision_v2,
+      fallbackOfficialStatus:
+        resolvedDisplayDecision.action === 'FIRE'
+          ? 'PLAY'
+          : resolvedDisplayDecision.action === 'HOLD'
+            ? 'LEAN'
+            : 'PASS',
       reasonCodes: reasonCodesUnique,
       passReasonCode: resolvedPassReasonCode,
       edge: edgePct,

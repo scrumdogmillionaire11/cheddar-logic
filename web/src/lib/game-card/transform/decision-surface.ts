@@ -4,6 +4,7 @@ type GoalieStatus = 'CONFIRMED' | 'EXPECTED' | 'UNKNOWN' | null | undefined;
 
 interface BuildFinalMarketDecisionInput {
   decisionV2?: DecisionV2 | null;
+  fallbackOfficialStatus?: 'PLAY' | 'LEAN' | 'PASS' | null;
   reasonCodes?: string[];
   passReasonCode?: string | null;
   edge?: number | null;
@@ -104,7 +105,9 @@ export function buildFinalMarketDecision(input: BuildFinalMarketDecisionInput): 
     decisionV2?.primary_reason_code || '',
   ].filter(Boolean);
 
-  let surfacedStatus = mapOfficialToSurfaced(decisionV2?.official_status);
+  let surfacedStatus = mapOfficialToSurfaced(
+    decisionV2?.official_status ?? input.fallbackOfficialStatus,
+  );
   const certaintyState = resolveCertaintyState(input.goalieHomeStatus, input.goalieAwayStatus);
   const verificationState = resolveVerificationState(decisionV2, reasonCodes);
   const marketStable = resolveMarketStable(reasonCodes);
