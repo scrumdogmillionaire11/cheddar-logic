@@ -3405,7 +3405,13 @@ describe('MLB Full-Game Suppression Funnel (WI-0944)', () => {
             prediction: 'OVER',
             confidence: 0.72,
             projection_source: 'FULL_MODEL',
-            projection: { projected_total: 9.4 },
+            projection: {
+              projected_total: 9.4,
+              home_f5_runs: 2.7,
+              away_f5_runs: 2.2,
+              home_late_runs: 2.3,
+              away_late_runs: 2.2,
+            },
             drivers: [{ projected: 9.4, edge: 1.1 }],
             reason_codes: [],
           },
@@ -3422,7 +3428,13 @@ describe('MLB Full-Game Suppression Funnel (WI-0944)', () => {
             prediction: 'UNDER',
             confidence: 0.66,
             projection_source: 'FULL_MODEL',
-            projection: { projected_total: 7.1 },
+            projection: {
+              projected_total: 7.1,
+              home_f5_runs: 2.1,
+              away_f5_runs: 1.9,
+              home_late_runs: 1.7,
+              away_late_runs: 1.4,
+            },
             drivers: [{ projected: 7.1, edge: -0.9 }],
             reason_codes: ['PASS_NO_EDGE'],
           },
@@ -3453,6 +3465,12 @@ describe('MLB Full-Game Suppression Funnel (WI-0944)', () => {
     expect(report.stage_drop_pct_by_side).toHaveProperty('passed_edge_threshold');
     expect(typeof report.stage_drop_pct_by_side.passed_edge_threshold.OVER).toBe('number');
     expect(typeof report.stage_drop_pct_by_side.passed_edge_threshold.UNDER).toBe('number');
+    expect(report.side_component_averages).toHaveProperty('OVER');
+    expect(report.side_component_averages).toHaveProperty('UNDER');
+    expect(typeof report.side_component_averages.OVER.average_abs_edge).toBe('number');
+    expect(typeof report.side_component_averages.UNDER.average_abs_edge).toBe('number');
+    expect(report.side_component_averages.OVER.average_late_share_pct).toBeGreaterThan(0);
+    expect(report.side_component_averages.OVER.average_late_share_pct).toBeLessThan(100);
   });
 
   test('directional report respects 200-sample window using latest full-game total entries', () => {
