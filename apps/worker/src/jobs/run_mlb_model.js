@@ -986,6 +986,52 @@ function resolveMlbMoneylineExecutionInputs({
   };
 }
 
+function resolveMlbTotalExecutionInputs({
+  prediction,
+  projectedTotal,
+  marketLine,
+  overPrice,
+  underPrice,
+  pOver,
+  pUnder,
+}) {
+  const side = String(prediction || '').toUpperCase();
+  const selectedPrice =
+    side === 'OVER'
+      ? toFiniteNumber(overPrice)
+      : side === 'UNDER'
+        ? toFiniteNumber(underPrice)
+        : null;
+  const pFair =
+    side === 'OVER'
+      ? toFiniteNumber(pOver)
+      : side === 'UNDER'
+        ? toFiniteNumber(pUnder)
+        : null;
+  const pImplied =
+    selectedPrice !== null
+      ? americanOddsToImpliedProbability(selectedPrice)
+      : null;
+  const edge =
+    pFair !== null && pImplied !== null
+      ? pFair - pImplied
+      : null;
+  const edgePoints =
+    Number.isFinite(projectedTotal) && Number.isFinite(marketLine)
+      ? projectedTotal - marketLine
+      : null;
+
+  return {
+    edge,
+    edge_pct: edge,
+    edge_points: edgePoints,
+    price: selectedPrice,
+    p_fair: pFair,
+    p_implied: pImplied,
+    model_prob: pFair,
+  };
+}
+
 function isMlbMoneylineSelection(selection) {
   const side = String(selection || '').toUpperCase();
   return side === 'HOME' || side === 'AWAY';
@@ -2993,6 +3039,22 @@ async function runMLBModel({
                       : gameOddsSnapshot?.h2h_away,
                     rawEdge: driverDetail.edge,
                   })
+                : isFullGameTotal
+                  ? (() => {
+                      const fgCtx = resolveMlbFullGameTotalContext(gameOddsSnapshot);
+                      return resolveMlbTotalExecutionInputs({
+                        prediction: driver.prediction,
+                        projectedTotal:
+                          driver.projection?.projected_total ??
+                          driverDetail.projected ??
+                          null,
+                        marketLine: fgCtx.line,
+                        overPrice: fgCtx.over_price,
+                        underPrice: fgCtx.under_price,
+                        pOver: driver.projection?.p_over ?? null,
+                        pUnder: driver.projection?.p_under ?? null,
+                      });
+                    })()
                 : {}),
               // Projection-only cards are explicitly tagged for downstream separation.
               // projection_floor is only set when the driver itself is a synthetic floor driver.
@@ -3362,6 +3424,7 @@ module.exports = {
   filterSnapshotsByGameIds,
   evaluatePitcherPropPublishability,
   deriveMlbExecutionEnvelope,
+  resolveMlbTotalExecutionInputs,
   resolveMlbMoneylineExecutionInputs,
   assertMlbExecutionInvariant,
   applyExecutionGateToMlbPayload,

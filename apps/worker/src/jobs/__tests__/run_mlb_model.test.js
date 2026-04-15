@@ -51,6 +51,7 @@ const {
   buildMlbPitcherKPayloadFields,
   resolvePitcherKPayloadIdentity,
   computeSyntheticLineF5Driver,
+  resolveMlbTotalExecutionInputs,
   resolveMlbMoneylineExecutionInputs,
 } = require('../run_mlb_model');
 
@@ -1655,6 +1656,67 @@ describe('WI-0720 MLB execution envelope', () => {
     expect(payload.execution_gate.blocked_by).toContain(
       'CONFIDENCE_BELOW_THRESHOLD:0.500',
     );
+  });
+
+  test('resolveMlbTotalExecutionInputs maps full-game total edge into canonical execution fields', () => {
+    const result = resolveMlbTotalExecutionInputs({
+      prediction: 'UNDER',
+      projectedTotal: 7.09,
+      marketLine: 9.5,
+      overPrice: -108,
+      underPrice: -112,
+      pOver: 0.215,
+      pUnder: 0.785,
+    });
+
+    expect(result.price).toBe(-112);
+    expect(result.p_fair).toBeCloseTo(0.785, 6);
+    expect(result.p_implied).toBeCloseTo(112 / 212, 6);
+    expect(result.edge).toBeCloseTo(0.2567, 3);
+    expect(result.edge_pct).toBeCloseTo(result.edge, 6);
+    expect(result.edge_points).toBeCloseTo(-2.41, 6);
+    expect(result.model_prob).toBeCloseTo(0.785, 6);
+  });
+
+  test('mlb full-game total with strong fair edge no longer trips missing-edge at execution gate', () => {
+    const payload = {
+      card_type: 'mlb-full-game',
+      execution_status: 'EXECUTABLE',
+      sport: 'MLB',
+      market_type: 'FULL_GAME',
+      recommended_bet_type: 'total',
+      prediction: 'UNDER',
+      edge: 0.2567,
+      edge_pct: 0.2567,
+      edge_points: -2.41,
+      p_fair: 0.785,
+      p_implied: 112 / 212,
+      price: -112,
+      confidence: 0.6,
+      model_status: 'MODEL_OK',
+      status: 'WATCH',
+      action: 'HOLD',
+      classification: 'LEAN',
+      ev_passed: true,
+      reason_codes: ['MODEL_DEGRADED_INPUTS'],
+      actionable: true,
+      publish_ready: true,
+      _publish_state: {
+        publish_ready: true,
+        emit_allowed: true,
+        execution_status: 'EXECUTABLE',
+      },
+    };
+    const oddsSnapshot = { captured_at: '2026-04-15T18:00:00Z' };
+    const nowMs = new Date(oddsSnapshot.captured_at).getTime() + 60_000;
+
+    const result = applyExecutionGateToMlbPayload(payload, { oddsSnapshot, nowMs });
+
+    expect(result).toEqual({ evaluated: true, blocked: false });
+    expect(payload.execution_gate.should_bet).toBe(true);
+    expect(payload.execution_gate.blocked_by).not.toContain('NO_EDGE_COMPUTED');
+    expect(payload.status).toBe('WATCH');
+    expect(payload.classification).toBe('LEAN');
   });
 
   test('high-edge MLB full-game moneyline is downgraded to LEAN even when payload.card_type is missing', () => {
