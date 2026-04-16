@@ -1,6 +1,6 @@
 'use client';
 
-import type { ProjectionSettledRow } from '@/app/api/results/projection-settled/route';
+import type { ProjectionProxyRow } from '@/app/api/results/projection-settled/route';
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -20,7 +20,7 @@ function fmtNum(
 }
 
 function fmtMatchup(
-  row: ProjectionSettledRow,
+  row: ProjectionProxyRow,
 ): string {
   if (row.homeTeam && row.awayTeam) {
     return `${row.awayTeam} @ ${row.homeTeam}`;
@@ -28,80 +28,124 @@ function fmtMatchup(
   return row.cardTitle || row.gameId;
 }
 
-function outcomeBadgeClass(outcome: 'HIT' | 'MISS' | null): string {
-  if (outcome === 'HIT')
+function directionBadgeClass(side: 'OVER' | 'UNDER' | 'PASS' | null): string {
+  if (side === 'OVER')
+    return 'border-orange-500/40 bg-orange-500/15 text-orange-200';
+  if (side === 'UNDER')
+    return 'border-cyan-500/40 bg-cyan-500/15 text-cyan-200';
+  return 'border-white/20 bg-white/5 text-cloud/50';
+}
+
+function tierBadgeClass(tier: 'PLAY' | 'LEAN' | 'STRONG' | 'PASS'): string {
+  if (tier === 'PLAY')
+    return 'border-blue-500/60 bg-blue-500/25 text-blue-100 font-semibold';
+  if (tier === 'LEAN')
+    return 'border-blue-500/40 bg-blue-500/15 text-blue-200';
+  if (tier === 'STRONG')
+    return 'border-blue-600/70 bg-blue-600/30 text-blue-50 font-bold';
+  return 'border-white/20 bg-white/5 text-cloud/50';
+}
+
+function outcomeBadgeClass(outcome: 'WIN' | 'LOSS' | 'NO_BET'): string {
+  if (outcome === 'WIN')
     return 'border-emerald-500/40 bg-emerald-500/15 text-emerald-200';
-  if (outcome === 'MISS')
+  if (outcome === 'LOSS')
     return 'border-rose-500/40 bg-rose-500/15 text-rose-200';
   return 'border-white/20 bg-white/5 text-cloud/50';
 }
 
 const CARD_LABEL: Record<string, string> = {
-  'nhl-pace-1p': 'NHL 1P Total',
-  'mlb-f5': 'MLB F5',
+  'NHL_1P_TOTAL': 'NHL 1P Total',
 };
 
 // ── row renderers ────────────────────────────────────────────────────────────
 
 interface NhlRowProps {
-  row: ProjectionSettledRow;
+  row: ProjectionProxyRow;
 }
 
 function NhlPaceRow({ row }: NhlRowProps) {
-  const date = fmtDate(row.gameTimeUtc ?? row.createdAt);
-  const projected = fmtNum(row.modelProjection);
-  const line = row.line !== null ? row.line.toFixed(1) : '1.5';
-  const actual =
-    row.actualValue !== null ? row.actualValue.toString() : '—';
-  const outcomeLabel = row.outcome ?? 'PENDING';
+  const date = fmtDate(row.gameDateUtc);
+  const projected = fmtNum(row.projValue, 3);
+  const edge = (row.edgeVsLine >= 0 ? '+' : '') + fmtNum(row.edgeVsLine, 2);
+  const actual = row.actualValue.toString();
+  const direction = row.recommendedSide;
+  const tier = row.tier;
+  const outcome = row.gradedResult;
 
   return (
     <>
       {/* Desktop row */}
-      <div className="hidden grid-cols-7 gap-4 px-4 py-3 text-sm text-cloud/70 md:grid">
+      <div className="hidden grid-cols-9 gap-3 px-4 py-3 text-sm text-cloud/70 md:grid">
         <span>{date}</span>
         <span className="col-span-2 truncate">{fmtMatchup(row)}</span>
         <span className="text-right font-mono">{projected}</span>
-        <span className="text-right font-mono text-cloud/50">o/u {line}</span>
+        <span className="flex justify-center">
+          <span
+            className={`rounded-full border px-2 py-0.5 text-xs font-semibold ${directionBadgeClass(
+              direction,
+            )}`}
+          >
+            {direction}
+          </span>
+        </span>
+        <span className="flex justify-center">
+          <span className={`rounded-full border px-2 py-0.5 text-xs ${tierBadgeClass(tier)}`}>
+            {tier}
+          </span>
+        </span>
+        <span className="text-right font-mono text-cloud/50">{edge}</span>
         <span className="text-right font-mono">{actual}</span>
         <span className="flex justify-end">
           <span
             className={`rounded-full border px-2 py-0.5 text-xs font-semibold ${outcomeBadgeClass(
-              row.outcome,
+              outcome,
             )}`}
           >
-            {outcomeLabel}
+            {outcome}
           </span>
         </span>
       </div>
 
       {/* Mobile card */}
-      <div className="space-y-1 border-b border-white/10 px-4 py-3 text-sm md:hidden">
-        <div className="flex items-start justify-between gap-3">
-          <div>
+      <div className="space-y-2 border-b border-white/10 px-4 py-3 text-sm md:hidden">
+        <div className="flex items-start justify-between gap-2">
+          <div className="flex-1">
             <p className="text-xs text-cloud/50">{date}</p>
             <p className="mt-0.5 font-medium text-cloud">{fmtMatchup(row)}</p>
           </div>
           <span
             className={`rounded-full border px-2 py-0.5 text-xs font-semibold ${outcomeBadgeClass(
-              row.outcome,
+              outcome,
             )}`}
           >
-            {outcomeLabel}
+            {outcome}
           </span>
         </div>
-        <div className="mt-2 grid grid-cols-3 gap-2 text-xs">
+        <div className="flex flex-wrap gap-1">
+          <span className={`rounded-full border px-2 py-0.5 text-xs ${directionBadgeClass(direction)}`}>
+            {direction}
+          </span>
+          <span className={`rounded-full border px-2 py-0.5 text-xs ${tierBadgeClass(tier)}`}>
+            {tier}
+          </span>
+        </div>
+        <div className="mt-2 grid grid-cols-4 gap-2 text-xs">
           <div className="rounded-lg border border-white/10 bg-white/5 px-2 py-1.5 text-center">
             <p className="font-mono font-semibold text-cloud">{projected}</p>
-            <p className="text-cloud/50">Projected</p>
+            <p className="text-cloud/50">Proj</p>
           </div>
           <div className="rounded-lg border border-white/10 bg-white/5 px-2 py-1.5 text-center">
-            <p className="font-mono font-semibold text-cloud">o/u {line}</p>
-            <p className="text-cloud/50">Line</p>
+            <p className="font-mono font-semibold text-cloud/60">{edge}</p>
+            <p className="text-cloud/50">Edge</p>
           </div>
           <div className="rounded-lg border border-white/10 bg-white/5 px-2 py-1.5 text-center">
-            <p className={`font-mono font-semibold ${actual === '—' ? 'text-cloud/50' : 'text-cloud'}`}>{actual}</p>
+            <p className="font-mono font-semibold text-cloud">{actual}</p>
             <p className="text-cloud/50">Actual</p>
+          </div>
+          <div className="rounded-lg border border-white/10 bg-white/5 px-2 py-1.5 text-center">
+            <p className="font-mono font-semibold text-cloud">{fmtNum(row.tierScore)}</p>
+            <p className="text-cloud/50">Score</p>
           </div>
         </div>
       </div>
@@ -109,91 +153,30 @@ function NhlPaceRow({ row }: NhlRowProps) {
   );
 }
 
-interface MlbF5RowProps {
-  row: ProjectionSettledRow;
+// ── per-card-family table section ────────────────────────────────────────────
+
+interface CardFamilySectionProps {
+  rows: ProjectionProxyRow[];
 }
 
-function MlbF5Row({ row }: MlbF5RowProps) {
-  const date = fmtDate(row.gameTimeUtc ?? row.createdAt);
-  const projected = fmtNum(row.modelProjection);
-  const actual =
-    row.actualValue !== null ? fmtNum(row.actualValue) : '—';
-  const errorLabel =
-    row.delta !== null
-      ? `|${fmtNum(row.modelProjection)} − ${fmtNum(row.actualValue)}| = ${fmtNum(row.delta)}`
-      : '—';
-
-  return (
-    <>
-      {/* Desktop row */}
-      <div className="hidden grid-cols-6 gap-4 px-4 py-3 text-sm text-cloud/70 md:grid">
-        <span>{date}</span>
-        <span className="col-span-2 truncate">{fmtMatchup(row)}</span>
-        <span className="text-right font-mono">{projected}</span>
-        <span className="text-right font-mono">{actual}</span>
-        <span className="text-right font-mono text-cloud/50">{errorLabel}</span>
-      </div>
-
-      {/* Mobile card */}
-      <div className="space-y-1 border-b border-white/10 px-4 py-3 text-sm md:hidden">
-        <div>
-          <p className="text-xs text-cloud/50">{date}</p>
-          <p className="mt-0.5 font-medium text-cloud">{fmtMatchup(row)}</p>
-        </div>
-        <div className="mt-2 grid grid-cols-3 gap-2 text-xs">
-          <div className="rounded-lg border border-white/10 bg-white/5 px-2 py-1.5 text-center">
-            <p className="font-mono font-semibold text-cloud">{projected}</p>
-            <p className="text-cloud/50">Projected</p>
-          </div>
-          <div className="rounded-lg border border-white/10 bg-white/5 px-2 py-1.5 text-center">
-            <p className={`font-mono font-semibold ${actual === '—' ? 'text-cloud/50' : 'text-cloud'}`}>{actual}</p>
-            <p className="text-cloud/50">Actual</p>
-          </div>
-          <div className="rounded-lg border border-white/10 bg-white/5 px-2 py-1.5 text-center">
-            <p className="font-mono font-semibold text-cloud/50">{row.delta !== null ? fmtNum(row.delta) : '—'}</p>
-            <p className="text-cloud/50">Error</p>
-          </div>
-        </div>
-      </div>
-    </>
-  );
-}
-
-// ── per-card-type table section ──────────────────────────────────────────────
-
-interface CardTypeSectionProps {
-  cardType: 'nhl-pace-1p' | 'mlb-f5';
-  rows: ProjectionSettledRow[];
-}
-
-function CardTypeSection({ cardType, rows }: CardTypeSectionProps) {
-  const label = CARD_LABEL[cardType] ?? cardType;
-
+function CardFamilySection({ rows }: CardFamilySectionProps) {
   const nhlHeaders = (
-    <div className="grid grid-cols-7 gap-4 bg-night/70 px-4 py-3 text-xs font-semibold uppercase tracking-[0.2em] text-cloud/60">
+    <div className="grid grid-cols-9 gap-3 bg-night/70 px-4 py-3 text-xs font-semibold uppercase tracking-[0.2em] text-cloud/60">
       <span>Date</span>
       <span className="col-span-2">Matchup</span>
       <span className="text-right">Projected</span>
-      <span className="text-right">Line</span>
+      <span className="text-center">Direction</span>
+      <span className="text-center">Tier</span>
+      <span className="text-right">Edge</span>
       <span className="text-right">Actual</span>
       <span className="text-right">Outcome</span>
-    </div>
-  );
-
-  const mlbHeaders = (
-    <div className="grid grid-cols-6 gap-4 bg-night/70 px-4 py-3 text-xs font-semibold uppercase tracking-[0.2em] text-cloud/60">
-      <span>Date</span>
-      <span className="col-span-2">Matchup</span>
-      <span className="text-right">Projected</span>
-      <span className="text-right">Actual</span>
-      <span className="text-right">Error</span>
     </div>
   );
 
   return (
     <div>
       <div className="mb-3 flex items-center justify-between gap-3">
-        <h3 className="text-lg font-semibold text-cloud">{label}</h3>
+        <h3 className="text-lg font-semibold text-cloud">NHL 1P Total Projections</h3>
         <span className="text-xs uppercase tracking-[0.2em] text-cloud/50">
           {rows.length} settled
         </span>
@@ -202,22 +185,19 @@ function CardTypeSection({ cardType, rows }: CardTypeSectionProps) {
       <div className="overflow-hidden rounded-xl border border-white/10">
         {/* headers — desktop only */}
         <div className="hidden md:block">
-          {cardType === 'nhl-pace-1p' ? nhlHeaders : mlbHeaders}
+          {nhlHeaders}
         </div>
 
         {rows.length === 0 ? (
           <div className="px-4 py-6 text-sm text-cloud/60">
-            No settled records yet for this model.
+            No settled projection records yet. Records appear here after games
+            complete and actuals are ingested.
           </div>
         ) : (
           <div className="divide-y divide-white/10 md:divide-y-0">
-            {rows.map((row) =>
-              cardType === 'nhl-pace-1p' ? (
-                <NhlPaceRow key={row.id} row={row} />
-              ) : (
-                <MlbF5Row key={row.id} row={row} />
-              ),
-            )}
+            {rows.map((row) => (
+              <NhlPaceRow key={row.id} row={row} />
+            ))}
           </div>
         )}
       </div>
@@ -228,13 +208,10 @@ function CardTypeSection({ cardType, rows }: CardTypeSectionProps) {
 // ── public component ─────────────────────────────────────────────────────────
 
 interface ProjectionResultsTableProps {
-  rows: ProjectionSettledRow[];
+  rows: ProjectionProxyRow[];
 }
 
 export function ProjectionResultsTable({ rows }: ProjectionResultsTableProps) {
-  const nhlRows = rows.filter((r) => r.cardType === 'nhl-pace-1p');
-  const mlbRows = rows.filter((r) => r.cardType === 'mlb-f5');
-
   if (rows.length === 0) {
     return (
       <div className="rounded-xl border border-white/10 bg-night/30 px-4 py-8 text-center text-sm text-cloud/60">
@@ -246,12 +223,7 @@ export function ProjectionResultsTable({ rows }: ProjectionResultsTableProps) {
 
   return (
     <div className="mt-6 space-y-8">
-      {nhlRows.length > 0 && (
-        <CardTypeSection cardType="nhl-pace-1p" rows={nhlRows} />
-      )}
-      {mlbRows.length > 0 && (
-        <CardTypeSection cardType="mlb-f5" rows={mlbRows} />
-      )}
+      <CardFamilySection rows={rows} />
     </div>
   );
 }
