@@ -254,6 +254,12 @@ export function CardsPageProvider({
         return [];
       }
 
+      // WI-0968: projection mode is an actionable surface; PASS rows stay in
+      // diagnostics/metadata but should never render as projection cards.
+      if (playStatus === 'PASS') {
+        return [];
+      }
+
       if (f.timeWindow === 'today') {
         if (getEtDayKey(game.gameTimeUtc) !== todayKey) return [];
       } else if (f.timeWindow === 'next_2h') {

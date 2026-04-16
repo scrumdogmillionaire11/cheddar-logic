@@ -141,7 +141,9 @@ export default function CardsList() {
 
       {viewMode === 'projections' && projectionItems.length > 0 && (
         <div className="space-y-4">
-          {projectionItems.map(({ game, play }) => (
+          {projectionItems
+            .filter(({ play }) => play.status !== 'PASS')
+            .map(({ game, play }) => (
             <ProjectionCard
               key={`${game.gameId}-gameprops`}
               homeTeam={game.homeTeam}
@@ -150,7 +152,7 @@ export default function CardsList() {
               sport={game.sport?.toUpperCase() ?? 'NHL'}
               play={play}
             />
-          ))}
+            ))}
         </div>
       )}
 
