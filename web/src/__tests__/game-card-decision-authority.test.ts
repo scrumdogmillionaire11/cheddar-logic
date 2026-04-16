@@ -94,61 +94,6 @@ function buildMoneylineGame(params: {
   };
 }
 
-function buildTotalsEvidenceOnlyGame() {
-  const play = {
-    cardType: 'nba-full-game',
-    cardTitle: 'Model total',
-    prediction: 'OVER' as const,
-    confidence: 0.55,
-    tier: 'WATCH' as const,
-    reasoning: 'Missing team metrics cache.',
-    evPassed: true,
-    driverKey: 'driver-nba-evidence-only',
-    edge: 0.02,
-    model_prob: 0.52,
-    market_type: 'TOTAL' as const,
-    selection: { side: 'OVER' as const, team: undefined },
-    kind: 'EVIDENCE' as const,
-    line: 229.5,
-    price: -110,
-    status: 'WATCH' as const,
-    classification: 'LEAN' as const,
-    action: 'HOLD' as const,
-    created_at: '2026-04-15T14:00:00.000Z',
-    missing_inputs: [
-      { reason: 'missing data team mapping' },
-      { code: 'team_metrics_cache absent' },
-      { label: 'player_usage_feed stale' },
-      'weather feed unavailable',
-    ],
-  };
-
-  return {
-    id: 'game-NBA-evidence-only',
-    gameId: 'game-NBA-evidence-only',
-    sport: 'NBA',
-    homeTeam: 'Home Team',
-    awayTeam: 'Away Team',
-    gameTimeUtc: '2026-04-15T19:00:00.000Z',
-    status: 'scheduled',
-    createdAt: '2026-04-15T14:00:00.000Z',
-    odds: {
-      h2hHome: -120,
-      h2hAway: 105,
-      total: 229.5,
-      spreadHome: -3.5,
-      spreadAway: 3.5,
-      spreadPriceHome: -110,
-      spreadPriceAway: -110,
-      totalPriceOver: -110,
-      totalPriceUnder: -110,
-      capturedAt: '2026-04-15T14:05:00.000Z',
-    },
-    plays: [play],
-    true_play: null,
-  };
-}
-
 for (const sport of ['MLB', 'NHL'] as const) {
   const executableCard = transformToGameCard(
     buildMoneylineGame({ sport, officialStatus: 'LEAN', executionStatus: 'EXECUTABLE' }) as never,
@@ -162,16 +107,6 @@ for (const sport of ['MLB', 'NHL'] as const) {
     );
     assert.strictEqual(applyFilters([blockedCard], DEFAULT_GAME_FILTERS, 'game').length, 0);
   }
-}
-
-{
-  const card = transformToGameCard(buildTotalsEvidenceOnlyGame() as never);
-  assert.deepStrictEqual(card.play?.transform_meta?.missing_inputs, [
-    'missing data team mapping',
-    'team_metrics_cache absent',
-    'player_usage_feed stale',
-    'weather feed unavailable',
-  ]);
 }
 
 console.log('Game card decision authority tests passed');

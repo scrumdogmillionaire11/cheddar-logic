@@ -571,7 +571,7 @@ const MLB_FULL_GAME_LEAN_EDGE_THRESHOLD = 0.75;
 const MLB_FULL_GAME_PLAY_EDGE_THRESHOLD = 1.25;
 const MLB_FULL_GAME_SHRINK_FACTOR_FULL_MODEL = 0.7;
 const MLB_FULL_GAME_SHRINK_FACTOR_DEGRADED_MODEL = 0.35;
-const MLB_FULL_GAME_DEGRADED_PASS_THRESHOLD = 2;
+const MLB_FULL_GAME_DEGRADED_PASS_THRESHOLD = 3;
 const MLB_FULL_GAME_DEGRADED_RECENTER_WEIGHT = 0.5;
 const MLB_PURE_SIGNAL_MODE = process.env.MLB_PURE_SIGNAL_MODE === 'true';
 
@@ -1236,11 +1236,14 @@ function projectFullGameTotalCard(homePitcher, awayPitcher, fullGameLine, contex
   const marketAligned = Number.isFinite(shrunkEdge)
     ? Math.abs(shrunkEdge) > MLB_FULL_GAME_SANITY_BAND
     : false;
-  const hasLeanEdge = Number.isFinite(shrunkEdge)
-    ? Math.abs(shrunkEdge) >= MLB_FULL_GAME_LEAN_EDGE_THRESHOLD
+  // WI-0944: degraded projections should qualify on raw edge so shrink/recenter
+  // does not erase otherwise valid signals into blanket PASS outcomes.
+  const edgeForQualification = degradedMode ? rawEdge : shrunkEdge;
+  const hasLeanEdge = Number.isFinite(edgeForQualification)
+    ? Math.abs(edgeForQualification) >= MLB_FULL_GAME_LEAN_EDGE_THRESHOLD
     : false;
-  const hasPlayEdge = Number.isFinite(shrunkEdge)
-    ? Math.abs(shrunkEdge) >= MLB_FULL_GAME_PLAY_EDGE_THRESHOLD
+  const hasPlayEdge = Number.isFinite(edgeForQualification)
+    ? Math.abs(edgeForQualification) >= MLB_FULL_GAME_PLAY_EDGE_THRESHOLD
     : false;
   const pOver = distribution.p_over;
   const pUnder = distribution.p_under;
