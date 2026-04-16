@@ -156,6 +156,17 @@ function syncCanonicalDecisionEnvelope(payload, overrides = {}) {
   const watchdogStatus = payload.decision_v2.watchdog_status || 'READY';
   const isActionable =
     officialStatus === 'PLAY' || officialStatus === 'LEAN';
+  const selectionSide =
+    overrides.selection_side ||
+    overrides.direction ||
+    payload?.selection?.side ||
+    payload?.decision_v2?.direction ||
+    payload?.prediction ||
+    null;
+  const selectionTeam =
+    overrides.selection_team !== undefined
+      ? overrides.selection_team
+      : payload?.selection?.team ?? null;
 
   payload.decision_v2.canonical_envelope_v2 = {
     official_status: officialStatus,
@@ -168,6 +179,9 @@ function syncCanonicalDecisionEnvelope(payload, overrides = {}) {
     reason_codes: reasonCodes,
     is_actionable: isActionable,
     execution_status: executionStatus,
+    direction: selectionSide,
+    selection_side: selectionSide,
+    selection_team: selectionTeam,
     publish_ready:
       overrides.publish_ready != null
         ? overrides.publish_ready === true

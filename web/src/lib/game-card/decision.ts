@@ -154,10 +154,16 @@ export function resolvePlayDisplayDecision(
         action?: Play['action'];
         status?: Play['status'];
         classification?: Play['classification'];
+        final_market_decision?: Play['final_market_decision'];
         decision_v2?: { official_status?: 'PLAY' | 'LEAN' | 'PASS' } | null;
       }
     | null,
 ): ResolvedPlayDisplayDecision {
+  const surfacedAction = actionFromOfficialStatus(
+    play?.final_market_decision?.surfaced_status === 'SLIGHT EDGE'
+      ? 'LEAN'
+      : play?.final_market_decision?.surfaced_status,
+  );
   const explicitAction = isValidAction(play?.action) ? play.action : undefined;
   const classificationAction = actionFromClassificationValue(
     play?.classification,
@@ -168,14 +174,16 @@ export function resolvePlayDisplayDecision(
   const legacyAction = actionFromLegacyStatus(play?.status);
 
   const hasCanonicalDecisionFields =
+    surfacedAction !== undefined ||
     explicitAction !== undefined ||
     classificationAction !== undefined ||
     decisionV2Action !== undefined;
 
   const action =
-    decisionV2Action ??
+    surfacedAction ??
     explicitAction ??
     classificationAction ??
+    decisionV2Action ??
     (hasCanonicalDecisionFields ? undefined : legacyAction) ??
     'PASS';
 

@@ -23,12 +23,6 @@ const ODDS_STALE_SEVERE_MINUTES = Math.max(
  * Derive expression status from drivers if not explicitly provided
  */
 function deriveStatus(card: GameCard): ExpressionStatus {
-  if (card.play?.decision_v2) {
-    if (card.play.decision_v2.official_status === 'PLAY') return 'FIRE';
-    if (card.play.decision_v2.official_status === 'LEAN') return 'WATCH';
-    return 'PASS';
-  }
-
   if (card.play) {
     const action = getPlayDisplayAction(card.play);
     if (action === 'FIRE') return 'FIRE';

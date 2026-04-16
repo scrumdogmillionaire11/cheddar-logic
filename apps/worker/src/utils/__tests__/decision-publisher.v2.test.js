@@ -259,6 +259,30 @@ describe('decision publisher v2 pipeline', () => {
     expect(payload.classification).toBe('BASE');
   });
 
+  test('canonical envelope carries selection semantics for MLB rows', () => {
+    const payload = buildWave1Payload({
+      sport: 'MLB',
+      market_type: 'MONEYLINE',
+      selection: { side: 'HOME', team: 'Home Team' },
+      prediction: 'HOME',
+      decision_v2: {
+        official_status: 'PLAY',
+        primary_reason_code: 'EDGE_CLEAR',
+        watchdog_status: 'READY',
+      },
+    });
+
+    finalizeDecisionFields(payload);
+
+    expect(payload.decision_v2?.canonical_envelope_v2).toMatchObject({
+      official_status: 'PLAY',
+      primary_reason_code: 'EDGE_CLEAR',
+      direction: 'HOME',
+      selection_side: 'HOME',
+      selection_team: 'Home Team',
+    });
+  });
+
   test('preserves additive pipeline_state metadata', () => {
     const pipelineState = {
       ingested: true,
