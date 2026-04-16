@@ -2,6 +2,7 @@
 
 const {
   evaluateExecution,
+  evaluateMlbExecution,
 } = require('../execution-gate');
 
 describe('evaluateExecution', () => {
@@ -203,6 +204,96 @@ describe('evaluateExecution', () => {
       expect(result.freshness_decision.sport).toBe('nhl');
       expect(result.freshness_decision.tier).toBe('STALE_VALID');
     });
+  });
+});
+
+describe('evaluateMlbExecution', () => {
+  test('centralized MLB full-game ML policy allows high-edge low-confidence row and marks lean downgrade', () => {
+    const payload = {
+      sport: 'MLB',
+      card_type: 'mlb-full-game-ml',
+      market_type: 'MONEYLINE',
+      recommended_bet_type: 'moneyline',
+      period: null,
+      edge: 0.061,
+      confidence: 0.5,
+      model_status: 'MODEL_OK',
+      reason_codes: ['SOFT_WEAK_DRIVER_SUPPORT'],
+    };
+
+    const result = evaluateMlbExecution(payload, {
+      modelStatus: 'MODEL_OK',
+      rawEdge: payload.edge,
+      confidence: payload.confidence,
+      snapshotAgeMs: 30_000,
+      sport: payload.sport,
+      recommendedBetType: payload.recommended_bet_type,
+      marketType: payload.market_type,
+      period: payload.period,
+      cardType: payload.card_type,
+    });
+
+    expect(result.gateShouldBet).toBe(true);
+    expect(result.gateBlockedBy).toEqual([]);
+    expect(result.downgradeHighEdgeToLean).toBe(true);
+  });
+
+  test('centralized MLB policy can override soft confidence/net-edge blockers for large-edge full-game ML rows', () => {
+    const payload = {
+      sport: 'MLB',
+      card_type: 'mlb-full-game-ml',
+      market_type: 'MONEYLINE',
+      recommended_bet_type: 'moneyline',
+      edge: 0.08,
+      confidence: 0.4,
+      model_status: 'MODEL_OK',
+      reason_codes: [],
+    };
+
+    const result = evaluateMlbExecution(payload, {
+      modelStatus: 'MODEL_OK',
+      rawEdge: payload.edge,
+      confidence: payload.confidence,
+      snapshotAgeMs: 30_000,
+      sport: payload.sport,
+      recommendedBetType: payload.recommended_bet_type,
+      marketType: payload.market_type,
+      cardType: payload.card_type,
+    });
+
+    expect(result.gateResult.shouldBet).toBe(false);
+    expect(result.applyHighEdgeOverride).toBe(true);
+    expect(result.gateShouldBet).toBe(true);
+    expect(result.gateBlockedBy).toEqual([]);
+  });
+
+  test('non-MLB rows are unaffected by MLB override policy', () => {
+    const payload = {
+      sport: 'NBA',
+      card_type: 'nba-moneyline-call',
+      market_type: 'MONEYLINE',
+      recommended_bet_type: 'moneyline',
+      edge: 0.08,
+      confidence: 0.4,
+      model_status: 'MODEL_OK',
+      reason_codes: [],
+    };
+
+    const result = evaluateMlbExecution(payload, {
+      modelStatus: 'MODEL_OK',
+      rawEdge: payload.edge,
+      confidence: payload.confidence,
+      snapshotAgeMs: 30_000,
+      sport: payload.sport,
+      recommendedBetType: payload.recommended_bet_type,
+      marketType: payload.market_type,
+      cardType: payload.card_type,
+    });
+
+    expect(result.applyHighEdgeOverride).toBe(false);
+    expect(result.downgradeHighEdgeToLean).toBe(false);
+    expect(result.gateShouldBet).toBe(false);
+    expect(result.gateBlockedBy).toContain('CONFIDENCE_BELOW_THRESHOLD:0.400');
   });
 });
 

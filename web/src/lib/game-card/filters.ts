@@ -142,9 +142,28 @@ function getCanonicalEnvelope(play: GameCard['play']) {
     : null;
 }
 
+function resolveSurfacedOfficialStatus(
+  play: GameCard['play'],
+): 'PLAY' | 'LEAN' | 'PASS' | null {
+  if (!play) return null;
+
+  const surfacedStatus = play.final_market_decision?.surfaced_status;
+  if (surfacedStatus === 'PLAY') return 'PLAY';
+  if (surfacedStatus === 'SLIGHT EDGE') return 'LEAN';
+  if (surfacedStatus === 'PASS') return 'PASS';
+
+  if (play.action === 'FIRE' || play.classification === 'BASE') return 'PLAY';
+  if (play.action === 'HOLD' || play.classification === 'LEAN') return 'LEAN';
+  if (play.action === 'PASS' || play.classification === 'PASS') return 'PASS';
+
+  return null;
+}
+
 function resolveCanonicalOfficialStatus(
   play: GameCard['play'],
 ): 'PLAY' | 'LEAN' | 'PASS' | null {
+  const surfaced = resolveSurfacedOfficialStatus(play);
+  if (surfaced) return surfaced;
   const envelope = getCanonicalEnvelope(play);
   const fromEnvelope = envelope?.official_status;
   if (
@@ -161,6 +180,9 @@ function resolveCanonicalOfficialStatus(
 }
 
 function resolveCanonicalIsActionable(play: GameCard['play']): boolean | null {
+  const surfaced = resolveSurfacedOfficialStatus(play);
+  if (surfaced) return surfaced !== 'PASS';
+
   const envelope = getCanonicalEnvelope(play);
   if (typeof envelope?.is_actionable === 'boolean') {
     return envelope.is_actionable;

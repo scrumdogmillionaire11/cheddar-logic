@@ -66,6 +66,35 @@ function roundToHalf(value, direction = 'nearest') {
   return Math.round(scaled) / 2;
 }
 
+/**
+ * Canonical MLB projection tier policy used by model-local projections.
+ *
+ * FULL_MODEL: no degraded inputs and no degraded gate cap.
+ * DEGRADED_MODEL: degraded gate or degraded inputs present.
+ * SYNTHETIC_FALLBACK: required model drivers unavailable.
+ */
+function resolveMlbProjectionTierContract({
+  hasSyntheticFallback = false,
+  degradedInputCount = 0,
+  gateStatus = 'MODEL_OK',
+  fallbackReasonCode = 'PASS_SYNTHETIC_FALLBACK',
+} = {}) {
+  if (hasSyntheticFallback) {
+    return {
+      projection_source: 'SYNTHETIC_FALLBACK',
+      status_cap: 'PASS',
+      reason_codes: [fallbackReasonCode],
+    };
+  }
+
+  const isDegraded = gateStatus === 'DEGRADED' || degradedInputCount > 0;
+  return {
+    projection_source: isDegraded ? 'DEGRADED_MODEL' : 'FULL_MODEL',
+    status_cap: isDegraded ? 'LEAN' : 'PLAY',
+    reason_codes: degradedInputCount > 0 ? ['MODEL_DEGRADED_INPUTS'] : [],
+  };
+}
+
 function resolveMultiplicativeAdjustment(baseRuns, factors = []) {
   const safeBase = Number.isFinite(baseRuns) ? baseRuns : 0;
   let running = safeBase;
@@ -398,16 +427,19 @@ function buildF5SyntheticFallbackProjection(homePitcher, awayPitcher) {
   const awayMean = Math.max(0.3, homeStarterSkill * (awayLeashIp / 9));
   const totalMean = homeMean + awayMean;
   const rangeWidth = Math.max(0.4, Math.sqrt(Math.max(totalMean, 0.1)) * MLB_F5_POISSON_RANGE_SCALE);
+  const tierContract = resolveMlbProjectionTierContract({
+    hasSyntheticFallback: true,
+  });
 
   return {
     base: totalMean,
     confidence: 4,
     avgWhip: ((homePitcher?.whip ?? 1.25) + (awayPitcher?.whip ?? 1.25)) / 2,
     avgK9: ((homePitcher?.k_per_9 ?? 8.5) + (awayPitcher?.k_per_9 ?? 8.5)) / 2,
-    projection_source: 'SYNTHETIC_FALLBACK',
-    status_cap: 'PASS',
+    projection_source: tierContract.projection_source,
+    status_cap: tierContract.status_cap,
     missing_inputs: [],
-    reason_codes: ['PASS_SYNTHETIC_FALLBACK'],
+    reason_codes: tierContract.reason_codes,
     projected_home_f5_runs: homeMean,
     projected_away_f5_runs: awayMean,
     projected_total_mean: totalMean,
@@ -524,6 +556,11 @@ function projectF5Total(homePitcher, awayPitcher, context = {}) {
   if (gate.status === 'DEGRADED') {
     confidence = Math.min(confidence, DEGRADED_CONSTRAINTS.MAX_CONFIDENCE * 10); // scale to 1-10 range
   }
+  const tierContract = resolveMlbProjectionTierContract({
+    hasSyntheticFallback: false,
+    degradedInputCount: degradedInputs.length,
+    gateStatus: gate.status,
+  });
 
   return {
     base,
@@ -532,11 +569,11 @@ function projectF5Total(homePitcher, awayPitcher, context = {}) {
     avgK9,
     model_status: gate.status,
     missingOptional: gate.missingOptional,
-    projection_source: degradedInputs.length > 0 ? 'DEGRADED_MODEL' : 'FULL_MODEL',
-    status_cap: gate.status === 'DEGRADED' || degradedInputs.length > 0 ? 'LEAN' : 'PLAY',
+    projection_source: tierContract.projection_source,
+    status_cap: tierContract.status_cap,
     missing_inputs: degradedInputs,
     degraded_inputs: degradedInputs,
-    reason_codes: degradedInputs.length > 0 ? ['MODEL_DEGRADED_INPUTS'] : [],
+    reason_codes: tierContract.reason_codes,
     projected_home_f5_runs: homeMean,
     projected_away_f5_runs: awayMean,
     projected_total_mean: base,
@@ -1141,8 +1178,11 @@ function projectFullGameTotal(homePitcher, awayPitcher, context = {}) {
   if (variance.volatility_bucket === MLB_TOTAL_VOL_BUCKETS.MED) confidence -= 1;
   confidence = Math.max(1, Math.min(10, confidence));
 
-  const projectionSource = degradedInputs.length === 0 ? 'FULL_MODEL' : 'DEGRADED_MODEL';
-  const statusCap = projectionSource === 'FULL_MODEL' ? 'PLAY' : 'LEAN';
+  const tierContract = resolveMlbProjectionTierContract({
+    degradedInputCount: degradedInputs.length,
+  });
+  const projectionSource = tierContract.projection_source;
+  const statusCap = tierContract.status_cap;
 
   const f5BaseRuns =
     (homeF5.component_breakdown?.base_runs ?? 0) +

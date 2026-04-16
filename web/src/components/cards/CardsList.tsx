@@ -5,6 +5,7 @@ import PropGameCard from '@/components/prop-game-card';
 import { useCardsPageActions, useCardsPageState, BUCKET_LABELS } from './CardsPageContext';
 import GameCardItem from './GameCardItem';
 import SportDiagnosticsPanel from './SportDiagnosticsPanel';
+import { isActionableProjectionPlay } from './shared';
 
 export default function CardsList() {
   const {
@@ -141,7 +142,9 @@ export default function CardsList() {
 
       {viewMode === 'projections' && projectionItems.length > 0 && (
         <div className="space-y-4">
-          {projectionItems.map(({ game, play }) => (
+          {projectionItems
+            .filter(({ play }) => isActionableProjectionPlay(play))
+            .map(({ game, play }) => (
             <ProjectionCard
               key={`${game.gameId}-gameprops`}
               homeTeam={game.homeTeam}
@@ -150,7 +153,7 @@ export default function CardsList() {
               sport={game.sport?.toUpperCase() ?? 'NHL'}
               play={play}
             />
-          ))}
+            ))}
         </div>
       )}
 

@@ -131,9 +131,12 @@ assert.ok(
     routeHandlerSource.includes(
       "const TRUE_PLAY_AUTHORITY_SOURCE = 'CARD_PAYLOADS_DECISION_V2'",
     ) &&
+    routeHandlerSource.includes('canonicalEnvelopeSelectionSide') &&
+    routeHandlerSource.includes('canonicalEnvelopeSelectionTeam') &&
+    transformSource.includes('getCanonicalEnvelopeSelection(') &&
     !routeHandlerSource.includes('repair_applied') &&
     !routeHandlerSource.includes('nhl_market_call_fallback'),
-  'TD-03: route-handler must gate official_status on decision_v2 first (no legacy reconstruction for NHL market-call cards)',
+  'TD-03: route-handler and transform must prefer canonical decision envelope fields before legacy selection reconstruction',
 );
 
 console.log('✅ Games pipeline v2 source contract tests passed');

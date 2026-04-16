@@ -92,6 +92,23 @@ type ProjectionSummaryRow = {
   mae: number | null;
   rowsSeen: number;
   sampleSize: number;
+  segments?: Array<{
+    bucketRangeLabel: string;
+    projectionMin: number;
+    projectionMax: number;
+    actualsAvailable: boolean;
+    bias: number | null;
+    mae: number | null;
+    directionalAccuracy: number | null;
+    directionalWins: number;
+    directionalLosses: number;
+    overWins: number;
+    overLosses: number;
+    underWins: number;
+    underLosses: number;
+    sampleSize: number;
+    rowsSeen: number;
+  }>;
 };
 
 type ResultsResponse = {
@@ -235,6 +252,7 @@ export default function ResultsPage() {
   const [projectionSettledRows, setProjectionSettledRows] = useState<ProjectionProxyRow[]>([]);
   const [projectionActualsReady, setProjectionActualsReady] = useState(false);
   const [projectionSettledLoading, setProjectionSettledLoading] = useState(true);
+  const [expandedProjectionFamilies, setExpandedProjectionFamilies] = useState<Set<string>>(new Set());
   const projectionSummariesWithActuals = useMemo(
     () => projectionSummaries.filter((row) => row.actualsAvailable),
     [projectionSummaries],
@@ -820,7 +838,7 @@ export default function ResultsPage() {
             <h2 className="text-2xl font-semibold">Projection Models (Research Only)</h2>
             <p className="mt-2 text-sm text-cloud/70">
               Model Projection — No Line Applied. Projection-only markets tracked
-              separately — no P&amp;L, just model accuracy versus actuals.
+              separately — no P&amp;L, just model accuracy versus actuals. Click a model row to see performance by projection value range.
             </p>
             <div className="mt-6 overflow-hidden rounded-xl border border-white/10">
               <div className="grid grid-cols-8 gap-4 bg-night/70 px-4 py-3 text-xs font-semibold uppercase tracking-[0.2em] text-cloud/60">
@@ -834,43 +852,113 @@ export default function ResultsPage() {
                 <span>Under</span>
               </div>
               <div className="divide-y divide-white/10">
-                {projectionSummariesWithActuals.map((row) => (
-                  <div
-                    key={row.cardFamily}
-                    className="grid grid-cols-8 gap-4 px-4 py-3 text-sm text-cloud/70"
-                  >
-                    <span className="font-medium text-cloud">{row.familyLabel}</span>
-                    <span>{row.sampleSize > 0 ? row.sampleSize : '—'}</span>
-                    <span>
-                      {row.mae !== null ? formatDecimal(row.mae, 2, { signed: false }) : '—'}
-                    </span>
-                    <span>
-                      {row.bias !== null ? formatDecimal(row.bias, 2) : '—'}
-                    </span>
-                    <span>
-                      {row.actualsAvailable && row.directionalAccuracy !== null
-                        ? formatPercent(row.directionalAccuracy)
-                        : row.actualsAvailable === false
-                          ? 'Awaiting settled outcome data'
-                          : '—'}
-                    </span>
-                    <span>
-                      {(row.directionalWins + row.directionalLosses) > 0
-                        ? `${row.directionalWins}-${row.directionalLosses}`
-                        : '—'}
-                    </span>
-                    <span>
-                      {(row.overWins + row.overLosses) > 0
-                        ? `${row.overWins}-${row.overLosses}`
-                        : '—'}
-                    </span>
-                    <span>
-                      {(row.underWins + row.underLosses) > 0
-                        ? `${row.underWins}-${row.underLosses}`
-                        : '—'}
-                    </span>
-                  </div>
-                ))}
+                {projectionSummariesWithActuals.map((row) => {
+                  const isExpanded = expandedProjectionFamilies.has(row.cardFamily);
+                  const hasSegments = row.segments && row.segments.length > 0;
+
+                  return (
+                    <div key={row.cardFamily}>
+                      <div
+                        className={`grid grid-cols-8 gap-4 px-4 py-3 text-sm text-cloud/70 ${
+                          hasSegments ? 'cursor-pointer hover:bg-white/5' : ''
+                        }`}
+                        onClick={() => {
+                          if (!hasSegments) return;
+                          const newExpanded = new Set(expandedProjectionFamilies);
+                          if (isExpanded) {
+                            newExpanded.delete(row.cardFamily);
+                          } else {
+                            newExpanded.add(row.cardFamily);
+                          }
+                          setExpandedProjectionFamilies(newExpanded);
+                        }}
+                      >
+                        <span className="font-medium text-cloud">
+                          {hasSegments && (
+                            <span className="mr-2 text-xs text-cloud/50">
+                              {isExpanded ? '▼' : '▶'}
+                            </span>
+                          )}
+                          {row.familyLabel}
+                        </span>
+                        <span>{row.sampleSize > 0 ? row.sampleSize : '—'}</span>
+                        <span>
+                          {row.mae !== null ? formatDecimal(row.mae, 2, { signed: false }) : '—'}
+                        </span>
+                        <span>
+                          {row.bias !== null ? formatDecimal(row.bias, 2) : '—'}
+                        </span>
+                        <span>
+                          {row.actualsAvailable && row.directionalAccuracy !== null
+                            ? formatPercent(row.directionalAccuracy)
+                            : row.actualsAvailable === false
+                              ? 'Awaiting settled outcome data'
+                              : '—'}
+                        </span>
+                        <span>
+                          {(row.directionalWins + row.directionalLosses) > 0
+                            ? `${row.directionalWins}-${row.directionalLosses}`
+                            : '—'}
+                        </span>
+                        <span>
+                          {(row.overWins + row.overLosses) > 0
+                            ? `${row.overWins}-${row.overLosses}`
+                            : '—'}
+                        </span>
+                        <span>
+                          {(row.underWins + row.underLosses) > 0
+                            ? `${row.underWins}-${row.underLosses}`
+                            : '—'}
+                        </span>
+                      </div>
+
+                      {/* Segment rows */}
+                      {isExpanded && hasSegments && row.segments && (
+                        <div className="divide-y divide-white/5 bg-white/2">
+                          {row.segments.map((segment) => (
+                            <div
+                              key={segment.bucketRangeLabel}
+                              className="grid grid-cols-8 gap-4 px-8 py-2 text-xs text-cloud/60"
+                            >
+                              <span className="font-mono text-cloud/50">
+                                Range: {segment.bucketRangeLabel}
+                              </span>
+                              <span>{segment.sampleSize}</span>
+                              <span>
+                                {segment.mae !== null
+                                  ? formatDecimal(segment.mae, 2, { signed: false })
+                                  : '—'}
+                              </span>
+                              <span>
+                                {segment.bias !== null ? formatDecimal(segment.bias, 2) : '—'}
+                              </span>
+                              <span>
+                                {segment.directionalAccuracy !== null
+                                  ? formatPercent(segment.directionalAccuracy)
+                                  : '—'}
+                              </span>
+                              <span>
+                                {(segment.directionalWins + segment.directionalLosses) > 0
+                                  ? `${segment.directionalWins}-${segment.directionalLosses}`
+                                  : '—'}
+                              </span>
+                              <span>
+                                {(segment.overWins + segment.overLosses) > 0
+                                  ? `${segment.overWins}-${segment.overLosses}`
+                                  : '—'}
+                              </span>
+                              <span>
+                                {(segment.underWins + segment.underLosses) > 0
+                                  ? `${segment.underWins}-${segment.underLosses}`
+                                  : '—'}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             </div>
           </section>

@@ -109,4 +109,34 @@ for (const sport of ['MLB', 'NHL'] as const) {
   }
 }
 
+{
+  const game = buildMoneylineGame({
+    sport: 'MLB',
+    officialStatus: 'LEAN',
+    executionStatus: 'EXECUTABLE',
+  });
+  const play = game.plays[0] as any;
+  play.prediction = 'AWAY';
+  play.selection = { side: 'AWAY', team: 'Away Team' };
+  play.decision_v2.direction = 'HOME';
+  play.decision_v2.canonical_envelope_v2 = {
+    official_status: 'LEAN',
+    primary_reason_code: 'EDGE_CLEAR',
+    direction: 'HOME',
+    selection_side: 'HOME',
+    selection_team: 'Home Team',
+    reason_codes: ['EDGE_CLEAR'],
+    terminal_reason_family: 'QUALIFIED',
+    is_actionable: true,
+    execution_status: 'EXECUTABLE',
+    publish_ready: true,
+  };
+
+  const card = transformToGameCard(game as never);
+  assert.strictEqual(card.play?.side, 'HOME');
+  assert.strictEqual(card.play?.selection?.side, 'HOME');
+  assert.strictEqual(card.play?.selection?.team, 'Home Team');
+}
+
+
 console.log('Game card decision authority tests passed');

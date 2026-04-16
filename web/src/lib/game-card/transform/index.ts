@@ -404,6 +404,23 @@ function getCanonicalEnvelopeFromPlay(
     : null;
 }
 
+function getCanonicalEnvelopeSelection(
+  play: ApiPlay | null | undefined
+): { side: string | null; team: string | null } {
+  const canonicalEnvelope = getCanonicalEnvelopeFromPlay(play);
+  const side =
+    canonicalEnvelope &&
+    (typeof canonicalEnvelope.selection_side === 'string' ||
+      typeof canonicalEnvelope.direction === 'string')
+      ? String(canonicalEnvelope.selection_side ?? canonicalEnvelope.direction)
+      : null;
+  const team =
+    canonicalEnvelope && typeof canonicalEnvelope.selection_team === 'string'
+      ? canonicalEnvelope.selection_team
+      : null;
+  return { side, team };
+}
+
 function resolveCanonicalOfficialStatus(
   play: ApiPlay | null | undefined
 ): string | null {
@@ -1172,8 +1189,16 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
       : selectWave1DecisionCandidate(scopedPlayCandidates, game.sport);
   if (wave1DecisionPlay?.decision_v2) {
     const decisionV2 = wave1DecisionPlay.decision_v2;
+    const canonicalSelection = getCanonicalEnvelopeSelection(wave1DecisionPlay);
+    const canonicalSelectionDirection = normalizeSideToken(canonicalSelection.side);
     const effectiveDecisionV2: DecisionV2 = {
       ...decisionV2,
+      direction:
+        canonicalSelectionDirection !== 'NONE'
+          ? canonicalSelectionDirection
+          :
+        decisionV2.direction ??
+        'NONE',
       missing_data: {
         ...decisionV2.missing_data,
         missing_fields: normalizeMissingInputs(decisionV2.missing_data?.missing_fields),
@@ -1385,9 +1410,15 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
             : 'UNKNOWN',
       },
       selection: wave1DecisionPlay.selection
+        || canonicalSelection.side
         ? {
-            side: (wave1DecisionPlay.selection.side ?? 'NONE') as SelectionSide,
-            team: wave1DecisionPlay.selection.team,
+            side: (
+              canonicalSelection.side ??
+              wave1DecisionPlay.selection?.side ??
+              'NONE'
+            ) as SelectionSide,
+            team:
+              canonicalSelection.team ?? wave1DecisionPlay.selection?.team,
           }
         : undefined,
       reason_codes: mergedReasonCodes,
@@ -1849,8 +1880,11 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
     (sourcePlay
       ? inferMarketFromPlay(sourcePlay)
       : { market, canonical: undefined, reasonCodes: [], tags: [] });
+  const sourceCanonicalSelection = getCanonicalEnvelopeSelection(sourcePlay);
   const sourceSide = normalizeSideToken(
-    sourcePlay?.selection?.side ?? sourcePlay?.prediction,
+    sourceCanonicalSelection.side ??
+      sourcePlay?.selection?.side ??
+      sourcePlay?.prediction,
   );
   const sourceHasPlayableBet =
     Boolean(sourcePlay) &&
@@ -2126,7 +2160,12 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
 
   // For PROP plays, the validation is different
   if (resolvedMarketType === 'PROP') {
-    if (!sourcePlay?.selection?.side && !sourcePlay?.selection?.team)
+    if (
+      !sourceCanonicalSelection.side &&
+      !sourceCanonicalSelection.team &&
+      !sourcePlay?.selection?.side &&
+      !sourcePlay?.selection?.team
+    )
       reasonCodes.push('PASS_MISSING_SELECTION');
   } else {
     if (!sourceInference.canonical)

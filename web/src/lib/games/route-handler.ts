@@ -2131,6 +2131,22 @@ export async function GET(request: NextRequest) {
           payloadMarketContext?.projection,
         );
         const payloadMarketContextWager = toObject(payloadMarketContext?.wager);
+        const normalizedDecisionV2 = normalizeDecisionV2(
+          (payload as Record<string, unknown>).decision_v2 ??
+            payloadPlay?.decision_v2,
+        );
+        const canonicalEnvelope =
+          normalizedDecisionV2?.canonical_envelope_v2 &&
+          typeof normalizedDecisionV2.canonical_envelope_v2 === 'object'
+            ? normalizedDecisionV2.canonical_envelope_v2
+            : null;
+        const canonicalEnvelopeSelectionSide = firstString(
+          canonicalEnvelope?.selection_side,
+          canonicalEnvelope?.direction,
+        );
+        const canonicalEnvelopeSelectionTeam = firstString(
+          canonicalEnvelope?.selection_team,
+        );
         const payloadSelection =
           toObject(payload.selection) ?? toObject(payloadPlay?.selection);
         const payloadSelectionRaw = firstString(
@@ -2139,7 +2155,8 @@ export async function GET(request: NextRequest) {
         );
         const normalizedSelectionSide =
           normalizeSelectionSide(
-            payloadSelection?.side ??
+            canonicalEnvelopeSelectionSide ??
+              payloadSelection?.side ??
               payloadMarketContext?.selection_side ??
               payloadPlay?.side ??
               payloadSelectionRaw ??
@@ -2155,10 +2172,6 @@ export async function GET(request: NextRequest) {
           payload.classification ??
             payloadPlay?.classification ??
             driverInputs?.classification,
-        );
-        const normalizedDecisionV2 = normalizeDecisionV2(
-          (payload as Record<string, unknown>).decision_v2 ??
-            payloadPlay?.decision_v2,
         );
         const normalizedTier = normalizeTier(payload.tier ?? payloadPlay?.tier);
         const baseNormalizedPrediction =
@@ -2202,6 +2215,7 @@ export async function GET(request: NextRequest) {
         );
         const normalizedSelectionTeamBase = firstString(
           normalizedPlayerName,
+          canonicalEnvelopeSelectionTeam,
           payloadSelection?.team,
           payloadMarketContext?.selection_team,
           payloadPlay?.team,

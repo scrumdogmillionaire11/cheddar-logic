@@ -5,9 +5,11 @@
 delete process.env.MLB_FULL_GAME_SHRINK_FACTOR_FULL_MODEL;
 delete process.env.MLB_FULL_GAME_SHRINK_FACTOR_DEGRADED_MODEL;
 delete process.env.MLB_FULL_GAME_DEGRADED_RECENTER_WEIGHT;
+delete process.env.MLB_PURE_SIGNAL_MODE;
 
 const {
   projectF5Total,
+  projectFullGameTotal,
   projectFullGameTotalCard,
   computeBullpenAdjustmentRuns,
 } = require('../mlb-model');
@@ -339,6 +341,45 @@ describe('projectFullGameTotalCard — WI-0944 gate semantics', () => {
     expect(result.projection.projected_total_final).toBe(result.directional_audit.final_total);
   });
 
+  test('MLB_PURE_SIGNAL_MODE toggle does not change projection tier identity', () => {
+    const originalPureSignalMode = process.env.MLB_PURE_SIGNAL_MODE;
+    const degradedContext = {
+      ...baseFgContext,
+      home_bullpen_era: null,
+      away_bullpen_era: null,
+      home_bullpen_context: null,
+      away_bullpen_context: null,
+    };
+
+    let projectFullGameTotalStrict;
+    process.env.MLB_PURE_SIGNAL_MODE = 'false';
+    jest.resetModules();
+    jest.isolateModules(() => {
+      ({ projectFullGameTotal: projectFullGameTotalStrict } = require('../mlb-model'));
+    });
+    const strictResult = projectFullGameTotalStrict(validHome, validAway, degradedContext);
+
+    let projectFullGameTotalPure;
+    process.env.MLB_PURE_SIGNAL_MODE = 'true';
+    jest.resetModules();
+    jest.isolateModules(() => {
+      ({ projectFullGameTotal: projectFullGameTotalPure } = require('../mlb-model'));
+    });
+    const pureSignalResult = projectFullGameTotalPure(validHome, validAway, degradedContext);
+
+    expect(strictResult.projection_source).toBe('DEGRADED_MODEL');
+    expect(pureSignalResult.projection_source).toBe('DEGRADED_MODEL');
+    expect(strictResult.status_cap).toBe('LEAN');
+    expect(pureSignalResult.status_cap).toBe('LEAN');
+
+    if (originalPureSignalMode == null) {
+      delete process.env.MLB_PURE_SIGNAL_MODE;
+    } else {
+      process.env.MLB_PURE_SIGNAL_MODE = originalPureSignalMode;
+    }
+    jest.resetModules();
+  });
+
   test('env override can disable full-model shrink for diagnostics', () => {
     const original = process.env.MLB_FULL_GAME_SHRINK_FACTOR_FULL_MODEL;
     let projectFullGameTotalCardWithOverride;
@@ -413,5 +454,51 @@ describe('projectFullGameTotalCard — WI-0944 gate semantics', () => {
     );
     expect(result.status).not.toBe('PASS');
     expect(result.ev_threshold_passed).toBe(true);
+  });
+
+  test('MLB_PURE_SIGNAL_MODE only removes soft suppressor reason-codes for full-game totals', () => {
+    const originalPureSignalMode = process.env.MLB_PURE_SIGNAL_MODE;
+    const contradictionContext = {
+      ...baseFgContext,
+      f5_line: 4.0,
+      home_bullpen_era: 2.8,
+      away_bullpen_era: 6.4,
+      home_bullpen_fatigue_index: 0.1,
+      away_bullpen_fatigue_index: 0.95,
+      home_leverage_availability: 0.95,
+      away_leverage_availability: 0.1,
+      home_recent_usage: 0.1,
+      away_recent_usage: 0.95,
+    };
+
+    let projectFullGameTotalCardStrict;
+    process.env.MLB_PURE_SIGNAL_MODE = 'false';
+    jest.resetModules();
+    jest.isolateModules(() => {
+      ({ projectFullGameTotalCard: projectFullGameTotalCardStrict } = require('../mlb-model'));
+    });
+    const strictResult = projectFullGameTotalCardStrict(validHome, validAway, 11.2, contradictionContext);
+
+    let projectFullGameTotalCardPure;
+    process.env.MLB_PURE_SIGNAL_MODE = 'true';
+    jest.resetModules();
+    jest.isolateModules(() => {
+      ({ projectFullGameTotalCard: projectFullGameTotalCardPure } = require('../mlb-model'));
+    });
+    const pureSignalResult = projectFullGameTotalCardPure(validHome, validAway, 11.2, contradictionContext);
+
+    expect(strictResult.projection_source).toBe(pureSignalResult.projection_source);
+    expect(strictResult.reason_codes).toEqual(expect.arrayContaining(['SOFT_F5_CONTRADICTION']));
+    expect(pureSignalResult.reason_codes).not.toContain('SOFT_F5_CONTRADICTION');
+    const nonSoftStrictReasons = strictResult.reason_codes.filter((code) => !code.startsWith('SOFT_'));
+    const nonSoftPureReasons = pureSignalResult.reason_codes.filter((code) => !code.startsWith('SOFT_'));
+    expect(nonSoftPureReasons).toEqual(nonSoftStrictReasons);
+
+    if (originalPureSignalMode == null) {
+      delete process.env.MLB_PURE_SIGNAL_MODE;
+    } else {
+      process.env.MLB_PURE_SIGNAL_MODE = originalPureSignalMode;
+    }
+    jest.resetModules();
   });
 });

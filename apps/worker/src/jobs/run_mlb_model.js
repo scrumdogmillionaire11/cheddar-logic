@@ -73,7 +73,7 @@ const {
   classifyMlbPitcherKQuality,
   dedupeFlags,
 } = require('./mlb-k-input-classifier');
-const { evaluateExecution } = require('./execution-gate');
+const { evaluateExecution, evaluateMlbExecution } = require('./execution-gate');
 const { refreshStaleOdds } = require('./refresh_stale_odds');
 const {
   parseContractFromEnv,
@@ -1934,46 +1934,12 @@ function applyExecutionGateToMlbPayload(payload, { oddsSnapshot, nowMs = Date.no
     return { evaluated: false, blocked: false };
   }
 
-  // WI-0944: MLB full-game ML uses relaxed execution thresholds.
-  // The model's confidence is structurally capped at 5-6/10 and raw edges of
-  // 6-11pp are meaningful signal. A positive ML edge must be the primary
-  // decision driver; support/confidence can downgrade tier but must not hard-veto.
-  // Large edge (rawEdge >= 0.06): near-bypass thresholds so conf=5/10 cannot
-  // nullify a +9-11pp model call.
-  // Standard relaxed (rawEdge < 0.06): lower but still meaningful floors.
-  const _rawEdgeForGate = Number.isFinite(payload.edge) ? payload.edge : 0;
-  const _sportToken = String(payload.sport || 'MLB').toUpperCase();
-  const _cardTypeToken = String(payload.card_type || '').toLowerCase();
-  const _marketTypeToken = String(payload.market_type || '').toUpperCase();
-  const _recommendedBetTypeToken = String(payload.recommended_bet_type || '').toUpperCase();
-  const _periodToken = String(payload.period ?? payload.market?.period ?? '').toUpperCase();
-  const _cardTitleToken = String(payload.card_title || payload.title || '').toUpperCase();
-  const _isFullGamePeriod =
-    _periodToken === '' ||
-    _periodToken === 'NA' ||
-    _periodToken === 'FULL_GAME' ||
-    _periodToken === 'GAME';
-  const _isMlbMoneylineLike =
-    _marketTypeToken === 'MONEYLINE' &&
-    (_recommendedBetTypeToken === 'MONEYLINE' || _cardTitleToken.includes('FULL GAME ML'));
-  const _isMlbFullGameMl =
-    _sportToken === 'MLB' &&
-    (
-      _cardTypeToken === 'mlb-full-game-ml' ||
-      _cardTypeToken === 'mlb-full-game' ||
-      (_isMlbMoneylineLike && _isFullGamePeriod)
-    );
-  const _mlbGateOverrides = _isMlbFullGameMl
-    ? {
-        minNetEdge: _rawEdgeForGate >= 0.06 ? 0.01 : 0.02,
-        minConfidence: _rawEdgeForGate >= 0.06 ? 0.45 : 0.50,
-      }
-    : {};
-
-  const gateResult = evaluateExecution({
+  const rawEdge = Number.isFinite(payload.edge) ? payload.edge : null;
+  const confidence = Number.isFinite(payload.confidence) ? payload.confidence : null;
+  const executionParams = {
     modelStatus: resolvedModelStatus,
-    rawEdge: Number.isFinite(payload.edge) ? payload.edge : null,
-    confidence: Number.isFinite(payload.confidence) ? payload.confidence : null,
+    rawEdge,
+    confidence,
     snapshotAgeMs,
     marketKey: payload.market_key ?? null,
     sport: payload.sport ?? 'MLB',
@@ -1981,41 +1947,26 @@ function applyExecutionGateToMlbPayload(payload, { oddsSnapshot, nowMs = Date.no
     marketType: payload.market_type ?? null,
     period: payload.period ?? payload.market?.period ?? null,
     cardType: payload.card_type ?? null,
-    ..._mlbGateOverrides,
-  });
+  };
 
-  const edgeOverrideEligible =
-    _isMlbFullGameMl &&
-    _rawEdgeForGate >= 0.06 &&
-    resolvedModelStatus === 'MODEL_OK';
-  const edgeOverrideBlockers = new Set([
-    'CONFIDENCE_BELOW_THRESHOLD',
-    'NET_EDGE_INSUFFICIENT',
-  ]);
-  const blockedByOnlySoftEdgeOrConfidence =
-    Array.isArray(gateResult.blocked_by) &&
-    gateResult.blocked_by.length > 0 &&
-    gateResult.blocked_by.every((reason) =>
-      edgeOverrideBlockers.has(String(reason || '').split(':')[0]),
-    );
-  const applyHighEdgeOverride =
-    !gateResult.shouldBet && edgeOverrideEligible && blockedByOnlySoftEdgeOrConfidence;
-
-  const gateShouldBet = applyHighEdgeOverride ? true : gateResult.shouldBet;
-  const gateBlockedBy = applyHighEdgeOverride ? [] : gateResult.blocked_by;
-  const gateDropReason = applyHighEdgeOverride ? null : gateResult.drop_reason;
-  const reasonCodes = Array.isArray(payload.reason_codes) ? payload.reason_codes : [];
-  const hasWeakSupportSignal = reasonCodes.some((code) => {
-    const token = String(code || '').toUpperCase();
-    return token === 'SOFT_WEAK_DRIVER_SUPPORT' || token === 'PASS_DRIVER_SUPPORT_WEAK';
-  });
-  const hasLowConfidenceSignal = Number.isFinite(payload.confidence) && payload.confidence < 0.55;
-  const downgradeHighEdgeToLean =
-    _isMlbFullGameMl &&
-    _rawEdgeForGate >= 0.06 &&
-    resolvedModelStatus === 'MODEL_OK' &&
-    gateShouldBet &&
-    (hasWeakSupportSignal || hasLowConfidenceSignal);
+  const fallbackGateResult = evaluateExecution(executionParams);
+  const {
+    gateResult,
+    gateShouldBet,
+    gateBlockedBy,
+    gateDropReason,
+    applyHighEdgeOverride,
+    downgradeHighEdgeToLean,
+  } = typeof evaluateMlbExecution === 'function'
+    ? evaluateMlbExecution(payload, executionParams)
+    : {
+        gateResult: fallbackGateResult,
+        gateShouldBet: fallbackGateResult.shouldBet,
+        gateBlockedBy: fallbackGateResult.blocked_by,
+        gateDropReason: fallbackGateResult.drop_reason,
+        applyHighEdgeOverride: false,
+        downgradeHighEdgeToLean: false,
+      };
 
   payload.execution_gate = {
     evaluated: true,
@@ -2030,7 +1981,7 @@ function applyExecutionGateToMlbPayload(payload, { oddsSnapshot, nowMs = Date.no
     overridden_by_edge: applyHighEdgeOverride || downgradeHighEdgeToLean,
     override_context: applyHighEdgeOverride || downgradeHighEdgeToLean
       ? {
-          raw_edge: _rawEdgeForGate,
+          raw_edge: rawEdge,
           threshold: 0.06,
           original_blocked_by: gateResult.blocked_by,
           resolution: 'DOWNGRADED_TO_LEAN',
@@ -3282,7 +3233,9 @@ function enrichMlbPitcherData(
 async function runMLBModel({
   jobKey = null,
   dryRun = false,
-  expectF5Ml = true,
+  // MLB featured ingest currently includes full-game h2h + totals only.
+  // F5 ML remains an optional watchdog expectation that must be explicitly enabled.
+  expectF5Ml = process.env.MLB_EXPECT_F5_ML === 'true',
   withoutOddsMode = process.env.ENABLE_WITHOUT_ODDS_MODE === 'true',
   gameIds = null,
 } = {}) {

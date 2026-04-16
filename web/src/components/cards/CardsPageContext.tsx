@@ -67,6 +67,7 @@ import {
   deriveOnePModelCallFromReasons,
   hasProjectedTotal,
   hasActionablePlay,
+  isActionableProjectionPlay,
   filterPropCards,
   isFullGameTotalsCallPlay,
 } from './shared';
@@ -251,6 +252,11 @@ export function CardsPageProvider({
 
       const playStatus = play1p.status;
       if (f.statuses.length > 0 && playStatus && !f.statuses.includes(playStatus)) {
+        return [];
+      }
+
+      // WI-0968: keep projection actionability logic centralized in shared utils.
+      if (!isActionableProjectionPlay(play1p)) {
         return [];
       }
 

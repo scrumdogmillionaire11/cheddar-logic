@@ -598,7 +598,7 @@ describe('runMLBModel dual-run orchestration', () => {
     jest.spyOn(console, 'error').mockImplementation(() => {});
     jest.spyOn(console, 'warn').mockImplementation(() => {});
 
-    const result = await runMLBModel();
+    const result = await runMLBModel({ expectF5Ml: true });
 
     expect(result.success).toBe(true);
     expect(mocks.computePitcherKDriverCardsMock).toHaveBeenCalledWith(
@@ -685,7 +685,7 @@ describe('runMLBModel dual-run orchestration', () => {
     jest.spyOn(console, 'error').mockImplementation(() => {});
     jest.spyOn(console, 'warn').mockImplementation(() => {});
 
-    const result = await runMLBModel();
+    const result = await runMLBModel({ expectF5Ml: true });
 
     expect(result.success).toBe(true);
     // K props use player_prop_lines — independent of F5 line. Call site must

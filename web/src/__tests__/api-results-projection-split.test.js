@@ -43,6 +43,32 @@ function buildMlbPitcherKProjectionRow() {
   };
 }
 
+function buildNhlShotsPassRow() {
+  return {
+    sport: 'NHL',
+    cardType: 'nhl-player-shots',
+    payload: {
+      basis: 'PROJECTION_ONLY',
+      numeric_projection: 3.4,
+      recommended_direction: 'UNDER',
+      play: {
+        player_id: '8478402',
+        prop_type: 'shots_on_goal',
+        decision_v2: {
+          official_status: 'PASS',
+        },
+      },
+    },
+    gameResultMetadata: {
+      playerShots: {
+        fullGameByPlayerId: {
+          '8478402': 4,
+        },
+      },
+    },
+  };
+}
+
 function buildOddsBackedRow() {
   return {
     sport: 'NHL',
@@ -129,6 +155,7 @@ function run() {
   const summaries = buildProjectionSummaries([
     buildOddsBackedRow(),
     buildNhlShotsProjectionRow(),
+    buildNhlShotsPassRow(),
     buildMlbPitcherKProjectionRow(),
   ]);
 
@@ -143,11 +170,21 @@ function run() {
   );
   assert.ok(nhlShots, 'NHL_PLAYER_SHOTS projection summary missing');
   assert.strictEqual(nhlShots.actualsAvailable, true);
-  assert.strictEqual(nhlShots.sampleSize, 1);
-  assert.strictEqual(nhlShots.rowsSeen, 1);
+  assert.strictEqual(nhlShots.sampleSize, 2);
+  assert.strictEqual(nhlShots.rowsSeen, 2);
   assert.strictEqual(nhlShots.mae, 0.6);
   assert.strictEqual(nhlShots.bias, -0.6);
   assert.strictEqual(nhlShots.directionalAccuracy, 1);
+  assert.strictEqual(
+    nhlShots.directionalWins,
+    1,
+    'PASS projections must not contribute to directional wins/losses',
+  );
+  assert.strictEqual(
+    nhlShots.directionalLosses,
+    0,
+    'PASS projections must be excluded from directional tallying',
+  );
 
   const pitcherK = summaries.find((row) => row.cardFamily === 'MLB_PITCHER_K');
   assert.ok(pitcherK, 'MLB_PITCHER_K projection summary missing');
