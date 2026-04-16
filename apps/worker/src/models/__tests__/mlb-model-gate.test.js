@@ -191,6 +191,69 @@ describe('projectFullGameTotalCard — WI-0944 gate semantics', () => {
     );
   });
 
+  test('directional audit exposes raw, recentered, shrunk, and final totals', () => {
+    const degradedContext = {
+      ...baseFgContext,
+      home_bullpen_era: null,
+      away_bullpen_era: null,
+      f5_line: 4.2,
+    };
+
+    const result = projectFullGameTotalCard(
+      validHome,
+      validAway,
+      7.0,
+      degradedContext,
+    );
+
+    expect(result.directional_audit).toEqual(expect.objectContaining({
+      market_total: 7,
+      raw_model_total: expect.any(Number),
+      recentered_model_total: expect.any(Number),
+      shrunk_model_total: expect.any(Number),
+      final_model_total: expect.any(Number),
+      after_degradation_total: expect.any(Number),
+      after_shrink_total: expect.any(Number),
+      final_total: expect.any(Number),
+      raw_edge: expect.any(Number),
+      final_edge: expect.any(Number),
+      shrink_factor: 0.35,
+      qualification_edge_source: 'raw',
+      degraded_mode: true,
+    }));
+    expect(result.projection.projected_total_recentered).toBe(result.directional_audit.after_degradation_total);
+    expect(result.projection.projected_total_final).toBe(result.directional_audit.final_total);
+  });
+
+  test('env override can disable full-model shrink for diagnostics', () => {
+    const original = process.env.MLB_FULL_GAME_SHRINK_FACTOR_FULL_MODEL;
+    let projectFullGameTotalCardWithOverride;
+
+    process.env.MLB_FULL_GAME_SHRINK_FACTOR_FULL_MODEL = '1';
+    jest.resetModules();
+    jest.isolateModules(() => {
+      ({ projectFullGameTotalCard: projectFullGameTotalCardWithOverride } = require('../mlb-model'));
+    });
+
+    const result = projectFullGameTotalCardWithOverride(
+      validHome,
+      validAway,
+      8.5,
+      baseFgContext,
+    );
+
+    expect(result.directional_audit.shrink_factor).toBe(1);
+    expect(result.directional_audit.after_shrink_total).toBe(result.directional_audit.after_degradation_total);
+    expect(result.directional_audit.final_total).toBe(result.directional_audit.after_degradation_total);
+
+    if (original == null) {
+      delete process.env.MLB_FULL_GAME_SHRINK_FACTOR_FULL_MODEL;
+    } else {
+      process.env.MLB_FULL_GAME_SHRINK_FACTOR_FULL_MODEL = original;
+    }
+    jest.resetModules();
+  });
+
   test('confidence < 6 on FULL_MODEL still hard-PASSes with PASS_CONFIDENCE_GATE', () => {
     // Only a true FULL_MODEL projection with conf < 6 should still be a hard PASS.
     // Fabricate this by stripping pitcher quality fields to degrade confidence math.

@@ -47,6 +47,45 @@ function writeDailyStats(db, {
   });
 }
 
+
+function writeShadowCandidates(db, { playDate, capturedAt, minEdgePct, candidates }) {
+  if (!Array.isArray(candidates) || candidates.length === 0) return;
+  const stmt = db.prepare(`
+    INSERT INTO potd_shadow_candidates (
+      play_date, captured_at, sport, market_type, selection_label,
+      home_team, away_team, game_id, price, line,
+      edge_pct, total_score, line_value, market_consensus,
+      model_win_prob, implied_prob, projection_source, gap_to_min_edge
+    ) VALUES (
+      @play_date, @captured_at, @sport, @market_type, @selection_label,
+      @home_team, @away_team, @game_id, @price, @line,
+      @edge_pct, @total_score, @line_value, @market_consensus,
+      @model_win_prob, @implied_prob, @projection_source, @gap_to_min_edge
+    )
+  `);
+  for (const c of candidates) {
+    stmt.run({
+      play_date: playDate,
+      captured_at: capturedAt,
+      sport: c.sport ?? null,
+      market_type: c.marketType ?? null,
+      selection_label: c.selectionLabel ?? null,
+      home_team: c.home_team ?? null,
+      away_team: c.away_team ?? null,
+      game_id: c.gameId ?? null,
+      price: c.price ?? null,
+      line: c.line ?? null,
+      edge_pct: c.edgePct ?? null,
+      total_score: c.totalScore ?? null,
+      line_value: c.lineValue ?? null,
+      market_consensus: c.marketConsensus ?? null,
+      model_win_prob: c.modelWinProb ?? null,
+      implied_prob: c.impliedProb ?? null,
+      projection_source: c.scoreBreakdown && c.scoreBreakdown.projection_source ? c.scoreBreakdown.projection_source : null,
+      gap_to_min_edge: c.edgePct != null ? c.edgePct - minEdgePct : null,
+    });
+  }
+}
 const { v4: uuidV4 } = require('uuid');
 const { DateTime } = require('luxon');
 const {
@@ -322,6 +361,7 @@ async function gatherBestCandidate({
 
   return {
     bestCandidate: selectBestPlayFn(scoredCandidates, { minConfidence: POTD_MIN_TOTAL_SCORE, minEdgePct: POTD_MIN_EDGE }),
+    allScoredCandidates: scoredCandidates,
     fetchErrors,
     activeSports: sports,
     candidatesCount: scoredCandidates.length,
@@ -388,7 +428,7 @@ async function runPotdEngine({
         };
       }
 
-      const { bestCandidate, fetchErrors, activeSports, candidatesCount, viableCount } = await gatherBestCandidate({
+      const { bestCandidate, allScoredCandidates, fetchErrors, activeSports, candidatesCount, viableCount } = await gatherBestCandidate({
         fetchOddsFn,
         buildCandidatesFn,
         scoreCandidateFn,
@@ -403,13 +443,17 @@ async function runPotdEngine({
       const bankrollAtPost = bankrollState.bankroll;
 
       if (!bestCandidate) {
+        const topByEdge = allScoredCandidates
+          .filter(c => typeof c.edgePct === 'number' && isFinite(c.edgePct) && typeof c.totalScore === 'number' && isFinite(c.totalScore))
+          .sort((a, b) => b.edgePct - a.edgePct)[0] || null;
+        writeShadowCandidates(db, { playDate, capturedAt: nowIso, minEdgePct: POTD_MIN_EDGE, candidates: allScoredCandidates });
         writeDailyStats(db, {
           playDate,
           potdFired: false,
           candidateCount: candidatesCount,
           viableCount,
-          topEdgePct: null,
-          topScore: null,
+          topEdgePct: topByEdge ? topByEdge.edgePct : null,
+          topScore: topByEdge ? topByEdge.totalScore : null,
           selectedEdgePct: null,
           selectedScore: null,
           stakePctOfBankroll: null,

@@ -569,11 +569,18 @@ const MLB_FULL_GAME_EDGE_THRESHOLD_CAP = 0.65;
 const MLB_FULL_GAME_SANITY_BAND = 0.3;
 const MLB_FULL_GAME_LEAN_EDGE_THRESHOLD = 0.75;
 const MLB_FULL_GAME_PLAY_EDGE_THRESHOLD = 1.25;
-const MLB_FULL_GAME_SHRINK_FACTOR_FULL_MODEL = 0.7;
-const MLB_FULL_GAME_SHRINK_FACTOR_DEGRADED_MODEL = 0.35;
+function readFiniteEnvNumber(name, fallback) {
+  const raw = process.env[name];
+  if (raw == null || raw === "") return fallback;
+  const value = Number(raw);
+  return Number.isFinite(value) ? value : fallback;
+}
+
+const MLB_FULL_GAME_SHRINK_FACTOR_FULL_MODEL = readFiniteEnvNumber("MLB_FULL_GAME_SHRINK_FACTOR_FULL_MODEL", 0.7);
+const MLB_FULL_GAME_SHRINK_FACTOR_DEGRADED_MODEL = readFiniteEnvNumber("MLB_FULL_GAME_SHRINK_FACTOR_DEGRADED_MODEL", 0.35);
 const MLB_FULL_GAME_DEGRADED_PASS_THRESHOLD = 3;
-const MLB_FULL_GAME_DEGRADED_RECENTER_WEIGHT = 0.5;
-const MLB_PURE_SIGNAL_MODE = process.env.MLB_PURE_SIGNAL_MODE === 'true';
+const MLB_FULL_GAME_DEGRADED_RECENTER_WEIGHT = readFiniteEnvNumber("MLB_FULL_GAME_DEGRADED_RECENTER_WEIGHT", 0.5);
+const MLB_PURE_SIGNAL_MODE = process.env.MLB_PURE_SIGNAL_MODE === "true";
 
 const MLB_TOTAL_VOL_BUCKETS = Object.freeze({
   LOW: 'LOW_VOL',
@@ -1194,6 +1201,7 @@ function projectFullGameTotalCard(homePitcher, awayPitcher, fullGameLine, contex
     ? (rawModelTotal * MLB_FULL_GAME_DEGRADED_RECENTER_WEIGHT) +
       (fullGameLine * (1 - MLB_FULL_GAME_DEGRADED_RECENTER_WEIGHT))
     : rawModelTotal;
+  const recenteredEdge = recenteredModelTotal - fullGameLine;
   const shrinkFactor = modelQuality === 'FULL_MODEL'
     ? MLB_FULL_GAME_SHRINK_FACTOR_FULL_MODEL
     : modelQuality === 'DEGRADED_MODEL'
@@ -1201,10 +1209,12 @@ function projectFullGameTotalCard(homePitcher, awayPitcher, fullGameLine, contex
       : null;
   const shrunkModelTotal = Number.isFinite(shrinkFactor)
     ? fullGameLine + (shrinkFactor * (recenteredModelTotal - fullGameLine))
-    : null;
+    : recenteredModelTotal;
   const shrunkEdge = Number.isFinite(shrunkModelTotal)
     ? shrunkModelTotal - fullGameLine
-    : null;
+    : recenteredEdge;
+  const finalModelTotal = Number.isFinite(shrunkModelTotal) ? shrunkModelTotal : recenteredModelTotal;
+  const finalEdge = Number.isFinite(finalModelTotal) ? finalModelTotal - fullGameLine : recenteredEdge;
   const directionBeforeShrink = Math.abs(rawEdge) >= MLB_FULL_GAME_LEAN_EDGE_THRESHOLD
     ? (rawEdge >= 0 ? 'OVER' : 'UNDER')
     : 'PASS';
@@ -1318,7 +1328,7 @@ function projectFullGameTotalCard(homePitcher, awayPitcher, fullGameLine, contex
     hasPlayEdge &&
     !confidenceBelowGate;
 
-  const prediction = canLean ? (shrunkEdge >= 0 ? 'OVER' : 'UNDER') : leanSide;
+  const prediction = canLean ? (finalEdge >= 0 ? 'OVER' : 'UNDER') : leanSide;
   let status = 'PASS';
   if (canLean) {
     const softReasonCount = reasonCodes.filter((code) => code.startsWith('SOFT_')).length;
@@ -1329,11 +1339,11 @@ function projectFullGameTotalCard(homePitcher, awayPitcher, fullGameLine, contex
   const classification = status === 'FIRE' ? 'BASE' : status === 'WATCH' ? 'LEAN' : 'PASS';
   const playability = {
     over_playable_at_or_below: roundToHalf(
-      (shrunkModelTotal ?? proj.projected_total_mean) - MLB_FULL_GAME_LEAN_EDGE_THRESHOLD,
+      (finalModelTotal ?? proj.projected_total_mean) - MLB_FULL_GAME_LEAN_EDGE_THRESHOLD,
       'floor',
     ),
     under_playable_at_or_above: roundToHalf(
-      (shrunkModelTotal ?? proj.projected_total_mean) + MLB_FULL_GAME_LEAN_EDGE_THRESHOLD,
+      (finalModelTotal ?? proj.projected_total_mean) + MLB_FULL_GAME_LEAN_EDGE_THRESHOLD,
       'ceil',
     ),
   };
@@ -1344,7 +1354,7 @@ function projectFullGameTotalCard(homePitcher, awayPitcher, fullGameLine, contex
     prediction,
     confidence: proj.confidence / 10,
     ev_threshold_passed: status !== 'PASS',
-    reasoning: `FG TOTAL ${proj.projection_source} raw ${rawModelTotal.toFixed(2)} shrunk ${(shrunkModelTotal ?? rawModelTotal).toFixed(2)} vs line ${fullGameLine.toFixed(1)} rawEdge ${rawEdge >= 0 ? '+' : ''}${rawEdge.toFixed(2)} shrunkEdge ${Number.isFinite(shrunkEdge) ? `${shrunkEdge >= 0 ? '+' : ''}${shrunkEdge.toFixed(2)}` : 'n/a'} bucket=${proj.volatility_bucket} thr=${dynamicThreshold.toFixed(2)} pOver=${(pOver * 100).toFixed(1)}% pUnder=${(pUnder * 100).toFixed(1)}% drivers=${driverValidation.drivers.join('|') || 'none'} conf=${proj.confidence}/10`,
+    reasoning: `FG TOTAL ${proj.projection_source} raw ${rawModelTotal.toFixed(2)} recentered ${recenteredModelTotal.toFixed(2)} shrunk ${finalModelTotal.toFixed(2)} vs line ${fullGameLine.toFixed(1)} rawEdge ${rawEdge >= 0 ? '+' : ''}${rawEdge.toFixed(2)} recenteredEdge ${recenteredEdge >= 0 ? '+' : ''}${recenteredEdge.toFixed(2)} finalEdge ${finalEdge >= 0 ? '+' : ''}${finalEdge.toFixed(2)} shrink=${Number.isFinite(shrinkFactor) ? shrinkFactor.toFixed(2) : 'n/a'} bucket=${proj.volatility_bucket} thr=${dynamicThreshold.toFixed(2)} pOver=${(pOver * 100).toFixed(1)}% pUnder=${(pUnder * 100).toFixed(1)}% drivers=${driverValidation.drivers.join('|') || 'none'} conf=${proj.confidence}/10`,
     status,
     action,
     classification,
@@ -1361,9 +1371,21 @@ function projectFullGameTotalCard(homePitcher, awayPitcher, fullGameLine, contex
     directional_audit: {
       raw_model_total: roundToTenth(rawModelTotal),
       market_total: roundToTenth(fullGameLine),
+      recentered_model_total: roundToTenth(recenteredModelTotal),
       shrunk_model_total: roundToTenth(shrunkModelTotal),
+      final_model_total: roundToTenth(finalModelTotal),
+      after_degradation_total: roundToTenth(recenteredModelTotal),
+      after_shrink_total: roundToTenth(shrunkModelTotal),
+      final_total: roundToTenth(finalModelTotal),
       proj_minus_line_raw: roundToTenth(rawEdge),
+      proj_minus_line_recentered: roundToTenth(recenteredEdge),
       proj_minus_line_shrunk: roundToTenth(shrunkEdge),
+      proj_minus_line_final: roundToTenth(finalEdge),
+      raw_edge: roundToTenth(rawEdge),
+      final_edge: roundToTenth(finalEdge),
+      shrink_factor: Number.isFinite(shrinkFactor) ? Number(shrinkFactor.toFixed(2)) : null,
+      qualification_edge: roundToTenth(edgeForQualification),
+      qualification_edge_source: degradedMode ? 'raw' : 'final',
       degraded_inputs_count: degradedInputsCount,
       degraded_mode: degradedMode,
       direction_before_shrink: directionBeforeShrink,
@@ -1372,7 +1394,9 @@ function projectFullGameTotalCard(homePitcher, awayPitcher, fullGameLine, contex
     playability,
     projection: {
       projected_total: roundToTenth(proj.projected_total_mean),
+      projected_total_recentered: roundToTenth(recenteredModelTotal),
       projected_total_shrunk: roundToTenth(shrunkModelTotal),
+      projected_total_final: roundToTenth(finalModelTotal),
       projected_total_low: roundToTenth(proj.projected_total_low),
       projected_total_high: roundToTenth(proj.projected_total_high),
       home_proj: roundToTenth(proj.home_proj),
