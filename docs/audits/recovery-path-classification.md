@@ -136,9 +136,148 @@ This audit:
 
 ---
 
-## Recovery Bucket Mapping (Phase 2 Draft)
+## Recovery Bucket Classification Matrix (Phase 2)
 
-### Updated Classification Status (with NHL/MLB trace)
+### Complete Mapping: 59 Scenarios → 6 Buckets
+
+#### HARD-FAIL: Model/Data Invalid — Must Reject Card (9 scenarios)
+
+| Scenario | Layer | Reason-Code | Layer Origin | Action |
+|---|---|---|---|---|
+| Model status non-OK | execution-gate | `MODEL_STATUS_INVALID` | worker_gate | Block bet, emit code, do not publish |
+| No edge computed | execution-gate | `MISSING_EDGE` | worker_gate | Block bet, no fair prob derivable |
+| Mixed book source mismatch | execution-gate | `MIXED_BOOK_INTEGRITY_GATE` | worker_gate | Block bet, inconsistent odds source |
+| Calibration kill switch | execution-gate | `CALIBRATION_GATE` | worker_gate | Block bet, system kill switch active |
+| EXPIRED freshness (hardMax exceeded) | execution-gate | `STALE_SNAPSHOT_GATE` | worker_gate | Block bet, data too old to trust |
+| Timestamp invalid/missing (MLB) | run_mlb_model.js | `TIMESTAMP_MISSING` | model_health | Return null, reject inference |
+| Timestamp parse failure (MLB) | run_mlb_model.js | `TIMESTAMP_PARSE_ERROR` | model_health | Return null, reject inference |
+| Game ID invalid (all sports) | model runner | `GAME_ID_INVALID` | model_health | Return null, no mapping possible |
+| Invariant breach thrown | run_nhl_model.js | `INVARIANT_BREACH` | audit_enforcement | Escalate error, investigate |
+
+**Visibility**: Operator logs, audit invariants. User sees "No bet available."
+
+---
+
+#### SOFT-PASS: Model OK but Inference Proceeds w/o Gate (8 scenarios)
+
+| Scenario | Layer | Reason-Code | Layer Origin | Action |
+|---|---|---|---|---|
+| Edge clear (pass-through) | decision-pipeline | `EDGE_CLEAR` | decision_canonical | No intervention, pass to pricing |
+| Availability gate DB error (NBA) | run_nba_model.js | `AVAILABILITY_GATE_DEGRADED` | model_health | Fail-open, skip gate, proceed |
+| Within-cadence stale (grace window) | execution-gate | `STALE_SNAPSHOT_VALID_GRACE` | worker_gate | Allow if allowed_flag set, log warning |
+| Decision envelope fallback | decision-pipeline-v2 | `DECISION_FALLBACK_INPUT_MISSING` | decision_canonical | Use fallback values, mark origin |
+| Edge verification required (market props) | decision-pipeline | `EDGE_VERIFICATION_REQUIRED` | decision_canonical | Allow pub, mark for manual review |
+| Pass-through decision v2 path | route-handler | `PASS_THROUGH_OK` | decision_canonical | No block, standard PASS |
+| Projection-only exclusion (no market) | execution-gate | `PROJECTION_ONLY_EXCLUSION` | worker_gate | Block live bet, allow projection view |
+
+**Visibility**: API debug metadata, audit. User sees card but non-actionable or marked "Research Only."
+
+---
+
+#### DEGRADED-OUTPUT: Features Missing, Model Inference Reduced (10 scenarios)
+
+| Scenario | Layer | Reason-Code | Layer Origin | Action |
+|---|---|---|---|---|
+| Sigma fallback used | decision-pipeline | `SIGMA_FALLBACK_DEGRADED` | decision_watchdog | Downgrade PLAY to LEAN, mark origin |
+| Heavy favorite price cap | decision-pipeline | `HEAVY_FAVORITE_PRICE_CAP` | decision_price | Cap wager, emit reason |
+| Play contradiction capped | decision-pipeline | `PLAY_CONTRADICTION_CAPPED` | decision_price | Downgrade/cap, emit reason |
+| Stale within grace (no new odds) | execution-gate | `STALE_SNAPSHOT:VALID_WITHIN_CADENCE` | worker_gate | Block or downgrade, flag staleness |
+| Line delta computation failed (NBA) | run_nba_model.js | `LINE_DELTA_COMPUTATION_FAILED` | model_feature | Return null feature, proceed w/o it |
+| Bullpen context missing (MLB) | run_mlb_model.js | `BULLPEN_CONTEXT_MISSING_HISTORY` | model_feature | Use neutral fallback, mark origin |
+| Bullpen context query error (MLB) | run_mlb_model.js | `BULLPEN_CONTEXT_QUERY_ERROR` | model_feature | Use neutral fallback, mark error |
+| Timestamp age invalid (MLB) | run_mlb_model.js | `TIMESTAMP_AGE_INVALID` | model_health | Return null, inference skipped |
+| Missing lineContext (NBA) | run_nba_model.js | `LINE_CONTEXT_MISSING` | model_feature | Return null feature, proceed |
+| Pricing status MISSING (MLB) | run_mlb_model.js | `PRICING_STATUS_MISSING` | model_inference | Block or degrade, emit reason |
+
+**Visibility**: API debug + audit. Card downgraded tier (LEAN or PASS), reason surfaced for context.
+
+---
+
+#### HIDDEN-OUTPUT: Silent Failure or Observation Only (14 scenarios) ⚠️
+
+| Scenario | Layer | Reason-Code | Layer Origin | Current | **Phase 4 Fix** |
+|---|---|---|---|---|---|
+| ESPN null metrics (NBA) | run_nba_model.js | `ESPN_NULL_OBSERVATION` | model_health | Log only | Emit to reason_codes |
+| ESPN null alert send error (NHL) | run_nhl_model.js | `ESPN_NULL_ALERT_FAILED` | alert_channel | Log only | Emit to audit + reason_codes |
+| Stale recovery refresh error (NHL) | run_nhl_model.js | `STALE_RECOVERY_REFRESH_FAILED` | model_health | Log only | Emit + mark as fallback |
+| Stale recovery reload error (NHL) | run_nhl_model.js | `STALE_RECOVERY_RELOAD_FAILED` | model_health | Log only | Emit + mark as fallback |
+| Neutral value coercion (MLB) | run_mlb_model.js | `NEUTRAL_VALUE_COERCE_SILENT` | model_feature | Return null silently | Emit reason, return fallback |
+| Price invalid (MLB) | run_mlb_model.js | `PRICE_VALIDATION_FAILED` | model_feature | Return null silently | Emit reason, return null |
+| Stale recovery refresh error (MLB) | run_mlb_model.js | `STALE_RECOVERY_REFRESH_FAILED` | model_health | Log only | Emit + mark as fallback |
+| Stale recovery reload error (MLB) | run_mlb_model.js | `STALE_RECOVERY_RELOAD_FAILED` | model_health | Log only | Emit + mark as fallback |
+| Missing capturedAt (NBA) | run_nba_model.js | `CAPTURED_AT_MISSING` | model_health | Return null silently | Emit reason, reject |
+| Missing capturedAtMs (NBA) | run_nba_model.js | `CAPTURED_AT_MS_INVALID` | model_health | Return null silently | Emit reason, reject |
+| Line delta null return (NBA) | run_nba_model.js | `LINE_DELTA_NULL_RETURN` | model_feature | No log, null silently | Emit reason, proceed w/o feature |
+| Consistency missing (partial) (NHL) | run_nhl_model.js | `WATCHDOG_CONSISTENCY_MISSING` | decision_watchdog | Already emitted ✅ | (Classified) |
+| Game ID null return (NHL) | run_nhl_model.js | `GAME_ID_INVALID` | model_health | Return null silently | Already in hard-fail |
+| Market price missing (all sports) | decision-pipeline | `MARKET_PRICE_MISSING` | decision_watchdog | Already emitted ✅ | (Classified) |
+
+**Visibility**: Silent until Phase 4 fixes applied. Post-fix: audit logs only (operator visible).
+
+---
+
+#### RETRY: Transient Failure, Eligible for Re-Attempt (1 scenario)
+
+| Scenario | Layer | Reason-Code | Layer Origin | Action |
+|---|---|---|---|---|
+| STALE_VALID with allowStaleIfNoNewOdds flag | execution-gate | `STALE_SNAPSHOT:STALE_BUT_RETRYABLE` | worker_gate | Retry on next odds cycle or immediately if flag_set |
+
+**Visibility**: Operator can force retry. API shows "Waiting for fresh odds."
+
+---
+
+#### FALLBACK: Data Missing, Use Canonical Fallback (12 scenarios)
+
+| Scenario | Layer | Reason-Code | Layer Origin | Action |
+|---|---|---|---|---|
+| No edge at current price | decision-pipeline | `NO_EDGE_AT_PRICE` | decision_price | Fallback to adjacent market or LEAN |
+| Model prob missing | decision-pipeline | `MODEL_PROB_MISSING` | decision_price | Use baseline probability, mark origin |
+| Market unavailable | decision-pipeline | `WATCHDOG_MARKET_UNAVAILABLE` | decision_watchdog | Skip market, use fallback pool |
+| Stale market input | decision-pipeline | `STALE_MARKET_INPUT` | decision_watchdog | Fallback to cached market or exclude |
+| Parse failure (decision) | decision-pipeline | `WATCHDOG_PARSE_FAILURE` | decision_watchdog | Skip payload, use envelope defaults |
+| Consistency missing (all 4 ESPN) | decision-pipeline | `WATCHDOG_CONSISTENCY_MISSING` | decision_watchdog | Block card, fallback to projection-only |
+| Goalie unconfirmed (NHL) | decision-pipeline | `GOALIE_UNCONFIRMED` | decision_watchdog | Fallback to team-level stats, mark uncertainty |
+| Goalie conflicting (NHL) | decision-pipeline | `GOALIE_CONFLICTING` | decision_watchdog | Skip goalie-driven props, fallback to base |
+| Injury uncertain | decision-pipeline | `INJURY_UNCERTAIN` | decision_watchdog | Fallback to pre-injury stats, mark unknown |
+| Timestamp resolver fallback (NHL/MLB) | model runner | `TIMESTAMP_RESOLVER_FALLBACK` | model_health | Use now() as fallback, mark origin |
+| Pricing status fallback (MLB) | run_mlb_model.js | `PRICING_STATUS_FALLBACK` | model_feature | Use neutral pricing, mark origin |
+| Decision envelope cascade (no primary) | transform/route-handler | `DECISION_ENVELOPE_FALLBACK` | decision_canonical | Use watchdog or pass_reason as fallback |
+
+**Visibility**: API debug + audit. Reason-code shows fallback source and confidence impact.
+
+---
+
+### Cross-Sport Consistency Validation
+
+| Failure Class | NBA | NHL | MLB | Consistency | Canonical Reason |
+|---|---|---|---|---|---|
+| Model status non-OK | ✅ hard-fail | ✅ hard-fail | ✅ hard-fail | **CONSISTENT** | `MODEL_STATUS_INVALID` |
+| Missing key stats | ⚠️ silent (ESPN null) | ⚠️ silent (ESPN consistency) | ⚠️ silent (timestamp) | **INCONSISTENT** → Phase 4 unify | TBD per sport |
+| Stale data handling | ✅ soft-pass (grace) | ✅ soft-pass (grace) | ✅ soft-pass (grace) | **CONSISTENT** | `STALE_SNAPSHOT_VALID_GRACE` |
+| Missing market/price | ✅ fallback | ✅ fallback | ✅ fallback | **CONSISTENT** | `MARKET_PRICE_MISSING` |
+| Refresh/recovery errors | ❌ silent log | ❌ silent log | ❌ silent log | **INCONSISTENT** → Phase 4 unify | `STALE_RECOVERY_REFRESH_FAILED` |
+| Goalie/Player special handling | ✅ watchdog (NHL) | ✅ watchdog (NHL) | N/A | **CONSISTENT** for NHL | `GOALIE_UNCONFIRMED` etc. |
+
+**Summary**: 4/6 consistent, 2/6 need unification in Phase 4 (missing stats pattern, refresh errors).
+
+---
+
+### Visibility Policy (Recovery Class → User Facing vs Debug-Only)
+
+| Bucket | User View | Debug/API | Audit Logs | Operator | Recommendation |
+|---|---|---|---|---|---|
+| hard-fail | "No bet available" | Engine error code | Escalation alert | Investigate | Stop betting, check infra |
+| soft-pass | "Research only" or "No bet" | Reason in metadata | Standard logs | Monitor | Safe to publish non-actionable |
+| degraded-output | "LEAN" + reason hint | Full reason set | Standard logs | Monitor | Monitor for pattern regressions |
+| hidden-output | Not visible pre-Phase4 | Not surfaced ❌ | Logs only ❌ | Not visible ❌ | **Phase 4: Promote to audit** |
+| retry | "Waiting for odds" | Retry flag set | Standard logs | Actionable | Can force retry if urgent |
+| fallback | "PLAY/LEAN" + "via [source]" | Fallback origin tagged | Standard logs | Informational | Track fallback frequency |
+
+---
+
+### Recovery Bucket Mapping (Phase 2 Draft)
+
+### Updated Classification Status (with comprehensive Phase 2 mapping)
 
 | Recovery Bucket | Count | Example Paths | Status |
 |---|---|---|---|
