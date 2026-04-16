@@ -238,6 +238,33 @@ function loadRunMlbModel({
     shouldRunJobKey: jest.fn(() => true),
     withDb: jest.fn(async (fn) => fn()),
     getPlayerPropLinesForGame: jest.fn(() => []),
+    resolveSnapshotAge: jest.fn((snapshotRow, opts = {}) => {
+      const nowMs = Number.isFinite(opts.nowMs)
+        ? opts.nowMs
+        : Date.parse('2026-03-27T19:00:00.000Z');
+      const resolvedTimestamp =
+        snapshotRow?.captured_at ??
+        snapshotRow?.pulled_at ??
+        snapshotRow?.updated_at ??
+        new Date(nowMs).toISOString();
+      const resolvedAgeMs = Math.max(0, nowMs - new Date(resolvedTimestamp).getTime());
+      return {
+        resolved_timestamp: new Date(resolvedTimestamp).toISOString(),
+        resolved_age_ms: Number.isFinite(resolvedAgeMs) ? resolvedAgeMs : 0,
+        source_field: snapshotRow?.captured_at
+          ? 'captured_at'
+          : snapshotRow?.pulled_at
+            ? 'pulled_at'
+            : snapshotRow?.updated_at
+              ? 'updated_at'
+              : 'now',
+        status: 'VALID',
+        fields_inspected: {},
+        fallback_chain_executed: false,
+        violations: [],
+        diagnostic: {},
+      };
+    }),
     // WI-0840: dynamic league constants — return static fallback in tests
     computeMLBLeagueAverages: jest.fn(() => ({ kPct: 0.225, xfip: 4.3, bbPct: 0.085, source: 'static_2024', n: 0 })),
   }));
