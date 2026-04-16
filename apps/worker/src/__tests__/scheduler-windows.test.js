@@ -330,6 +330,97 @@ if (require.main === module) {
     .catch(() => process.exit(1));
 }
 
+describe('MLB T-minus freshness override resolver', () => {
+  const {
+    resolveTMinusFreshnessOverride,
+    MLB_TMINUS_FRESHNESS_OVERRIDES,
+    keyMlbPremodelOdds,
+  } = require('../schedulers/windows');
+
+  test('ladder has 4 rows ordered ascending by minutesToGameLte', () => {
+    expect(MLB_TMINUS_FRESHNESS_OVERRIDES).toHaveLength(4);
+    const bands = MLB_TMINUS_FRESHNESS_OVERRIDES.map((r) => r.minutesToGameLte);
+    expect(bands).toEqual([180, 90, 45, 15]);
+  });
+
+  test('minutesToGame=180 resolves to band 180', () => {
+    const result = resolveTMinusFreshnessOverride(180);
+    expect(result).not.toBeNull();
+    expect(result.minutesToGameLte).toBe(180);
+  });
+
+  test('minutesToGame=38 resolves to band 45 (strictest match precedence)', () => {
+    const result = resolveTMinusFreshnessOverride(38);
+    expect(result).not.toBeNull();
+    expect(result.minutesToGameLte).toBe(45);
+    expect(result.minutesToGameLte).not.toBe(90);
+    expect(result.minutesToGameLte).not.toBe(180);
+  });
+
+  test('minutesToGame=15 resolves to band 15', () => {
+    const result = resolveTMinusFreshnessOverride(15);
+    expect(result).not.toBeNull();
+    expect(result.minutesToGameLte).toBe(15);
+  });
+
+  test('minutesToGame=14 returns null (below all thresholds)', () => {
+    const result = resolveTMinusFreshnessOverride(14);
+    expect(result).toBeNull();
+  });
+
+  test('minutesToGame=181 returns null (above all thresholds)', () => {
+    const result = resolveTMinusFreshnessOverride(181);
+    expect(result).toBeNull();
+  });
+
+  test('boundary: exact value 180 selects band 180', () => {
+    const result = resolveTMinusFreshnessOverride(180);
+    expect(result.minutesToGameLte).toBe(180);
+  });
+
+  test('boundary: exact value 90 selects band 90', () => {
+    const result = resolveTMinusFreshnessOverride(90);
+    expect(result.minutesToGameLte).toBe(90);
+  });
+
+  test('boundary: exact value 45 selects band 45', () => {
+    const result = resolveTMinusFreshnessOverride(45);
+    expect(result.minutesToGameLte).toBe(45);
+  });
+
+  test('boundary: exact value 15 selects band 15', () => {
+    const result = resolveTMinusFreshnessOverride(15);
+    expect(result.minutesToGameLte).toBe(15);
+  });
+
+  test('strictest-match precedence: 38 must NOT return 90 or 180', () => {
+    const result = resolveTMinusFreshnessOverride(38);
+    expect(result.minutesToGameLte).toBeLessThan(90);
+  });
+
+  test('band 45 has triggerPreModelRefresh=true', () => {
+    const result = resolveTMinusFreshnessOverride(38);
+    expect(result.triggerPreModelRefresh).toBe(true);
+  });
+
+  test('band 180 has triggerPreModelRefresh=false', () => {
+    const result = resolveTMinusFreshnessOverride(150);
+    expect(result.minutesToGameLte).toBe(180);
+    expect(result.triggerPreModelRefresh).toBe(false);
+  });
+
+  test('keyMlbPremodelOdds produces correct format', () => {
+    const key = keyMlbPremodelOdds('mlb_game_1', 45, '2026-04-15T19:38');
+    expect(key).toBe('pull-odds:mlb:premodel:mlb_game_1:45:2026-04-15T19:38');
+  });
+
+  test('keyMlbPremodelOdds truncates slotStartIsoUtc to minute precision', () => {
+    const key = keyMlbPremodelOdds('mlb_game_2', 90, '2026-04-15T19:38:00.000Z');
+    // Should truncate to first 16 chars
+    expect(key).toBe('pull-odds:mlb:premodel:mlb_game_2:90:2026-04-15T19:38');
+  });
+});
+
 function loadSchedulerModuleForDiscord() {
   return loadSchedulerModule();
 }
