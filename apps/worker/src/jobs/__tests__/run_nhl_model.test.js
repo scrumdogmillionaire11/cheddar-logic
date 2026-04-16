@@ -19,6 +19,7 @@ const {
   extractNhlEspnNullMetricTeams,
   recordEspnNullTeams,
   sendEspnNullDiscordAlert,
+  applyExecutionGateToNhlCard,
 } = require('../run_nhl_model');
 const { computeNHLDriverCards } = require('../../models/index');
 
@@ -727,5 +728,49 @@ describe('generateNHLMarketCallCards independent evaluation (IME-01-04)', () => 
     expect(cards).toHaveLength(0);
     expect(gameEval.official_plays).toHaveLength(0);
     expect(gameEval.leans).toHaveLength(0);
+  });
+});
+
+describe('applyExecutionGateToNhlCard timestamp provenance', () => {
+  test('attaches execution_envelope.snapshot_timestamp and freshness_decision', () => {
+    const card = {
+      sport: 'NHL',
+      cardType: 'nhl-moneyline-call',
+      payloadData: {
+        sport: 'NHL',
+        game_id: 'nhl_1',
+        execution_status: 'EXECUTABLE',
+        status: 'WATCH',
+        action: 'LEAN',
+        classification: 'LEAN',
+        model_status: 'MODEL_OK',
+        edge: 0.03,
+        confidence: 0.61,
+        market_type: 'MONEYLINE',
+        recommended_bet_type: 'MONEYLINE',
+      },
+    };
+
+    applyExecutionGateToNhlCard(card, {
+      oddsSnapshot: {
+        id: 'odds_nhl_test_1',
+        game_id: 'nhl_1',
+        captured_at: '2026-04-15T19:20:00Z',
+        pulled_at: '2026-04-15T19:20:05Z',
+        updated_at: '2026-04-15T19:20:07Z',
+      },
+      nowMs: Date.parse('2026-04-15T19:30:00Z'),
+    });
+
+    expect(card.payloadData.snapshot_timestamp).toBeDefined();
+    expect(card.payloadData.snapshot_timestamp).toMatchObject({
+      captured_at: '2026-04-15T19:20:00Z',
+      resolved_source: 'captured_at',
+      resolved_timestamp: expect.any(String),
+      resolved_age_ms: expect.any(Number),
+    });
+    expect(card.payloadData.execution_envelope).toBeDefined();
+    expect(card.payloadData.execution_envelope.snapshot_timestamp).toBeDefined();
+    expect(card.payloadData.execution_gate).toHaveProperty('freshness_decision');
   });
 });

@@ -39,6 +39,7 @@ const {
   updateOddsSnapshotRawData,
   getDatabase,
   getPlayerAvailabilityByTeam,
+  resolveSnapshotAge,
 } = require('@cheddar-logic/data');
 const { kellyStake } = require('@cheddar-logic/models/src/edge-calculator');
 const {
@@ -498,14 +499,31 @@ function canPriceCard(card) {
   return Boolean(sharpPriceStatus && sharpPriceStatus !== 'UNPRICED');
 }
 
-function resolveSnapshotAgeMs(oddsSnapshot, nowMs = Date.now()) {
-  const capturedAt = oddsSnapshot?.captured_at ?? oddsSnapshot?.fetched_at ?? null;
-  if (!capturedAt) return null;
+function resolveSnapshotTimestampMeta(oddsSnapshot, payload, nowMs = Date.now()) {
+  const resolution = resolveSnapshotAge(
+    {
+      captured_at: oddsSnapshot?.captured_at ?? oddsSnapshot?.fetched_at ?? null,
+      pulled_at: oddsSnapshot?.pulled_at ?? null,
+      updated_at: oddsSnapshot?.updated_at ?? null,
+    },
+    {
+      snapshotId: oddsSnapshot?.id ?? null,
+      sport: payload?.sport ?? 'NHL',
+      gameId: oddsSnapshot?.game_id ?? payload?.game_id ?? null,
+      nowMs,
+    },
+  );
 
-  const capturedAtMs = new Date(capturedAt).getTime();
-  if (!Number.isFinite(capturedAtMs)) return null;
+  const snapshotTimestamp = {
+    captured_at: oddsSnapshot?.captured_at ?? null,
+    pulled_at: oddsSnapshot?.pulled_at ?? null,
+    updated_at: oddsSnapshot?.updated_at ?? null,
+    resolved_timestamp: resolution.resolved_timestamp,
+    resolved_source: resolution.source_field,
+    resolved_age_ms: resolution.resolved_age_ms,
+  };
 
-  return Math.max(0, nowMs - capturedAtMs);
+  return { resolution, snapshotTimestamp };
 }
 
 function toExecutionGatePassReasonCode(reason) {
@@ -533,7 +551,13 @@ function applyExecutionGateToNhlCard(card, { oddsSnapshot, nowMs = Date.now() } 
     String(payload.classification || '').toUpperCase() === 'PASS' ||
     String(payload.decision_v2?.official_status || '').toUpperCase() === 'PASS';
   const resolvedModelStatus = String(payload.model_status || 'MODEL_OK').toUpperCase();
-  const snapshotAgeMs = resolveSnapshotAgeMs(oddsSnapshot, nowMs);
+  const { resolution: snapshotResolution, snapshotTimestamp } = resolveSnapshotTimestampMeta(
+    oddsSnapshot,
+    payload,
+    nowMs,
+  );
+  const snapshotAgeMs = snapshotResolution?.resolved_age_ms ?? null;
+  payload.snapshot_timestamp = snapshotTimestamp;
 
   if (executionStatus !== 'EXECUTABLE' || alreadyPass) {
     const earlyExitDropReasonCode = alreadyPass
@@ -548,11 +572,17 @@ function applyExecutionGateToNhlCard(card, { oddsSnapshot, nowMs = Date.now() } 
       blocked_by: [earlyExitDropReasonCode],
       model_status: resolvedModelStatus,
       snapshot_age_ms: snapshotAgeMs,
+      freshness_decision: null,
       evaluated_at: new Date(nowMs).toISOString(),
       drop_reason: {
         drop_reason_code: earlyExitDropReasonCode,
         drop_reason_layer: 'worker_gate',
       },
+    };
+    payload.execution_envelope = {
+      snapshot_id: oddsSnapshot?.id ?? null,
+      snapshot_timestamp: snapshotTimestamp,
+      freshness_decision: null,
     };
     return { evaluated: false, blocked: false };
   }
@@ -587,8 +617,14 @@ function applyExecutionGateToNhlCard(card, { oddsSnapshot, nowMs = Date.now() } 
     blocked_by: gateResult.blocked_by,
     model_status: resolvedModelStatus,
     snapshot_age_ms: snapshotAgeMs,
+    freshness_decision: gateResult.freshness_decision || null,
     evaluated_at: new Date(nowMs).toISOString(),
     drop_reason: gateResult.drop_reason,
+  };
+  payload.execution_envelope = {
+    snapshot_id: oddsSnapshot?.id ?? null,
+    snapshot_timestamp: snapshotTimestamp,
+    freshness_decision: gateResult.freshness_decision || null,
   };
 
   if (!gateResult.shouldBet) {

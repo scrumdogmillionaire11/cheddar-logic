@@ -15,6 +15,7 @@ const {
   getDatabase,
   closeDatabase,
   runMigrations,
+  resolveSnapshotAge,
 } = require('@cheddar-logic/data');
 
 const TEST_DB_PATH = '/tmp/cheddar-test.db';
@@ -190,6 +191,152 @@ describe('pull_odds_hourly job', () => {
 
     expect(result).toBeDefined();
     expect(result.error_message).toBeNull();
+  });
+
+  describe('resolveSnapshotAge timestamp provenance', () => {
+    const fixedNowMs = Date.parse('2026-04-15T19:30:15.123Z');
+
+    test('1. Valid captured_at uses primary field with VALID status', () => {
+      const result = resolveSnapshotAge(
+        {
+          captured_at: '2026-04-15T19:10:12Z',
+          pulled_at: '2026-04-15T19:15:00Z',
+          updated_at: '2026-04-15T19:20:00Z',
+        },
+        { nowMs: fixedNowMs, sport: 'mlb', gameId: 'g1', snapshotId: 's1' },
+      );
+      expect(result.source_field).toBe('captured_at');
+      expect(result.status).toBe('VALID');
+      expect(result.fallback_chain_executed).toBe(false);
+      expect(result.resolved_age_ms).toBeGreaterThan(0);
+    });
+
+    test('2. Missing captured_at falls back to pulled_at with DEGRADED status', () => {
+      const result = resolveSnapshotAge(
+        {
+          captured_at: null,
+          pulled_at: '2026-04-15T19:15:00Z',
+          updated_at: '2026-04-15T19:20:00Z',
+        },
+        { nowMs: fixedNowMs },
+      );
+      expect(result.source_field).toBe('pulled_at');
+      expect(result.status).toBe('DEGRADED');
+      expect(result.fallback_chain_executed).toBe(true);
+    });
+
+    test('3. Missing captured_at and pulled_at falls back to updated_at with DEGRADED status', () => {
+      const result = resolveSnapshotAge(
+        {
+          captured_at: null,
+          pulled_at: null,
+          updated_at: '2026-04-15T19:10:00Z',
+        },
+        { nowMs: fixedNowMs },
+      );
+      expect(result.source_field).toBe('updated_at');
+      expect(result.status).toBe('DEGRADED');
+      expect(result.fallback_chain_executed).toBe(true);
+    });
+
+    test('4. All null falls back to now with DEGRADED status and near-zero age', () => {
+      const result = resolveSnapshotAge(
+        { captured_at: null, pulled_at: null, updated_at: null },
+        { nowMs: fixedNowMs },
+      );
+      expect(result.source_field).toBe('now');
+      expect(result.status).toBe('DEGRADED');
+      expect(result.resolved_age_ms).toBe(0);
+    });
+
+    test('5. Malformed ISO date-only triggers MALFORMED status with fallback', () => {
+      const result = resolveSnapshotAge(
+        {
+          captured_at: '2026-04-15',
+          pulled_at: '2026-04-15T19:15:00Z',
+          updated_at: null,
+        },
+        { nowMs: fixedNowMs },
+      );
+      expect(result.source_field).toBe('pulled_at');
+      expect(result.status).toBe('MALFORMED');
+      expect(result.fallback_chain_executed).toBe(true);
+    });
+
+    test('6. Malformed Unix epoch string triggers MALFORMED status', () => {
+      const result = resolveSnapshotAge(
+        {
+          captured_at: '1713200400',
+          pulled_at: '2026-04-15T19:15:00Z',
+          updated_at: null,
+        },
+        { nowMs: fixedNowMs },
+      );
+      expect(result.status).toBe('MALFORMED');
+      expect(result.source_field).toBe('pulled_at');
+    });
+
+    test('7. Future captured_at triggers MONOTONIC_VIOLATION status', () => {
+      const result = resolveSnapshotAge(
+        {
+          captured_at: '2026-04-15T20:30:15.123Z',
+          pulled_at: '2026-04-15T19:15:00Z',
+          updated_at: '2026-04-15T19:16:00Z',
+        },
+        { nowMs: fixedNowMs },
+      );
+      expect(result.status).toBe('MONOTONIC_VIOLATION');
+      expect(Array.isArray(result.violations)).toBe(true);
+      expect(result.violations.length).toBeGreaterThan(0);
+    });
+
+    test('8. Timezone offset normalizes to UTC and calculates age correctly', () => {
+      const nowMs = Date.parse('2026-04-15T14:30:10.000Z');
+      const result = resolveSnapshotAge(
+        {
+          captured_at: '2026-04-15T19:30:00+05:30',
+          pulled_at: null,
+          updated_at: null,
+        },
+        { nowMs },
+      );
+      expect(result.status).toBe('VALID');
+      expect(result.resolved_timestamp).toBe('2026-04-15T14:00:00.000Z');
+      expect(result.resolved_age_ms).toBe(30 * 60 * 1000 + 10 * 1000);
+    });
+
+    test('9. Non-monotonic ordering triggers MONOTONIC_VIOLATION', () => {
+      const result = resolveSnapshotAge(
+        {
+          captured_at: '2026-04-15T19:20:00Z',
+          pulled_at: '2026-04-15T19:10:00Z',
+          updated_at: '2026-04-15T19:09:00Z',
+        },
+        { nowMs: fixedNowMs },
+      );
+      expect(result.status).toBe('MONOTONIC_VIOLATION');
+      expect(result.violations).toEqual(
+        expect.arrayContaining([
+          expect.stringContaining('pulled_at < captured_at'),
+          expect.stringContaining('updated_at < pulled_at'),
+        ]),
+      );
+    });
+
+    test('10. Near-zero age captures recent timestamp with VALID status', () => {
+      const nowMs = Date.parse('2026-04-15T19:30:15.123Z');
+      const result = resolveSnapshotAge(
+        {
+          captured_at: '2026-04-15T19:30:15.073Z',
+          pulled_at: null,
+          updated_at: null,
+        },
+        { nowMs },
+      );
+      expect(result.status).toBe('VALID');
+      expect(result.source_field).toBe('captured_at');
+      expect(result.resolved_age_ms).toBe(50);
+    });
   });
 
   if (!hasOddsKey) {

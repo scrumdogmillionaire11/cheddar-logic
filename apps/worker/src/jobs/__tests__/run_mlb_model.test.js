@@ -2529,6 +2529,30 @@ describe('multi-market insertion (IME-01-03)', () => {
         xfip: 4.1,
         bbPct: 0.08,
       })),
+      resolveSnapshotAge: jest.fn((snapshotRow, opts = {}) => {
+        const nowMs = Number.isFinite(opts.nowMs)
+          ? opts.nowMs
+          : Date.parse('2026-04-15T19:30:00Z');
+        const resolvedTimestamp =
+          snapshotRow?.captured_at ?? snapshotRow?.pulled_at ?? snapshotRow?.updated_at ?? new Date(nowMs).toISOString();
+        const resolvedAgeMs = Math.max(0, nowMs - new Date(resolvedTimestamp).getTime());
+        return {
+          resolved_timestamp: new Date(resolvedTimestamp).toISOString(),
+          resolved_age_ms: Number.isFinite(resolvedAgeMs) ? resolvedAgeMs : 0,
+          source_field: snapshotRow?.captured_at
+            ? 'captured_at'
+            : snapshotRow?.pulled_at
+              ? 'pulled_at'
+              : snapshotRow?.updated_at
+                ? 'updated_at'
+                : 'now',
+          status: 'VALID',
+          fields_inspected: {},
+          fallback_chain_executed: false,
+          violations: [],
+          diagnostic: {},
+        };
+      }),
     };
   }
 
@@ -2897,6 +2921,30 @@ describe('runMLBModel without-odds mode selection', () => {
         xfip: 4.1,
         bbPct: 0.08,
       })),
+      resolveSnapshotAge: jest.fn((snapshotRow, opts = {}) => {
+        const nowMs = Number.isFinite(opts.nowMs)
+          ? opts.nowMs
+          : Date.parse('2026-04-15T19:30:00Z');
+        const resolvedTimestamp =
+          snapshotRow?.captured_at ?? snapshotRow?.pulled_at ?? snapshotRow?.updated_at ?? new Date(nowMs).toISOString();
+        const resolvedAgeMs = Math.max(0, nowMs - new Date(resolvedTimestamp).getTime());
+        return {
+          resolved_timestamp: new Date(resolvedTimestamp).toISOString(),
+          resolved_age_ms: Number.isFinite(resolvedAgeMs) ? resolvedAgeMs : 0,
+          source_field: snapshotRow?.captured_at
+            ? 'captured_at'
+            : snapshotRow?.pulled_at
+              ? 'pulled_at'
+              : snapshotRow?.updated_at
+                ? 'updated_at'
+                : 'now',
+          status: 'VALID',
+          fields_inspected: {},
+          fallback_chain_executed: false,
+          violations: [],
+          diagnostic: {},
+        };
+      }),
     }));
     jest.doMock('@cheddar-logic/odds/src/config', () => ({
       SPORTS_CONFIG: { MLB: { active: true } },
@@ -3626,5 +3674,48 @@ describe('Pitcher stats lookup by mlb_id and full_name (not team-only)', () => {
 
     expect(gameStartingPitcher.mlb_id).toBe(408014);
     expect(gameStartingPitcher.full_name).toBe('Luis Severino');
+  });
+});
+
+describe('applyExecutionGateToMlbPayload timestamp provenance', () => {
+  test('attaches execution_envelope.snapshot_timestamp and freshness_decision', () => {
+    const payload = {
+      sport: 'MLB',
+      game_id: 'mlb_1',
+      card_type: 'mlb-full-game-ml',
+      market_type: 'MONEYLINE',
+      recommended_bet_type: 'MONEYLINE',
+      period: 'FULL_GAME',
+      execution_status: 'EXECUTABLE',
+      status: 'WATCH',
+      action: 'LEAN',
+      classification: 'LEAN',
+      model_status: 'MODEL_OK',
+      edge: 0.04,
+      confidence: 0.62,
+    };
+
+    applyExecutionGateToMlbPayload(payload, {
+      oddsSnapshot: {
+        id: 'odds_mlb_test_1',
+        game_id: 'mlb_1',
+        captured_at: '2026-04-15T19:20:00Z',
+        pulled_at: '2026-04-15T19:20:05Z',
+        updated_at: '2026-04-15T19:20:07Z',
+      },
+      nowMs: Date.parse('2026-04-15T19:30:00Z'),
+    });
+
+    expect(payload.snapshot_timestamp).toBeDefined();
+    expect(payload.snapshot_timestamp).toMatchObject({
+      captured_at: '2026-04-15T19:20:00Z',
+      resolved_source: 'captured_at',
+      resolved_timestamp: expect.any(String),
+      resolved_age_ms: expect.any(Number),
+    });
+    expect(payload.execution_envelope).toBeDefined();
+    expect(payload.execution_envelope.snapshot_timestamp).toBeDefined();
+    expect(payload.execution_gate).toBeDefined();
+    expect(payload.execution_gate).toHaveProperty('freshness_decision');
   });
 });

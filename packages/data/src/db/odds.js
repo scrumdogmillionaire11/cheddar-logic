@@ -957,8 +957,8 @@ function updateOddsSnapshotCircaSplits({ gameId, circaData }) {
  * @returns {object} { resolved_timestamp, resolved_age_ms, source_field, status, fields_inspected, fallback_chain_executed, violations, diagnostic }
  */
 function resolveSnapshotAge(snapshotRow, opts = {}) {
-  const startTime = Date.now();
-  const now = new Date();
+  const nowMs = Number.isFinite(opts.nowMs) ? opts.nowMs : Date.now();
+  const now = new Date(nowMs);
   const nowIso = now.toISOString();
   
   const fieldsInspected = {
@@ -983,8 +983,9 @@ function resolveSnapshotAge(snapshotRow, opts = {}) {
       return { valid: false, reason: 'not_string' };
     }
 
-    // Check ISO 8601 format with UTC timezone
-    const iso8601Pattern = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{3})?Z?(\+00:00)?$/;
+    // Require explicit timezone (Z or +HH:MM/-HH:MM)
+    const iso8601Pattern =
+      /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{3})?(Z|[+-]\d{2}:\d{2})$/;
     if (!iso8601Pattern.test(value)) {
       return { valid: false, reason: 'not_iso8601' };
     }
@@ -996,7 +997,7 @@ function resolveSnapshotAge(snapshotRow, opts = {}) {
     }
 
     // Check for future timestamp (allow 1 second grace for clock skew)
-    const diffMs = parsed.getTime() - now.getTime();
+    const diffMs = parsed.getTime() - nowMs;
     if (diffMs > 1000) {
       violations.push(`${fieldName} is future timestamp (${value}, ${diffMs}ms in future)`);
       return { valid: false, reason: 'future_timestamp' };
@@ -1005,12 +1006,7 @@ function resolveSnapshotAge(snapshotRow, opts = {}) {
     return { valid: true, parsed, reason: null };
   };
 
-  // Helper: check timezone normalization
-  const normalizeToUtc = (isoString) => {
-    // Convert IST or other timezone to UTC if needed
-    const d = new Date(isoString);
-    return d.toISOString();
-  };
+  const normalizeToUtc = (isoString) => new Date(isoString).toISOString();
 
   // Level 1: Try captured_at
   const capturedAtResult = validateTimestamp(snapshotRow.captured_at, 'captured_at');
@@ -1058,6 +1054,14 @@ function resolveSnapshotAge(snapshotRow, opts = {}) {
     }
   }
 
+  const malformedDetected =
+    (snapshotRow?.captured_at && !capturedAtResult.valid && capturedAtResult.reason !== 'future_timestamp') ||
+    (snapshotRow?.pulled_at && fieldsInspected.pulled_at.status === 'INVALID') ||
+    (snapshotRow?.updated_at && fieldsInspected.updated_at.status === 'INVALID');
+  if (malformedDetected && status !== 'MONOTONIC_VIOLATION') {
+    status = 'MALFORMED';
+  }
+
   // Detect non-monotonic violations after resolution
   if (snapshotRow.captured_at && snapshotRow.pulled_at) {
     const capturedTime = new Date(snapshotRow.captured_at).getTime();
@@ -1079,7 +1083,7 @@ function resolveSnapshotAge(snapshotRow, opts = {}) {
 
   // Calculate age
   const resolvedParsed = new Date(resolvedTimestamp);
-  resolvedAgeMs = Math.max(0, now.getTime() - resolvedParsed.getTime());
+  resolvedAgeMs = Math.max(0, nowMs - resolvedParsed.getTime());
 
   // Build diagnostic object
   const diagnostic = {
@@ -1098,7 +1102,7 @@ function resolveSnapshotAge(snapshotRow, opts = {}) {
 
     fields_inspected: fieldsInspected,
 
-    fallback_chain_executed,
+    fallback_chain_executed: fallbackChainExecuted,
     violations: violations.length > 0 ? violations : [],
   };
 
@@ -1111,7 +1115,7 @@ function resolveSnapshotAge(snapshotRow, opts = {}) {
     source_field: sourceField,
     status,
     fields_inspected: fieldsInspected,
-    fallback_chain_executed,
+    fallback_chain_executed: fallbackChainExecuted,
     violations,
     diagnostic,
   };

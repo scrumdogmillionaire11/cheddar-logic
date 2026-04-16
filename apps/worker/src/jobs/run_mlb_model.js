@@ -37,6 +37,7 @@ const {
   withDb,
   // WI-0840: dynamic league constants query
   computeMLBLeagueAverages,
+  resolveSnapshotAge,
 } = require('@cheddar-logic/data');
 
 // Import pluggable inference layer
@@ -1334,14 +1335,31 @@ function deriveMlbExecutionEnvelope({
   };
 }
 
-function resolveSnapshotAgeMs(oddsSnapshot, nowMs = Date.now()) {
-  const capturedAt = oddsSnapshot?.captured_at ?? oddsSnapshot?.fetched_at ?? null;
-  if (!capturedAt) return null;
+function resolveSnapshotTimestampMeta(oddsSnapshot, payload, nowMs = Date.now()) {
+  const resolution = resolveSnapshotAge(
+    {
+      captured_at: oddsSnapshot?.captured_at ?? oddsSnapshot?.fetched_at ?? null,
+      pulled_at: oddsSnapshot?.pulled_at ?? null,
+      updated_at: oddsSnapshot?.updated_at ?? null,
+    },
+    {
+      snapshotId: oddsSnapshot?.id ?? null,
+      sport: payload?.sport ?? 'MLB',
+      gameId: oddsSnapshot?.game_id ?? payload?.game_id ?? null,
+      nowMs,
+    },
+  );
 
-  const capturedAtMs = new Date(capturedAt).getTime();
-  if (!Number.isFinite(capturedAtMs)) return null;
+  const snapshotTimestamp = {
+    captured_at: oddsSnapshot?.captured_at ?? null,
+    pulled_at: oddsSnapshot?.pulled_at ?? null,
+    updated_at: oddsSnapshot?.updated_at ?? null,
+    resolved_timestamp: resolution.resolved_timestamp,
+    resolved_source: resolution.source_field,
+    resolved_age_ms: resolution.resolved_age_ms,
+  };
 
-  return Math.max(0, nowMs - capturedAtMs);
+  return { resolution, snapshotTimestamp };
 }
 
 function toExecutionGatePassReasonCode(reason) {
@@ -1504,7 +1522,13 @@ function applyExecutionGateToMlbPayload(payload, { oddsSnapshot, nowMs = Date.no
     String(payload.action || '').toUpperCase() === 'PASS' ||
     String(payload.classification || '').toUpperCase() === 'PASS';
   const resolvedModelStatus = String(payload.model_status || 'MODEL_OK').toUpperCase();
-  const snapshotAgeMs = resolveSnapshotAgeMs(oddsSnapshot, nowMs);
+  const { resolution: snapshotResolution, snapshotTimestamp } = resolveSnapshotTimestampMeta(
+    oddsSnapshot,
+    payload,
+    nowMs,
+  );
+  const snapshotAgeMs = snapshotResolution?.resolved_age_ms ?? null;
+  payload.snapshot_timestamp = snapshotTimestamp;
   if (executionStatus !== 'EXECUTABLE' || alreadyPass) {
     const earlyExitDropReasonCode = alreadyPass
       ? 'NOT_BET_ELIGIBLE'
@@ -1518,11 +1542,17 @@ function applyExecutionGateToMlbPayload(payload, { oddsSnapshot, nowMs = Date.no
       blocked_by: [earlyExitDropReasonCode],
       model_status: resolvedModelStatus,
       snapshot_age_ms: snapshotAgeMs,
+      freshness_decision: null,
       evaluated_at: new Date(nowMs).toISOString(),
       drop_reason: {
         drop_reason_code: earlyExitDropReasonCode,
         drop_reason_layer: 'worker_gate',
       },
+    };
+    payload.execution_envelope = {
+      snapshot_id: oddsSnapshot?.id ?? null,
+      snapshot_timestamp: snapshotTimestamp,
+      freshness_decision: null,
     };
     return { evaluated: false, blocked: false };
   }
@@ -1617,6 +1647,7 @@ function applyExecutionGateToMlbPayload(payload, { oddsSnapshot, nowMs = Date.no
     blocked_by: gateBlockedBy,
     model_status: resolvedModelStatus,
     snapshot_age_ms: snapshotAgeMs,
+    freshness_decision: gateResult.freshness_decision || null,
     evaluated_at: new Date(nowMs).toISOString(),
     drop_reason: gateDropReason,
     overridden_by_edge: applyHighEdgeOverride || downgradeHighEdgeToLean,
@@ -1628,6 +1659,11 @@ function applyExecutionGateToMlbPayload(payload, { oddsSnapshot, nowMs = Date.no
           resolution: 'DOWNGRADED_TO_LEAN',
         }
       : null,
+  };
+  payload.execution_envelope = {
+    snapshot_id: oddsSnapshot?.id ?? null,
+    snapshot_timestamp: snapshotTimestamp,
+    freshness_decision: gateResult.freshness_decision || null,
   };
 
   if (applyHighEdgeOverride || downgradeHighEdgeToLean) {
@@ -3587,18 +3623,30 @@ async function runMLBModel({
                 },
               });
             } else {
+              const projectionOnlySnapshotMeta = resolveSnapshotTimestampMeta(
+                gameOddsSnapshot,
+                payloadData,
+                Date.now(),
+              );
+              payloadData.snapshot_timestamp = projectionOnlySnapshotMeta.snapshotTimestamp;
               payloadData.execution_gate = {
                 evaluated: false,
                 should_bet: null,
                 net_edge: null,
                 blocked_by: ['PROJECTION_ONLY_MARKET'],
                 model_status: String(payloadData.model_status || 'MODEL_OK').toUpperCase(),
-                snapshot_age_ms: resolveSnapshotAgeMs(gameOddsSnapshot),
+                snapshot_age_ms: projectionOnlySnapshotMeta.resolution?.resolved_age_ms ?? null,
+                freshness_decision: null,
                 evaluated_at: new Date().toISOString(),
                 drop_reason: {
                   drop_reason_code: 'PROJECTION_ONLY_MARKET',
                   drop_reason_layer: 'worker_gate',
                 },
+              };
+              payloadData.execution_envelope = {
+                snapshot_id: gameOddsSnapshot?.id ?? null,
+                snapshot_timestamp: projectionOnlySnapshotMeta.snapshotTimestamp,
+                freshness_decision: null,
               };
             }
             assertMlbExecutionInvariant(payloadData);
