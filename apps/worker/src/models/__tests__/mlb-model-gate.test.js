@@ -2,9 +2,14 @@
 // WI-0820: Input gate regression tests for mlb-model.js
 // Verifies NO_BET / DEGRADED paths wired into projectF5Total.
 
+delete process.env.MLB_FULL_GAME_SHRINK_FACTOR_FULL_MODEL;
+delete process.env.MLB_FULL_GAME_SHRINK_FACTOR_DEGRADED_MODEL;
+delete process.env.MLB_FULL_GAME_DEGRADED_RECENTER_WEIGHT;
+
 const {
   projectF5Total,
   projectFullGameTotalCard,
+  computeBullpenAdjustmentRuns,
 } = require('../mlb-model');
 
 // ---------------------------------------------------------------------------
@@ -146,7 +151,72 @@ describe('projectFullGameTotalCard — WI-0944 gate semantics', () => {
     home_recent_usage: 0.5,
     away_recent_usage: 0.5,
     f5_line: 4.5,
+    home_bullpen_context: {
+      quality_tier: 'AVG',
+      era_14d: 4.2,
+      usage_score_3d: 0,
+      fatigue_score_3d: 0,
+      availability_score: 0.8,
+    },
+    away_bullpen_context: {
+      quality_tier: 'AVG',
+      era_14d: 4.3,
+      usage_score_3d: 0,
+      fatigue_score_3d: 0,
+      availability_score: 0.8,
+    },
   };
+
+  test('bullpen adjustment is positive for bad/taxed, negative for good/fresh, neutral on missing, and bounded', () => {
+    const hot = computeBullpenAdjustmentRuns({
+      homeBullpenContext: {
+        era_14d: 5.4,
+        usage_score_3d: 2,
+        fatigue_score_3d: 2,
+      },
+      awayBullpenContext: {
+        era_14d: 5.1,
+        usage_score_3d: 1,
+        fatigue_score_3d: 2,
+      },
+    });
+    expect(hot).toBeGreaterThan(0.25);
+
+    const cool = computeBullpenAdjustmentRuns({
+      homeBullpenContext: {
+        era_14d: 3.1,
+        usage_score_3d: 0,
+        fatigue_score_3d: 0,
+      },
+      awayBullpenContext: {
+        era_14d: 3.3,
+        usage_score_3d: 0,
+        fatigue_score_3d: 0,
+      },
+    });
+    expect(cool).toBeLessThan(0);
+
+    const neutral = computeBullpenAdjustmentRuns({
+      homeBullpenContext: null,
+      awayBullpenContext: null,
+    });
+    expect(neutral).toBe(0);
+
+    const bounded = computeBullpenAdjustmentRuns({
+      homeBullpenContext: {
+        era_14d: 10,
+        usage_score_3d: 5,
+        fatigue_score_3d: 5,
+      },
+      awayBullpenContext: {
+        era_14d: 10,
+        usage_score_3d: 5,
+        fatigue_score_3d: 5,
+      },
+    });
+    expect(bounded).toBeLessThanOrEqual(0.55);
+    expect(bounded).toBeGreaterThanOrEqual(-0.35);
+  });
 
   test('edge below threshold remains PASS and preserves PASS reason continuity', () => {
     const result = projectFullGameTotalCard(
@@ -173,6 +243,8 @@ describe('projectFullGameTotalCard — WI-0944 gate semantics', () => {
       ...baseFgContext,
       home_bullpen_era: null,
       away_bullpen_era: null,
+      home_bullpen_context: null,
+      away_bullpen_context: null,
       f5_line: 4.2,
     };
 
@@ -191,11 +263,44 @@ describe('projectFullGameTotalCard — WI-0944 gate semantics', () => {
     );
   });
 
+  test('heavily degraded full-game total with real edge downgrades to WATCH instead of PASS', () => {
+    const heavilyDegradedContext = {
+      ...baseFgContext,
+      home_bullpen_era: null,
+      away_bullpen_era: null,
+      home_bullpen_context: null,
+      away_bullpen_context: null,
+      temp_f: null,
+      wind_mph: null,
+      wind_dir: null,
+      f5_line: 4.2,
+    };
+
+    const result = projectFullGameTotalCard(
+      validHome,
+      validAway,
+      7.0,
+      heavilyDegradedContext,
+    );
+
+    expect(result).toBeTruthy();
+    expect(result.status).toBe('WATCH');
+    expect(result.action).toBe('HOLD');
+    expect(result.classification).toBe('LEAN');
+    expect(result.reason_codes).toEqual(
+      expect.arrayContaining(['MODEL_DEGRADED_INPUTS', 'SOFT_DEGRADED_TOTAL_MODEL']),
+    );
+    expect(result.reason_codes).not.toContain('PASS_DEGRADED_TOTAL_MODEL');
+    expect(result.pass_reason_code).toBeNull();
+  });
+
   test('directional audit exposes raw, recentered, shrunk, and final totals', () => {
     const degradedContext = {
       ...baseFgContext,
       home_bullpen_era: null,
       away_bullpen_era: null,
+      home_bullpen_context: null,
+      away_bullpen_context: null,
       f5_line: 4.2,
     };
 
@@ -217,10 +322,19 @@ describe('projectFullGameTotalCard — WI-0944 gate semantics', () => {
       final_total: expect.any(Number),
       raw_edge: expect.any(Number),
       final_edge: expect.any(Number),
-      shrink_factor: 0.35,
+      shrink_factor: 0.65,
       qualification_edge_source: 'raw',
       degraded_mode: true,
+      bullpen_context: expect.objectContaining({
+        bullpen_adjustment_runs: expect.any(Number),
+        bullpen_data_missing: expect.any(Boolean),
+      }),
     }));
+    expect(result.projection.component_breakdown).toEqual(
+      expect.objectContaining({
+        bullpen_adjustment_runs: expect.any(Number),
+      }),
+    );
     expect(result.projection.projected_total_recentered).toBe(result.directional_audit.after_degradation_total);
     expect(result.projection.projected_total_final).toBe(result.directional_audit.final_total);
   });

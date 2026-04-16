@@ -337,6 +337,119 @@ function resolveMlbF5ParkRunFactor(homeTeamName) {
   return abbreviation ? toFiniteNumber(MLB_F5_PARK_RUN_FACTORS[abbreviation]) : null;
 }
 
+function buildNeutralBullpenContext(auditFlag = 'BULLPEN_CONTEXT_NEUTRAL_FALLBACK') {
+  return {
+    quality_tier: 'AVG',
+    era_14d: null,
+    usage_score_3d: 0,
+    fatigue_score_3d: 0,
+    availability_score: null,
+    audit_flags: [auditFlag],
+  };
+}
+
+function resolveBullpenQualityTier(era14d) {
+  if (!Number.isFinite(era14d)) return 'AVG';
+  if (era14d <= 3.9) return 'GOOD';
+  if (era14d >= 4.9) return 'BAD';
+  return 'AVG';
+}
+
+function buildMlbBullpenContext({ teamName, asOfIso, recentGames = [] } = {}) {
+  const normalizedTeam = normalizeTokenForMap(teamName || '');
+  if (!normalizedTeam || !Array.isArray(recentGames) || recentGames.length === 0) {
+    return buildNeutralBullpenContext('BULLPEN_CONTEXT_MISSING_HISTORY');
+  }
+
+  const asOfMs = Date.parse(asOfIso || new Date().toISOString());
+  const window3dMs = 3 * 24 * 60 * 60 * 1000;
+  const window2dMs = 2 * 24 * 60 * 60 * 1000;
+  const runsAllowed = [];
+  let games3d = 0;
+  let games2d = 0;
+
+  for (const game of recentGames) {
+    const homeTeam = normalizeTokenForMap(game?.home_team || '');
+    const awayTeam = normalizeTokenForMap(game?.away_team || '');
+    const homeScore = toFiniteNumber(game?.final_score_home);
+    const awayScore = toFiniteNumber(game?.final_score_away);
+    if (!Number.isFinite(homeScore) || !Number.isFinite(awayScore)) continue;
+
+    const isHome = homeTeam === normalizedTeam;
+    const isAway = awayTeam === normalizedTeam;
+    if (!isHome && !isAway) continue;
+
+    const gameMs = Date.parse(game?.game_time_utc || game?.updated_at || game?.created_at || '');
+    if (!Number.isFinite(gameMs)) continue;
+
+    const allowed = isHome ? awayScore : homeScore;
+    runsAllowed.push(allowed);
+
+    if (Number.isFinite(asOfMs) && asOfMs > gameMs) {
+      const deltaMs = asOfMs - gameMs;
+      if (deltaMs <= window3dMs) games3d += 1;
+      if (deltaMs <= window2dMs) games2d += 1;
+    }
+  }
+
+  if (runsAllowed.length === 0) {
+    return buildNeutralBullpenContext('BULLPEN_CONTEXT_NO_MATCHED_RESULTS');
+  }
+
+  const era14d = runsAllowed.reduce((sum, value) => sum + value, 0) / runsAllowed.length;
+  const usageScore3d = games3d >= 3 ? 2 : games3d >= 2 ? 1 : 0;
+  const fatigueScore3d = games2d >= 2 ? 2 : games3d >= 2 ? 1 : 0;
+  const availabilityScore = Math.max(
+    0,
+    Math.min(1, 1 - (usageScore3d * 0.28) - (fatigueScore3d * 0.34)),
+  );
+
+  return {
+    quality_tier: resolveBullpenQualityTier(era14d),
+    era_14d: Number(era14d.toFixed(2)),
+    usage_score_3d: usageScore3d,
+    fatigue_score_3d: fatigueScore3d,
+    availability_score: Number(availabilityScore.toFixed(2)),
+    audit_flags: [],
+  };
+}
+
+function resolveMlbBullpenContext(db, teamName, asOfIso) {
+  if (!db || typeof db.prepare !== 'function') {
+    return buildNeutralBullpenContext('BULLPEN_CONTEXT_DB_UNAVAILABLE');
+  }
+
+  const asOf = asOfIso || new Date().toISOString();
+  try {
+    const rows = db.prepare(`
+      SELECT
+        g.home_team,
+        g.away_team,
+        g.game_time_utc,
+        r.final_score_home,
+        r.final_score_away,
+        r.updated_at
+      FROM game_results r
+      INNER JOIN games g ON g.game_id = r.game_id
+      WHERE LOWER(r.sport) = 'mlb'
+        AND LOWER(r.status) = 'final'
+        AND datetime(g.game_time_utc) < datetime(?)
+        AND datetime(g.game_time_utc) >= datetime(?, '-14 days')
+        AND (UPPER(g.home_team) = UPPER(?) OR UPPER(g.away_team) = UPPER(?))
+      ORDER BY datetime(g.game_time_utc) DESC
+      LIMIT 14
+    `).all(asOf, asOf, teamName, teamName);
+
+    return buildMlbBullpenContext({
+      teamName,
+      asOfIso: asOf,
+      recentGames: rows,
+    });
+  } catch (_error) {
+    return buildNeutralBullpenContext('BULLPEN_CONTEXT_QUERY_ERROR');
+  }
+}
+
 function parseMlbRawData(oddsSnapshot) {
   try {
     if (typeof oddsSnapshot?.raw_data === 'string') {
@@ -2984,7 +3097,7 @@ function enrichMlbPitcherData(
     try {
       const today = new Date().toISOString().slice(0, 10);
       const weatherRow = db.prepare(
-        'SELECT temp_f, wind_mph, wind_dir, conditions FROM mlb_game_weather WHERE game_date = ? AND home_team = ? LIMIT 1',
+        'SELECT temp_f, wind_mph, wind_dir, conditions FROM mlb_game_weather WHERE game_date = ? AND UPPER(home_team) = UPPER(?) LIMIT 1',
       ).get(today, homeTeam);
 
       if (weatherRow && weatherRow.conditions !== 'INDOOR') {
@@ -3003,6 +3116,53 @@ function enrichMlbPitcherData(
       }
     } catch (_weatherErr) {
       // Non-fatal — model uses neutral defaults
+    }
+
+    // Bullpen context v1: derive bounded quality/workload proxies from recent MLB finals.
+    try {
+      const asOfIso = oddsSnapshot?.game_time_utc || new Date().toISOString();
+      const homeBullpenContext = resolveMlbBullpenContext(db, homeTeam, asOfIso);
+      const awayBullpenContext = resolveMlbBullpenContext(db, awayTeam, asOfIso);
+
+      mlb.home_bullpen_context = homeBullpenContext;
+      mlb.away_bullpen_context = awayBullpenContext;
+
+      // Maintain legacy model fields while the v1 context contract rolls out.
+      if (!Number.isFinite(toFiniteNumber(mlb.home_bullpen_era))) {
+        mlb.home_bullpen_era = toFiniteNumber(homeBullpenContext?.era_14d);
+      }
+      if (!Number.isFinite(toFiniteNumber(mlb.away_bullpen_era))) {
+        mlb.away_bullpen_era = toFiniteNumber(awayBullpenContext?.era_14d);
+      }
+      if (!Number.isFinite(toFiniteNumber(mlb.home_recent_usage))) {
+        mlb.home_recent_usage = toFiniteNumber(homeBullpenContext?.usage_score_3d) !== null
+          ? Math.max(0, Math.min(1, Number(homeBullpenContext.usage_score_3d) / 2))
+          : null;
+      }
+      if (!Number.isFinite(toFiniteNumber(mlb.away_recent_usage))) {
+        mlb.away_recent_usage = toFiniteNumber(awayBullpenContext?.usage_score_3d) !== null
+          ? Math.max(0, Math.min(1, Number(awayBullpenContext.usage_score_3d) / 2))
+          : null;
+      }
+      if (!Number.isFinite(toFiniteNumber(mlb.home_bullpen_fatigue_index))) {
+        mlb.home_bullpen_fatigue_index = toFiniteNumber(homeBullpenContext?.fatigue_score_3d) !== null
+          ? Math.max(0, Math.min(1, Number(homeBullpenContext.fatigue_score_3d) / 2))
+          : null;
+      }
+      if (!Number.isFinite(toFiniteNumber(mlb.away_bullpen_fatigue_index))) {
+        mlb.away_bullpen_fatigue_index = toFiniteNumber(awayBullpenContext?.fatigue_score_3d) !== null
+          ? Math.max(0, Math.min(1, Number(awayBullpenContext.fatigue_score_3d) / 2))
+          : null;
+      }
+      if (!Number.isFinite(toFiniteNumber(mlb.home_leverage_availability))) {
+        mlb.home_leverage_availability = toFiniteNumber(homeBullpenContext?.availability_score);
+      }
+      if (!Number.isFinite(toFiniteNumber(mlb.away_leverage_availability))) {
+        mlb.away_leverage_availability = toFiniteNumber(awayBullpenContext?.availability_score);
+      }
+    } catch (_bullpenErr) {
+      mlb.home_bullpen_context = mlb.home_bullpen_context || buildNeutralBullpenContext('BULLPEN_CONTEXT_ENRICH_ERROR');
+      mlb.away_bullpen_context = mlb.away_bullpen_context || buildNeutralBullpenContext('BULLPEN_CONTEXT_ENRICH_ERROR');
     }
 
     const today = new Date().toISOString().slice(0, 10);
@@ -4321,6 +4481,9 @@ module.exports = {
   buildMlbF5OddsContext,
   buildMlbMarketAvailability,
   buildMlbPipelineState,
+  buildMlbBullpenContext,
+  resolveMlbBullpenContext,
+  buildNeutralBullpenContext,
   MLB_PIPELINE_REASON_CODES,
   resolveMlbTeamLookupKeys,
   resolvePitcherKsMode,

@@ -683,6 +683,73 @@ function computeL5Mean(l5Sog) {
   return l5Sog.reduce((sum, value) => sum + value, 0) / l5Sog.length;
 }
 
+function computeBlkRatePer60FromLookback(games, windowSize) {
+  if (!Array.isArray(games) || games.length === 0) return null;
+  const window = games.slice(0, windowSize);
+  if (window.length === 0) return null;
+  const totals = window.reduce(
+    (acc, row) => {
+      const blocks = Number(row?.blocked_shots);
+      const toi = Number(row?.toi_minutes);
+      if (Number.isFinite(blocks) && Number.isFinite(toi) && toi > 0) {
+        acc.blocks += blocks;
+        acc.toi += toi;
+      }
+      return acc;
+    },
+    { blocks: 0, toi: 0 },
+  );
+  if (!Number.isFinite(totals.toi) || totals.toi <= 0) return null;
+  return (totals.blocks / totals.toi) * 60;
+}
+
+function resolveBlkRateInputs({
+  blkRateRow,
+  playerBlkLookbackGames,
+  playerId,
+  playerName,
+}) {
+  const lookbackL10 = computeBlkRatePer60FromLookback(playerBlkLookbackGames, 10);
+  const lookbackL5 = computeBlkRatePer60FromLookback(playerBlkLookbackGames, 5);
+
+  const normalizeRolling = (storedValue, lookbackValue, label) => {
+    const stored = Number(storedValue);
+    const lookback = Number(lookbackValue);
+    const hasStored = Number.isFinite(stored) && stored > 0;
+    const hasLookback = Number.isFinite(lookback) && lookback > 0;
+    if (!hasStored && hasLookback) {
+      console.warn(
+        '[' + JOB_NAME + '] BLK rolling-rate fallback for ' + playerName + ' (' + playerId + ') ' + label + ': ' +
+          'stored=' + (Number.isFinite(stored) ? stored : 'null') + ' lookback=' + lookback.toFixed(3),
+      );
+      return lookback;
+    }
+    return Number.isFinite(stored) ? stored : null;
+  };
+
+  const evL10 = normalizeRolling(blkRateRow?.ev_blocks_l10_per60, lookbackL10, 'ev_l10');
+  const evL5 = normalizeRolling(blkRateRow?.ev_blocks_l5_per60, lookbackL5, 'ev_l5');
+  const pkL10 = normalizeRolling(blkRateRow?.pk_blocks_l10_per60, lookbackL10, 'pk_l10');
+  const pkL5 = normalizeRolling(blkRateRow?.pk_blocks_l5_per60, lookbackL5, 'pk_l5');
+
+  return {
+    evSeason: Number.isFinite(Number(blkRateRow?.ev_blocks_season_per60))
+      ? Number(blkRateRow?.ev_blocks_season_per60)
+      : null,
+    evL10,
+    evL5,
+    pkSeason: Number.isFinite(Number(blkRateRow?.pk_blocks_season_per60))
+      ? Number(blkRateRow?.pk_blocks_season_per60)
+      : null,
+    pkL10,
+    pkL5,
+    usedLookbackFallback:
+      (!Number.isFinite(Number(blkRateRow?.ev_blocks_l10_per60)) || Number(blkRateRow?.ev_blocks_l10_per60) <= 0) &&
+      Number.isFinite(lookbackL10) &&
+      lookbackL10 > 0,
+  };
+}
+
 function computeL5StdDev(l5Sog, mean) {
   if (!Array.isArray(l5Sog) || l5Sog.length === 0) return 0;
   const variance =
@@ -3559,6 +3626,12 @@ async function runNHLPlayerShotsModel() {
                 );
 
               if (blkMarket) {
+                const blkRateInputs = resolveBlkRateInputs({
+                  blkRateRow,
+                  playerBlkLookbackGames,
+                  playerId: player.player_id,
+                  playerName,
+                });
                 const blkUsingRealLine =
                   !EVENT_PRICING_DISABLED &&
                   blkLineCandidates.length > 0 &&
@@ -3590,9 +3663,9 @@ async function runNHLPlayerShotsModel() {
                   blkGameMonth === 5 ||
                   blkGameMonth === 6;
                 const blkEvBlendedRate = weightedRateBlendBLK(
-                  blkRateRow?.ev_blocks_season_per60 ?? null,
-                  blkRateRow?.ev_blocks_l10_per60 ?? null,
-                  blkRateRow?.ev_blocks_l5_per60 ?? null,
+                  blkRateInputs.evSeason,
+                  blkRateInputs.evL10,
+                  blkRateInputs.evL5,
                 );
                 const blkIsEstablished =
                   blkInPlayoffs &&
@@ -3618,6 +3691,9 @@ async function runNHLPlayerShotsModel() {
                 }
                 if (blkUnderdogContext.missing) {
                   blkContextFlags.push('BLK_UNDERDOG_FACTOR_MISSING');
+                }
+                if (blkRateInputs.usedLookbackFallback) {
+                  blkContextFlags.push('BLK_RATE_LOOKBACK_FALLBACK');
                 }
                 const blkCombinedDynamic =
                   blkOppAttemptFactor *
@@ -3652,12 +3728,12 @@ async function runNHLPlayerShotsModel() {
                 const blkProjection = projectBlkV1({
                   player_id: player.player_id,
                   game_id: resolvedGameId,
-                  ev_blocks_season_per60: blkRateRow?.ev_blocks_season_per60 ?? null,
-                  ev_blocks_l10_per60: blkRateRow?.ev_blocks_l10_per60 ?? null,
-                  ev_blocks_l5_per60: blkRateRow?.ev_blocks_l5_per60 ?? null,
-                  pk_blocks_season_per60: blkRateRow?.pk_blocks_season_per60 ?? null,
-                  pk_blocks_l10_per60: blkRateRow?.pk_blocks_l10_per60 ?? null,
-                  pk_blocks_l5_per60: blkRateRow?.pk_blocks_l5_per60 ?? null,
+                  ev_blocks_season_per60: blkRateInputs.evSeason,
+                  ev_blocks_l10_per60: blkRateInputs.evL10,
+                  ev_blocks_l5_per60: blkRateInputs.evL5,
+                  pk_blocks_season_per60: blkRateInputs.pkSeason,
+                  pk_blocks_l10_per60: blkRateInputs.pkL10,
+                  pk_blocks_l5_per60: blkRateInputs.pkL5,
                   toi_proj_ev: blkToiProjEv,
                   toi_proj_pk: blkToiProjPk,
                   role_stability: roleStability,

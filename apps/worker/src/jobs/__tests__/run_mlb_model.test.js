@@ -47,6 +47,8 @@ const {
   buildMlbMarketAvailability,
   hydrateCanonicalMlbMarketLines,
   buildMlbPipelineState,
+  buildMlbBullpenContext,
+  resolveMlbBullpenContext,
   buildPitcherKLineContract,
   buildMlbPitcherKPayloadFields,
   resolvePitcherKPayloadIdentity,
@@ -360,6 +362,55 @@ describe('buildMlbMarketAvailability projection-only totals guard', () => {
 
     expect(canonicalCards.some((card) => card.market === 'full_game_total')).toBe(true);
     expect(aliasOnlyCards.some((card) => card.market === 'full_game_total')).toBe(false);
+  });
+
+  test('mlb-full-game card projection includes bullpen_adjustment_runs in component breakdown', () => {
+    const snapshot = {
+      raw_data: {
+        mlb: {
+          full_game_line: 8.5,
+          f5_line: 4.5,
+          home_pitcher: { ...f5HomePitcher },
+          away_pitcher: { ...f5AwayPitcher },
+          home_offense_profile: { ...f5FullContext.home_offense_profile },
+          away_offense_profile: { ...f5FullContext.away_offense_profile },
+          park_run_factor: f5FullContext.park_run_factor,
+          temp_f: f5FullContext.temp_f,
+          wind_mph: f5FullContext.wind_mph,
+          wind_dir: f5FullContext.wind_dir,
+          roof: f5FullContext.roof,
+          home_bullpen_context: {
+            quality_tier: 'BAD',
+            era_14d: 5.2,
+            usage_score_3d: 2,
+            fatigue_score_3d: 2,
+            availability_score: 0.1,
+          },
+          away_bullpen_context: {
+            quality_tier: 'AVG',
+            era_14d: 4.4,
+            usage_score_3d: 1,
+            fatigue_score_3d: 1,
+            availability_score: 0.5,
+          },
+        },
+      },
+      h2h_home: -120,
+      h2h_away: 110,
+    };
+
+    const cards = computeMLBDriverCards('g-mlb-bullpen-smoke', snapshot);
+    const fullGame = cards.find((card) => card.market === 'full_game_total');
+
+    expect(fullGame).toBeTruthy();
+    expect(fullGame.projection.component_breakdown).toEqual(
+      expect.objectContaining({
+        bullpen_adjustment_runs: expect.any(Number),
+        bullpen_context: expect.objectContaining({
+          bullpen_data_missing: expect.any(Boolean),
+        }),
+      }),
+    );
   });
 
   describe('WI-0944: F5 decoupling from full-game markets', () => {
@@ -1997,6 +2048,104 @@ describe('resolveMlbTeamLookupKeys — MLB team join fallback', () => {
   test('returns empty array for empty input', () => {
     expect(resolveMlbTeamLookupKeys('')).toEqual([]);
     expect(resolveMlbTeamLookupKeys(null)).toEqual([]);
+  });
+});
+
+describe('bullpen context v1 enrichment smoke', () => {
+  test('buildMlbBullpenContext computes bounded non-neutral context from recent games', () => {
+    const asOfIso = '2026-04-16T19:00:00Z';
+    const context = buildMlbBullpenContext({
+      teamName: 'DETROIT TIGERS',
+      asOfIso,
+      recentGames: [
+        {
+          home_team: 'Detroit Tigers',
+          away_team: 'Kansas City Royals',
+          final_score_home: 2,
+          final_score_away: 8,
+          game_time_utc: '2026-04-16T18:00:00Z',
+        },
+        {
+          home_team: 'Detroit Tigers',
+          away_team: 'Cleveland Guardians',
+          final_score_home: 4,
+          final_score_away: 7,
+          game_time_utc: '2026-04-15T22:00:00Z',
+        },
+        {
+          home_team: 'Detroit Tigers',
+          away_team: 'Chicago White Sox',
+          final_score_home: 3,
+          final_score_away: 6,
+          game_time_utc: '2026-04-14T22:00:00Z',
+        },
+      ],
+    });
+
+    expect(context.quality_tier).toBe('BAD');
+    expect(context.era_14d).toBeGreaterThanOrEqual(4.9);
+    expect(context.usage_score_3d).toBeGreaterThanOrEqual(1);
+    expect(context.fatigue_score_3d).toBeGreaterThanOrEqual(1);
+    expect(context.availability_score).toBeGreaterThanOrEqual(0);
+    expect(context.availability_score).toBeLessThanOrEqual(1);
+  });
+
+  test('buildMlbBullpenContext returns explicit neutral fallback when no history exists', () => {
+    const context = buildMlbBullpenContext({
+      teamName: 'DETROIT TIGERS',
+      asOfIso: '2026-04-16T19:00:00Z',
+      recentGames: [],
+    });
+
+    expect(context.quality_tier).toBe('AVG');
+    expect(context.era_14d).toBeNull();
+    expect(context.usage_score_3d).toBe(0);
+    expect(context.fatigue_score_3d).toBe(0);
+    expect(context.audit_flags).toContain('BULLPEN_CONTEXT_MISSING_HISTORY');
+  });
+
+  test('resolveMlbBullpenContext uses case-insensitive SQL matching and preserves output contract', () => {
+    const all = jest.fn().mockReturnValue([
+      {
+        home_team: 'Detroit Tigers',
+        away_team: 'Kansas City Royals',
+        final_score_home: 5,
+        final_score_away: 8,
+        game_time_utc: '2026-04-16T18:00:00Z',
+      },
+      {
+        home_team: 'Detroit Tigers',
+        away_team: 'Chicago White Sox',
+        final_score_home: 3,
+        final_score_away: 6,
+        game_time_utc: '2026-04-15T20:00:00Z',
+      },
+    ]);
+    const prepare = jest.fn().mockReturnValue({ all });
+    const db = { prepare };
+
+    const context = resolveMlbBullpenContext(
+      db,
+      'DETROIT TIGERS',
+      '2026-04-16T19:00:00Z',
+    );
+
+    const sql = String(prepare.mock.calls[0][0]);
+    expect(sql).toContain('UPPER(g.home_team) = UPPER(?)');
+    expect(sql).toContain('UPPER(g.away_team) = UPPER(?)');
+    expect(all).toHaveBeenCalledWith(
+      '2026-04-16T19:00:00Z',
+      '2026-04-16T19:00:00Z',
+      'DETROIT TIGERS',
+      'DETROIT TIGERS',
+    );
+    expect(context).toEqual(
+      expect.objectContaining({
+        quality_tier: expect.any(String),
+        usage_score_3d: expect.any(Number),
+        fatigue_score_3d: expect.any(Number),
+      }),
+    );
   });
 });
 
