@@ -13,6 +13,8 @@ export type ProjectionSummaryRow = {
   bias: number | null;
   cardFamily: string;
   directionalAccuracy: number | null;
+  directionalWins: number;
+  directionalLosses: number;
   familyLabel: string;
   mae: number | null;
   rowsSeen: number;
@@ -25,6 +27,7 @@ type ProjectionAccumulator = {
   cardFamily: string;
   directionCorrectCount: number;
   directionSampleCount: number;
+  directionLossCount: number;
   rowsSeen: number;
   sampleSize: number;
 };
@@ -329,16 +332,36 @@ function resolvePlayerShotsActualValue(row: ProjectionMetricInputRow): number | 
   return toNumber((valuesByPlayer as Record<string, unknown>)[mappedPlayerId]);
 }
 
+function parseActualResultObject(
+  actualResult: string | null | undefined,
+): Record<string, unknown> | null {
+  if (!actualResult) return null;
+  try {
+    const parsed = JSON.parse(actualResult);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return null;
+    }
+    return parsed as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
 function resolveProjectionActualValue(row: ProjectionMetricInputRow): number | null {
   const cardFamily = deriveProjectionCardFamily(row);
+  const actualResult = parseActualResultObject(row.actualResult);
+
   if (cardFamily === 'NHL_1P_TOTAL') {
-    return resolveFirstPeriodTotal(row.gameResultMetadata);
+    return (
+      resolveFirstPeriodTotal(row.gameResultMetadata) ??
+      toNumber(actualResult?.goals_1p)
+    );
   }
   if (
     cardFamily === 'NHL_PLAYER_SHOTS' ||
     cardFamily === 'NHL_PLAYER_SHOTS_1P'
   ) {
-    return resolvePlayerShotsActualValue(row);
+    return resolvePlayerShotsActualValue(row) ?? toNumber(actualResult?.shots_1p ?? actualResult?.shots);
   }
   if (cardFamily === 'NHL_PLAYER_BLOCKS') {
     const playerBlocks =
@@ -375,15 +398,15 @@ function resolveProjectionActualValue(row: ProjectionMetricInputRow): number | n
     const mappedPlayerId = playerIdByNormalizedName
       ? String(playerIdByNormalizedName[playerName] || '').trim()
       : '';
-    if (!mappedPlayerId) return null;
+    if (mappedPlayerId) {
+      const mapped = toNumber((valuesByPlayer as Record<string, unknown>)[mappedPlayerId]);
+      if (mapped !== null) return mapped;
+    }
 
-    return toNumber((valuesByPlayer as Record<string, unknown>)[mappedPlayerId]);
+    return toNumber(actualResult?.blocks);
   }
   if (cardFamily === 'MLB_PITCHER_K') {
-    if (!row.actualResult) return null;
-    const parsed = JSON.parse(row.actualResult);
-    const ks = parsed?.pitcher_ks;
-    return typeof ks === 'number' ? ks : null;
+    return toNumber(actualResult?.pitcher_ks);
   }
   return null;
 }
@@ -543,6 +566,7 @@ export function buildProjectionSummaries(
         cardFamily,
         directionCorrectCount: 0,
         directionSampleCount: 0,
+        directionLossCount: 0,
         rowsSeen: 0,
         sampleSize: 0,
       };
@@ -562,11 +586,13 @@ export function buildProjectionSummaries(
     const direction = resolveProjectionDirection(row.payload);
     if (direction === 'OVER' || direction === 'UNDER') {
       accumulator.directionSampleCount += 1;
-      if (
+      const isCorrect =
         (direction === 'OVER' && actual >= projection) ||
-        (direction === 'UNDER' && actual <= projection)
-      ) {
+        (direction === 'UNDER' && actual <= projection);
+      if (isCorrect) {
         accumulator.directionCorrectCount += 1;
+      } else {
+        accumulator.directionLossCount += 1;
       }
     }
 
@@ -588,6 +614,8 @@ export function buildProjectionSummaries(
               summary.directionCorrectCount / summary.directionSampleCount,
             )
           : null,
+      directionalWins: summary.directionCorrectCount,
+      directionalLosses: summary.directionLossCount,
       familyLabel:
         PROJECTION_FAMILY_LABELS[summary.cardFamily] || summary.cardFamily,
       mae:

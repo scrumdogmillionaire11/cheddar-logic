@@ -82,6 +82,8 @@ type ProjectionSummaryRow = {
   bias: number | null;
   cardFamily: string;
   directionalAccuracy: number | null;
+  directionalWins: number;
+  directionalLosses: number;
   familyLabel: string;
   mae: number | null;
   rowsSeen: number;
@@ -131,8 +133,14 @@ function formatUnits(value: number | null | undefined) {
   return `${sign}${value.toFixed(2)}u`;
 }
 
-function formatDecimal(value: number | null | undefined, digits = 1) {
+function formatDecimal(
+  value: number | null | undefined,
+  digits = 1,
+  options: { signed?: boolean } = {},
+) {
   if (value === null || value === undefined || Number.isNaN(value)) return 'N/A';
+  const { signed = true } = options;
+  if (!signed) return Math.abs(value).toFixed(digits);
   const sign = value > 0 ? '+' : '';
   return `${sign}${value.toFixed(digits)}`;
 }
@@ -223,6 +231,10 @@ export default function ResultsPage() {
   const [projectionSettledRows, setProjectionSettledRows] = useState<ProjectionProxyRow[]>([]);
   const [projectionActualsReady, setProjectionActualsReady] = useState(false);
   const [projectionSettledLoading, setProjectionSettledLoading] = useState(true);
+  const projectionSummariesWithActuals = useMemo(
+    () => projectionSummaries.filter((row) => row.actualsAvailable),
+    [projectionSummaries],
+  );
 
   // Filter state
   const [filterSport, setFilterSport] = useState<string>('');
@@ -799,7 +811,7 @@ export default function ResultsPage() {
           </section>
         )}
 
-        {projectionSummaries.length > 0 && (
+        {projectionSummariesWithActuals.length > 0 && (
           <section className="mt-12 rounded-2xl border border-white/10 bg-surface/80 p-8">
             <h2 className="text-2xl font-semibold">Projection Models (Research Only)</h2>
             <p className="mt-2 text-sm text-cloud/70">
@@ -807,23 +819,24 @@ export default function ResultsPage() {
               separately — no P&amp;L, just model accuracy versus actuals.
             </p>
             <div className="mt-6 overflow-hidden rounded-xl border border-white/10">
-              <div className="grid grid-cols-5 gap-4 bg-night/70 px-4 py-3 text-xs font-semibold uppercase tracking-[0.2em] text-cloud/60">
+              <div className="grid grid-cols-6 gap-4 bg-night/70 px-4 py-3 text-xs font-semibold uppercase tracking-[0.2em] text-cloud/60">
                 <span>Model</span>
                 <span>Sample</span>
                 <span>MAE</span>
                 <span>Bias</span>
                 <span>Dir. Acc.</span>
+                <span>Record</span>
               </div>
               <div className="divide-y divide-white/10">
-                {projectionSummaries.map((row) => (
+                {projectionSummariesWithActuals.map((row) => (
                   <div
                     key={row.cardFamily}
-                    className="grid grid-cols-5 gap-4 px-4 py-3 text-sm text-cloud/70"
+                    className="grid grid-cols-6 gap-4 px-4 py-3 text-sm text-cloud/70"
                   >
                     <span className="font-medium text-cloud">{row.familyLabel}</span>
                     <span>{row.sampleSize > 0 ? row.sampleSize : '—'}</span>
                     <span>
-                      {row.mae !== null ? formatDecimal(row.mae, 2) : '—'}
+                      {row.mae !== null ? formatDecimal(row.mae, 2, { signed: false }) : '—'}
                     </span>
                     <span>
                       {row.bias !== null ? formatDecimal(row.bias, 2) : '—'}
@@ -834,6 +847,11 @@ export default function ResultsPage() {
                         : row.actualsAvailable === false
                           ? 'Awaiting settled outcome data'
                           : '—'}
+                    </span>
+                    <span>
+                      {(row.directionalWins + row.directionalLosses) > 0
+                        ? `${row.directionalWins}-${row.directionalLosses}`
+                        : '—'}
                     </span>
                   </div>
                 ))}
