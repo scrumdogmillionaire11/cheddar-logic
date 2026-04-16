@@ -4,7 +4,7 @@ milestone: v1.1
 milestone_name: Model Integrity & Betting Execution Hardening
 status: active
 last_updated: "2026-04-15T00:00:00Z"
-last_activity: "2026-04-15 - Completed WI-0944-02-PLAN.md (MLB full-game total gate retune + gate-stage regression coverage)"
+last_activity: "2026-04-16 - Completed quick task 160: WI-0951: MLB T-Minus Freshness Override Schedule"
 ---
 
 # Project State
@@ -172,6 +172,7 @@ Notable: WI-0797 (pipeline health Discord watchdog), WI-0798 (NHL season key fix
 
 | # | Description | Date | Commit | Directory |
 |---|-------------|------|--------|-----------|
+| 160 | WI-0951: MLB T-Minus Freshness Override Schedule | 2026-04-16 | 8f8356a9 | [160-wi-0951-mlb-t-minus-freshness-override-s](./quick/160-wi-0951-mlb-t-minus-freshness-override-s/) |
 | 159 | WI-0911 NHL Player Blocks Projection Settlement Policy | 2026-04-13 | ed879b5 | [159-wi-0911-nhl-player-blocks-projection-set](./quick/159-wi-0911-nhl-player-blocks-projection-set/) |
 | 158 | WI-0902 Endpoint Behavioral Parity Fixtures for Cards and Games | 2026-04-13 | af624ff | [158-wi-0902-endpoint-behavioral-parity-fixtu](./quick/158-wi-0902-endpoint-behavioral-parity-fixtu/) |
 | 157 | WI-0893 End-to-end drop reason ledger — worker gate taxonomy, API diagnostics drop_summary, transform_meta.drop_reason, CardsPageContext diagnostics surface | 2026-04-12 | 4857ecb | [157-wi-0893-add-end-to-end-odds-to-surface-d](./quick/157-wi-0893-add-end-to-end-odds-to-surface-d/) |
