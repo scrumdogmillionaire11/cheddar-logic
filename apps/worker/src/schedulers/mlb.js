@@ -19,6 +19,8 @@ const {
   keyTminus,
   dueTminusMinutes,
   keyEspnGamesDirect,
+  resolveTMinusFreshnessOverride,
+  keyMlbPremodelOdds,
 } = require('./windows');
 
 const { runMLBModel } = require('../jobs/run_mlb_model');
@@ -95,9 +97,9 @@ function computeMlbDueJobs(nowEt, {
   }
 
   // ========== MLB T-MINUS MODEL RUNS ==========
-  // MLB is not a projection-model sport (NBA/NHL only), so no pre-model odds pull via T-minus.
+  // Each T-minus tick consults the WI-0951 freshness override ladder to determine
+  // whether to enqueue a pre-model odds pull before the model run.
   const mlbGames = games.filter((g) => String(g.sport).toLowerCase() === 'mlb');
-  const hourSlot = nowUtc.toISO().slice(0, 13); // YYYY-MM-DDTHH
 
   for (const g of mlbGames) {
     const { DateTime } = require('luxon');
@@ -106,6 +108,44 @@ function computeMlbDueJobs(nowEt, {
 
     for (const mins of minsList) {
       maybeQueueTeamMetricsRefresh(`T-${mins} for ${g.game_id}`, 'mlb');
+
+      const minutesToGame = Math.round(startUtc.diff(nowUtc, 'minutes').minutes);
+      const override = resolveTMinusFreshnessOverride(minutesToGame);
+
+      let triggered = false;
+      if (override && override.triggerPreModelRefresh && !mlbWithoutOddsMode) {
+        const slotStartIsoUtc = nowUtc.toISO().slice(0, 16);
+        const oddsJobKey = keyMlbPremodelOdds(g.game_id, override.minutesToGameLte, slotStartIsoUtc);
+        if (claimTminusPullSlot('mlb', oddsJobKey)) {
+          triggered = true;
+          jobs.push({
+            jobName: 'pull_odds_hourly',
+            jobKey: oddsJobKey,
+            execute: pullOddsHourly,
+            args: { jobKey: oddsJobKey, dryRun },
+            reason: `pre-model odds refresh (T-minus band ${override.minutesToGameLte}, ${g.game_id})`,
+          });
+        } else {
+          triggered = true; // Already refreshed this slot
+        }
+      }
+
+      const decision = !override
+        ? 'FALLBACK_BASELINE'
+        : !override.triggerPreModelRefresh
+          ? 'ALLOW'
+          : triggered
+            ? 'ALLOW_AFTER_REFRESH'
+            : 'ALLOW';
+
+      console.log(JSON.stringify({
+        type: 'EXECUTION_FRESHNESS_TMINUS',
+        minutes_to_game: minutesToGame,
+        matched_band: override ? override.minutesToGameLte : null,
+        required_max_snapshot_age_minutes: override ? override.requiredMaxSnapshotAgeMinutes : null,
+        triggered_refresh: triggered,
+        decision,
+      }));
 
       const jobKey = keyTminus('mlb', g.game_id, mins);
       jobs.push({
