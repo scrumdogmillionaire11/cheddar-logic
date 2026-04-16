@@ -369,11 +369,178 @@ For CONFIG_AND_STATE_TRUTH_AUDIT in mapper system prompt (Phase 4):
 
 ## Phase 3 Documentation Scope
 
-Will update this file with:
-1. **Classification Matrix** — all 33+ scenarios grouped by bucket with reason-codes
-2. **Visibility Policy** — which buckets are user-facing vs debug-only
-3. **Wiring Tasks** — explicit code changes required per file
-4. **Testing Strategy** — injection scenarios per bucket for Phase 5
+Will create/update in `.planning/codebase/HARDENING_AUDIT.md`:
+
+1. **Recovery-Path Classification Checklist** — For future audits, mandatory questions:
+   - Is this path mapped to a recovery bucket?
+   - Does it emit machine-readable reason-code?
+   - Is it consistent with same class across sports?
+   - Is visibility policy (user/debug/operator) applied?
+
+2. **Phase 4 Implementation Action Items** (59 tasks):
+   - **Silent degradation fixes** (14 tasks): Instrument logging + reason-code emission
+   - **Consistency unification** (2 tasks): Align missing-stats and recovery-error handling across sports
+   - **Wiring tasks** (5 tasks): route-handler, transform, execution-gate, decision-pipeline integration tests
+
+3. **Test Strategy** — Injection scenarios per bucket for Phase 5:
+   - **hard-fail injection**: Trigger model-status non-OK, verify card rejected
+   - **soft-pass injection**: Trigger edge clear, verify passthrough + reason code
+   - **degraded-output injection**: Trigger sigma fallback, verify LEAN downgrade + reason
+   - **hidden-output injection** (post-Phase4): Trigger ESPN null, verify reason emitted
+   - **retry injection**: Trigger stale valid, verify retry flag set
+   - **fallback injection**: Trigger market unavailable, verify fallback pool used
+
+## Phase 4 Implementation Blueprint
+
+### High-Priority: Silent Degradation Fixes (14 tasks)
+
+Each task follows pattern: **Locate entry point → Emit reason-code → Add test → Verify consistency across sports**
+
+#### NBA Runner fixes (3 tasks)
+
+```markdown
+Task 1: ESPN null observation instrumentation
+- File: apps/worker/src/jobs/run_nba_model.js:173-175
+- Add: reason_codes.push('ESPN_NULL_OBSERVATION') to decision payload
+- Test: Verify reason code in /api/games response
+- Link: WI-0901 (reason-code taxonomy) contract
+
+Task 2: Availability gate fallback instrumentation
+- File: apps/worker/src/jobs/run_nba_model.js:371-373
+- Add: Emit AVAILABILITY_GATE_DEGRADED to audit object
+- Test: Verify audit reason in decision envelope
+- Link: WI-0901
+
+Task 3: Line delta null return instrumentation
+- File: apps/worker/src/jobs/run_nba_model.js:505-514
+- Add: Emit LINE_DELTA_COMPUTATION_FAILED to reason_codes
+- Test: Verify feature degrades, reason visible in API
+- Link: WI-0901
+```
+
+#### NHL Runner fixes (4 tasks)
+
+```markdown
+Task 4: ESPN null alert error instrumentation
+- File: apps/worker/src/jobs/run_nhl_model.js:373-376
+- Add: Emit ESPN_NULL_ALERT_FAILED to audit object (not just log)
+- Test: Verify audit + call stack preserved
+- CrossSport: Align with NBA Task 1
+
+Task 5: Stale recovery refresh error instrumentation
+- File: apps/worker/src/jobs/run_nhl_model.js:948-953
+- Add: Emit STALE_RECOVERY_REFRESH_FAILED to audit + reason_codes
+- Test: Verify fallback triggered, reason logged
+- CrossSport: Create separate task for MLB same (Task 11)
+
+Task 6: Stale recovery reload error instrumentation
+- File: apps/worker/src/jobs/run_nhl_model.js:961-962
+- Add: Emit STALE_RECOVERY_RELOAD_FAILED to audit
+- Test: Verify fallback triggered
+- CrossSport: Create separate task for MLB same (Task 12)
+
+Task 7: Game ID invalid instrumentation
+- File: apps/worker/src/jobs/run_nhl_model.js:869
+- Add: Emit GAME_ID_INVALID + log context
+- Test: Verify card rejected with reason
+- CrossSport: Align with MLB Task 13
+```
+
+#### MLB Runner fixes (7 tasks)
+
+```markdown
+Task 8: Timestamp invalid/missing instrumentation
+- File: apps/worker/src/jobs/run_mlb_model.js:739
+- Add: Emit TIMESTAMP_MISSING reason-code (not null silently)
+- Test: Verify inference rejects or fallback applied
+- Link: WI-0900 (timestamp audit) contract
+
+Task 9: Timestamp parse error instrumentation
+- File: apps/worker/src/jobs/run_mlb_model.js:741
+- Add: Emit TIMESTAMP_PARSE_ERROR reason-code
+- Test: Verify error logged + propagated
+- Link: WI-0900
+
+Task 10: Timestamp age invalid instrumentation
+- File: apps/worker/src/jobs/run_mlb_model.js:743
+- Add: Emit TIMESTAMP_AGE_INVALID reason-code
+- Test: Verify inference fails safely
+- Link: WI-0900
+
+Task 11: Stale recovery refresh error instrumentation (see Task 5 NHL)
+- File: apps/worker/src/jobs/run_mlb_model.js:2143-2148
+- Add: Emit STALE_RECOVERY_REFRESH_FAILED to audit
+- Test: Verify aligned with NHL Task 5
+- CrossSport: Unify NHL + MLB into single reason-code
+
+Task 12: Stale recovery reload error instrumentation (see Task 6 NHL)
+- File: apps/worker/src/jobs/run_mlb_model.js:2156
+- Add: Emit STALE_RECOVERY_RELOAD_FAILED to audit
+- Test: Verify aligned with NHL Task 6
+- CrossSport: Unify NHL + MLB
+
+Task 13: Game ID invalid instrumentation (see Task 7 NHL)
+- File: apps/worker/src/jobs/run_mlb_model.js:2062
+- Add: Emit GAME_ID_INVALID + log context
+- Test: Verify aligned with NHL Task 7
+- CrossSport: Unify NHL + MLB
+
+Task 14: Neutral value coercion + price invalid instrumentation
+- File: apps/worker/src/jobs/run_mlb_model.js:140, 1717
+- Add: Emit NEUTRAL_VALUE_COERCE_SILENT, PRICE_VALIDATION_FAILED reason-codes
+- Test: Verify degraded inference, reasons exposed
+- Link: WI-0901
+```
+
+### Mid-Priority: Route-Handler/Transform Wiring (5 tasks)
+
+```markdown
+Task 15: route-handler.ts — expose classification in debug metadata
+- File: web/src/lib/games/route-handler.ts (lines ~1024-1168)
+- Add: Include recovery_bucket classification in execution_gate.debug output
+- Test: /api/games response includes bucket + layer origin
+- Depends: Tasks 1-14 (all reason-codes emitted)
+
+Task 16: transform/index.ts — inject classification into card transform_meta
+- File: web/src/lib/game-card/transform/index.ts (lines ~450-466)
+- Add: Derive recovery_bucket from drop_reason_code, attach to transform_meta
+- Test: Card diagnostics expose bucket classification
+- Depends: Task 15
+
+Task 17: execution-gate — verify all paths emit drop_reason
+- File: apps/worker/src/jobs/execution-gate.js (lines ~245-250)
+- Add: Regression test — all shouldBet=false paths must have drop_reason
+- Test: Jest test suite validates zero silent blocks
+- Depends: Tasks 1-14
+
+Task 18: decision-pipeline—v2 — regression test for reason-code emission
+- File: packages/models/src/decision-pipeline-v2.js
+- Add: Jest test — all non-EDGE_CLEAR paths emit reason-code
+- Test: 100% coverage of watchdog + price reason paths
+- Depends: Tasks 1-14
+
+Task 19: Mapper prompt update (config/system-prompt or docs/decisions)
+- File: docs/decisions/ADR-000X-config-state-truth-audit.md (new) or update mapper prompt
+- Add: CONFIG_AND_STATE_TRUTH_AUDIT directive (from Phase 1 artifact)
+- Test: Manual review — prompt enforces reason-code discipline
+- Depends: All prior tasks
+```
+
+### Low-Priority: Consistency Unification (2 tasks)
+
+```markdown
+Task 20: Consolidate missing-stats reason-codes across sports
+- Scope: run_nba_model.js ESPN null, run_nhl_model.js consistency, run_mlb_model.js timestamp
+- Standardize: Use canonical MissingInputs reason taxonomy instead of sport-specific names
+- Test: All three sports emit same reason code for same failure class
+- Depends: Tasks 1-14
+
+Task 21: Consolidate recovery-error handling across sports
+- Scope: Stale recovery refresh/reload, game ID invalid patterns
+- Standardize: Use canonical fallback recovery reason-codes
+- Test: All three sports follow same recovery bucket + visibility policy
+- Depends: Tasks 1-14, Task 11-12
+```
 
 ---
 
