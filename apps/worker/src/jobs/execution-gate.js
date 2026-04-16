@@ -30,6 +30,22 @@ function mapBlockedByToDropReasonCode(blocked_by) {
 const VIG_COST_STANDARD = 0.045;
 const SLIPPAGE_ESTIMATE = 0.005;
 
+const MLB_FULL_GAME_ML_POLICY = Object.freeze({
+  edgeThreshold: 0.06,
+  largeEdge: Object.freeze({
+    minNetEdge: 0.01,
+    minConfidence: 0.45,
+  }),
+  standard: Object.freeze({
+    minNetEdge: 0.02,
+    minConfidence: 0.5,
+  }),
+  softBlockers: Object.freeze([
+    'CONFIDENCE_BELOW_THRESHOLD',
+    'NET_EDGE_INSUFFICIENT',
+  ]),
+});
+
 // Cache env var overrides (parse once at module load)
 let cachedEnvOverrides = null;
 
@@ -247,8 +263,108 @@ function evaluateExecution(params) {
   };
 }
 
+function isMlbFullGameMlPayload(payload, executionParams = {}) {
+  const sportToken = String(
+    executionParams.sport ?? payload?.sport ?? '',
+  ).toUpperCase();
+  const cardTypeToken = String(
+    executionParams.cardType ?? payload?.card_type ?? '',
+  ).toLowerCase();
+  const marketTypeToken = String(
+    executionParams.marketType ?? payload?.market_type ?? '',
+  ).toUpperCase();
+  const recommendedBetTypeToken = String(
+    executionParams.recommendedBetType ?? payload?.recommended_bet_type ?? '',
+  ).toUpperCase();
+  const periodToken = String(
+    executionParams.period ?? payload?.period ?? payload?.market?.period ?? '',
+  ).toUpperCase();
+  const cardTitleToken = String(payload?.card_title || payload?.title || '').toUpperCase();
+
+  const isFullGamePeriod =
+    periodToken === '' ||
+    periodToken === 'NA' ||
+    periodToken === 'FULL_GAME' ||
+    periodToken === 'GAME';
+  const isMoneylineLike =
+    marketTypeToken === 'MONEYLINE' &&
+    (recommendedBetTypeToken === 'MONEYLINE' || cardTitleToken.includes('FULL GAME ML'));
+
+  return (
+    sportToken === 'MLB' &&
+    (cardTypeToken === 'mlb-full-game-ml' ||
+      cardTypeToken === 'mlb-full-game' ||
+      (isMoneylineLike && isFullGamePeriod))
+  );
+}
+
+function evaluateMlbExecution(payload, executionParams) {
+  const rawEdge = Number.isFinite(executionParams?.rawEdge)
+    ? executionParams.rawEdge
+    : Number.isFinite(payload?.edge)
+      ? payload.edge
+      : null;
+  const resolvedModelStatus = String(
+    executionParams?.modelStatus ?? payload?.model_status ?? 'MODEL_OK',
+  ).toUpperCase();
+  const isMlbFullGameMl = isMlbFullGameMlPayload(payload, executionParams);
+
+  const mlbOverrides = isMlbFullGameMl
+    ? rawEdge !== null && rawEdge >= MLB_FULL_GAME_ML_POLICY.edgeThreshold
+      ? MLB_FULL_GAME_ML_POLICY.largeEdge
+      : MLB_FULL_GAME_ML_POLICY.standard
+    : null;
+
+  const gateResult = evaluateExecution({
+    ...executionParams,
+    ...(mlbOverrides ? mlbOverrides : {}),
+  });
+
+  const edgeOverrideEligible =
+    isMlbFullGameMl &&
+    rawEdge !== null &&
+    rawEdge >= MLB_FULL_GAME_ML_POLICY.edgeThreshold &&
+    resolvedModelStatus === 'MODEL_OK';
+  const softBlockers = new Set(MLB_FULL_GAME_ML_POLICY.softBlockers);
+  const blockedByOnlySoftEdgeOrConfidence =
+    Array.isArray(gateResult.blocked_by) &&
+    gateResult.blocked_by.length > 0 &&
+    gateResult.blocked_by.every((reason) =>
+      softBlockers.has(String(reason || '').split(':')[0]),
+    );
+  const applyHighEdgeOverride =
+    !gateResult.shouldBet && edgeOverrideEligible && blockedByOnlySoftEdgeOrConfidence;
+
+  const gateShouldBet = applyHighEdgeOverride ? true : gateResult.shouldBet;
+
+  const reasonCodes = Array.isArray(payload?.reason_codes) ? payload.reason_codes : [];
+  const hasWeakSupportSignal = reasonCodes.some((code) => {
+    const token = String(code || '').toUpperCase();
+    return token === 'SOFT_WEAK_DRIVER_SUPPORT' || token === 'PASS_DRIVER_SUPPORT_WEAK';
+  });
+  const hasLowConfidenceSignal =
+    Number.isFinite(executionParams?.confidence) && executionParams.confidence < 0.55;
+  const downgradeHighEdgeToLean =
+    isMlbFullGameMl &&
+    rawEdge !== null &&
+    rawEdge >= MLB_FULL_GAME_ML_POLICY.edgeThreshold &&
+    resolvedModelStatus === 'MODEL_OK' &&
+    gateShouldBet &&
+    (hasWeakSupportSignal || hasLowConfidenceSignal);
+
+  return {
+    gateResult,
+    gateShouldBet,
+    gateBlockedBy: applyHighEdgeOverride ? [] : gateResult.blocked_by,
+    gateDropReason: applyHighEdgeOverride ? null : gateResult.drop_reason,
+    applyHighEdgeOverride,
+    downgradeHighEdgeToLean,
+  };
+}
+
 module.exports = {
   evaluateExecution,
+  evaluateMlbExecution,
   evaluateFreshnessTier,
   mapBlockedByToDropReasonCode,
   VIG_COST_STANDARD,
