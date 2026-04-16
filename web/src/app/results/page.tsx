@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { StickyBackButton } from '@/components/sticky-back-button';
 import { ProjectionResultsTable } from '@/components/results/ProjectionResultsTable';
-import type { ProjectionSettledRow } from '@/app/api/results/projection-settled/route';
+import type { ProjectionProxyRow } from '@/app/api/results/projection-settled/route';
 
 type ResultsSummary = {
   totalCards: number;
@@ -220,7 +220,7 @@ export default function ResultsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [withoutOddsMode, setWithoutOddsMode] = useState(false);
-  const [projectionSettledRows, setProjectionSettledRows] = useState<ProjectionSettledRow[]>([]);
+  const [projectionSettledRows, setProjectionSettledRows] = useState<ProjectionProxyRow[]>([]);
   const [projectionActualsReady, setProjectionActualsReady] = useState(false);
   const [projectionSettledLoading, setProjectionSettledLoading] = useState(true);
 
@@ -305,7 +305,7 @@ export default function ResultsPage() {
         const payload = (await res.json()) as {
           success: boolean;
           data?: {
-            settledRows: ProjectionSettledRow[];
+            settledRows: ProjectionProxyRow[];
             totalSettled: number;
             actualsReady: boolean;
           };
