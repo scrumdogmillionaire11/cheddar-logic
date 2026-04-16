@@ -66,6 +66,31 @@ function roundToHalf(value, direction = 'nearest') {
   return Math.round(scaled) / 2;
 }
 
+function resolveMultiplicativeAdjustment(baseRuns, factors = []) {
+  const safeBase = Number.isFinite(baseRuns) ? baseRuns : 0;
+  let running = safeBase;
+  const multipliers = {};
+  const deltas = {};
+
+  for (const factor of factors) {
+    const key = String(factor?.key || '').trim();
+    if (!key) continue;
+    const multiplier = Number.isFinite(factor?.multiplier)
+      ? factor.multiplier
+      : 1;
+    multipliers[key] = multiplier;
+    const next = running * multiplier;
+    deltas[`${key}_runs_delta`] = next - running;
+    running = next;
+  }
+
+  return {
+    adjusted_runs: running,
+    multipliers,
+    deltas,
+  };
+}
+
 function resolveStarterSkillProfile(pitcher) {
   const siera = toFiniteNumberOrNull(pitcher?.siera);
   const xFip =
@@ -299,6 +324,7 @@ function projectTeamF5RunsAgainstStarter(starterPitcher, offenseProfile, context
       starter_skill_ra9: starterSkillRa9,
       starter_ip_f5_exp: starterLeashProfile.starter_ip_f5_exp,
       ttop_penalty_mult: starterLeashProfile.ttop_penalty_mult,
+      component_breakdown: null,
     };
   }
 
@@ -309,21 +335,29 @@ function projectTeamF5RunsAgainstStarter(starterPitcher, offenseProfile, context
     { name: 'xwoba',   value: matchupProfile.xwoba ?? MLB_F5_DEFAULT_TEAM_XWOBA, mean: MLB_LEAGUE_XWOBA_MEAN, std: MLB_LEAGUE_XWOBA_SD, weight: 0.40 },
   ]);
   const offenseMult = resolveOffenseComposite(matchupProfile);
-  let adjustedRa9 = starterSkillRa9 * offenseMult;
-  if (matchupProfile.rolling_14d_wrc_plus !== null) {
-    // Tightened from [0.95, 1.05] — composite already captures medium-term form
-    adjustedRa9 *= clampValue(
+  const rollingFormMult = matchupProfile.rolling_14d_wrc_plus !== null
+    ? clampValue(
       1 + ((matchupProfile.rolling_14d_wrc_plus - 100) / 100) * 0.15,
       0.97,
       1.03,
-    );
-  }
-  adjustedRa9 *= clampValue(parkFactor, 0.9, 1.12);
-  adjustedRa9 *= weatherFactor ?? 1.0;
-  adjustedRa9 *= starterLeashProfile.ttop_penalty_mult;
+    )
+    : 1;
+  const parkMult = clampValue(parkFactor, 0.9, 1.12);
+  const weatherMult = weatherFactor ?? 1.0;
+  const ttopMult = starterLeashProfile.ttop_penalty_mult;
+  const baseRuns = starterSkillRa9 * (starterLeashProfile.starter_ip_f5_exp / 9);
+  const adjustment = resolveMultiplicativeAdjustment(baseRuns, [
+    { key: 'offense', multiplier: offenseMult },
+    { key: 'rolling_form', multiplier: rollingFormMult },
+    { key: 'park', multiplier: parkMult },
+    { key: 'weather', multiplier: weatherMult },
+    { key: 'ttop', multiplier: ttopMult },
+  ]);
+  const finalRuns = Math.max(0.3, adjustment.adjusted_runs);
+  const floorDelta = finalRuns - adjustment.adjusted_runs;
 
   return {
-    f5_runs: Math.max(0.3, adjustedRa9 * (starterLeashProfile.starter_ip_f5_exp / 9)),
+    f5_runs: finalRuns,
     missing_inputs: [],
     degraded_inputs: Array.from(new Set(degradedInputs)),
     matchup_profile: matchupProfile,
@@ -337,6 +371,17 @@ function projectTeamF5RunsAgainstStarter(starterPitcher, offenseProfile, context
     offense_z_scores: offenseZScores ?? null,
     park_factor: parkFactor,
     weather_factor: weatherFactor ?? 1.0,
+    component_breakdown: {
+      base_runs: baseRuns,
+      adjusted_runs_pre_floor: adjustment.adjusted_runs,
+      final_runs: finalRuns,
+      floor_delta_runs: floorDelta,
+      multipliers: adjustment.multipliers,
+      deltas: {
+        ...adjustment.deltas,
+        floor_runs_delta: floorDelta,
+      },
+    },
   };
 }
 
@@ -863,31 +908,41 @@ function projectLateInningsRuns(
     : MLB_FULL_GAME_DEFAULT_BULLPEN_ERA;
 
   // Base late-innings projection: bullpen ERA scaled to 4 innings
-  let lateMean = bullpen_ra9 * (4 / 9);
-  lateMean *= bullpen.bullpen_factor ?? 1;
+  const baseRuns = bullpen_ra9 * (4 / 9);
+  const bullpenContextMult = bullpen.bullpen_factor ?? 1;
 
   // Apply offense composite multiplier (same clamping as F5: [0.88, 1.14])
   const matchupProfile = resolveTeamSplitProfile(offenseProfile, pitcherHandedness);
-  if (matchupProfile) {
-    const offenseMult = resolveOffenseComposite(matchupProfile);
-    lateMean *= offenseMult;
-  }
-
-  // Apply park factor
+  const offenseMult = matchupProfile ? resolveOffenseComposite(matchupProfile) : 1;
   const parkFactor = toFiniteNumberOrNull(environment?.park_run_factor);
-  if (parkFactor !== null) {
-    lateMean *= clampValue(parkFactor, 0.9, 1.12);
-  }
-
-  // Apply weather factor
+  const parkMult = parkFactor !== null ? clampValue(parkFactor, 0.9, 1.12) : 1;
   const weatherFactor = resolveWeatherRunFactor(environment);
-  lateMean *= weatherFactor ?? 1.0;
+  const weatherMult = weatherFactor ?? 1.0;
+  const adjustment = resolveMultiplicativeAdjustment(baseRuns, [
+    { key: 'bullpen_context', multiplier: bullpenContextMult },
+    { key: 'offense', multiplier: offenseMult },
+    { key: 'park', multiplier: parkMult },
+    { key: 'weather', multiplier: weatherMult },
+  ]);
+  const lateRuns = Math.max(0.1, adjustment.adjusted_runs);
+  const floorDelta = lateRuns - adjustment.adjusted_runs;
 
   return {
-    late_runs: Math.max(0.1, lateMean),
+    late_runs: lateRuns,
     bullpen_ra9_used: bullpen_ra9,
     bullpen_context: bullpen,
     degraded_inputs: degradedInputs,
+    component_breakdown: {
+      base_runs: baseRuns,
+      adjusted_runs_pre_floor: adjustment.adjusted_runs,
+      final_runs: lateRuns,
+      floor_delta_runs: floorDelta,
+      multipliers: adjustment.multipliers,
+      deltas: {
+        ...adjustment.deltas,
+        floor_runs_delta: floorDelta,
+      },
+    },
   };
 }
 
@@ -1000,6 +1055,62 @@ function projectFullGameTotal(homePitcher, awayPitcher, context = {}) {
   const projectionSource = degradedInputs.length === 0 ? 'FULL_MODEL' : 'DEGRADED_MODEL';
   const statusCap = projectionSource === 'FULL_MODEL' ? 'PLAY' : 'LEAN';
 
+  const f5BaseRuns =
+    (homeF5.component_breakdown?.base_runs ?? 0) +
+    (awayF5.component_breakdown?.base_runs ?? 0);
+  const lateBaseRuns =
+    (homeLate.component_breakdown?.base_runs ?? 0) +
+    (awayLate.component_breakdown?.base_runs ?? 0);
+  const sumDelta = (segment, key) => segment?.component_breakdown?.deltas?.[key] ?? 0;
+  const projectionComponents = {
+    starter_base_runs: f5BaseRuns,
+    late_innings_base_runs: lateBaseRuns,
+    offense_adjustment_runs:
+      sumDelta(homeF5, 'offense_runs_delta') +
+      sumDelta(awayF5, 'offense_runs_delta') +
+      sumDelta(homeLate, 'offense_runs_delta') +
+      sumDelta(awayLate, 'offense_runs_delta'),
+    bullpen_context_adjustment_runs:
+      sumDelta(homeLate, 'bullpen_context_runs_delta') +
+      sumDelta(awayLate, 'bullpen_context_runs_delta'),
+    rolling_form_adjustment_runs:
+      sumDelta(homeF5, 'rolling_form_runs_delta') +
+      sumDelta(awayF5, 'rolling_form_runs_delta'),
+    park_adjustment_runs:
+      sumDelta(homeF5, 'park_runs_delta') +
+      sumDelta(awayF5, 'park_runs_delta') +
+      sumDelta(homeLate, 'park_runs_delta') +
+      sumDelta(awayLate, 'park_runs_delta'),
+    weather_adjustment_runs:
+      sumDelta(homeF5, 'weather_runs_delta') +
+      sumDelta(awayF5, 'weather_runs_delta') +
+      sumDelta(homeLate, 'weather_runs_delta') +
+      sumDelta(awayLate, 'weather_runs_delta'),
+    ttop_adjustment_runs:
+      sumDelta(homeF5, 'ttop_runs_delta') +
+      sumDelta(awayF5, 'ttop_runs_delta'),
+    floor_adjustment_runs:
+      sumDelta(homeF5, 'floor_runs_delta') +
+      sumDelta(awayF5, 'floor_runs_delta') +
+      sumDelta(homeLate, 'floor_runs_delta') +
+      sumDelta(awayLate, 'floor_runs_delta'),
+    final_projected_total_mean: fullGameMean,
+    f5_share_pct: fullGameMean > 0
+      ? ((homeF5.f5_runs + awayF5.f5_runs) / fullGameMean) * 100
+      : null,
+    late_share_pct: fullGameMean > 0
+      ? ((homeLate.late_runs + awayLate.late_runs) / fullGameMean) * 100
+      : null,
+    home_team_segments: {
+      f5_runs: homeF5.f5_runs,
+      late_runs: homeLate.late_runs,
+    },
+    away_team_segments: {
+      f5_runs: awayF5.f5_runs,
+      late_runs: awayLate.late_runs,
+    },
+  };
+
   return {
     projected_total_mean: fullGameMean,
     projected_total_low: Math.max(0, fullGameMean - rangeWidth),
@@ -1022,6 +1133,7 @@ function projectFullGameTotal(homePitcher, awayPitcher, context = {}) {
     variance_multiplier: variance.variance_multiplier,
     volatility_bucket: variance.volatility_bucket,
     variance_components: variance.components,
+    projection_components: projectionComponents,
   };
 }
 
@@ -1199,6 +1311,7 @@ function projectFullGameTotalCard(homePitcher, awayPitcher, fullGameLine, contex
       volatility_bucket: proj.volatility_bucket,
       p_over: roundToTenth(distribution.p_over),
       p_under: roundToTenth(distribution.p_under),
+      component_breakdown: proj.projection_components ?? null,
     },
     drivers: [
       {

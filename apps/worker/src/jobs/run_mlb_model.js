@@ -3719,6 +3719,24 @@ async function runMLBModel({
             }
             insertCardPayload(card);
 
+            if (isFullGameTotal && payloadData?.projection?.component_breakdown) {
+              const modelTotal = Number(payloadData?.projection?.projected_total);
+              const marketTotal = Number(payloadData?.odds_context?.total ?? payloadData?.line);
+              const edge = Number.isFinite(modelTotal) && Number.isFinite(marketTotal)
+                ? modelTotal - marketTotal
+                : null;
+              console.log(
+                `[MLB_PROJECTION_COMPONENTS] ${JSON.stringify({
+                  gameId,
+                  prediction: driver.prediction,
+                  model_total: Number.isFinite(modelTotal) ? modelTotal : null,
+                  market_total: Number.isFinite(marketTotal) ? marketTotal : null,
+                  edge,
+                  components: payloadData.projection.component_breakdown,
+                })}`,
+              );
+            }
+
                         _cardLogs.push(`  ✅ ${gameId} [${cardType}]: ${driver.prediction} (${(driver.confidence * 100).toFixed(0)}%)`);
           }
           });
