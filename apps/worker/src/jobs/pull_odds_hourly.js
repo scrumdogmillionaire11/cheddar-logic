@@ -34,6 +34,7 @@ const {
   getQuotaLedger,
   upsertQuotaLedger,
   isQuotaCircuitOpen,
+  resolveSnapshotAge,
 } = require('@cheddar-logic/data');
 
 const { resolveTeamVariant } = require('@cheddar-logic/data/src/normalize');
@@ -514,6 +515,22 @@ async function pullOddsHourly({ jobKey = null, dryRun = false } = {}) {
                 rawData: normalized.market,
                 jobRunId,
               });
+              
+              // Resolve and audit timestamp provenance from ingest
+              resolveSnapshotAge(
+                {
+                  captured_at: normalized.capturedAtUtc,
+                  pulled_at: null, // set at ingest time
+                  updated_at: null, // set at DB persist time
+                },
+                {
+                  snapshotId: `odds-${sport.toLowerCase()}-${normalized.gameId}`,
+                  sport: normalized.sport,
+                  gameId: normalized.gameId,
+                  jobRunId,
+                },
+              );
+              
               snapshotsInserted++;
               kpis.snapshotsInserted += 1;
             } catch (gameErr) {

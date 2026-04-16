@@ -73,6 +73,7 @@ module.exports = {
   getOddsWithUpcomingGames: db.getOddsWithUpcomingGames,
   recordOddsIngestFailure: db.recordOddsIngestFailure,
   getOddsIngestFailureSummary: db.getOddsIngestFailureSummary,
+  resolveSnapshotAge: db.resolveSnapshotAge,
   upsertPlayerShotLog: db.upsertPlayerShotLog,
   getPlayerShotLogs: db.getPlayerShotLogs,
   upsertPlayerBlkLog: db.upsertPlayerBlkLog,
