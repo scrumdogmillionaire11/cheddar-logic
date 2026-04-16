@@ -3233,7 +3233,9 @@ function enrichMlbPitcherData(
 async function runMLBModel({
   jobKey = null,
   dryRun = false,
-  expectF5Ml = true,
+  // MLB featured ingest currently includes full-game h2h + totals only.
+  // F5 ML remains an optional watchdog expectation that must be explicitly enabled.
+  expectF5Ml = process.env.MLB_EXPECT_F5_ML === 'true',
   withoutOddsMode = process.env.ENABLE_WITHOUT_ODDS_MODE === 'true',
   gameIds = null,
 } = {}) {
