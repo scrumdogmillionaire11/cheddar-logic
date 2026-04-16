@@ -11,7 +11,6 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const repoRoot = path.resolve(__dirname, '../../../..');
 
-const routePath = path.join(repoRoot, 'web/src/app/api/games/route.ts');
 const resultsRoutePath = path.join(repoRoot, 'web/src/app/api/results/route.ts');
 const transformPath = path.join(repoRoot, 'web/src/lib/game-card/transform/index.ts');
 const cardsPath = path.join(
@@ -26,7 +25,6 @@ const displayVerdictPath = path.join(
 
 const routeHandlerPath = path.join(repoRoot, 'web/src/lib/games/route-handler.ts');
 
-const routeSource = fs.readFileSync(routePath, 'utf8');
 const resultsRouteSource = fs.readFileSync(resultsRoutePath, 'utf8');
 const transformSource = fs.readFileSync(transformPath, 'utf8');
 const cardsSource = fs.readFileSync(cardsPath, 'utf8');
