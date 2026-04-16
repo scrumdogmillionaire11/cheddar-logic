@@ -11,7 +11,7 @@ import {
   addRateLimitHeaders,
 } from '../../../lib/api-security';
 import {
-  buildProjectionSummaries,
+  buildProjectionValueSegments,
   deriveResultCardMode,
   deriveCardFamily,
   deriveModelFamily,
@@ -765,7 +765,7 @@ export async function GET(request: NextRequest) {
     `,
     );
 
-    const projectionSummaries = buildProjectionSummaries(
+    const projectionSummaries = buildProjectionValueSegments(
       (function* () {
         for (const row of projectionTrackingStmt.iterate(
           ...PROJECTION_TRACKING_CARD_TYPES,

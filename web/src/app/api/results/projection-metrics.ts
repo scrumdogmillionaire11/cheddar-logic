@@ -25,6 +25,28 @@ export type ProjectionSummaryRow = {
   sampleSize: number;
 };
 
+export type ProjectionValueSegment = {
+  bucketRangeLabel: string; // e.g., "2.0-2.5"
+  projectionMin: number;
+  projectionMax: number;
+  actualsAvailable: boolean;
+  bias: number | null;
+  mae: number | null;
+  directionalAccuracy: number | null;
+  directionalWins: number;
+  directionalLosses: number;
+  overWins: number;
+  overLosses: number;
+  underWins: number;
+  underLosses: number;
+  sampleSize: number;
+  rowsSeen: number;
+};
+
+export type ProjectionSummaryWithSegments = ProjectionSummaryRow & {
+  segments?: ProjectionValueSegment[];
+};
+
 type ProjectionAccumulator = {
   absErrorSum: number;
   biasSum: number;
@@ -685,4 +707,267 @@ export function buildProjectionSummaries(
       }
       return left.familyLabel.localeCompare(right.familyLabel);
     });
+}
+
+/**
+ * Determine which range bucket a projection value falls into.
+ * For 1P totals: fine buckets below 2.20, then 2.20+ catch-all
+ * For full-game totals: 0.5 increments
+ * For prop markets (shots, blocks, K): buckets based on typical ranges.
+ */
+function getProjectionBucket(
+  value: number,
+  cardFamily: string,
+): { min: number; max: number; label: string } {
+  // For 1P totals: use finer buckets below 2.20, then catch-all for 2.20+
+  if (cardFamily === 'NHL_1P_TOTAL') {
+    if (value >= 2.2) {
+      return {
+        min: 2.2,
+        max: 10,
+        label: '2.20+',
+      };
+    }
+    const floor = Math.floor(value * 2) / 2; // Round down to nearest 0.5
+    const ceiling = floor + 0.5;
+    return {
+      min: floor,
+      max: ceiling,
+      label: `${floor.toFixed(1)}-${ceiling.toFixed(1)}`,
+    };
+  }
+
+  // For full-game totals: use 0.5-sized buckets
+  if (cardFamily === 'NHL_TOTAL') {
+    const floor = Math.floor(value * 2) / 2; // Round down to nearest 0.5
+    const ceiling = floor + 0.5;
+    return {
+      min: floor,
+      max: ceiling,
+      label: `${floor.toFixed(1)}-${ceiling.toFixed(1)}`,
+    };
+  }
+
+  // For NHL shots/blocks: buckets of width 2
+  if (
+    cardFamily === 'NHL_PLAYER_SHOTS' ||
+    cardFamily === 'NHL_PLAYER_SHOTS_1P' ||
+    cardFamily === 'NHL_PLAYER_BLOCKS'
+  ) {
+    const floor = Math.floor(value / 2) * 2;
+    const ceiling = floor + 2;
+    return {
+      min: floor,
+      max: ceiling,
+      label: `${floor}-${ceiling}`,
+    };
+  }
+
+  // For MLB pitcher K: buckets of width 1.5
+  if (cardFamily === 'MLB_PITCHER_K') {
+    const floor = Math.floor(value / 1.5) * 1.5;
+    const ceiling = floor + 1.5;
+    return {
+      min: floor,
+      max: ceiling,
+      label: `${floor.toFixed(1)}-${ceiling.toFixed(1)}`,
+    };
+  }
+
+  // Default: single bucket
+  return { min: value, max: value, label: `${value.toFixed(1)}` };
+}
+
+type ProjectionSegmentAccumulator = {
+  bucketKey: string; // min-max as string for grouping
+  bucketMin: number;
+  bucketMax: number;
+  bucketLabel: string;
+  absErrorSum: number;
+  biasSum: number;
+  sampleSize: number;
+  rowsSeen: number;
+  directionCorrectCount: number;
+  directionLossCount: number;
+  directionSampleCount: number;
+  overWins: number;
+  overLosses: number;
+  underWins: number;
+  underLosses: number;
+};
+
+/**
+ * Build projection accuracy summaries segmented by projection value ranges.
+ * Groups rows by cardFamily and projection value bucket to identify if certain
+ * ranges have systematically better/worse accuracy.
+ */
+export function buildProjectionValueSegments(
+  rows: Iterable<ProjectionMetricInputRow>,
+): ProjectionSummaryWithSegments[] {
+  const groupedByFamily = new Map<string, Map<string, ProjectionSegmentAccumulator>>();
+
+  for (const row of rows) {
+    const cardFamily = deriveProjectionCardFamily(row);
+
+    // Only include projection-only families
+    if (!PROJECTION_FAMILY_LABELS[cardFamily]) continue;
+
+    const projection = resolveProjectionValue(row.payload);
+    const actual = resolveProjectionActualValue(row);
+
+    const bucket = projection !== null ? getProjectionBucket(projection, cardFamily) : null;
+    const bucketKey = bucket ? `${bucket.min}-${bucket.max}` : 'null';
+
+    if (!groupedByFamily.has(cardFamily)) {
+      groupedByFamily.set(cardFamily, new Map());
+    }
+    const familySegments = groupedByFamily.get(cardFamily)!;
+
+    if (!familySegments.has(bucketKey)) {
+      familySegments.set(bucketKey, {
+        bucketKey,
+        bucketMin: bucket?.min ?? 0,
+        bucketMax: bucket?.max ?? 0,
+        bucketLabel: bucket?.label ?? 'null',
+        absErrorSum: 0,
+        biasSum: 0,
+        sampleSize: 0,
+        rowsSeen: 0,
+        directionCorrectCount: 0,
+        directionLossCount: 0,
+        directionSampleCount: 0,
+        overWins: 0,
+        overLosses: 0,
+        underWins: 0,
+        underLosses: 0,
+      });
+    }
+    const accumulator = familySegments.get(bucketKey)!;
+    accumulator.rowsSeen += 1;
+
+    if (projection === null || actual === null) continue;
+
+    accumulator.sampleSize += 1;
+    accumulator.absErrorSum += Math.abs(actual - projection);
+    accumulator.biasSum += projection - actual;
+
+    const direction = resolveProjectionDirection(row.payload);
+    if (
+      hasActionableProjectionCall(row.payload) &&
+      (direction === 'OVER' || direction === 'UNDER')
+    ) {
+      accumulator.directionSampleCount += 1;
+      const isCorrect =
+        (direction === 'OVER' && actual >= projection) ||
+        (direction === 'UNDER' && actual <= projection);
+      if (isCorrect) {
+        accumulator.directionCorrectCount += 1;
+        if (direction === 'OVER') accumulator.overWins += 1;
+        else accumulator.underWins += 1;
+      } else {
+        accumulator.directionLossCount += 1;
+        if (direction === 'OVER') accumulator.overLosses += 1;
+        else accumulator.underLosses += 1;
+      }
+    }
+  }
+
+  // Convert to summary rows with segment breakdowns
+  const results: ProjectionSummaryWithSegments[] = [];
+
+  for (const [cardFamily, familySegments] of groupedByFamily.entries()) {
+    // First compute family-level aggregates
+    let familyAbsErrorSum = 0;
+    let familyBiasSum = 0;
+    let familySampleSize = 0;
+    let familyRowsSeen = 0;
+    let familyDirCorrectCount = 0;
+    let familyDirLossCount = 0;
+    let familyDirSampleCount = 0;
+    let familyOverWins = 0;
+    let familyOverLosses = 0;
+    let familyUnderWins = 0;
+    let familyUnderLosses = 0;
+
+    const segments: ProjectionValueSegment[] = [];
+    for (const segment of familySegments.values()) {
+      familyAbsErrorSum += segment.absErrorSum;
+      familyBiasSum += segment.biasSum;
+      familySampleSize += segment.sampleSize;
+      familyRowsSeen += segment.rowsSeen;
+      familyDirCorrectCount += segment.directionCorrectCount;
+      familyDirLossCount += segment.directionLossCount;
+      familyDirSampleCount += segment.directionSampleCount;
+      familyOverWins += segment.overWins;
+      familyOverLosses += segment.overLosses;
+      familyUnderWins += segment.underWins;
+      familyUnderLosses += segment.underLosses;
+
+      segments.push({
+        bucketRangeLabel: segment.bucketLabel,
+        projectionMin: segment.bucketMin,
+        projectionMax: segment.bucketMax,
+        actualsAvailable: segment.sampleSize > 0,
+        bias:
+          segment.sampleSize > 0
+            ? roundNumber(segment.biasSum / segment.sampleSize)
+            : null,
+        mae:
+          segment.sampleSize > 0
+            ? roundNumber(segment.absErrorSum / segment.sampleSize)
+            : null,
+        directionalAccuracy:
+          segment.directionSampleCount > 0
+            ? roundNumber(
+                segment.directionCorrectCount / segment.directionSampleCount,
+              )
+            : null,
+        directionalWins: segment.directionCorrectCount,
+        directionalLosses: segment.directionLossCount,
+        overWins: segment.overWins,
+        overLosses: segment.overLosses,
+        underWins: segment.underWins,
+        underLosses: segment.underLosses,
+        sampleSize: segment.sampleSize,
+        rowsSeen: segment.rowsSeen,
+      });
+    }
+
+    // Sort segments by projection min value
+    segments.sort((a, b) => a.projectionMin - b.projectionMin);
+
+    results.push({
+      actualsAvailable: familySampleSize > 0,
+      bias:
+        familySampleSize > 0
+          ? roundNumber(familyBiasSum / familySampleSize)
+          : null,
+      cardFamily,
+      directionalAccuracy:
+        familyDirSampleCount > 0
+          ? roundNumber(familyDirCorrectCount / familyDirSampleCount)
+          : null,
+      directionalWins: familyDirCorrectCount,
+      directionalLosses: familyDirLossCount,
+      overWins: familyOverWins,
+      overLosses: familyOverLosses,
+      underWins: familyUnderWins,
+      underLosses: familyUnderLosses,
+      familyLabel: PROJECTION_FAMILY_LABELS[cardFamily] || cardFamily,
+      mae:
+        familySampleSize > 0
+          ? roundNumber(familyAbsErrorSum / familySampleSize)
+          : null,
+      rowsSeen: familyRowsSeen,
+      sampleSize: familySampleSize,
+      segments: segments.length > 0 ? segments : undefined,
+    });
+  }
+
+  return results.sort((left, right) => {
+    if (left.actualsAvailable !== right.actualsAvailable) {
+      return left.actualsAvailable ? -1 : 1;
+    }
+    return left.familyLabel.localeCompare(right.familyLabel);
+  });
 }
