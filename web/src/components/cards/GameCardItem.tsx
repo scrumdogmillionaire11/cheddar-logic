@@ -33,7 +33,6 @@ import {
   formatOddsLine,
   formatProjectedSentence,
   formatReasonCode,
-  formatSharpPriceStatus,
   formatSignedDecimal,
   getDirectionBadge,
   getMarketTypeBadge,

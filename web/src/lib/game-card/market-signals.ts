@@ -54,10 +54,6 @@ export function deriveMarketSignals(card: GameCard): MarketSignalPill[] {
   const tags: string[] = (play?.tags as string[] | undefined) ?? [];
   const hasFadePublicPositive = tags.includes('FADE_PUBLIC_POSITIVE');
 
-  const primaryReasonCode: string | null =
-    play?.decision_v2?.primary_reason_code ??
-    play?.pass_reason_code ??
-    null;
   const hasSharpDivergence =
     tags.includes('SHARP_MONEY_OPPOSITE') ||
     hasFadePublicPositive;

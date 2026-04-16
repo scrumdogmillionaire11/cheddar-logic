@@ -54,10 +54,6 @@ function outcomeBadgeClass(outcome: 'WIN' | 'LOSS' | 'NO_BET'): string {
   return 'border-white/20 bg-white/5 text-cloud/50';
 }
 
-const CARD_LABEL: Record<string, string> = {
-  'NHL_1P_TOTAL': 'NHL 1P Total',
-};
-
 // ── row renderers ────────────────────────────────────────────────────────────
 
 interface NhlRowProps {

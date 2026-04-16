@@ -115,7 +115,14 @@ for (const sport of ['MLB', 'NHL'] as const) {
     officialStatus: 'LEAN',
     executionStatus: 'EXECUTABLE',
   });
-  const play = game.plays[0] as any;
+  const play = game.plays[0] as {
+    prediction?: string;
+    selection?: { side: string; team: string };
+    decision_v2: {
+      direction: string;
+      canonical_envelope_v2?: Record<string, unknown>;
+    };
+  };
   play.prediction = 'AWAY';
   play.selection = { side: 'AWAY', team: 'Away Team' };
   play.decision_v2.direction = 'HOME';
