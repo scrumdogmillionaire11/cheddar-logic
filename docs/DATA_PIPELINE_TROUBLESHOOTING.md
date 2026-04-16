@@ -21,6 +21,62 @@ cd packages/data && npm run db:test-query
 cd packages/data && npm run test:integration
 ```
 
+## Moneyline Suppression Attribution (WI-0955)
+
+Use these queries when MLB/NHL moneyline cards appear to disappear between model output and visible cards.
+
+Canonical suppression IDs:
+
+- MODEL: `MODEL_NO_EDGE`, `MODEL_LOW_CONFIDENCE`, `MODEL_INTEGRITY_FAIL`, `MODEL_NO_RECENT_DATA`
+- GATE: `GATE_STALE_EXPIRED`, `GATE_STALE_VALID`, `GATE_INTEGRITY_FAIL`, `GATE_NO_CONTRACT`
+- TRANSFORM: `TRANSFORM_STATUS_REMAP`, `TRANSFORM_INSUFFICIENT_DATA`
+- FILTER: `FILTER_USER_CHOICE`, `FILTER_DEFAULT_HIDDEN`
+
+One-command layer/reason rollup (last 24h logs):
+
+```bash
+grep -h "moneyline_suppression" /var/log/worker/*.log | \
+   jq -r 'select(.market=="moneyline") | [.layer,.reason] | @tsv' | \
+   awk -F'\t' '{k=$1"|"$2; c[k]++} END {for (k in c) print c[k],k}' | \
+   sort -rn
+```
+
+One-command reconciliation by layer with monotonic check:
+
+```bash
+grep -h "moneyline_suppression" /var/log/worker/*.log | \
+   jq -r 'select(.market=="moneyline") | .layer' | \
+   awk '{c[$1]++} END {
+      m=c["MODEL"]+0; g=c["GATE"]+0; t=c["TRANSFORM"]+0; f=c["FILTER"]+0;
+      print "MODEL",m; print "GATE",g; print "TRANSFORM",t; print "FILTER",f;
+      if (g<=m && t<=g && f<=t) print "RECONCILIATION_OK"; else print "RECONCILIATION_MISMATCH";
+   }'
+```
+
+Check for non-canonical reason IDs:
+
+```bash
+grep -h "moneyline_suppression" /var/log/worker/*.log | \
+   jq -r '.reason' | sort -u | \
+   comm -23 - <(cat <<'EOF' | sort
+FILTER_DEFAULT_HIDDEN
+FILTER_USER_CHOICE
+GATE_INTEGRITY_FAIL
+GATE_NO_CONTRACT
+GATE_STALE_EXPIRED
+GATE_STALE_VALID
+MODEL_INTEGRITY_FAIL
+MODEL_LOW_CONFIDENCE
+MODEL_NO_EDGE
+MODEL_NO_RECENT_DATA
+TRANSFORM_INSUFFICIENT_DATA
+TRANSFORM_STATUS_REMAP
+EOF
+)
+```
+
+If the final command outputs anything, suppression code mapping has regressed and should be treated as a deployment blocker.
+
 ### Missing `MISSING_DATA_NO_PLAYS` Diagnostic
 
 When `/cards` shows games as degraded with `MISSING_DATA_NO_PLAYS`, run this read-only diagnostic from repo root:

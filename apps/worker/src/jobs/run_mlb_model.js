@@ -43,7 +43,11 @@ const {
 // Import pluggable inference layer
 const { computeMLBDriverCards, computePitcherKDriverCards } = require('../models');
 const { evaluateMlbGameMarkets, projectF5ML, projectTeamF5RunsAgainstStarter, setLeagueConstants } = require('../models/mlb-model');
-const { assertNoSilentMarketDrop, logRejectedMarkets } = require('@cheddar-logic/models/src/market-eval');
+const {
+  assertNoSilentMarketDrop,
+  logRejectedMarkets,
+  canonicalizeMoneylineSuppressionReason,
+} = require('@cheddar-logic/models/src/market-eval');
 
 // WI-0648: Empirical sigma recalibration gate
 // Threshold: once a team has accumulated >= MIN_MLB_GAMES_FOR_RECAL settled games
@@ -1701,6 +1705,37 @@ function resolveMlbMarketGroup(driver = {}) {
   return MLB_MARKET_GROUP.OTHER_PROP;
 }
 
+function isMlbMoneylinePayload(payload) {
+  if (!payload || typeof payload !== 'object') return false;
+  const marketType = String(payload.market_type || '').toUpperCase();
+  const recommendedBetType = String(payload.recommended_bet_type || '').toUpperCase();
+  return marketType === 'MONEYLINE' || recommendedBetType === 'MONEYLINE';
+}
+
+function emitMlbMoneylineSuppressionLog({
+  payload,
+  layer,
+  reason,
+  cardStatus,
+  detail = null,
+}) {
+  if (!isMlbMoneylinePayload(payload)) return;
+  console.log(
+    JSON.stringify({
+      timestamp: new Date().toISOString(),
+      event: 'moneyline_suppression',
+      layer,
+      reason: canonicalizeMoneylineSuppressionReason(reason, layer),
+      game_id: payload?.game_id ?? null,
+      sport: String(payload?.sport || 'MLB').toLowerCase(),
+      market: 'moneyline',
+      card_id: payload?.source_card_id ?? payload?.game_id ?? null,
+      card_status: cardStatus ?? payload?.execution_status ?? 'BLOCKED',
+      detail,
+    }),
+  );
+}
+
 function resolveMlbTrustClass(marketGroup) {
   if (
     marketGroup === MLB_MARKET_GROUP.FULL_GAME_TOTAL ||
@@ -1776,6 +1811,13 @@ function applyExecutionGateToMlbPayload(payload, { oddsSnapshot, nowMs = Date.no
       snapshot_timestamp: snapshotTimestamp,
       freshness_decision: null,
     };
+    emitMlbMoneylineSuppressionLog({
+      payload,
+      layer: 'MODEL',
+      reason: earlyExitDropReasonCode,
+      cardStatus: executionStatus || 'BLOCKED',
+      detail: alreadyPass ? 'already_pass' : 'not_executable_path',
+    });
     return { evaluated: false, blocked: false };
   }
 
@@ -1937,6 +1979,13 @@ function applyExecutionGateToMlbPayload(payload, { oddsSnapshot, nowMs = Date.no
       execution_status: 'BLOCKED',
       block_reason: gateResult.reason,
     };
+    emitMlbMoneylineSuppressionLog({
+      payload,
+      layer: 'GATE',
+      reason: gateResult.reason,
+      cardStatus: 'BLOCKED',
+      detail: gateResult.drop_reason || null,
+    });
   }
 
   return {

@@ -84,6 +84,7 @@ const {
 const { 
   assertNoSilentMarketDrop,
   logRejectedMarkets,
+  canonicalizeMoneylineSuppressionReason,
 } = require('@cheddar-logic/models/src/market-eval');
 const { evaluateExecution } = require('./execution-gate');
 const { refreshStaleOdds } = require('./refresh_stale_odds');
@@ -682,6 +683,37 @@ function toExecutionGatePassReasonCode(reason) {
     : 'PASS_EXECUTION_GATE_BLOCKED';
 }
 
+function isNhlMoneylinePayload(payload) {
+  if (!payload || typeof payload !== 'object') return false;
+  const marketType = String(payload.market_type || '').toUpperCase();
+  const recommendedBetType = String(payload.recommended_bet_type || '').toUpperCase();
+  return marketType === 'MONEYLINE' || recommendedBetType === 'MONEYLINE';
+}
+
+function emitNhlMoneylineSuppressionLog({
+  payload,
+  layer,
+  reason,
+  cardStatus,
+  detail = null,
+}) {
+  if (!isNhlMoneylinePayload(payload)) return;
+  console.log(
+    JSON.stringify({
+      timestamp: new Date().toISOString(),
+      event: 'moneyline_suppression',
+      layer,
+      reason: canonicalizeMoneylineSuppressionReason(reason, layer),
+      game_id: payload?.game_id ?? null,
+      sport: String(payload?.sport || 'NHL').toLowerCase(),
+      market: 'moneyline',
+      card_id: payload?.source_card_id ?? payload?.game_id ?? null,
+      card_status: cardStatus ?? payload?.execution_status ?? 'BLOCKED',
+      detail,
+    }),
+  );
+}
+
 function applyExecutionGateToNhlCard(card, { oddsSnapshot, nowMs = Date.now() } = {}) {
   if (!card?.payloadData || typeof card.payloadData !== 'object') {
     return { evaluated: false, blocked: false };
@@ -727,6 +759,13 @@ function applyExecutionGateToNhlCard(card, { oddsSnapshot, nowMs = Date.now() } 
       snapshot_timestamp: snapshotTimestamp,
       freshness_decision: null,
     };
+    emitNhlMoneylineSuppressionLog({
+      payload,
+      layer: 'MODEL',
+      reason: earlyExitDropReasonCode,
+      cardStatus: executionStatus || 'BLOCKED',
+      detail: alreadyPass ? 'already_pass' : 'not_executable_path',
+    });
     return { evaluated: false, blocked: false };
   }
 
@@ -811,6 +850,13 @@ function applyExecutionGateToNhlCard(card, { oddsSnapshot, nowMs = Date.now() } 
       execution_status: 'BLOCKED',
       block_reason: gateResult.reason,
     };
+    emitNhlMoneylineSuppressionLog({
+      payload,
+      layer: 'GATE',
+      reason: gateResult.reason,
+      cardStatus: 'BLOCKED',
+      detail: gateResult.drop_reason || null,
+    });
   }
 
   return {
@@ -835,16 +881,11 @@ function fetchLatestOddsSnapshotForGame(gameId) {
 async function applyExecutionGateWithStaleRecoveryToNhlCard(
   card,
   {
+    oddsSnapshot,
+    nowMs = Date.now(),
     gameId, 
     slotStartIso, 
     modelRunUuid, 
-    attemptCount = 0,
-    refreshOddsFn = refreshStaleOdds,
-    fetchLatestSnapshotFn = null,
-    dedupCache = staleRecoveryDedupCache,
-    logger = console,
-    slotStartIso,
-    modelRunUuid,
     attemptCount = 0,
     refreshOddsFn = refreshStaleOdds,
     fetchLatestSnapshotFn = null,
