@@ -569,11 +569,22 @@ const MLB_FULL_GAME_EDGE_THRESHOLD_CAP = 0.65;
 const MLB_FULL_GAME_SANITY_BAND = 0.3;
 const MLB_FULL_GAME_LEAN_EDGE_THRESHOLD = 0.75;
 const MLB_FULL_GAME_PLAY_EDGE_THRESHOLD = 1.25;
-const MLB_FULL_GAME_SHRINK_FACTOR_FULL_MODEL = 0.7;
-const MLB_FULL_GAME_SHRINK_FACTOR_DEGRADED_MODEL = 0.35;
+function readFiniteEnvNumber(name, fallback) {
+  const raw = process.env[name];
+  if (raw == null || raw === "") return fallback;
+  const value = Number(raw);
+  return Number.isFinite(value) ? value : fallback;
+}
+
+const MLB_FULL_GAME_SHRINK_FACTOR_FULL_MODEL = readFiniteEnvNumber("MLB_FULL_GAME_SHRINK_FACTOR_FULL_MODEL", 0.85);
+const MLB_FULL_GAME_SHRINK_FACTOR_DEGRADED_MODEL = readFiniteEnvNumber("MLB_FULL_GAME_SHRINK_FACTOR_DEGRADED_MODEL", 0.65);
 const MLB_FULL_GAME_DEGRADED_PASS_THRESHOLD = 3;
-const MLB_FULL_GAME_DEGRADED_RECENTER_WEIGHT = 0.5;
-const MLB_PURE_SIGNAL_MODE = process.env.MLB_PURE_SIGNAL_MODE === 'true';
+const MLB_FULL_GAME_DEGRADED_RECENTER_WEIGHT = readFiniteEnvNumber("MLB_FULL_GAME_DEGRADED_RECENTER_WEIGHT", 0.8);
+const MLB_PURE_SIGNAL_MODE = process.env.MLB_PURE_SIGNAL_MODE === "true";
+const MLB_BULLPEN_QUALITY_ADJ_MIN = -0.22;
+const MLB_BULLPEN_QUALITY_ADJ_MAX = 0.32;
+const MLB_BULLPEN_GAME_ADJ_MIN = -0.35;
+const MLB_BULLPEN_GAME_ADJ_MAX = 0.55;
 
 const MLB_TOTAL_VOL_BUCKETS = Object.freeze({
   LOW: 'LOW_VOL',
@@ -694,6 +705,51 @@ function computeBullpenContext(opponentBullpenEra, context = {}) {
     leverage_penalty: leveragePenalty,
     usage_penalty: usagePenalty,
   };
+}
+
+function scoreBullpenQuality({ era14d } = {}) {
+  if (!Number.isFinite(era14d)) return 0;
+  if (era14d <= 3.3) return -0.18;
+  if (era14d <= 3.9) return -0.08;
+  if (era14d <= 4.5) return 0;
+  if (era14d <= 5.1) return 0.1;
+  return 0.22;
+}
+
+function scoreBullpenWorkload({ usageScore3d, fatigueScore3d } = {}) {
+  const usage = Number.isFinite(usageScore3d) ? usageScore3d : 0;
+  const fatigue = Number.isFinite(fatigueScore3d) ? fatigueScore3d : 0;
+  const raw = (usage * 0.08) + (fatigue * 0.12);
+  return clampValue(raw, -0.1, 0.18);
+}
+
+function computeTeamBullpenRuns(teamCtx = {}) {
+  const quality = scoreBullpenQuality({
+    era14d: toFiniteNumberOrNull(teamCtx?.era_14d),
+  });
+  const workload = scoreBullpenWorkload({
+    usageScore3d: toFiniteNumberOrNull(teamCtx?.usage_score_3d),
+    fatigueScore3d: toFiniteNumberOrNull(teamCtx?.fatigue_score_3d),
+  });
+
+  return clampValue(
+    quality + workload,
+    MLB_BULLPEN_QUALITY_ADJ_MIN,
+    MLB_BULLPEN_QUALITY_ADJ_MAX,
+  );
+}
+
+function computeBullpenAdjustmentRuns({
+  homeBullpenContext,
+  awayBullpenContext,
+} = {}) {
+  const homeLiability = computeTeamBullpenRuns(homeBullpenContext);
+  const awayLiability = computeTeamBullpenRuns(awayBullpenContext);
+  return clampValue(
+    homeLiability + awayLiability,
+    MLB_BULLPEN_GAME_ADJ_MIN,
+    MLB_BULLPEN_GAME_ADJ_MAX,
+  );
 }
 
 function computeTotalVariance({
@@ -983,26 +1039,49 @@ function projectFullGameTotal(homePitcher, awayPitcher, context = {}) {
     ...(awayF5.missing_inputs || []).map((n) => `away_${n}`),
   ]));
 
+  const homeBullpenContextInput = context?.home_bullpen_context ?? null;
+  const awayBullpenContextInput = context?.away_bullpen_context ?? null;
+
   // Late-innings segments — opponent bullpen ERA governs each side
   const homeLate = projectLateInningsRuns(
     homeOffenseProfile,
     awayPitcher?.handedness ?? null,
-    context?.away_bullpen_era ?? null,
+    context?.away_bullpen_era ?? awayBullpenContextInput?.era_14d ?? null,
     {
-      fatigue_index: context?.away_bullpen_fatigue_index,
-      leverage_availability: context?.away_leverage_availability,
-      recent_usage: context?.away_recent_usage,
+      fatigue_index:
+        context?.away_bullpen_fatigue_index ??
+        (Number.isFinite(toFiniteNumberOrNull(awayBullpenContextInput?.fatigue_score_3d))
+          ? toFiniteNumberOrNull(awayBullpenContextInput?.fatigue_score_3d) / 2
+          : null),
+      leverage_availability:
+        context?.away_leverage_availability ??
+        toFiniteNumberOrNull(awayBullpenContextInput?.availability_score),
+      recent_usage:
+        context?.away_recent_usage ??
+        (Number.isFinite(toFiniteNumberOrNull(awayBullpenContextInput?.usage_score_3d))
+          ? toFiniteNumberOrNull(awayBullpenContextInput?.usage_score_3d) / 2
+          : null),
     },
     environment,
   );
   const awayLate = projectLateInningsRuns(
     awayOffenseProfile,
     homePitcher?.handedness ?? null,
-    context?.home_bullpen_era ?? null,
+    context?.home_bullpen_era ?? homeBullpenContextInput?.era_14d ?? null,
     {
-      fatigue_index: context?.home_bullpen_fatigue_index,
-      leverage_availability: context?.home_leverage_availability,
-      recent_usage: context?.home_recent_usage,
+      fatigue_index:
+        context?.home_bullpen_fatigue_index ??
+        (Number.isFinite(toFiniteNumberOrNull(homeBullpenContextInput?.fatigue_score_3d))
+          ? toFiniteNumberOrNull(homeBullpenContextInput?.fatigue_score_3d) / 2
+          : null),
+      leverage_availability:
+        context?.home_leverage_availability ??
+        toFiniteNumberOrNull(homeBullpenContextInput?.availability_score),
+      recent_usage:
+        context?.home_recent_usage ??
+        (Number.isFinite(toFiniteNumberOrNull(homeBullpenContextInput?.usage_score_3d))
+          ? toFiniteNumberOrNull(homeBullpenContextInput?.usage_score_3d) / 2
+          : null),
     },
     environment,
   );
@@ -1032,9 +1111,13 @@ function projectFullGameTotal(homePitcher, awayPitcher, context = {}) {
   }
 
   const offenseEdge = resolveOffenseEdgeSignal(homePitcher, awayPitcher, context);
+  const bullpenAdjustmentRuns = computeBullpenAdjustmentRuns({
+    homeBullpenContext: homeBullpenContextInput,
+    awayBullpenContext: awayBullpenContextInput,
+  });
   const homeProj = homeF5.f5_runs + homeLate.late_runs;
   const awayProj = awayF5.f5_runs + awayLate.late_runs;
-  const fullGameMean = homeProj + awayProj;
+  const fullGameMean = homeProj + awayProj + bullpenAdjustmentRuns;
   const variance = computeTotalVariance({
     totalMean: fullGameMean,
     homeF5Runs: homeF5.f5_runs,
@@ -1071,6 +1154,7 @@ function projectFullGameTotal(homePitcher, awayPitcher, context = {}) {
   const projectionComponents = {
     starter_base_runs: f5BaseRuns,
     late_innings_base_runs: lateBaseRuns,
+    bullpen_adjustment_runs: bullpenAdjustmentRuns,
     offense_adjustment_runs:
       sumDelta(homeF5, 'offense_runs_delta') +
       sumDelta(awayF5, 'offense_runs_delta') +
@@ -1115,6 +1199,13 @@ function projectFullGameTotal(homePitcher, awayPitcher, context = {}) {
       f5_runs: awayF5.f5_runs,
       late_runs: awayLate.late_runs,
     },
+    bullpen_context: {
+      home: homeBullpenContextInput,
+      away: awayBullpenContextInput,
+      bullpen_data_missing:
+        !Number.isFinite(toFiniteNumberOrNull(homeBullpenContextInput?.era_14d)) ||
+        !Number.isFinite(toFiniteNumberOrNull(awayBullpenContextInput?.era_14d)),
+    },
   };
 
   return {
@@ -1134,6 +1225,9 @@ function projectFullGameTotal(homePitcher, awayPitcher, context = {}) {
     away_late_runs: awayLate.late_runs,
     home_bullpen_context: homeLate.bullpen_context,
     away_bullpen_context: awayLate.bullpen_context,
+    home_bullpen_context_input: homeBullpenContextInput,
+    away_bullpen_context_input: awayBullpenContextInput,
+    bullpen_adjustment_runs: bullpenAdjustmentRuns,
     total_variance: variance.total_variance,
     run_diff_variance: variance.run_diff_variance,
     variance_multiplier: variance.variance_multiplier,
@@ -1194,6 +1288,7 @@ function projectFullGameTotalCard(homePitcher, awayPitcher, fullGameLine, contex
     ? (rawModelTotal * MLB_FULL_GAME_DEGRADED_RECENTER_WEIGHT) +
       (fullGameLine * (1 - MLB_FULL_GAME_DEGRADED_RECENTER_WEIGHT))
     : rawModelTotal;
+  const recenteredEdge = recenteredModelTotal - fullGameLine;
   const shrinkFactor = modelQuality === 'FULL_MODEL'
     ? MLB_FULL_GAME_SHRINK_FACTOR_FULL_MODEL
     : modelQuality === 'DEGRADED_MODEL'
@@ -1201,10 +1296,12 @@ function projectFullGameTotalCard(homePitcher, awayPitcher, fullGameLine, contex
       : null;
   const shrunkModelTotal = Number.isFinite(shrinkFactor)
     ? fullGameLine + (shrinkFactor * (recenteredModelTotal - fullGameLine))
-    : null;
+    : recenteredModelTotal;
   const shrunkEdge = Number.isFinite(shrunkModelTotal)
     ? shrunkModelTotal - fullGameLine
-    : null;
+    : recenteredEdge;
+  const finalModelTotal = Number.isFinite(shrunkModelTotal) ? shrunkModelTotal : recenteredModelTotal;
+  const finalEdge = Number.isFinite(finalModelTotal) ? finalModelTotal - fullGameLine : recenteredEdge;
   const directionBeforeShrink = Math.abs(rawEdge) >= MLB_FULL_GAME_LEAN_EDGE_THRESHOLD
     ? (rawEdge >= 0 ? 'OVER' : 'UNDER')
     : 'PASS';
@@ -1280,8 +1377,9 @@ function projectFullGameTotalCard(homePitcher, awayPitcher, fullGameLine, contex
   }
   const isHeavilyDegraded = isDegraded &&
     degradedInputsCount >= MLB_FULL_GAME_DEGRADED_PASS_THRESHOLD;
+  const degradedWatchOnly = isHeavilyDegraded && hasLeanEdge;
   if (isHeavilyDegraded) {
-    reasonCodes.push('PASS_DEGRADED_TOTAL_MODEL');
+    reasonCodes.push(degradedWatchOnly ? 'SOFT_DEGRADED_TOTAL_MODEL' : 'PASS_DEGRADED_TOTAL_MODEL');
   }
 
   if (!MLB_PURE_SIGNAL_MODE) {
@@ -1311,29 +1409,28 @@ function projectFullGameTotalCard(homePitcher, awayPitcher, fullGameLine, contex
   const canLean =
     modelQuality !== 'NO_BET_MODEL' &&
     hasLeanEdge &&
-    !isHeavilyDegraded &&
     (!confidenceBelowGate || isDegraded);
   const canFire =
     modelQuality === 'FULL_MODEL' &&
     hasPlayEdge &&
     !confidenceBelowGate;
 
-  const prediction = canLean ? (shrunkEdge >= 0 ? 'OVER' : 'UNDER') : leanSide;
+  const prediction = canLean ? (finalEdge >= 0 ? 'OVER' : 'UNDER') : leanSide;
   let status = 'PASS';
   if (canLean) {
     const softReasonCount = reasonCodes.filter((code) => code.startsWith('SOFT_')).length;
     const softSuppressed = !MLB_PURE_SIGNAL_MODE && softReasonCount >= 2;
-    status = canFire && !softSuppressed ? 'FIRE' : 'WATCH';
+    status = canFire && !softSuppressed && !degradedWatchOnly ? 'FIRE' : 'WATCH';
   }
   const action = status === 'FIRE' ? 'FIRE' : status === 'WATCH' ? 'HOLD' : 'PASS';
   const classification = status === 'FIRE' ? 'BASE' : status === 'WATCH' ? 'LEAN' : 'PASS';
   const playability = {
     over_playable_at_or_below: roundToHalf(
-      (shrunkModelTotal ?? proj.projected_total_mean) - MLB_FULL_GAME_LEAN_EDGE_THRESHOLD,
+      (finalModelTotal ?? proj.projected_total_mean) - MLB_FULL_GAME_LEAN_EDGE_THRESHOLD,
       'floor',
     ),
     under_playable_at_or_above: roundToHalf(
-      (shrunkModelTotal ?? proj.projected_total_mean) + MLB_FULL_GAME_LEAN_EDGE_THRESHOLD,
+      (finalModelTotal ?? proj.projected_total_mean) + MLB_FULL_GAME_LEAN_EDGE_THRESHOLD,
       'ceil',
     ),
   };
@@ -1344,7 +1441,7 @@ function projectFullGameTotalCard(homePitcher, awayPitcher, fullGameLine, contex
     prediction,
     confidence: proj.confidence / 10,
     ev_threshold_passed: status !== 'PASS',
-    reasoning: `FG TOTAL ${proj.projection_source} raw ${rawModelTotal.toFixed(2)} shrunk ${(shrunkModelTotal ?? rawModelTotal).toFixed(2)} vs line ${fullGameLine.toFixed(1)} rawEdge ${rawEdge >= 0 ? '+' : ''}${rawEdge.toFixed(2)} shrunkEdge ${Number.isFinite(shrunkEdge) ? `${shrunkEdge >= 0 ? '+' : ''}${shrunkEdge.toFixed(2)}` : 'n/a'} bucket=${proj.volatility_bucket} thr=${dynamicThreshold.toFixed(2)} pOver=${(pOver * 100).toFixed(1)}% pUnder=${(pUnder * 100).toFixed(1)}% drivers=${driverValidation.drivers.join('|') || 'none'} conf=${proj.confidence}/10`,
+    reasoning: `FG TOTAL ${proj.projection_source} raw ${rawModelTotal.toFixed(2)} recentered ${recenteredModelTotal.toFixed(2)} shrunk ${finalModelTotal.toFixed(2)} vs line ${fullGameLine.toFixed(1)} rawEdge ${rawEdge >= 0 ? '+' : ''}${rawEdge.toFixed(2)} recenteredEdge ${recenteredEdge >= 0 ? '+' : ''}${recenteredEdge.toFixed(2)} finalEdge ${finalEdge >= 0 ? '+' : ''}${finalEdge.toFixed(2)} shrink=${Number.isFinite(shrinkFactor) ? shrinkFactor.toFixed(2) : 'n/a'} bucket=${proj.volatility_bucket} thr=${dynamicThreshold.toFixed(2)} pOver=${(pOver * 100).toFixed(1)}% pUnder=${(pUnder * 100).toFixed(1)}% drivers=${driverValidation.drivers.join('|') || 'none'} conf=${proj.confidence}/10`,
     status,
     action,
     classification,
@@ -1361,18 +1458,40 @@ function projectFullGameTotalCard(homePitcher, awayPitcher, fullGameLine, contex
     directional_audit: {
       raw_model_total: roundToTenth(rawModelTotal),
       market_total: roundToTenth(fullGameLine),
+      recentered_model_total: roundToTenth(recenteredModelTotal),
       shrunk_model_total: roundToTenth(shrunkModelTotal),
+      final_model_total: roundToTenth(finalModelTotal),
+      after_degradation_total: roundToTenth(recenteredModelTotal),
+      after_shrink_total: roundToTenth(shrunkModelTotal),
+      final_total: roundToTenth(finalModelTotal),
       proj_minus_line_raw: roundToTenth(rawEdge),
+      proj_minus_line_recentered: roundToTenth(recenteredEdge),
       proj_minus_line_shrunk: roundToTenth(shrunkEdge),
+      proj_minus_line_final: roundToTenth(finalEdge),
+      raw_edge: roundToTenth(rawEdge),
+      final_edge: roundToTenth(finalEdge),
+      shrink_factor: Number.isFinite(shrinkFactor) ? Number(shrinkFactor.toFixed(2)) : null,
+      qualification_edge: roundToTenth(edgeForQualification),
+      qualification_edge_source: degradedMode ? 'raw' : 'final',
       degraded_inputs_count: degradedInputsCount,
       degraded_mode: degradedMode,
       direction_before_shrink: directionBeforeShrink,
       direction_after_shrink: directionAfterShrink,
+      bullpen_context: {
+        home: proj.home_bullpen_context_input ?? null,
+        away: proj.away_bullpen_context_input ?? null,
+        bullpen_adjustment_runs: roundToTenth(proj.bullpen_adjustment_runs),
+        bullpen_data_missing:
+          !Number.isFinite(toFiniteNumberOrNull(proj?.home_bullpen_context_input?.era_14d)) ||
+          !Number.isFinite(toFiniteNumberOrNull(proj?.away_bullpen_context_input?.era_14d)),
+      },
     },
     playability,
     projection: {
       projected_total: roundToTenth(proj.projected_total_mean),
+      projected_total_recentered: roundToTenth(recenteredModelTotal),
       projected_total_shrunk: roundToTenth(shrunkModelTotal),
+      projected_total_final: roundToTenth(finalModelTotal),
       projected_total_low: roundToTenth(proj.projected_total_low),
       projected_total_high: roundToTenth(proj.projected_total_high),
       home_proj: roundToTenth(proj.home_proj),
@@ -1984,6 +2103,8 @@ function computeMLBDriverCards(gameId, oddsSnapshot) {
       wind_mph: mlb.wind_mph ?? null,
       wind_dir: mlb.wind_dir ?? null,
       roof: mlb.roof ?? null,
+      home_bullpen_context: mlb.home_bullpen_context ?? null,
+      away_bullpen_context: mlb.away_bullpen_context ?? null,
       home_bullpen_era: mlb.home_bullpen_era ?? null,
       away_bullpen_era: mlb.away_bullpen_era ?? null,
       home_bullpen_fatigue_index: mlb.home_bullpen_fatigue_index ?? null,
@@ -2011,6 +2132,8 @@ function computeMLBDriverCards(gameId, oddsSnapshot) {
       wind_mph: mlb.wind_mph ?? null,
       wind_dir: mlb.wind_dir ?? null,
       roof: mlb.roof ?? null,
+      home_bullpen_context: mlb.home_bullpen_context ?? null,
+      away_bullpen_context: mlb.away_bullpen_context ?? null,
       home_bullpen_era: mlb.home_bullpen_era ?? null,
       away_bullpen_era: mlb.away_bullpen_era ?? null,
       home_bullpen_fatigue_index: mlb.home_bullpen_fatigue_index ?? null,
@@ -3663,6 +3786,10 @@ module.exports = {
   calculateProjectionK,
   // WI-0872: full-game total model
   computeBullpenContext,
+  scoreBullpenQuality,
+  scoreBullpenWorkload,
+  computeTeamBullpenRuns,
+  computeBullpenAdjustmentRuns,
   computeTotalVariance,
   simulateGameTotalDistribution,
   validateTotalDrivers,

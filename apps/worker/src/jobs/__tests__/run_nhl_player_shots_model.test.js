@@ -3543,6 +3543,52 @@ describe('run_nhl_player_shots_model', () => {
     );
   });
 
+  test('BLK parity fallback: zero stored rolling rates use lookback-derived rates', async () => {
+    process.env.NHL_BLK_CARDS_ENABLED = 'true';
+    const { mod, data, shots } = loadFreshModule();
+
+    shots.projectBlkV1.mockImplementation((inputs = {}) => ({
+      blk_mu: 1.9,
+      blk_sigma: 1.1,
+      block_rate_ev_per60: 4.8,
+      block_rate_pk_per60: 4.8,
+      role_stability: inputs.role_stability || 'HIGH',
+      fair_over_prob_by_line: { [String(inputs.market_line)]: 0.55 },
+      fair_under_prob_by_line: { [String(inputs.market_line)]: 0.45 },
+      edge_over_pp: null,
+      edge_under_pp: null,
+      ev_over: null,
+      ev_under: null,
+      opportunity_score: null,
+      flags: [],
+    }));
+
+    data.getDatabase.mockReturnValue(buildMockDb({
+      games: [buildFutureGame({ game_id: 'blk-parity-fallback-01' })],
+      players: [buildPlayer({ player_id: 8476457, player_name: 'Adam Larsson' })],
+      playerLogs: [],
+      playerBlkLogs: buildBlkGames([2, 1, 2, 1, 2, 2, 1, 2, 1, 2]),
+      playerBlkRateRow: buildBlkRateRow({
+        ev_blocks_l10_per60: 0,
+        ev_blocks_l5_per60: 0,
+        pk_blocks_l10_per60: 0,
+        pk_blocks_l5_per60: 0,
+      }),
+      availabilityRow: { status: 'ACTIVE', checked_at: new Date().toISOString() },
+    }));
+
+    await mod.runNHLPlayerShotsModel();
+
+    expect(shots.projectBlkV1).toHaveBeenCalled();
+    const blkInputs = shots.projectBlkV1.mock.calls[0][0];
+    expect(blkInputs.ev_blocks_l10_per60).toBeGreaterThan(0);
+    expect(blkInputs.ev_blocks_l5_per60).toBeGreaterThan(0);
+    expect(blkInputs.pk_blocks_l10_per60).toBeGreaterThan(0);
+    expect(blkInputs.pk_blocks_l5_per60).toBeGreaterThan(0);
+
+    const blkCard = getSingleBlkCard(data);
+    expect(blkCard.payloadData.prop_decision.flags).toContain('BLK_RATE_LOOKBACK_FALLBACK');
+  });
   test('WI-0911: nhl-player-blk payloads include settlement_policy.grading_eligible === false', async () => {
     process.env.NHL_BLK_CARDS_ENABLED = 'true';
     const { mod, data, shots } = loadFreshModule();

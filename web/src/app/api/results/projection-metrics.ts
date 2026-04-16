@@ -13,6 +13,12 @@ export type ProjectionSummaryRow = {
   bias: number | null;
   cardFamily: string;
   directionalAccuracy: number | null;
+  directionalWins: number;
+  directionalLosses: number;
+  overWins: number;
+  overLosses: number;
+  underWins: number;
+  underLosses: number;
   familyLabel: string;
   mae: number | null;
   rowsSeen: number;
@@ -25,6 +31,11 @@ type ProjectionAccumulator = {
   cardFamily: string;
   directionCorrectCount: number;
   directionSampleCount: number;
+  directionLossCount: number;
+  overWins: number;
+  overLosses: number;
+  underWins: number;
+  underLosses: number;
   rowsSeen: number;
   sampleSize: number;
 };
@@ -259,6 +270,37 @@ function resolveProjectionDirection(
   return null;
 }
 
+function hasActionableProjectionCall(
+  payload: Record<string, unknown> | null,
+): boolean {
+  const officialStatus = toUpperToken(
+    getPayloadValue(payload, ['play', 'decision_v2', 'official_status']) ||
+      getPayloadValue(payload, ['decision_v2', 'official_status']),
+  );
+  if (officialStatus === 'PASS') return false;
+  if (officialStatus === 'PLAY' || officialStatus === 'LEAN') return true;
+
+  const fallback = toUpperToken(
+    getPayloadValue(payload, ['decision', 'status']) ||
+      getPayloadValue(payload, ['status']) ||
+      getPayloadValue(payload, ['play', 'status']) ||
+      getPayloadValue(payload, ['action']) ||
+      getPayloadValue(payload, ['play', 'action']) ||
+      getPayloadValue(payload, ['decision', 'action']),
+  );
+
+  if (fallback === 'PASS' || fallback === 'HOLD' || fallback === 'WATCH') {
+    return false;
+  }
+  if (fallback === 'PLAY' || fallback === 'LEAN' || fallback === 'FIRE') {
+    return true;
+  }
+
+  // Legacy payloads may not include explicit status/action fields.
+  // In that case, keep prior behavior and infer actionability from direction.
+  return true;
+}
+
 function resolveFirstPeriodTotal(
   gameResultMetadata: Record<string, unknown> | null,
 ): number | null {
@@ -329,16 +371,36 @@ function resolvePlayerShotsActualValue(row: ProjectionMetricInputRow): number | 
   return toNumber((valuesByPlayer as Record<string, unknown>)[mappedPlayerId]);
 }
 
+function parseActualResultObject(
+  actualResult: string | null | undefined,
+): Record<string, unknown> | null {
+  if (!actualResult) return null;
+  try {
+    const parsed = JSON.parse(actualResult);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return null;
+    }
+    return parsed as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
 function resolveProjectionActualValue(row: ProjectionMetricInputRow): number | null {
   const cardFamily = deriveProjectionCardFamily(row);
+  const actualResult = parseActualResultObject(row.actualResult);
+
   if (cardFamily === 'NHL_1P_TOTAL') {
-    return resolveFirstPeriodTotal(row.gameResultMetadata);
+    return (
+      resolveFirstPeriodTotal(row.gameResultMetadata) ??
+      toNumber(actualResult?.goals_1p)
+    );
   }
   if (
     cardFamily === 'NHL_PLAYER_SHOTS' ||
     cardFamily === 'NHL_PLAYER_SHOTS_1P'
   ) {
-    return resolvePlayerShotsActualValue(row);
+    return resolvePlayerShotsActualValue(row) ?? toNumber(actualResult?.shots_1p ?? actualResult?.shots);
   }
   if (cardFamily === 'NHL_PLAYER_BLOCKS') {
     const playerBlocks =
@@ -375,15 +437,15 @@ function resolveProjectionActualValue(row: ProjectionMetricInputRow): number | n
     const mappedPlayerId = playerIdByNormalizedName
       ? String(playerIdByNormalizedName[playerName] || '').trim()
       : '';
-    if (!mappedPlayerId) return null;
+    if (mappedPlayerId) {
+      const mapped = toNumber((valuesByPlayer as Record<string, unknown>)[mappedPlayerId]);
+      if (mapped !== null) return mapped;
+    }
 
-    return toNumber((valuesByPlayer as Record<string, unknown>)[mappedPlayerId]);
+    return toNumber(actualResult?.blocks);
   }
   if (cardFamily === 'MLB_PITCHER_K') {
-    if (!row.actualResult) return null;
-    const parsed = JSON.parse(row.actualResult);
-    const ks = parsed?.pitcher_ks;
-    return typeof ks === 'number' ? ks : null;
+    return toNumber(actualResult?.pitcher_ks);
   }
   return null;
 }
@@ -543,6 +605,11 @@ export function buildProjectionSummaries(
         cardFamily,
         directionCorrectCount: 0,
         directionSampleCount: 0,
+        directionLossCount: 0,
+        overWins: 0,
+        overLosses: 0,
+        underWins: 0,
+        underLosses: 0,
         rowsSeen: 0,
         sampleSize: 0,
       };
@@ -560,13 +627,22 @@ export function buildProjectionSummaries(
     accumulator.biasSum += projection - actual;
 
     const direction = resolveProjectionDirection(row.payload);
-    if (direction === 'OVER' || direction === 'UNDER') {
+    if (
+      hasActionableProjectionCall(row.payload) &&
+      (direction === 'OVER' || direction === 'UNDER')
+    ) {
       accumulator.directionSampleCount += 1;
-      if (
+      const isCorrect =
         (direction === 'OVER' && actual >= projection) ||
-        (direction === 'UNDER' && actual <= projection)
-      ) {
+        (direction === 'UNDER' && actual <= projection);
+      if (isCorrect) {
         accumulator.directionCorrectCount += 1;
+        if (direction === 'OVER') accumulator.overWins += 1;
+        else accumulator.underWins += 1;
+      } else {
+        accumulator.directionLossCount += 1;
+        if (direction === 'OVER') accumulator.overLosses += 1;
+        else accumulator.underLosses += 1;
       }
     }
 
@@ -588,6 +664,12 @@ export function buildProjectionSummaries(
               summary.directionCorrectCount / summary.directionSampleCount,
             )
           : null,
+      directionalWins: summary.directionCorrectCount,
+      directionalLosses: summary.directionLossCount,
+      overWins: summary.overWins,
+      overLosses: summary.overLosses,
+      underWins: summary.underWins,
+      underLosses: summary.underLosses,
       familyLabel:
         PROJECTION_FAMILY_LABELS[summary.cardFamily] || summary.cardFamily,
       mae:
