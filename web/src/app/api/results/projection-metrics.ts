@@ -270,7 +270,7 @@ function resolveProjectionDirection(
   return null;
 }
 
-function hasActionableProjectionCall(
+export function hasActionableProjectionCall(
   payload: Record<string, unknown> | null,
 ): boolean {
   const officialStatus = toUpperToken(

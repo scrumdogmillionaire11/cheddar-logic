@@ -16,6 +16,7 @@ import {
   deriveCardFamily,
   deriveModelFamily,
   deriveModelVersion,
+  hasActionableProjectionCall,
   PROJECTION_TRACKING_CARD_TYPES,
   shouldTrackInResults,
 } from './projection-metrics';
@@ -45,6 +46,36 @@ type DecisionSegmentMeta = {
   label: string;
   canonicalStatus: 'PLAY' | 'LEAN';
 };
+
+// TODO(WI-0968 legacy): remove this fallback chain once historical payloads
+// consistently provide decision_v2.official_status for results rows.
+function resolveLegacyDecisionTierFallback(
+  payload: Record<string, unknown> | null,
+): DecisionTierStatus {
+  const fallbackSignals = [
+    getNestedString(payload, ['decision', 'status']),
+    getNestedString(payload, ['status']),
+    getNestedString(payload, ['play', 'status']),
+    getNestedString(payload, ['action']),
+    getNestedString(payload, ['play', 'action']),
+    getNestedString(payload, ['decision', 'action']),
+  ];
+
+  for (const signal of fallbackSignals) {
+    const normalized = normalizeStatusToken(signal);
+    if (normalized === 'FIRE' || normalized === 'PLAY') return 'PLAY';
+    if (normalized === 'LEAN') return 'LEAN';
+    if (
+      normalized === 'PASS' ||
+      normalized === 'WATCH' ||
+      normalized === 'HOLD'
+    ) {
+      return 'PASS_OR_OTHER';
+    }
+  }
+
+  return 'PASS_OR_OTHER';
+}
 
 type LedgerRow = {
   id: string;
@@ -182,29 +213,13 @@ function resolveDecisionTier(
   if (officialStatus === 'LEAN') return 'LEAN';
   if (officialStatus === 'PASS') return 'PASS_OR_OTHER';
 
-  const fallbackSignals = [
-    getNestedString(payload, ['decision', 'status']),
-    getNestedString(payload, ['status']),
-    getNestedString(payload, ['play', 'status']),
-    getNestedString(payload, ['action']),
-    getNestedString(payload, ['play', 'action']),
-    getNestedString(payload, ['decision', 'action']),
-  ];
-
-  for (const signal of fallbackSignals) {
-    const normalized = normalizeStatusToken(signal);
-    if (normalized === 'FIRE' || normalized === 'PLAY') return 'PLAY';
-    if (
-      normalized === 'WATCH' ||
-      normalized === 'HOLD' ||
-      normalized === 'LEAN'
-    ) {
-      return 'LEAN';
-    }
-    if (normalized === 'PASS') return 'PASS_OR_OTHER';
+  // If the shared actionable policy says this projection is not actionable,
+  // force PASS_OR_OTHER even when legacy fields are sparse.
+  if (!hasActionableProjectionCall(payload)) {
+    return 'PASS_OR_OTHER';
   }
 
-  return 'PASS_OR_OTHER';
+  return resolveLegacyDecisionTierFallback(payload);
 }
 
 function deriveDecisionSegment(tier: 'PLAY' | 'LEAN'): DecisionSegmentMeta {

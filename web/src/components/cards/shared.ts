@@ -362,6 +362,21 @@ export function hasActionablePlay(game: GameData): boolean {
   });
 }
 
+export function isActionableProjectionPlay(
+  play: GameData['plays'][number] | null | undefined,
+): boolean {
+  if (!play) return false;
+  const kind = (play.kind ?? 'PLAY') === 'PLAY';
+  const status = String(play.status || '').trim().toUpperCase();
+  if (status === 'PASS') return false;
+
+  const side = play.selection?.side?.toUpperCase() ?? '';
+  const hasSelection = side !== '' && side !== 'NONE';
+  const hasNonNeutralPrediction = play.prediction !== 'NEUTRAL';
+
+  return kind && hasSelection && hasNonNeutralPrediction;
+}
+
 export function parseRetryAfterMs(retryAfterHeader: string | null): number | null {
   if (!retryAfterHeader) return null;
 

@@ -67,6 +67,7 @@ import {
   deriveOnePModelCallFromReasons,
   hasProjectedTotal,
   hasActionablePlay,
+  isActionableProjectionPlay,
   filterPropCards,
   isFullGameTotalsCallPlay,
 } from './shared';
@@ -254,9 +255,8 @@ export function CardsPageProvider({
         return [];
       }
 
-      // WI-0968: projection mode is an actionable surface; PASS rows stay in
-      // diagnostics/metadata but should never render as projection cards.
-      if (playStatus === 'PASS') {
+      // WI-0968: keep projection actionability logic centralized in shared utils.
+      if (!isActionableProjectionPlay(play1p)) {
         return [];
       }
 
