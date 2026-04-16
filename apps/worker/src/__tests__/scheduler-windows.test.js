@@ -712,6 +712,81 @@ describe('scheduler settlement windows', () => {
   });
 });
 
+describe('scheduler near-tip odds backstop windows', () => {
+  const originalEnv = process.env;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    process.env = { ...originalEnv };
+    process.env.ENABLE_ODDS_PULL = 'true';
+    process.env.ENABLE_WITHOUT_ODDS_MODE = 'false';
+    process.env.ENABLE_ODDS_BACKSTOP = 'false';
+    process.env.ENABLE_ODDS_NEAR_TIP_BACKSTOP = 'true';
+    process.env.ODDS_FETCH_SLOT_MINUTES = '180';
+    process.env.ODDS_FETCH_START_HOUR = '9';
+    process.env.ENABLE_SETTLEMENT = 'false';
+    process.env.ENABLE_NHL_MODEL = 'false';
+    process.env.ENABLE_NBA_MODEL = 'false';
+    process.env.ENABLE_FPL_MODEL = 'false';
+    process.env.ENABLE_NFL_MODEL = 'false';
+    process.env.ENABLE_MLB_MODEL = 'false';
+    process.env.ENABLE_NHL_PLAYER_AVAILABILITY_SYNC = 'false';
+    process.env.ENABLE_DISCORD_CARD_WEBHOOKS = 'false';
+    process.env.FIXED_CATCHUP = 'false';
+  });
+
+  afterAll(() => {
+    process.env = originalEnv;
+  });
+
+  test('queues near-tip odds backstop at slot midpoint with deterministic key', () => {
+    const scheduler = loadSchedulerModule();
+    const { DateTime } = require('luxon');
+
+    const nowEt = DateTime.fromISO('2026-03-24T10:34:00', {
+      zone: 'America/New_York',
+    });
+    const nowUtc = nowEt.toUTC();
+
+    const dueJobs = scheduler.computeDueJobs({
+      nowEt,
+      nowUtc,
+      games: [],
+      dryRun: true,
+    });
+
+    const backstopJob = dueJobs.find((job) => job.jobName === 'refresh_stale_odds');
+    expect(backstopJob).toBeDefined();
+    expect(backstopJob.jobKey).toBe('odds|near-tip-backstop|2026-03-24|s003');
+    expect(backstopJob.reason).toContain('deterministic near-tip odds backstop');
+  });
+
+  test('does not queue near-tip odds backstop outside midpoint window', () => {
+    const scheduler = loadSchedulerModule();
+    const { DateTime } = require('luxon');
+
+    const nowEt = DateTime.fromISO('2026-03-24T10:05:00', {
+      zone: 'America/New_York',
+    });
+    const nowUtc = nowEt.toUTC();
+
+    const dueJobs = scheduler.computeDueJobs({
+      nowEt,
+      nowUtc,
+      games: [],
+      dryRun: true,
+    });
+
+    expect(
+      dueJobs.some(
+        (job) =>
+          job.jobName === 'refresh_stale_odds' &&
+          String(job.jobKey).startsWith('odds|near-tip-backstop|'),
+      ),
+    ).toBe(false);
+  });
+});
+
 describe('scheduler POTD windows', () => {
   const originalEnv = process.env;
 

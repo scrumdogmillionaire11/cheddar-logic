@@ -26,6 +26,13 @@ function keyOddsHourly(nowEt) {
   return `odds|hourly|${nowEt.toISODate()}|s${String(slot).padStart(3, '0')}`;
 }
 
+function keyOddsNearTipBackstop(nowEt) {
+  const ODDS_FETCH_SLOT_MINUTES = Number(process.env.ODDS_FETCH_SLOT_MINUTES || 180);
+  const minuteOfDay = nowEt.hour * 60 + nowEt.minute;
+  const slot = Math.floor(minuteOfDay / ODDS_FETCH_SLOT_MINUTES);
+  return `odds|near-tip-backstop|${nowEt.toISODate()}|s${String(slot).padStart(3, '0')}`;
+}
+
 function keyFixed(sport, nowEt, hhmm) {
   return `${sport}|fixed|${nowEt.toISODate()}|${hhmm.replace(':', '')}`;
 }
@@ -201,6 +208,26 @@ function isFixedDue(nowEt, hhmm) {
 }
 
 /**
+ * Deterministic near-tip backstop window.
+ *
+ * Fires once per odds slot around the midpoint between hourly-slot pulls to provide
+ * an extra stale-odds refresh path before tip windows tighten.
+ */
+function isNearTipOddsBackstopDue(nowEt) {
+  const slotMinutes = Number(process.env.ODDS_FETCH_SLOT_MINUTES || 180);
+  if (!Number.isFinite(slotMinutes) || slotMinutes < 30) return false;
+
+  const windowMinutes = Math.max(
+    1,
+    Number(process.env.ODDS_NEAR_TIP_BACKSTOP_WINDOW_MINUTES || 10),
+  );
+  const minuteOfDay = nowEt.hour * 60 + nowEt.minute;
+  const slotOffset = minuteOfDay % slotMinutes;
+  const midpoint = Math.floor(slotMinutes / 2);
+  return Math.abs(slotOffset - midpoint) < windowMinutes;
+}
+
+/**
  * @typedef {object} TMinusFreshnessOverride
  * @property {number} minutesToGameLte - Upper bound of minutes-to-game for this band (inclusive)
  * @property {number} requiredMaxSnapshotAgeMinutes - Maximum allowable snapshot age in minutes
@@ -296,6 +323,7 @@ module.exports = {
   isProjectionModelSport,
   keyEspnGamesDirect,
   keyOddsHourly,
+  keyOddsNearTipBackstop,
   keyFixed,
   keyDiscordCardsSnapshot,
   keyTminus,
@@ -315,6 +343,7 @@ module.exports = {
   keyNightlySettlementJob,
   isHourlySettlementDue,
   isNightlySettlementOwningHourlyWindow,
+  isNearTipOddsBackstopDue,
   getOddsIntervalMinutes,
   getScheduleRefreshDue,
   shouldRefreshOddsForGame,

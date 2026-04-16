@@ -43,6 +43,9 @@ const ODDS_FETCH_SLOT_MINUTES = Number(process.env.ODDS_FETCH_SLOT_MINUTES || 60
 const ODDS_FRESHNESS_MAX_AGE_MINUTES = Number(
   process.env.ODDS_FRESHNESS_MAX_AGE_MINUTES || Math.max(15, ODDS_FETCH_SLOT_MINUTES + 15),
 );
+const ODDS_FRESHNESS_ALERT_WINDOW_HOURS = Number(
+  process.env.ODDS_FRESHNESS_ALERT_WINDOW_HOURS || Math.max(2, Math.ceil(ODDS_FETCH_SLOT_MINUTES / 60)),
+);
 const SEED_FRESHNESS_MAX_AGE_MINUTES = Number(
   process.env.SEED_FRESHNESS_MAX_AGE_MINUTES || Math.max(15, ODDS_FETCH_SLOT_MINUTES + 15),
 );
@@ -261,9 +264,9 @@ function checkOddsFreshness() {
     };
   }
 
-  // Only escalate to failed/alert when stale games are within T-2h.
-  // Games 2-6h out with stale odds are expected slack — flag as warning only.
-  const alertWindowEnd = nowUtc.plus({ hours: 2 });
+  // Only escalate to failed/alert when stale games are inside the configured alert window.
+  // Games outside this window are warning-only because they still have runway before tip.
+  const alertWindowEnd = nowUtc.plus({ hours: ODDS_FRESHNESS_ALERT_WINDOW_HOURS });
   const staleNearTerm = staleGames.filter(
     (g) => DateTime.fromISO(g.game_time_utc, { zone: 'utc' }) <= alertWindowEnd,
   );
@@ -276,7 +279,7 @@ function checkOddsFreshness() {
       : '';
 
   if (quotaConstrained) {
-    const reason = `${staleGames.length}/${dedupedGames.length} games within T-6h have stale odds (>${ODDS_FRESHNESS_MAX_AGE_MINUTES}m old) — odds fetch paused (quota tier: ${quotaTier})${duplicateSuffix}`;
+    const reason = `${staleGames.length}/${dedupedGames.length} games within T-6h have stale odds (>${ODDS_FRESHNESS_MAX_AGE_MINUTES}m old; alert window T-${ODDS_FRESHNESS_ALERT_WINDOW_HOURS}h) — odds fetch paused (quota tier: ${quotaTier})${duplicateSuffix}`;
     writePipelineHealth('odds', 'freshness', 'warning', reason);
     return {
       ok: false,
@@ -290,7 +293,7 @@ function checkOddsFreshness() {
   }
 
   if (staleNearTerm.length === 0) {
-    const reason = `${staleGames.length}/${dedupedGames.length} games within T-6h have stale odds (>${ODDS_FRESHNESS_MAX_AGE_MINUTES}m old) but none within T-2h${duplicateSuffix}`;
+    const reason = `${staleGames.length}/${dedupedGames.length} games within T-6h have stale odds (>${ODDS_FRESHNESS_MAX_AGE_MINUTES}m old) but none within alert window T-${ODDS_FRESHNESS_ALERT_WINDOW_HOURS}h${duplicateSuffix}`;
     writePipelineHealth('odds', 'freshness', 'warning', reason);
     return {
       ok: false,
@@ -303,7 +306,7 @@ function checkOddsFreshness() {
     };
   }
 
-  const reason = `${staleNearTerm.length}/${dedupedGames.length} games within T-2h have stale odds (>${ODDS_FRESHNESS_MAX_AGE_MINUTES}m old)${duplicateSuffix}`;
+  const reason = `${staleNearTerm.length}/${dedupedGames.length} games within alert window T-${ODDS_FRESHNESS_ALERT_WINDOW_HOURS}h have stale odds (>${ODDS_FRESHNESS_MAX_AGE_MINUTES}m old)${duplicateSuffix}`;
   writePipelineHealth('odds', 'freshness', 'failed', reason);
   return {
     ok: false,

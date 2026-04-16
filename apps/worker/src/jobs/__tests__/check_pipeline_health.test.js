@@ -333,8 +333,32 @@ describe('checkOddsFreshness', () => {
     const result = checkOddsFreshness();
 
     expect(result.ok).toBe(false);
-    expect(result.reason).toContain('1/1 games within T-2h have stale odds');
+    expect(result.reason).toContain('1/1 games within alert window T-2h have stale odds');
     expect(result.reason).toContain('duplicate game_id rows ignored');
+  });
+
+  test('returns warning when stale odds are outside alert window', () => {
+    const now = DateTime.utc();
+    const upcomingGames = [
+      {
+        game_id: 'nba-far-window-1',
+        sport: 'NBA',
+        away_team: 'Miami Heat',
+        home_team: 'Orlando Magic',
+        game_time_utc: now.plus({ hours: 4 }).toISO(),
+      },
+    ];
+    const latestOddsByGame = {
+      'nba-far-window-1': { captured_at: now.minus({ minutes: 141 }).toISO() },
+    };
+
+    getDatabase.mockReturnValue(makeDb({ upcomingGames, latestOddsByGame }));
+
+    const result = checkOddsFreshness();
+
+    expect(result.ok).toBe(false);
+    expect(result.reason).toContain('but none within alert window T-2h');
+    expect(result.diagnostics).toEqual({ detected: 1, blocked: 0, refreshed: 0 });
   });
 });
 
