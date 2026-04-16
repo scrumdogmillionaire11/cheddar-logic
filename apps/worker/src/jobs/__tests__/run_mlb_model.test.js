@@ -3379,6 +3379,7 @@ describe('MLB Full-Game Suppression Funnel (WI-0944)', () => {
       'PASS_NO_EDGE_OR_RUN_DIFF',
       'PASS_PROBABILITY_EDGE_WEAK_OR_MATH_ONLY',
       'PASS_CONFIDENCE_GATE',
+      'PASS_DEGRADED_TOTAL_MODEL',
       'PASS_F5_CONTRADICTION',
       'PASS_DRIVER_SUPPORT',
       'PROJECTION_SOURCE_NO_BET',
@@ -3599,6 +3600,90 @@ describe('MLB Full-Game Suppression Funnel (WI-0944)', () => {
       expect(stageDrop.OVER).toBeGreaterThanOrEqual(0);
       expect(stageDrop.UNDER).toBeGreaterThanOrEqual(0);
     });
+  });
+
+  test('uses directional audit shrunk side and marks degraded model suppressor', () => {
+    const sample = evaluateMlbFullGameFunnelCandidate(
+      {
+        market: 'full_game_total',
+        prediction: 'OVER',
+        confidence: 0.72,
+        projection_source: 'DEGRADED_MODEL',
+        reason_codes: ['PASS_DEGRADED_TOTAL_MODEL'],
+        directional_audit: {
+          direction_after_shrink: 'UNDER',
+          shrunk_model_total: 7.3,
+          raw_model_total: 6.1,
+          market_total: 8.0,
+          proj_minus_line_raw: -1.9,
+          proj_minus_line_shrunk: -0.7,
+          degraded_mode: true,
+          degraded_inputs_count: 3,
+        },
+      },
+      false,
+    );
+
+    expect(sample.directionalSide).toBe('UNDER');
+    expect(sample.directionalModelTotal).toBe(7.3);
+    expect(sample.directionalRawModelTotal).toBe(6.1);
+    expect(sample.directionalEdge).toBe(-0.7);
+    expect(sample.directionalRawEdge).toBe(-1.9);
+    expect(sample.degradedMode).toBe(true);
+    expect(sample.degradedInputsCount).toBe(3);
+    expect(sample.suppressor).toBe('PASS_DEGRADED_TOTAL_MODEL');
+  });
+
+  test('directional report includes raw/shrunk delta averages and degraded share', () => {
+    const samples = [
+      evaluateMlbFullGameFunnelCandidate(
+        {
+          market: 'full_game_total',
+          prediction: 'UNDER',
+          confidence: 0.7,
+          projection_source: 'DEGRADED_MODEL',
+          reason_codes: ['PASS_DEGRADED_TOTAL_MODEL'],
+          directional_audit: {
+            direction_after_shrink: 'UNDER',
+            shrunk_model_total: 7.4,
+            raw_model_total: 6.2,
+            market_total: 8.1,
+            proj_minus_line_raw: -1.9,
+            proj_minus_line_shrunk: -0.7,
+            degraded_mode: true,
+            degraded_inputs_count: 3,
+          },
+        },
+        false,
+      ),
+      evaluateMlbFullGameFunnelCandidate(
+        {
+          market: 'full_game_total',
+          prediction: 'OVER',
+          confidence: 0.74,
+          projection_source: 'FULL_MODEL',
+          reason_codes: [],
+          directional_audit: {
+            direction_after_shrink: 'OVER',
+            shrunk_model_total: 8.8,
+            raw_model_total: 9.3,
+            market_total: 8.1,
+            proj_minus_line_raw: 1.2,
+            proj_minus_line_shrunk: 0.7,
+            degraded_mode: false,
+            degraded_inputs_count: 0,
+          },
+        },
+        true,
+      ),
+    ];
+
+    const report = buildMlbFullGameDirectionalFunnelReport(samples);
+    expect(report.averages).toHaveProperty('average_model_total_raw');
+    expect(report.averages).toHaveProperty('average_proj_minus_line_raw');
+    expect(report.averages).toHaveProperty('average_proj_minus_line_shrunk');
+    expect(report.averages).toHaveProperty('degraded_share');
+    expect(report.averages.degraded_share).toBe(50);
   });
 });
 

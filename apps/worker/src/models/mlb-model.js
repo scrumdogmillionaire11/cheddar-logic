@@ -567,6 +567,12 @@ const MLB_FULL_GAME_EDGE_THRESHOLD_MED_VOL = 0.5;
 const MLB_FULL_GAME_EDGE_THRESHOLD_HIGH_VOL = 0.62;
 const MLB_FULL_GAME_EDGE_THRESHOLD_CAP = 0.65;
 const MLB_FULL_GAME_SANITY_BAND = 0.3;
+const MLB_FULL_GAME_LEAN_EDGE_THRESHOLD = 0.75;
+const MLB_FULL_GAME_PLAY_EDGE_THRESHOLD = 1.25;
+const MLB_FULL_GAME_SHRINK_FACTOR_FULL_MODEL = 0.7;
+const MLB_FULL_GAME_SHRINK_FACTOR_DEGRADED_MODEL = 0.35;
+const MLB_FULL_GAME_DEGRADED_PASS_THRESHOLD = 2;
+const MLB_FULL_GAME_DEGRADED_RECENTER_WEIGHT = 0.5;
 const MLB_PURE_SIGNAL_MODE = process.env.MLB_PURE_SIGNAL_MODE === 'true';
 
 const MLB_TOTAL_VOL_BUCKETS = Object.freeze({
@@ -1173,8 +1179,40 @@ function projectFullGameTotalCard(homePitcher, awayPitcher, fullGameLine, contex
     };
   }
 
-  const edge = proj.projected_total_mean - fullGameLine;
-  const leanSide = edge >= 0 ? 'OVER' : 'UNDER';
+  const rawModelTotal = proj.projected_total_mean;
+  const rawEdge = rawModelTotal - fullGameLine;
+  const modelQuality = proj.projection_source === 'FULL_MODEL'
+    ? 'FULL_MODEL'
+    : proj.projection_source === 'DEGRADED_MODEL'
+      ? 'DEGRADED_MODEL'
+      : 'NO_BET_MODEL';
+  const degradedInputsCount = Array.isArray(proj.degraded_inputs)
+    ? Array.from(new Set(proj.degraded_inputs)).length
+    : 0;
+  const degradedMode = modelQuality === 'DEGRADED_MODEL';
+  const recenteredModelTotal = degradedMode
+    ? (rawModelTotal * MLB_FULL_GAME_DEGRADED_RECENTER_WEIGHT) +
+      (fullGameLine * (1 - MLB_FULL_GAME_DEGRADED_RECENTER_WEIGHT))
+    : rawModelTotal;
+  const shrinkFactor = modelQuality === 'FULL_MODEL'
+    ? MLB_FULL_GAME_SHRINK_FACTOR_FULL_MODEL
+    : modelQuality === 'DEGRADED_MODEL'
+      ? MLB_FULL_GAME_SHRINK_FACTOR_DEGRADED_MODEL
+      : null;
+  const shrunkModelTotal = Number.isFinite(shrinkFactor)
+    ? fullGameLine + (shrinkFactor * (recenteredModelTotal - fullGameLine))
+    : null;
+  const shrunkEdge = Number.isFinite(shrunkModelTotal)
+    ? shrunkModelTotal - fullGameLine
+    : null;
+  const directionBeforeShrink = Math.abs(rawEdge) >= MLB_FULL_GAME_LEAN_EDGE_THRESHOLD
+    ? (rawEdge >= 0 ? 'OVER' : 'UNDER')
+    : 'PASS';
+  const directionAfterShrink = Number.isFinite(shrunkEdge) &&
+    Math.abs(shrunkEdge) >= MLB_FULL_GAME_LEAN_EDGE_THRESHOLD
+    ? (shrunkEdge >= 0 ? 'OVER' : 'UNDER')
+    : 'PASS';
+  const leanSide = Number.isFinite(shrunkEdge) ? (shrunkEdge >= 0 ? 'OVER' : 'UNDER') : 'PASS';
   const dynamicThreshold = resolveVarianceEdgeThreshold(
     proj.volatility_bucket,
     proj.variance_multiplier,
@@ -1195,13 +1233,20 @@ function projectFullGameTotalCard(homePitcher, awayPitcher, fullGameLine, contex
     },
   });
 
-  const marketAligned = Math.abs(edge) > MLB_FULL_GAME_SANITY_BAND;
-  const hasEdge = Math.abs(edge) >= dynamicThreshold;
+  const marketAligned = Number.isFinite(shrunkEdge)
+    ? Math.abs(shrunkEdge) > MLB_FULL_GAME_SANITY_BAND
+    : false;
+  const hasLeanEdge = Number.isFinite(shrunkEdge)
+    ? Math.abs(shrunkEdge) >= MLB_FULL_GAME_LEAN_EDGE_THRESHOLD
+    : false;
+  const hasPlayEdge = Number.isFinite(shrunkEdge)
+    ? Math.abs(shrunkEdge) >= MLB_FULL_GAME_PLAY_EDGE_THRESHOLD
+    : false;
   const pOver = distribution.p_over;
   const pUnder = distribution.p_under;
   const probabilityPass =
-    (edge > 0 && pOver < 0.54) ||
-    (edge < 0 && pUnder < 0.54);
+    (Number.isFinite(shrunkEdge) && shrunkEdge > 0 && pOver < 0.54) ||
+    (Number.isFinite(shrunkEdge) && shrunkEdge < 0 && pUnder < 0.54);
 
   const f5Line = toFiniteNumberOrNull(context?.f5_line);
   const f5Mean = Number.isFinite(proj.home_f5_runs) && Number.isFinite(proj.away_f5_runs)
@@ -1212,7 +1257,8 @@ function projectFullGameTotalCard(homePitcher, awayPitcher, fullGameLine, contex
     : null;
   const bullpenShift = (proj.home_late_runs ?? 0) - (proj.away_late_runs ?? 0);
   const preferF5 = Number.isFinite(f5Edge) && Math.abs(f5Edge) >= MLB_F5_EDGE_THRESHOLD && Math.abs(bullpenShift) < 0.12;
-  const fgContradictsF5 = Number.isFinite(f5Edge) && (Math.sign(edge) !== Math.sign(f5Edge)) && Math.abs(bullpenShift) > 0.14;
+  const fgContradictsF5 = Number.isFinite(f5Edge) && Number.isFinite(shrunkEdge)
+    && (Math.sign(shrunkEdge) !== Math.sign(f5Edge)) && Math.abs(bullpenShift) > 0.14;
   // Keep hard gates explicit and minimal: edge + confidence.
   // Full-model paths retain the 6/10 floor, while degraded projections require
   // strictly above 6 so capped degraded confidence (6) does not auto-pass.
@@ -1225,9 +1271,14 @@ function projectFullGameTotalCard(homePitcher, awayPitcher, fullGameLine, contex
   const confidenceBelowGate = proj.confidence < confidenceGate;
 
   const reasonCodes = [];
-  const isDegraded = proj.projection_source === 'DEGRADED_MODEL';
+  const isDegraded = degradedMode;
   if (isDegraded) {
     reasonCodes.push('MODEL_DEGRADED_INPUTS');
+  }
+  const isHeavilyDegraded = isDegraded &&
+    degradedInputsCount >= MLB_FULL_GAME_DEGRADED_PASS_THRESHOLD;
+  if (isHeavilyDegraded) {
+    reasonCodes.push('PASS_DEGRADED_TOTAL_MODEL');
   }
 
   if (!MLB_PURE_SIGNAL_MODE) {
@@ -1248,46 +1299,54 @@ function projectFullGameTotalCard(homePitcher, awayPitcher, fullGameLine, contex
     }
   }
 
-  if (!hasEdge) reasonCodes.push('PASS_NO_EDGE');
+  if (!hasLeanEdge) reasonCodes.push('PASS_NO_EDGE');
   if (confidenceBelowGate) reasonCodes.push('PASS_CONFIDENCE_GATE');
 
   // WI-0944: DEGRADED_MODEL with edge present — surface as WATCH (LEAN) rather than hard PASS.
   // Confidence gate remains a hard veto only for FULL_MODEL paths; degraded projections
   // with a real edge should downgrade to LEAN/WATCH, not disappear entirely.
-  const canPlay = hasEdge && (!confidenceBelowGate || isDegraded);
+  const canLean =
+    modelQuality !== 'NO_BET_MODEL' &&
+    hasLeanEdge &&
+    !isHeavilyDegraded &&
+    (!confidenceBelowGate || isDegraded);
+  const canFire =
+    modelQuality === 'FULL_MODEL' &&
+    hasPlayEdge &&
+    !confidenceBelowGate;
 
-  const prediction = canPlay ? (edge >= 0 ? 'OVER' : 'UNDER') : leanSide;
+  const prediction = canLean ? (shrunkEdge >= 0 ? 'OVER' : 'UNDER') : leanSide;
   let status = 'PASS';
-  if (canPlay) {
+  if (canLean) {
     const softReasonCount = reasonCodes.filter((code) => code.startsWith('SOFT_')).length;
-    // Pure mode keeps only signal gates (edge/confidence + degraded cap).
-    status = isDegraded || (!MLB_PURE_SIGNAL_MODE && softReasonCount >= 2)
-      ? 'WATCH'
-      : 'FIRE';
+    const softSuppressed = !MLB_PURE_SIGNAL_MODE && softReasonCount >= 2;
+    status = canFire && !softSuppressed ? 'FIRE' : 'WATCH';
   }
   const action = status === 'FIRE' ? 'FIRE' : status === 'WATCH' ? 'HOLD' : 'PASS';
   const classification = status === 'FIRE' ? 'BASE' : status === 'WATCH' ? 'LEAN' : 'PASS';
   const playability = {
     over_playable_at_or_below: roundToHalf(
-      proj.projected_total_mean - dynamicThreshold,
+      (shrunkModelTotal ?? proj.projected_total_mean) - MLB_FULL_GAME_LEAN_EDGE_THRESHOLD,
       'floor',
     ),
     under_playable_at_or_above: roundToHalf(
-      proj.projected_total_mean + dynamicThreshold,
+      (shrunkModelTotal ?? proj.projected_total_mean) + MLB_FULL_GAME_LEAN_EDGE_THRESHOLD,
       'ceil',
     ),
   };
 
   return {
     market: 'full_game_total',
+    line: fullGameLine,
     prediction,
     confidence: proj.confidence / 10,
     ev_threshold_passed: status !== 'PASS',
-    reasoning: `FG TOTAL ${proj.projection_source} mean ${proj.projected_total_mean.toFixed(2)} vs line ${fullGameLine.toFixed(1)} edge ${edge >= 0 ? '+' : ''}${edge.toFixed(2)} bucket=${proj.volatility_bucket} thr=${dynamicThreshold.toFixed(2)} pOver=${(pOver * 100).toFixed(1)}% pUnder=${(pUnder * 100).toFixed(1)}% drivers=${driverValidation.drivers.join('|') || 'none'} conf=${proj.confidence}/10`,
+    reasoning: `FG TOTAL ${proj.projection_source} raw ${rawModelTotal.toFixed(2)} shrunk ${(shrunkModelTotal ?? rawModelTotal).toFixed(2)} vs line ${fullGameLine.toFixed(1)} rawEdge ${rawEdge >= 0 ? '+' : ''}${rawEdge.toFixed(2)} shrunkEdge ${Number.isFinite(shrunkEdge) ? `${shrunkEdge >= 0 ? '+' : ''}${shrunkEdge.toFixed(2)}` : 'n/a'} bucket=${proj.volatility_bucket} thr=${dynamicThreshold.toFixed(2)} pOver=${(pOver * 100).toFixed(1)}% pUnder=${(pUnder * 100).toFixed(1)}% drivers=${driverValidation.drivers.join('|') || 'none'} conf=${proj.confidence}/10`,
     status,
     action,
     classification,
     projection_source: proj.projection_source,
+    model_quality: modelQuality,
     status_cap: status === 'PASS' ? 'PASS' : proj.status_cap,
     pass_reason_code:
       status !== 'PASS'
@@ -1296,9 +1355,21 @@ function projectFullGameTotalCard(homePitcher, awayPitcher, fullGameLine, contex
           'PASS_NO_EDGE'),
     reason_codes: reasonCodes,
     missing_inputs: proj.missing_inputs,
+    directional_audit: {
+      raw_model_total: roundToTenth(rawModelTotal),
+      market_total: roundToTenth(fullGameLine),
+      shrunk_model_total: roundToTenth(shrunkModelTotal),
+      proj_minus_line_raw: roundToTenth(rawEdge),
+      proj_minus_line_shrunk: roundToTenth(shrunkEdge),
+      degraded_inputs_count: degradedInputsCount,
+      degraded_mode: degradedMode,
+      direction_before_shrink: directionBeforeShrink,
+      direction_after_shrink: directionAfterShrink,
+    },
     playability,
     projection: {
       projected_total: roundToTenth(proj.projected_total_mean),
+      projected_total_shrunk: roundToTenth(shrunkModelTotal),
       projected_total_low: roundToTenth(proj.projected_total_low),
       projected_total_high: roundToTenth(proj.projected_total_high),
       home_proj: roundToTenth(proj.home_proj),
@@ -1316,8 +1387,10 @@ function projectFullGameTotalCard(homePitcher, awayPitcher, fullGameLine, contex
     drivers: [
       {
         type: 'mlb-full-game',
-        edge,
+        edge: rawEdge,
+        edge_shrunk: shrunkEdge,
         projected: proj.projected_total_mean,
+        projected_shrunk: shrunkModelTotal,
         projection_source: proj.projection_source,
         volatility_bucket: proj.volatility_bucket,
         threshold: dynamicThreshold,

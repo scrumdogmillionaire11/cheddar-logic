@@ -1172,7 +1172,13 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
       : selectWave1DecisionCandidate(scopedPlayCandidates, game.sport);
   if (wave1DecisionPlay?.decision_v2) {
     const decisionV2 = wave1DecisionPlay.decision_v2;
-    const effectiveDecisionV2: DecisionV2 = decisionV2;
+    const effectiveDecisionV2: DecisionV2 = {
+      ...decisionV2,
+      missing_data: {
+        ...decisionV2.missing_data,
+        missing_fields: normalizeMissingInputs(decisionV2.missing_data?.missing_fields),
+      },
+    };
     const officialStatus = effectiveDecisionV2.official_status;
     const status = statusFromOfficial(officialStatus);
     const action = actionFromOfficial(officialStatus);

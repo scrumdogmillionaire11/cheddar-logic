@@ -62,23 +62,36 @@ function normalizeMissingInputs(values: unknown): string[] {
   if (!Array.isArray(values)) return [];
 
   const normalized: string[] = [];
+  const seen = new Set<string>();
   for (const value of values) {
-    if (typeof value === 'string' && value.trim().length > 0) {
-      normalized.push(value.trim());
-      continue;
-    }
+    let label: string | null = null;
 
-    if (value && typeof value === 'object') {
+    if (typeof value === 'string' && value.trim().length > 0) {
+      label = value.trim();
+    } else if (typeof value === 'number' || typeof value === 'boolean') {
+      label = String(value);
+    } else if (value && typeof value === 'object') {
       const entry = value as Record<string, unknown>;
-      const label =
+      label =
         (typeof entry.reason === 'string' && entry.reason.trim()) ||
         (typeof entry.code === 'string' && entry.code.trim()) ||
         (typeof entry.label === 'string' && entry.label.trim()) ||
-        '';
-      if (label) {
-        normalized.push(label);
+        (typeof entry.message === 'string' && entry.message.trim()) ||
+        null;
+
+      if (!label) {
+        try {
+          const serialized = JSON.stringify(value);
+          label = serialized && serialized !== '{}' ? serialized : null;
+        } catch {
+          label = null;
+        }
       }
     }
+
+    if (!label || seen.has(label)) continue;
+    seen.add(label);
+    normalized.push(label);
   }
 
   return normalized;
