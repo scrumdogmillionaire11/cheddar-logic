@@ -719,8 +719,22 @@ function getProjectionBucket(
   value: number,
   cardFamily: string,
 ): { min: number; max: number; label: string } {
-  // For 1P totals: isolate the 2.0-2.19 range, then 2.20+
+  // For 1P totals: use fixed reporting buckets.
   if (cardFamily === 'NHL_1P_TOTAL') {
+    if (value < 1.5) {
+      return {
+        min: 1.0,
+        max: 1.5,
+        label: '1.0-1.4',
+      };
+    }
+    if (value < 2.0) {
+      return {
+        min: 1.5,
+        max: 2.0,
+        label: '1.5-1.9',
+      };
+    }
     if (value >= 2.2) {
       return {
         min: 2.2,
@@ -728,20 +742,10 @@ function getProjectionBucket(
         label: '2.20+',
       };
     }
-    if (value >= 2.0) {
-      return {
-        min: 2.0,
-        max: 2.2,
-        label: '2.0-2.19',
-      };
-    }
-    // Below 2.0: use 0.5 increments
-    const floor = Math.floor(value * 2) / 2;
-    const ceiling = floor + 0.5;
     return {
-      min: floor,
-      max: ceiling,
-      label: `${floor.toFixed(1)}-${ceiling.toFixed(1)}`,
+      min: 2.0,
+      max: 2.2,
+      label: '2.0-2.19',
     };
   }
 
@@ -803,6 +807,13 @@ type ProjectionSegmentAccumulator = {
   underWins: number;
   underLosses: number;
 };
+
+const NHL_1P_FIXED_SEGMENTS: Array<{ min: number; max: number; label: string }> = [
+  { min: 1.0, max: 1.5, label: '1.0-1.4' },
+  { min: 1.5, max: 2.0, label: '1.5-1.9' },
+  { min: 2.0, max: 2.2, label: '2.0-2.19' },
+  { min: 2.2, max: 10, label: '2.20+' },
+];
 
 /**
  * Build projection accuracy summaries segmented by projection value ranges.
@@ -898,7 +909,33 @@ export function buildProjectionValueSegments(
     let familyUnderLosses = 0;
 
     const segments: ProjectionValueSegment[] = [];
-    for (const segment of familySegments.values()) {
+    const segmentsToRender =
+      cardFamily === 'NHL_1P_TOTAL'
+        ? NHL_1P_FIXED_SEGMENTS.map(({ min, max, label }) => {
+            const key = `${min}-${max}`;
+            const existing = familySegments.get(key);
+            if (existing) return existing;
+            return {
+              bucketKey: key,
+              bucketMin: min,
+              bucketMax: max,
+              bucketLabel: label,
+              absErrorSum: 0,
+              biasSum: 0,
+              sampleSize: 0,
+              rowsSeen: 0,
+              directionCorrectCount: 0,
+              directionLossCount: 0,
+              directionSampleCount: 0,
+              overWins: 0,
+              overLosses: 0,
+              underWins: 0,
+              underLosses: 0,
+            } as ProjectionSegmentAccumulator;
+          })
+        : Array.from(familySegments.values());
+
+    for (const segment of segmentsToRender) {
       familyAbsErrorSum += segment.absErrorSum;
       familyBiasSum += segment.biasSum;
       familySampleSize += segment.sampleSize;

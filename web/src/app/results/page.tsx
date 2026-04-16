@@ -923,7 +923,7 @@ export default function ResultsPage() {
                               <span className="font-mono text-cloud/50">
                                 Range: {segment.bucketRangeLabel}
                               </span>
-                              <span>{segment.sampleSize > 0 ? segment.sampleSize : '—'}</span>
+                              <span>{segment.sampleSize}</span>
                               <span>
                                 {segment.mae !== null
                                   ? formatDecimal(segment.mae, 2, { signed: false })
