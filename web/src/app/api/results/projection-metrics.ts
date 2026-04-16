@@ -270,6 +270,37 @@ function resolveProjectionDirection(
   return null;
 }
 
+function hasActionableProjectionCall(
+  payload: Record<string, unknown> | null,
+): boolean {
+  const officialStatus = toUpperToken(
+    getPayloadValue(payload, ['play', 'decision_v2', 'official_status']) ||
+      getPayloadValue(payload, ['decision_v2', 'official_status']),
+  );
+  if (officialStatus === 'PASS') return false;
+  if (officialStatus === 'PLAY' || officialStatus === 'LEAN') return true;
+
+  const fallback = toUpperToken(
+    getPayloadValue(payload, ['decision', 'status']) ||
+      getPayloadValue(payload, ['status']) ||
+      getPayloadValue(payload, ['play', 'status']) ||
+      getPayloadValue(payload, ['action']) ||
+      getPayloadValue(payload, ['play', 'action']) ||
+      getPayloadValue(payload, ['decision', 'action']),
+  );
+
+  if (fallback === 'PASS' || fallback === 'HOLD' || fallback === 'WATCH') {
+    return false;
+  }
+  if (fallback === 'PLAY' || fallback === 'LEAN' || fallback === 'FIRE') {
+    return true;
+  }
+
+  // Legacy payloads may not include explicit status/action fields.
+  // In that case, keep prior behavior and infer actionability from direction.
+  return true;
+}
+
 function resolveFirstPeriodTotal(
   gameResultMetadata: Record<string, unknown> | null,
 ): number | null {
@@ -596,7 +627,10 @@ export function buildProjectionSummaries(
     accumulator.biasSum += projection - actual;
 
     const direction = resolveProjectionDirection(row.payload);
-    if (direction === 'OVER' || direction === 'UNDER') {
+    if (
+      hasActionableProjectionCall(row.payload) &&
+      (direction === 'OVER' || direction === 'UNDER')
+    ) {
       accumulator.directionSampleCount += 1;
       const isCorrect =
         (direction === 'OVER' && actual >= projection) ||
