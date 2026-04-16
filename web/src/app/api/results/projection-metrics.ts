@@ -711,7 +711,7 @@ export function buildProjectionSummaries(
 
 /**
  * Determine which range bucket a projection value falls into.
- * For 1P totals: fine buckets below 2.20, then 2.20+ catch-all
+ * For 1P totals: [2.0, 2.2) → "2.0-2.19", [2.2, ∞) → "2.20+", others by 0.5 increments
  * For full-game totals: 0.5 increments
  * For prop markets (shots, blocks, K): buckets based on typical ranges.
  */
@@ -719,7 +719,7 @@ function getProjectionBucket(
   value: number,
   cardFamily: string,
 ): { min: number; max: number; label: string } {
-  // For 1P totals: use finer buckets below 2.20, then catch-all for 2.20+
+  // For 1P totals: isolate the 2.0-2.19 range, then 2.20+
   if (cardFamily === 'NHL_1P_TOTAL') {
     if (value >= 2.2) {
       return {
@@ -728,7 +728,15 @@ function getProjectionBucket(
         label: '2.20+',
       };
     }
-    const floor = Math.floor(value * 2) / 2; // Round down to nearest 0.5
+    if (value >= 2.0) {
+      return {
+        min: 2.0,
+        max: 2.2,
+        label: '2.0-2.19',
+      };
+    }
+    // Below 2.0: use 0.5 increments
+    const floor = Math.floor(value * 2) / 2;
     const ceiling = floor + 0.5;
     return {
       min: floor,
