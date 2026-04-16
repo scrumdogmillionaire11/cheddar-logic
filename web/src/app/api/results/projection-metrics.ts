@@ -15,6 +15,10 @@ export type ProjectionSummaryRow = {
   directionalAccuracy: number | null;
   directionalWins: number;
   directionalLosses: number;
+  overWins: number;
+  overLosses: number;
+  underWins: number;
+  underLosses: number;
   familyLabel: string;
   mae: number | null;
   rowsSeen: number;
@@ -28,6 +32,10 @@ type ProjectionAccumulator = {
   directionCorrectCount: number;
   directionSampleCount: number;
   directionLossCount: number;
+  overWins: number;
+  overLosses: number;
+  underWins: number;
+  underLosses: number;
   rowsSeen: number;
   sampleSize: number;
 };
@@ -567,6 +575,10 @@ export function buildProjectionSummaries(
         directionCorrectCount: 0,
         directionSampleCount: 0,
         directionLossCount: 0,
+        overWins: 0,
+        overLosses: 0,
+        underWins: 0,
+        underLosses: 0,
         rowsSeen: 0,
         sampleSize: 0,
       };
@@ -591,8 +603,12 @@ export function buildProjectionSummaries(
         (direction === 'UNDER' && actual <= projection);
       if (isCorrect) {
         accumulator.directionCorrectCount += 1;
+        if (direction === 'OVER') accumulator.overWins += 1;
+        else accumulator.underWins += 1;
       } else {
         accumulator.directionLossCount += 1;
+        if (direction === 'OVER') accumulator.overLosses += 1;
+        else accumulator.underLosses += 1;
       }
     }
 
@@ -616,6 +632,10 @@ export function buildProjectionSummaries(
           : null,
       directionalWins: summary.directionCorrectCount,
       directionalLosses: summary.directionLossCount,
+      overWins: summary.overWins,
+      overLosses: summary.overLosses,
+      underWins: summary.underWins,
+      underLosses: summary.underLosses,
       familyLabel:
         PROJECTION_FAMILY_LABELS[summary.cardFamily] || summary.cardFamily,
       mae:

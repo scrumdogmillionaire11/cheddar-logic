@@ -84,6 +84,10 @@ type ProjectionSummaryRow = {
   directionalAccuracy: number | null;
   directionalWins: number;
   directionalLosses: number;
+  overWins: number;
+  overLosses: number;
+  underWins: number;
+  underLosses: number;
   familyLabel: string;
   mae: number | null;
   rowsSeen: number;
@@ -819,19 +823,21 @@ export default function ResultsPage() {
               separately — no P&amp;L, just model accuracy versus actuals.
             </p>
             <div className="mt-6 overflow-hidden rounded-xl border border-white/10">
-              <div className="grid grid-cols-6 gap-4 bg-night/70 px-4 py-3 text-xs font-semibold uppercase tracking-[0.2em] text-cloud/60">
+              <div className="grid grid-cols-8 gap-4 bg-night/70 px-4 py-3 text-xs font-semibold uppercase tracking-[0.2em] text-cloud/60">
                 <span>Model</span>
                 <span>Sample</span>
                 <span>MAE</span>
                 <span>Bias</span>
                 <span>Dir. Acc.</span>
                 <span>Record</span>
+                <span>Over</span>
+                <span>Under</span>
               </div>
               <div className="divide-y divide-white/10">
                 {projectionSummariesWithActuals.map((row) => (
                   <div
                     key={row.cardFamily}
-                    className="grid grid-cols-6 gap-4 px-4 py-3 text-sm text-cloud/70"
+                    className="grid grid-cols-8 gap-4 px-4 py-3 text-sm text-cloud/70"
                   >
                     <span className="font-medium text-cloud">{row.familyLabel}</span>
                     <span>{row.sampleSize > 0 ? row.sampleSize : '—'}</span>
@@ -851,6 +857,16 @@ export default function ResultsPage() {
                     <span>
                       {(row.directionalWins + row.directionalLosses) > 0
                         ? `${row.directionalWins}-${row.directionalLosses}`
+                        : '—'}
+                    </span>
+                    <span>
+                      {(row.overWins + row.overLosses) > 0
+                        ? `${row.overWins}-${row.overLosses}`
+                        : '—'}
+                    </span>
+                    <span>
+                      {(row.underWins + row.underLosses) > 0
+                        ? `${row.underWins}-${row.underLosses}`
                         : '—'}
                     </span>
                   </div>
