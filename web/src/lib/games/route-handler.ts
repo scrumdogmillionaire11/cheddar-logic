@@ -3423,6 +3423,17 @@ export async function GET(request: NextRequest) {
           (!wave1Eligible || isPropPlay || shouldSkipWave1DecisionV2Enforcement) &&
           !play.consistency?.total_bias
         ) {
+          const nativeTotalStatus =
+            typeof play.status === 'string' ? play.status.toUpperCase() : null;
+          const nativeTotalLine = typeof play.line === 'number';
+          const nativeTotalEdge =
+            typeof play.edge_pct === 'number' || typeof play.edge === 'number';
+          const nativeTotalBiasOk =
+            play.market_type === 'TOTAL' &&
+            nativeTotalStatus !== null &&
+            nativeTotalStatus !== 'PASS' &&
+            nativeTotalLine &&
+            nativeTotalEdge;
           const totalDecision =
             payload.all_markets &&
             typeof payload.all_markets === 'object' &&
@@ -3445,10 +3456,11 @@ export async function GET(request: NextRequest) {
           const decisionEdge = typeof totalDecision?.edge === 'number';
           play.consistency = {
             total_bias:
-              decisionStatus &&
-              decisionStatus !== 'PASS' &&
-              decisionLine &&
-              decisionEdge
+              nativeTotalBiasOk ||
+              (decisionStatus &&
+                decisionStatus !== 'PASS' &&
+                decisionLine &&
+                decisionEdge)
                 ? 'OK'
                 : 'INSUFFICIENT_DATA',
           };

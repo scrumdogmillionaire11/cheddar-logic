@@ -28,6 +28,7 @@ const {
   createJob,
   wasJobRecentlySuccessful,
 } = require('@cheddar-logic/data');
+const { getContractForSport } = require('./execution-gate-freshness-contract');
 const { buildMlbMarketAvailability } = require('./run_mlb_model');
 const { getCurrentQuotaTier } = require('../schedulers/quota');
 const { keyTminus, TMINUS_BANDS } = require('../schedulers/windows');
@@ -42,16 +43,26 @@ const ODDS_FETCH_SLOT_MINUTES = Number(process.env.ODDS_FETCH_SLOT_MINUTES || 60
 const ODDS_FRESHNESS_MAX_AGE_MINUTES = Number(
   process.env.ODDS_FRESHNESS_MAX_AGE_MINUTES || Math.max(15, ODDS_FETCH_SLOT_MINUTES + 15),
 );
+const ODDS_FRESHNESS_ALERT_WINDOW_HOURS = Number(
+  process.env.ODDS_FRESHNESS_ALERT_WINDOW_HOURS || Math.max(2, Math.ceil(ODDS_FETCH_SLOT_MINUTES / 60)),
+);
 const SEED_FRESHNESS_MAX_AGE_MINUTES = Number(
   process.env.SEED_FRESHNESS_MAX_AGE_MINUTES || Math.max(15, ODDS_FETCH_SLOT_MINUTES + 15),
 );
 const CARDS_FRESHNESS_MAX_AGE_MINUTES = Number(
   process.env.CARDS_FRESHNESS_MAX_AGE_MINUTES || 30,
 );
-// Per-sport model freshness threshold. Only fires when upcoming games exist.
-const MODEL_FRESHNESS_MAX_AGE_MINUTES = Number(
-  process.env.MODEL_FRESHNESS_MAX_AGE_MINUTES || 240, // 4h default
-);
+// Per-sport model freshness threshold (WI-0950).
+// Imported from execution-gate-freshness-contract; health check uses 4x the moneyline hardMax
+// per operational policy (health check is stricter to catch issues earlier).
+// Default: 120m hardMax * 4 = 480m, but env var can override.
+function getModelFreshnessMaxAgeMinutes() {
+  const envOverride = Number(process.env.MODEL_FRESHNESS_MAX_AGE_MINUTES || 0);
+  if (envOverride > 0) return envOverride;
+  // Use contract hardMax * 4 for health check window (typically 120m * 4 = 480m)
+  const contract = getContractForSport('mlb');
+  return contract.hardMaxMinutes * 4;
+}
 // Alert timing windows for checks that depend on T-minus execution, not schedule ingestion.
 const MODEL_FRESHNESS_ALERT_WINDOW_HOURS = Number(
   process.env.MODEL_FRESHNESS_ALERT_WINDOW_HOURS || 2,
@@ -253,9 +264,9 @@ function checkOddsFreshness() {
     };
   }
 
-  // Only escalate to failed/alert when stale games are within T-2h.
-  // Games 2-6h out with stale odds are expected slack — flag as warning only.
-  const alertWindowEnd = nowUtc.plus({ hours: 2 });
+  // Only escalate to failed/alert when stale games are inside the configured alert window.
+  // Games outside this window are warning-only because they still have runway before tip.
+  const alertWindowEnd = nowUtc.plus({ hours: ODDS_FRESHNESS_ALERT_WINDOW_HOURS });
   const staleNearTerm = staleGames.filter(
     (g) => DateTime.fromISO(g.game_time_utc, { zone: 'utc' }) <= alertWindowEnd,
   );
@@ -268,7 +279,7 @@ function checkOddsFreshness() {
       : '';
 
   if (quotaConstrained) {
-    const reason = `${staleGames.length}/${dedupedGames.length} games within T-6h have stale odds (>${ODDS_FRESHNESS_MAX_AGE_MINUTES}m old) — odds fetch paused (quota tier: ${quotaTier})${duplicateSuffix}`;
+    const reason = `${staleGames.length}/${dedupedGames.length} games within T-6h have stale odds (>${ODDS_FRESHNESS_MAX_AGE_MINUTES}m old; alert window T-${ODDS_FRESHNESS_ALERT_WINDOW_HOURS}h) — odds fetch paused (quota tier: ${quotaTier})${duplicateSuffix}`;
     writePipelineHealth('odds', 'freshness', 'warning', reason);
     return {
       ok: false,
@@ -282,7 +293,7 @@ function checkOddsFreshness() {
   }
 
   if (staleNearTerm.length === 0) {
-    const reason = `${staleGames.length}/${dedupedGames.length} games within T-6h have stale odds (>${ODDS_FRESHNESS_MAX_AGE_MINUTES}m old) but none within T-2h${duplicateSuffix}`;
+    const reason = `${staleGames.length}/${dedupedGames.length} games within T-6h have stale odds (>${ODDS_FRESHNESS_MAX_AGE_MINUTES}m old) but none within alert window T-${ODDS_FRESHNESS_ALERT_WINDOW_HOURS}h${duplicateSuffix}`;
     writePipelineHealth('odds', 'freshness', 'warning', reason);
     return {
       ok: false,
@@ -295,7 +306,7 @@ function checkOddsFreshness() {
     };
   }
 
-  const reason = `${staleNearTerm.length}/${dedupedGames.length} games within T-2h have stale odds (>${ODDS_FRESHNESS_MAX_AGE_MINUTES}m old)${duplicateSuffix}`;
+  const reason = `${staleNearTerm.length}/${dedupedGames.length} games within alert window T-${ODDS_FRESHNESS_ALERT_WINDOW_HOURS}h have stale odds (>${ODDS_FRESHNESS_MAX_AGE_MINUTES}m old)${duplicateSuffix}`;
   writePipelineHealth('odds', 'freshness', 'failed', reason);
   return {
     ok: false,
@@ -1420,17 +1431,18 @@ async function checkPipelineHealth({ jobKey, dryRun }) {
       mlb_seed_freshness: () => checkMlbSeedFreshness(),
       settlement_backlog: checkSettlementBacklog,
       // Per-sport model freshness (only fires when upcoming games exist for that sport)
+      // Uses 4x moneyline hardMax from contract per operational policy (stricter health check)
       nhl_model_freshness: () =>
-        checkSportModelFreshness('nhl', 'run_nhl_model', 'model_freshness', MODEL_FRESHNESS_MAX_AGE_MINUTES),
+        checkSportModelFreshness('nhl', 'run_nhl_model', 'model_freshness', getModelFreshnessMaxAgeMinutes()),
       nhl_market_call_diagnostics: checkNhlMarketCallDiagnostics,
       nhl_moneyline_coverage: checkNhlMoneylineCoverage,
       nhl_shots_model_freshness: () =>
-        checkSportModelFreshness('nhl', 'run-nhl-player-shots-model', 'shots_model_freshness', MODEL_FRESHNESS_MAX_AGE_MINUTES),
+        checkSportModelFreshness('nhl', 'run-nhl-player-shots-model', 'shots_model_freshness', getModelFreshnessMaxAgeMinutes()),
       nba_model_freshness: () =>
-        checkSportModelFreshness('nba', 'run_nba_model', 'model_freshness', MODEL_FRESHNESS_MAX_AGE_MINUTES),
+        checkSportModelFreshness('nba', 'run_nba_model', 'model_freshness', getModelFreshnessMaxAgeMinutes()),
       nba_market_call_diagnostics: checkNbaMarketCallDiagnostics,
       mlb_model_freshness: () =>
-        checkSportModelFreshness('mlb', 'run_mlb_model', 'model_freshness', MODEL_FRESHNESS_MAX_AGE_MINUTES),
+        checkSportModelFreshness('mlb', 'run_mlb_model', 'model_freshness', getModelFreshnessMaxAgeMinutes()),
       calibration_kill_switches: checkCalibrationKillSwitches,
     };
 

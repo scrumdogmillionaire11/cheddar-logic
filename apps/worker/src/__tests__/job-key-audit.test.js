@@ -44,7 +44,7 @@ const VALID_PATTERNS = [
   /^settle\|backfill-card-results\|\d{4}-\d{2}-\d{2}$/,
   /^settle\|game-results\|\d{4}-\d{2}-\d{2}$/,
   /^settle\|pending-cards\|\d{4}-\d{2}-\d{2}$/,
-  /^settle\|after-odds\|.+\|(games|cards)$/,
+  /^settle\|after-odds\|.+\|(games|cards|game-results|projections|pending-cards)$/,
   // legacy/manual markers
   /^started$/,
 ];

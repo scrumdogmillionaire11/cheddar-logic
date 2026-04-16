@@ -107,4 +107,102 @@ describe('evaluateExecution', () => {
       drop_reason_layer: 'worker_gate',
     });
   });
+
+  // ========== BOUNDARY TESTS: THREE-TIER FRESHNESS LOGIC (WI-0950) ==========
+  // Tests verify cadence-aligned freshness contract with 60m cadence, 1.25x grace, 120m hardMax
+
+  describe('three-tier freshness logic (WI-0950)', () => {
+    // Helper: create execution params with specified age and sport
+    function executionWithAge(ageMs, sport = 'mlb') {
+      return {
+        modelStatus: 'MODEL_OK',
+        rawEdge: 0.1,
+        confidence: 0.75,
+        snapshotAgeMs: ageMs,
+        sport,
+      };
+    }
+
+    // FRESH TIER: 0 to 60 minutes (fully trusted, always pass)
+    test('FRESH tier: 30 seconds should PASS', () => {
+      const result = evaluateExecution(executionWithAge(30 * 1000));
+      expect(result.shouldBet).toBe(true);
+      expect(result.freshness_decision.tier).toBe('FRESH');
+      expect(result.freshness_decision.blocked_by_freshness).toBe(false);
+    });
+
+    test('FRESH tier: 30 minutes should PASS', () => {
+      const result = evaluateExecution(executionWithAge(30 * 60 * 1000));
+      expect(result.shouldBet).toBe(true);
+      expect(result.freshness_decision.tier).toBe('FRESH');
+      expect(result.freshness_decision.blocked_by_freshness).toBe(false);
+    });
+
+    // STALE_VALID TIER: 60 to 120 minutes (anti-silencing allows pass if allowStaleIfNoNewOdds=true)
+    test('STALE_VALID: exactly at 60m cadence boundary should be FRESH (upper bound)', () => {
+      const result = evaluateExecution(executionWithAge(60 * 60 * 1000));
+      expect(result.shouldBet).toBe(true);
+      expect(result.freshness_decision.tier).toBe('FRESH');
+      expect(result.freshness_decision.blocked_by_freshness).toBe(false);
+    });
+
+    test('STALE_VALID: just over cadence (60m 1s) should PASS', () => {
+      const result = evaluateExecution(executionWithAge(60 * 60 * 1000 + 1000));
+      expect(result.shouldBet).toBe(true);
+      expect(result.freshness_decision.tier).toBe('STALE_VALID');
+      expect(result.freshness_decision.blocked_by_freshness).toBe(false);
+    });
+
+    test('STALE_VALID: at grace boundary (75m) should PASS', () => {
+      const result = evaluateExecution(executionWithAge(75 * 60 * 1000));
+      expect(result.shouldBet).toBe(true);
+      expect(result.freshness_decision.tier).toBe('STALE_VALID');
+      expect(result.freshness_decision.blocked_by_freshness).toBe(false);
+    });
+
+    test('STALE_VALID: beyond grace but under hardMax (90m) should PASS per anti-silencing', () => {
+      const result = evaluateExecution(executionWithAge(90 * 60 * 1000));
+      expect(result.shouldBet).toBe(true);
+      expect(result.freshness_decision.tier).toBe('STALE_VALID');
+      expect(result.freshness_decision.blocked_by_freshness).toBe(false);
+      expect(result.freshness_decision.reason).not.toContain('block');
+    });
+
+    test('STALE_VALID: at hardMax boundary (120m) should PASS', () => {
+      const result = evaluateExecution(executionWithAge(120 * 60 * 1000));
+      expect(result.shouldBet).toBe(true);
+      expect(result.freshness_decision.tier).toBe('STALE_VALID');
+      expect(result.freshness_decision.blocked_by_freshness).toBe(false);
+    });
+
+    // EXPIRED TIER: beyond 120 minutes (always block)
+    test('EXPIRED: just over hardMax (121m) should FAIL', () => {
+      const result = evaluateExecution(executionWithAge(121 * 60 * 1000));
+      expect(result.shouldBet).toBe(false);
+      expect(result.freshness_decision.tier).toBe('EXPIRED');
+      expect(result.freshness_decision.blocked_by_freshness).toBe(true);
+      expect(result.blocked_by).toContainEqual(
+        expect.stringContaining('STALE_SNAPSHOT:EXPIRED_HARDMAX'),
+      );
+    });
+
+    test('EXPIRED: clearly stale (130m) should FAIL', () => {
+      const result = evaluateExecution(executionWithAge(130 * 60 * 1000));
+      expect(result.shouldBet).toBe(false);
+      expect(result.freshness_decision.tier).toBe('EXPIRED');
+      expect(result.freshness_decision.blocked_by_freshness).toBe(true);
+      expect(result.blocked_by).toContainEqual(
+        expect.stringContaining('STALE_SNAPSHOT:EXPIRED_HARDMAX'),
+      );
+    });
+
+    // Sport-specific contract test
+    test('contract applies per-sport defaults (NHL)', () => {
+      const result = evaluateExecution(executionWithAge(90 * 60 * 1000, 'nhl'));
+      expect(result.shouldBet).toBe(true);
+      expect(result.freshness_decision.sport).toBe('nhl');
+      expect(result.freshness_decision.tier).toBe('STALE_VALID');
+    });
+  });
 });
+

@@ -940,6 +940,187 @@ function updateOddsSnapshotCircaSplits({ gameId, circaData }) {
   return result.changes;
 }
 
+/**
+ * Resolve snapshot age using explicit 4-level fallback chain with validation.
+ * Emits [TIMESTAMP_DIAGNOSTIC] structured log for audit trail.
+ *
+ * Fallback chain precedence:
+ *   1. captured_at (primary, preferred)
+ *   2. pulled_at (fallback if captured_at is null/invalid)
+ *   3. updated_at (fallback if both above are null/invalid)
+ *   4. NOW() (last resort, status=DEGRADED)
+ *
+ * Valid value: ISO 8601 UTC string, not null, not future timestamp
+ *
+ * @param {object} snapshotRow - Row with captured_at, pulled_at, updated_at
+ * @param {object} opts - Optional { snapshotId, sport, gameId, jobRunId }
+ * @returns {object} { resolved_timestamp, resolved_age_ms, source_field, status, fields_inspected, fallback_chain_executed, violations, diagnostic }
+ */
+function resolveSnapshotAge(snapshotRow, opts = {}) {
+  const nowMs = Number.isFinite(opts.nowMs) ? opts.nowMs : Date.now();
+  const now = new Date(nowMs);
+  const nowIso = now.toISOString();
+  
+  const fieldsInspected = {
+    captured_at: { value: null, status: null },
+    pulled_at: { value: null, status: null },
+    updated_at: { value: null, status: null },
+  };
+  
+  const violations = [];
+  let resolvedTimestamp = null;
+  let resolvedAgeMs = null;
+  let sourceField = null;
+  let status = null;
+  let fallbackChainExecuted = false;
+
+  // Helper: validate a timestamp value
+  const validateTimestamp = (value, fieldName) => {
+    if (!value) return { valid: false, reason: 'null_or_undefined' };
+    
+    // Check if it's a string
+    if (typeof value !== 'string') {
+      return { valid: false, reason: 'not_string' };
+    }
+
+    // Require explicit timezone (Z or +HH:MM/-HH:MM)
+    const iso8601Pattern =
+      /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{3})?(Z|[+-]\d{2}:\d{2})$/;
+    if (!iso8601Pattern.test(value)) {
+      return { valid: false, reason: 'not_iso8601' };
+    }
+
+    // Try to parse
+    const parsed = new Date(value);
+    if (isNaN(parsed.getTime())) {
+      return { valid: false, reason: 'unparseable' };
+    }
+
+    // Check for future timestamp (allow 1 second grace for clock skew)
+    const diffMs = parsed.getTime() - nowMs;
+    if (diffMs > 1000) {
+      violations.push(`${fieldName} is future timestamp (${value}, ${diffMs}ms in future)`);
+      return { valid: false, reason: 'future_timestamp' };
+    }
+
+    return { valid: true, parsed, reason: null };
+  };
+
+  const normalizeToUtc = (isoString) => new Date(isoString).toISOString();
+
+  // Level 1: Try captured_at
+  const capturedAtResult = validateTimestamp(snapshotRow.captured_at, 'captured_at');
+  fieldsInspected.captured_at = {
+    value: snapshotRow.captured_at,
+    status: capturedAtResult.valid ? 'VALID' : 'INVALID',
+  };
+
+  if (capturedAtResult.valid) {
+    resolvedTimestamp = normalizeToUtc(snapshotRow.captured_at);
+    sourceField = 'captured_at';
+    status = 'VALID';
+  } else {
+    fallbackChainExecuted = true;
+
+    // Level 2: Try pulled_at
+    const pulledAtResult = validateTimestamp(snapshotRow.pulled_at, 'pulled_at');
+    fieldsInspected.pulled_at = {
+      value: snapshotRow.pulled_at,
+      status: pulledAtResult.valid ? 'VALID' : 'INVALID',
+    };
+
+    if (pulledAtResult.valid) {
+      resolvedTimestamp = normalizeToUtc(snapshotRow.pulled_at);
+      sourceField = 'pulled_at';
+      status = 'DEGRADED';
+    } else {
+      // Level 3: Try updated_at
+      const updatedAtResult = validateTimestamp(snapshotRow.updated_at, 'updated_at');
+      fieldsInspected.updated_at = {
+        value: snapshotRow.updated_at,
+        status: updatedAtResult.valid ? 'VALID' : 'INVALID',
+      };
+
+      if (updatedAtResult.valid) {
+        resolvedTimestamp = normalizeToUtc(snapshotRow.updated_at);
+        sourceField = 'updated_at';
+        status = 'DEGRADED';
+      } else {
+        // Level 4: Use NOW()
+        resolvedTimestamp = nowIso;
+        sourceField = 'now';
+        status = 'DEGRADED';
+      }
+    }
+  }
+
+  const malformedDetected =
+    (snapshotRow?.captured_at && !capturedAtResult.valid && capturedAtResult.reason !== 'future_timestamp') ||
+    (snapshotRow?.pulled_at && fieldsInspected.pulled_at.status === 'INVALID') ||
+    (snapshotRow?.updated_at && fieldsInspected.updated_at.status === 'INVALID');
+  if (malformedDetected && status !== 'MONOTONIC_VIOLATION') {
+    status = 'MALFORMED';
+  }
+
+  // Detect non-monotonic violations after resolution
+  if (snapshotRow.captured_at && snapshotRow.pulled_at) {
+    const capturedTime = new Date(snapshotRow.captured_at).getTime();
+    const pulledTime = new Date(snapshotRow.pulled_at).getTime();
+    if (pulledTime < capturedTime) {
+      violations.push('pulled_at < captured_at (impossible order)');
+      status = 'MONOTONIC_VIOLATION';
+    }
+  }
+
+  if (snapshotRow.pulled_at && snapshotRow.updated_at) {
+    const pulledTime = new Date(snapshotRow.pulled_at).getTime();
+    const updatedTime = new Date(snapshotRow.updated_at).getTime();
+    if (updatedTime < pulledTime) {
+      violations.push('updated_at < pulled_at (replication lag or corruption)');
+      if (status !== 'MONOTONIC_VIOLATION') status = 'MONOTONIC_VIOLATION';
+    }
+  }
+
+  // Calculate age
+  const resolvedParsed = new Date(resolvedTimestamp);
+  resolvedAgeMs = Math.max(0, nowMs - resolvedParsed.getTime());
+
+  // Build diagnostic object
+  const diagnostic = {
+    event_type: 'TIMESTAMP_DIAGNOSTIC',
+    timestamp: nowIso,
+    snapshot_id: opts.snapshotId || null,
+    sport: opts.sport || null,
+    game_id: opts.gameId || null,
+    job_run_id: opts.jobRunId || null,
+
+    resolved_timestamp: resolvedTimestamp,
+    resolved_age_ms: resolvedAgeMs,
+    source_field: sourceField,
+
+    status,
+
+    fields_inspected: fieldsInspected,
+
+    fallback_chain_executed: fallbackChainExecuted,
+    violations: violations.length > 0 ? violations : [],
+  };
+
+  // Emit diagnostic log
+  console.log(`[TIMESTAMP_DIAGNOSTIC] ${JSON.stringify(diagnostic)}`);
+
+  return {
+    resolved_timestamp: resolvedTimestamp,
+    resolved_age_ms: resolvedAgeMs,
+    source_field: sourceField,
+    status,
+    fields_inspected: fieldsInspected,
+    fallback_chain_executed: fallbackChainExecuted,
+    violations,
+    diagnostic,
+  };
+}
+
 module.exports = {
   insertOddsSnapshot,
   patchOddsSnapshot1p,
@@ -958,4 +1139,5 @@ module.exports = {
   updateOddsSnapshotSplits,
   updateOddsSnapshotVsinSplits,
   updateOddsSnapshotCircaSplits,
+  resolveSnapshotAge,
 };

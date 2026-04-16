@@ -26,6 +26,13 @@ function keyOddsHourly(nowEt) {
   return `odds|hourly|${nowEt.toISODate()}|s${String(slot).padStart(3, '0')}`;
 }
 
+function keyOddsNearTipBackstop(nowEt) {
+  const ODDS_FETCH_SLOT_MINUTES = Number(process.env.ODDS_FETCH_SLOT_MINUTES || 180);
+  const minuteOfDay = nowEt.hour * 60 + nowEt.minute;
+  const slot = Math.floor(minuteOfDay / ODDS_FETCH_SLOT_MINUTES);
+  return `odds|near-tip-backstop|${nowEt.toISODate()}|s${String(slot).padStart(3, '0')}`;
+}
+
 function keyFixed(sport, nowEt, hhmm) {
   return `${sport}|fixed|${nowEt.toISODate()}|${hhmm.replace(':', '')}`;
 }
@@ -201,6 +208,83 @@ function isFixedDue(nowEt, hhmm) {
 }
 
 /**
+ * Deterministic near-tip backstop window.
+ *
+ * Fires once per odds slot around the midpoint between hourly-slot pulls to provide
+ * an extra stale-odds refresh path before tip windows tighten.
+ */
+function isNearTipOddsBackstopDue(nowEt) {
+  const slotMinutes = Number(process.env.ODDS_FETCH_SLOT_MINUTES || 180);
+  if (!Number.isFinite(slotMinutes) || slotMinutes < 30) return false;
+
+  const windowMinutes = Math.max(
+    1,
+    Number(process.env.ODDS_NEAR_TIP_BACKSTOP_WINDOW_MINUTES || 10),
+  );
+  const minuteOfDay = nowEt.hour * 60 + nowEt.minute;
+  const slotOffset = minuteOfDay % slotMinutes;
+  const midpoint = Math.floor(slotMinutes / 2);
+  return Math.abs(slotOffset - midpoint) < windowMinutes;
+}
+
+/**
+ * @typedef {object} TMinusFreshnessOverride
+ * @property {number} minutesToGameLte - Upper bound of minutes-to-game for this band (inclusive)
+ * @property {number} requiredMaxSnapshotAgeMinutes - Maximum allowable snapshot age in minutes
+ * @property {boolean} triggerPreModelRefresh - Whether to enqueue a pre-model odds pull
+ */
+
+/**
+ * MLB T-minus freshness override ladder.
+ * Ordered ascending by minutesToGameLte so that resolveTMinusFreshnessOverride
+ * can find the strictest (smallest) matching band efficiently.
+ *
+ * @type {TMinusFreshnessOverride[]}
+ */
+const MLB_TMINUS_FRESHNESS_OVERRIDES = [
+  { minutesToGameLte: 180, requiredMaxSnapshotAgeMinutes: 75, triggerPreModelRefresh: false },
+  { minutesToGameLte: 90,  requiredMaxSnapshotAgeMinutes: 30, triggerPreModelRefresh: true  },
+  { minutesToGameLte: 45,  requiredMaxSnapshotAgeMinutes: 20, triggerPreModelRefresh: true  },
+  { minutesToGameLte: 15,  requiredMaxSnapshotAgeMinutes: 10, triggerPreModelRefresh: true  },
+];
+
+/**
+ * Resolve the strictest (smallest minutesToGameLte) freshness override band
+ * that satisfies minutesToGame <= minutesToGameLte.
+ *
+ * @param {number} minutesToGame - Minutes until game starts
+ * @param {TMinusFreshnessOverride[]} [overrides] - Override ladder (defaults to MLB_TMINUS_FRESHNESS_OVERRIDES)
+ * @returns {TMinusFreshnessOverride|null} - Matched row, or null if no row matches
+ */
+function resolveTMinusFreshnessOverride(minutesToGame, overrides) {
+  const ladder = overrides !== undefined ? overrides : MLB_TMINUS_FRESHNESS_OVERRIDES;
+  if (ladder.length === 0) return null;
+  // Floor: must be at least the smallest minutesToGameLte in the ladder
+  const minBandLte = Math.min(...ladder.map((r) => r.minutesToGameLte));
+  if (minutesToGame < minBandLte) return null;
+  // Ceiling: must not exceed the largest minutesToGameLte
+  const matches = ladder.filter((row) => minutesToGame <= row.minutesToGameLte);
+  if (matches.length === 0) return null;
+  // Return the row with the smallest minutesToGameLte (strictest match)
+  return matches.reduce((best, row) =>
+    row.minutesToGameLte < best.minutesToGameLte ? row : best,
+  );
+}
+
+/**
+ * Build a deduped job key for an MLB pre-model odds pull in a T-minus band.
+ *
+ * @param {string} gameId - MLB game identifier
+ * @param {number} matchedBandMinutes - The minutesToGameLte of the matched override band
+ * @param {string} slotStartIsoUtc - Minute-precision UTC ISO string (will be truncated to YYYY-MM-DDTHH:MM)
+ * @returns {string} - e.g. 'pull-odds:mlb:premodel:mlb_game_1:45:2026-04-15T19:38'
+ */
+function keyMlbPremodelOdds(gameId, matchedBandMinutes, slotStartIsoUtc) {
+  const slotMinute = String(slotStartIsoUtc).slice(0, 16);
+  return `pull-odds:mlb:premodel:${gameId}:${matchedBandMinutes}:${slotMinute}`;
+}
+
+/**
  * T-minus window bands with tolerance
  * If game starts at 19:00, T-120 window = 17:00 ± 5 min
  */
@@ -233,9 +317,13 @@ function isProjectionModelSport(sport) {
 }
 
 module.exports = {
+  MLB_TMINUS_FRESHNESS_OVERRIDES,
+  resolveTMinusFreshnessOverride,
+  keyMlbPremodelOdds,
   isProjectionModelSport,
   keyEspnGamesDirect,
   keyOddsHourly,
+  keyOddsNearTipBackstop,
   keyFixed,
   keyDiscordCardsSnapshot,
   keyTminus,
@@ -255,6 +343,7 @@ module.exports = {
   keyNightlySettlementJob,
   isHourlySettlementDue,
   isNightlySettlementOwningHourlyWindow,
+  isNearTipOddsBackstopDue,
   getOddsIntervalMinutes,
   getScheduleRefreshDue,
   shouldRefreshOddsForGame,

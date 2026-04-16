@@ -47,6 +47,7 @@ module.exports = {
   computeLineDelta: odds.computeLineDelta,
   getOddsWithUpcomingGames: odds.getOddsWithUpcomingGames,
   getUpcomingGamesAsSyntheticSnapshots: odds.getUpcomingGamesAsSyntheticSnapshots,
+  resolveSnapshotAge: odds.resolveSnapshotAge,
   recordOddsIngestFailure: odds.recordOddsIngestFailure,
   getOddsIngestFailureSummary: odds.getOddsIngestFailureSummary,
   upsertPlayerShotLog: players.upsertPlayerShotLog,

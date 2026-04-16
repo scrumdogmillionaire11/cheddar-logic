@@ -36,11 +36,13 @@ const STADIUM_COORDS = {
   'PNC Park':                    [40.4468, -80.0057],
   'American Family Field':       [43.0280, -87.9712],
   'Guaranteed Rate Field':       [41.8299, -87.6338],
+  'Rate Field':                  [41.8299, -87.6338],
   'Progressive Field':           [41.4962, -81.6852],
   'Comerica Park':               [42.3390, -83.0485],
   'Target Field':                [44.9817, -93.2776],
   'Kauffman Stadium':            [39.0517, -94.4803],
   'Minute Maid Park':            [29.7573, -95.3555],
+  'Daikin Park':                 [29.7573, -95.3555],
   'Globe Life Field':            [32.7473, -97.0832],
   'Angel Stadium':               [33.8003, -117.8827],
   'T-Mobile Park':               [47.5914, -122.3325],
@@ -50,6 +52,7 @@ const STADIUM_COORDS = {
   'Coors Field':                 [39.7559, -104.9942],
   'Rogers Centre':               [43.6414, -79.3894],
   'Tropicana Field':             [27.7683, -82.6534],
+  'Sutter Health Park':          [38.5802, -121.5002],
 };
 
 /**
@@ -60,6 +63,7 @@ const INDOOR_STADIUMS = new Set([
   'Tropicana Field',       // fixed dome
   'Rogers Centre',         // retractable
   'Minute Maid Park',      // retractable
+  'Daikin Park',           // retractable (Houston's renamed Minute Maid Park)
   'American Family Field', // retractable
   'Globe Life Field',      // retractable
 ]);

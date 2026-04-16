@@ -37,12 +37,17 @@ const {
   withDb,
   // WI-0840: dynamic league constants query
   computeMLBLeagueAverages,
+  resolveSnapshotAge,
 } = require('@cheddar-logic/data');
 
 // Import pluggable inference layer
 const { computeMLBDriverCards, computePitcherKDriverCards } = require('../models');
 const { evaluateMlbGameMarkets, projectF5ML, projectTeamF5RunsAgainstStarter, setLeagueConstants } = require('../models/mlb-model');
-const { assertNoSilentMarketDrop, logRejectedMarkets } = require('@cheddar-logic/models/src/market-eval');
+const {
+  assertNoSilentMarketDrop,
+  logRejectedMarkets,
+  canonicalizeMoneylineSuppressionReason,
+} = require('@cheddar-logic/models/src/market-eval');
 
 // WI-0648: Empirical sigma recalibration gate
 // Threshold: once a team has accumulated >= MIN_MLB_GAMES_FOR_RECAL settled games
@@ -69,6 +74,11 @@ const {
   dedupeFlags,
 } = require('./mlb-k-input-classifier');
 const { evaluateExecution } = require('./execution-gate');
+const { refreshStaleOdds } = require('./refresh_stale_odds');
+const {
+  parseContractFromEnv,
+  getEffectiveContract,
+} = require('./execution-gate-freshness-contract');
 const { applyCalibration } = require('../utils/calibration');
 const { assertFeatureTimeliness } = require('../models/feature-time-guard');
 const { pullMlbStatcast } = require('./pull_mlb_statcast');
@@ -111,6 +121,11 @@ const MLB_PROJECTION_ONLY_MARKET_FLAGS = Object.freeze([
   'PROJECTION_ONLY_NOT_ACTIONABLE',
   'NO_ANCHOR_PRICE_VALIDATION',
 ]);
+const STALE_RECOVERY_MAX_ATTEMPTS = 1;
+const STALE_RECOVERY_DEDUP_TTL_MS = 10 * 60 * 1000;
+const staleRecoveryDedupCache = new Map();
+
+let cachedFreshnessEnvOverrides = null;
 
 const loggedUnknownMlbTeamVariants = new Set();
 const MLB_TEAM_CANONICAL_BY_TOKEN = Object.freeze(
@@ -143,6 +158,104 @@ function uniqueReasonCodes(codes = []) {
       ),
     ),
   );
+}
+
+function normalizeSlotStartIso(value) {
+  const parsed = new Date(value || Date.now());
+  if (!Number.isFinite(parsed.getTime())) {
+    return new Date(Date.now()).toISOString().replace(/\.\d{3}Z$/, 'Z');
+  }
+  parsed.setUTCSeconds(0, 0);
+  return parsed.toISOString().replace(/\.\d{3}Z$/, 'Z');
+}
+
+function buildStaleRecoveryKey({ sport, gameId, slotStartIso, modelRunUuid }) {
+  return `${String(sport || '').toLowerCase()}:${String(gameId || 'unknown')}:${normalizeSlotStartIso(slotStartIso)}:${String(modelRunUuid || 'unknown')}`;
+}
+
+function claimStaleRecoveryKey(cache, key, nowMs = Date.now(), ttlMs = STALE_RECOVERY_DEDUP_TTL_MS) {
+  for (const [existingKey, expiresAt] of cache.entries()) {
+    if (!Number.isFinite(expiresAt) || expiresAt <= nowMs) {
+      cache.delete(existingKey);
+    }
+  }
+  if (cache.has(key)) {
+    return false;
+  }
+  cache.set(key, nowMs + ttlMs);
+  return true;
+}
+
+function hasOnlyStaleBlockers(blockedBy = []) {
+  if (!Array.isArray(blockedBy) || blockedBy.length === 0) return false;
+  return blockedBy.every((reason) => String(reason || '').startsWith('STALE_SNAPSHOT'));
+}
+
+function shouldAttemptStaleRecoveryFromGate({ gate, sport }) {
+  if (!gate || gate.should_bet !== false) {
+    return { shouldAttempt: false, reason: 'not_blocked' };
+  }
+
+  const freshnessDecision = gate.freshness_decision || null;
+  const tier = String(freshnessDecision?.tier || '').toUpperCase();
+  const blockedByFreshness = freshnessDecision?.blocked_by_freshness === true;
+
+  if (!blockedByFreshness) {
+    return { shouldAttempt: false, reason: 'freshness_not_primary' };
+  }
+  if (!hasOnlyStaleBlockers(gate.blocked_by)) {
+    return { shouldAttempt: false, reason: 'mixed_blockers' };
+  }
+  if (tier === 'STALE_VALID') {
+    return { shouldAttempt: true, reason: 'stale_valid' };
+  }
+  if (tier !== 'EXPIRED') {
+    return { shouldAttempt: false, reason: 'unsupported_tier' };
+  }
+
+  if (!cachedFreshnessEnvOverrides) {
+    cachedFreshnessEnvOverrides = parseContractFromEnv();
+  }
+  const contract = getEffectiveContract(String(sport || '').toLowerCase(), cachedFreshnessEnvOverrides);
+  if (contract?.allowStaleIfNoNewOdds === true) {
+    return { shouldAttempt: true, reason: 'expired_allow_stale' };
+  }
+  return { shouldAttempt: false, reason: 'expired_disallowed' };
+}
+
+function cloneValue(value) {
+  return value == null ? value : JSON.parse(JSON.stringify(value));
+}
+
+function captureMlbExecutionRetrySeed(payload) {
+  return {
+    status: payload.status,
+    action: payload.action,
+    classification: payload.classification,
+    ev_passed: payload.ev_passed,
+    execution_status: payload.execution_status,
+    actionable: payload.actionable,
+    publish_ready: payload.publish_ready,
+    pass_reason_code: payload.pass_reason_code,
+    reason_codes: cloneValue(payload.reason_codes),
+    _publish_state: cloneValue(payload._publish_state),
+  };
+}
+
+function restoreMlbExecutionRetrySeed(payload, seed) {
+  Object.assign(payload, {
+    status: seed.status,
+    action: seed.action,
+    classification: seed.classification,
+    ev_passed: seed.ev_passed,
+    execution_status: seed.execution_status,
+    actionable: seed.actionable,
+    publish_ready: seed.publish_ready,
+    pass_reason_code: seed.pass_reason_code,
+    reason_codes: cloneValue(seed.reason_codes),
+    _publish_state: cloneValue(seed._publish_state),
+  });
+  delete payload.execution_gate;
 }
 
 function normalizeMlbTeamVariant(value) {
@@ -590,16 +703,103 @@ function summarizeMlbPipelineStates(gamePipelineStates = {}) {
 }
 
 const MLB_FULL_GAME_FUNNEL_WINDOW = 50;
+const MLB_FULL_GAME_DIRECTIONAL_FUNNEL_WINDOW = 200;
+const MLB_FULL_GAME_DIRECTIONAL_SKEW_ALERT_MIN_SAMPLES = 100;
+const MLB_FULL_GAME_DIRECTIONAL_SKEW_ALERT_PCT = 80;
 
 function roundPct(value) {
   if (!Number.isFinite(value)) return 0;
   return Math.round(value * 10) / 10;
 }
 
+function computeStageDropPct(previousCount, currentCount) {
+  const prev = Number(previousCount);
+  const curr = Number(currentCount);
+  if (!Number.isFinite(prev) || prev <= 0) return 0;
+  if (!Number.isFinite(curr)) return 0;
+  const dropped = Math.max(0, prev - curr);
+  return roundPct((dropped / prev) * 100);
+}
+
 function getMlbFullGameMarketKey(driver = {}) {
   const market = String(driver?.market || '').toLowerCase();
   if (market === 'full_game_total') return 'FULL_GAME_TOTAL';
   if (market === 'full_game_ml') return 'FULL_GAME_ML';
+  return null;
+}
+
+function resolveDirectionalTotalSide(driver = {}) {
+  const auditDirection = String(
+    driver?.directional_audit?.direction_after_shrink || '',
+  ).toUpperCase();
+  if (auditDirection === 'OVER' || auditDirection === 'UNDER') return auditDirection;
+  const prediction = String(driver?.prediction || '').toUpperCase();
+  if (prediction === 'OVER' || prediction === 'UNDER') return prediction;
+  const edge = Number(driver?.drivers?.[0]?.edge);
+  if (Number.isFinite(edge)) return edge >= 0 ? 'OVER' : 'UNDER';
+  return null;
+}
+
+function resolveDirectionalModelTotal(driver = {}) {
+  const shrunkTotal = Number(driver?.directional_audit?.shrunk_model_total);
+  if (Number.isFinite(shrunkTotal)) return shrunkTotal;
+  const projectedTotal = Number(
+    driver?.projection?.projected_total ?? driver?.drivers?.[0]?.projected,
+  );
+  return Number.isFinite(projectedTotal) ? projectedTotal : null;
+}
+
+function resolveDirectionalRawModelTotal(driver = {}) {
+  const rawModelTotal = Number(driver?.directional_audit?.raw_model_total);
+  if (Number.isFinite(rawModelTotal)) return rawModelTotal;
+  const projectedTotal = Number(
+    driver?.projection?.projected_total ?? driver?.drivers?.[0]?.projected,
+  );
+  return Number.isFinite(projectedTotal) ? projectedTotal : null;
+}
+
+function resolveDirectionalEdge(driver = {}) {
+  const shrunkDelta = Number(driver?.directional_audit?.proj_minus_line_shrunk);
+  if (Number.isFinite(shrunkDelta)) return shrunkDelta;
+  const edge = Number(driver?.drivers?.[0]?.edge);
+  return Number.isFinite(edge) ? edge : null;
+}
+
+function resolveDirectionalRawEdge(driver = {}) {
+  const rawDelta = Number(driver?.directional_audit?.proj_minus_line_raw);
+  if (Number.isFinite(rawDelta)) return rawDelta;
+  const edge = Number(driver?.drivers?.[0]?.edge);
+  return Number.isFinite(edge) ? edge : null;
+}
+
+function resolveDirectionalConfidence(driver = {}) {
+  const confidence = Number(driver?.confidence);
+  return Number.isFinite(confidence) ? confidence : null;
+}
+
+function resolveDirectionalSegmentRuns(driver = {}) {
+  const homeF5 = Number(driver?.projection?.home_f5_runs);
+  const awayF5 = Number(driver?.projection?.away_f5_runs);
+  const homeLate = Number(driver?.projection?.home_late_runs);
+  const awayLate = Number(driver?.projection?.away_late_runs);
+  return {
+    f5Runs: Number.isFinite(homeF5) && Number.isFinite(awayF5)
+      ? homeF5 + awayF5
+      : null,
+    lateRuns: Number.isFinite(homeLate) && Number.isFinite(awayLate)
+      ? homeLate + awayLate
+      : null,
+  };
+}
+
+function resolveDirectionalMarketTotal(driver = {}, modelTotal = null) {
+  const explicitLine = Number(driver?.line);
+  if (Number.isFinite(explicitLine)) return explicitLine;
+
+  const edge = Number(driver?.drivers?.[0]?.edge);
+  if (Number.isFinite(modelTotal) && Number.isFinite(edge)) {
+    return modelTotal - edge;
+  }
   return null;
 }
 
@@ -611,13 +811,51 @@ function normalizeReasonCodeSet(driver = {}) {
 }
 
 function evaluateMlbFullGameFunnelCandidate(driver = {}, isOfficialPlay = false) {
+  const marketKey = getMlbFullGameMarketKey(driver);
+  const directionalSide = marketKey === 'FULL_GAME_TOTAL'
+    ? resolveDirectionalTotalSide(driver)
+    : null;
+  const directionalModelTotal = marketKey === 'FULL_GAME_TOTAL'
+    ? resolveDirectionalModelTotal(driver)
+    : null;
+  const directionalRawModelTotal = marketKey === 'FULL_GAME_TOTAL'
+    ? resolveDirectionalRawModelTotal(driver)
+    : null;
+  const directionalMarketTotal = marketKey === 'FULL_GAME_TOTAL'
+    ? resolveDirectionalMarketTotal(driver, directionalModelTotal)
+    : null;
+  const directionalEdge = marketKey === 'FULL_GAME_TOTAL'
+    ? resolveDirectionalEdge(driver)
+    : null;
+  const directionalRawEdge = marketKey === 'FULL_GAME_TOTAL'
+    ? resolveDirectionalRawEdge(driver)
+    : null;
+  const directionalConfidence = marketKey === 'FULL_GAME_TOTAL'
+    ? resolveDirectionalConfidence(driver)
+    : null;
+  const directionalSegments = marketKey === 'FULL_GAME_TOTAL'
+    ? resolveDirectionalSegmentRuns(driver)
+    : { f5Runs: null, lateRuns: null };
   const reasonCodes = normalizeReasonCodeSet(driver);
   const confidence = Number(driver?.confidence ?? 0);
+  const directionalAudit = driver?.directional_audit ?? null;
+  const degradedMode = directionalAudit?.degraded_mode === true;
+  const degradedInputsCount = Number.isFinite(Number(directionalAudit?.degraded_inputs_count))
+    ? Number(directionalAudit.degraded_inputs_count)
+    : 0;
+  const modelQuality = String(driver?.model_quality || '').toUpperCase() ||
+    (String(driver?.projection_source || '').toUpperCase() === 'FULL_MODEL'
+      ? 'FULL_MODEL'
+      : String(driver?.projection_source || '').toUpperCase() === 'DEGRADED_MODEL'
+        ? 'DEGRADED_MODEL'
+        : 'NO_BET_MODEL');
 
   const passedProjection =
     String(driver?.projection_source || '').toUpperCase() !== 'NO_BET';
   const passedEdgeThreshold = !(
-    reasonCodes.has('PASS_NO_EDGE') || reasonCodes.has('PASS_RUN_DIFF_TOO_SMALL')
+    reasonCodes.has('PASS_NO_EDGE') ||
+    reasonCodes.has('PASS_RUN_DIFF_TOO_SMALL') ||
+    reasonCodes.has('PASS_DEGRADED_TOTAL_MODEL')
   );
   const passedVolatilityThreshold = !(
     reasonCodes.has('PASS_PROBABILITY_EDGE_WEAK') || reasonCodes.has('PASS_MATH_ONLY_EDGE')
@@ -633,6 +871,7 @@ function evaluateMlbFullGameFunnelCandidate(driver = {}, isOfficialPlay = false)
 
   let suppressor = null;
   if (!passedProjection) suppressor = 'PROJECTION_SOURCE_NO_BET';
+  else if (reasonCodes.has('PASS_DEGRADED_TOTAL_MODEL')) suppressor = 'PASS_DEGRADED_TOTAL_MODEL';
   else if (!passedEdgeThreshold) suppressor = 'PASS_NO_EDGE_OR_RUN_DIFF';
   else if (!passedVolatilityThreshold) suppressor = 'PASS_PROBABILITY_EDGE_WEAK_OR_MATH_ONLY';
   else if (!passedDriverSupport) suppressor = 'PASS_DRIVER_SUPPORT';
@@ -641,6 +880,18 @@ function evaluateMlbFullGameFunnelCandidate(driver = {}, isOfficialPlay = false)
   else if (!finalOfficialPlay) suppressor = 'NOT_IN_OFFICIAL_PLAYS';
 
   return {
+    directionalSide,
+    directionalModelTotal,
+    directionalRawModelTotal,
+    directionalMarketTotal,
+    directionalEdge,
+    directionalRawEdge,
+    directionalConfidence,
+    directionalF5Runs: directionalSegments.f5Runs,
+    directionalLateRuns: directionalSegments.lateRuns,
+    degradedMode,
+    degradedInputsCount,
+    modelQuality,
     passedProjection,
     passedEdgeThreshold,
     passedVolatilityThreshold,
@@ -649,6 +900,366 @@ function evaluateMlbFullGameFunnelCandidate(driver = {}, isOfficialPlay = false)
     passedConfidence,
     finalOfficialPlay,
     suppressor,
+  };
+}
+
+/**
+ * Killshot audit: measures what % of pre-gate overs survive each gate.
+ * This shows explicitly: "If we turn off gate X, how many overs pass?"
+ */
+function buildMlbKillshotGateAudit(samples = []) {
+  const ordered = Array.isArray(samples)
+    ? samples.slice(-1000) // Use larger window for audit
+    : [];
+  
+  const directional = ordered.filter(
+    (sample) => sample?.directionalSide === 'OVER' || sample?.directionalSide === 'UNDER',
+  );
+  
+  if (directional.length === 0) {
+    return {
+      audit_type: 'KILLSHOT_GATE_ANALYSIS',
+      sample_size: 0,
+      pre_gate: { OVER: 0, UNDER: 0 },
+      post_gate: { OVER: 0, UNDER: 0 },
+      gate_analysis: {},
+      insights: [],
+    };
+  }
+
+  const gateChain = [
+    { name: 'passed_projection', fieldName: 'passedProjection' },
+    { name: 'passed_edge_threshold', fieldName: 'passedEdgeThreshold' },
+    { name: 'passed_volatility_threshold', fieldName: 'passedVolatilityThreshold' },
+    { name: 'passed_driver_support', fieldName: 'passedDriverSupport' },
+    { name: 'passed_f5_contradiction', fieldName: 'passedF5Contradiction' },
+    { name: 'passed_confidence', fieldName: 'passedConfidence' },
+    { name: 'final_official_play', fieldName: 'finalOfficialPlay' },
+  ];
+
+  // Pre-gate: all candidates by side
+  const preGate = {
+    OVER: directional.filter((s) => s.directionalSide === 'OVER').length,
+    UNDER: directional.filter((s) => s.directionalSide === 'UNDER').length,
+  };
+
+  // Post-gate: candidates that pass ALL gates
+  const postGate = {
+    OVER: directional.filter(
+      (s) =>
+        s.directionalSide === 'OVER' &&
+        s.passedProjection &&
+        s.passedEdgeThreshold &&
+        s.passedVolatilityThreshold &&
+        s.passedDriverSupport &&
+        s.passedF5Contradiction &&
+        s.passedConfidence &&
+        s.finalOfficialPlay,
+    ).length,
+    UNDER: directional.filter(
+      (s) =>
+        s.directionalSide === 'UNDER' &&
+        s.passedProjection &&
+        s.passedEdgeThreshold &&
+        s.passedVolatilityThreshold &&
+        s.passedDriverSupport &&
+        s.passedF5Contradiction &&
+        s.passedConfidence &&
+        s.finalOfficialPlay,
+    ).length,
+  };
+
+  // For each gate: how many overs would exist if we removed JUST this gate?
+  const gateAnalysis = {};
+  for (const gate of gateChain) {
+    const withoutThisGate = {
+      OVER: directional.filter((s) => {
+        if (s.directionalSide !== 'OVER') return false;
+        // Check all gates EXCEPT this one
+        for (const g of gateChain) {
+          if (g.name === gate.name) continue; // Skip the gate we're removing
+          if (!s[g.fieldName]) return false;
+        }
+        return true;
+      }).length,
+      UNDER: directional.filter((s) => {
+        if (s.directionalSide !== 'UNDER') return false;
+        // Check all gates EXCEPT this one
+        for (const g of gateChain) {
+          if (g.name === gate.name) continue; // Skip the gate we're removing
+          if (!s[g.fieldName]) return false;
+        }
+        return true;
+      }).length,
+    };
+
+    const currentlyBlocking = {
+      OVER: preGate.OVER - withoutThisGate.OVER,
+      UNDER: preGate.UNDER - withoutThisGate.UNDER,
+    };
+
+    gateAnalysis[gate.name] = {
+      would_pass_without_this_gate: withoutThisGate,
+      currently_blocking: currentlyBlocking,
+      blocking_pct: {
+        OVER: preGate.OVER > 0 ? ((currentlyBlocking.OVER / preGate.OVER) * 100).toFixed(1) : '0',
+        UNDER: preGate.UNDER > 0 ? ((currentlyBlocking.UNDER / preGate.UNDER) * 100).toFixed(1) : '0',
+      },
+    };
+  }
+
+  // Identify the biggest over-killers
+  const overKillers = Object.entries(gateAnalysis)
+    .map(([gateName, analysis]) => ({
+      gate: gateName,
+      blocking: analysis.currently_blocking.OVER,
+      pct: parseFloat(analysis.blocking_pct.OVER),
+    }))
+    .sort((a, b) => b.blocking - a.blocking)
+    .slice(0, 3);
+
+  const insights = [];
+  if (preGate.OVER === 0 && preGate.UNDER > 0) {
+    insights.push('CRITICAL: Zero OVER candidates pre-gate. Model is entirely biased toward UNDER.');
+  } else if (preGate.OVER < preGate.UNDER * 0.1) {
+    insights.push(`WARNING: OVER is only ${((preGate.OVER / (preGate.OVER + preGate.UNDER)) * 100).toFixed(1)}% of candidates. Heavy directional bias.`);
+  }
+
+  if (postGate.OVER === 0 && postGate.UNDER > 0) {
+    insights.push(`All ${preGate.OVER} OVER candidates killed by pipeline. See top killers below.`);
+    for (const killer of overKillers) {
+      insights.push(`  - ${killer.gate}: blocks ${killer.blocking} overs (${killer.pct}%)`);
+    }
+  }
+
+  const overToUnderRatio = preGate.OVER > 0 ? (preGate.UNDER / preGate.OVER).toFixed(2) : 'Inf';
+
+  return {
+    audit_type: 'KILLSHOT_GATE_ANALYSIS',
+    sample_size: directional.length,
+    directional_bias: {
+      pre_gate_over_to_under_ratio: overToUnderRatio,
+      over_pct_pre_gate: preGate.OVER > 0 || preGate.UNDER > 0
+        ? ((preGate.OVER / (preGate.OVER + preGate.UNDER)) * 100).toFixed(1)
+        : '0',
+      over_pct_post_gate: postGate.OVER > 0 || postGate.UNDER > 0
+        ? ((postGate.OVER / (postGate.OVER + postGate.UNDER)) * 100).toFixed(1)
+        : '0',
+    },
+    pre_gate: preGate,
+    post_gate: postGate,
+    gate_analysis: gateAnalysis,
+    top_over_killers: overKillers,
+    insights,
+  };
+}
+
+function buildMlbFullGameDirectionalFunnelReport(samples = []) {
+  const ordered = Array.isArray(samples)
+    ? samples.slice(-MLB_FULL_GAME_DIRECTIONAL_FUNNEL_WINDOW)
+    : [];
+  const directional = ordered.filter(
+    (sample) => sample?.directionalSide === 'OVER' || sample?.directionalSide === 'UNDER',
+  );
+
+  const stageOrder = [
+    ['total_candidates_created', null],
+    ['passed_projection', 'passedProjection'],
+    ['passed_edge_threshold', 'passedEdgeThreshold'],
+    ['passed_volatility_threshold', 'passedVolatilityThreshold'],
+    ['passed_driver_support', 'passedDriverSupport'],
+    ['passed_f5_contradiction', 'passedF5Contradiction'],
+    ['passed_confidence', 'passedConfidence'],
+    ['final_official_plays', 'finalOfficialPlay'],
+  ];
+
+  const stageSideCounts = Object.fromEntries(
+    stageOrder.map(([stageName]) => [stageName, { OVER: 0, UNDER: 0 }]),
+  );
+
+  let modelTotalSum = 0;
+  let modelTotalCount = 0;
+  let rawModelTotalSum = 0;
+  let rawModelTotalCount = 0;
+  let marketTotalSum = 0;
+  let marketTotalCount = 0;
+  let rawDeltaSum = 0;
+  let rawDeltaCount = 0;
+  let shrunkDeltaSum = 0;
+  let shrunkDeltaCount = 0;
+  let degradedCount = 0;
+
+  const sideComponents = {
+    OVER: {
+      edgeSum: 0,
+      edgeCount: 0,
+      absEdgeSum: 0,
+      confidenceSum: 0,
+      confidenceCount: 0,
+      f5ShareSum: 0,
+      lateShareSum: 0,
+      shareCount: 0,
+    },
+    UNDER: {
+      edgeSum: 0,
+      edgeCount: 0,
+      absEdgeSum: 0,
+      confidenceSum: 0,
+      confidenceCount: 0,
+      f5ShareSum: 0,
+      lateShareSum: 0,
+      shareCount: 0,
+    },
+  };
+
+  for (const sample of directional) {
+    const side = sample.directionalSide;
+    stageOrder.forEach(([stageName, sampleKey]) => {
+      const include = sampleKey === null ? true : sample[sampleKey] === true;
+      if (include) stageSideCounts[stageName][side] += 1;
+    });
+
+    if (Number.isFinite(sample.directionalModelTotal)) {
+      modelTotalSum += sample.directionalModelTotal;
+      modelTotalCount += 1;
+    }
+    if (Number.isFinite(sample.directionalRawModelTotal)) {
+      rawModelTotalSum += sample.directionalRawModelTotal;
+      rawModelTotalCount += 1;
+    }
+    if (Number.isFinite(sample.directionalMarketTotal)) {
+      marketTotalSum += sample.directionalMarketTotal;
+      marketTotalCount += 1;
+    }
+    if (Number.isFinite(sample.directionalRawEdge)) {
+      rawDeltaSum += sample.directionalRawEdge;
+      rawDeltaCount += 1;
+    }
+    if (Number.isFinite(sample.directionalEdge)) {
+      shrunkDeltaSum += sample.directionalEdge;
+      shrunkDeltaCount += 1;
+    }
+    if (sample.degradedMode === true) {
+      degradedCount += 1;
+    }
+
+    if (Number.isFinite(sample.directionalEdge)) {
+      sideComponents[side].edgeSum += sample.directionalEdge;
+      sideComponents[side].absEdgeSum += Math.abs(sample.directionalEdge);
+      sideComponents[side].edgeCount += 1;
+    }
+
+    if (Number.isFinite(sample.directionalConfidence)) {
+      sideComponents[side].confidenceSum += sample.directionalConfidence;
+      sideComponents[side].confidenceCount += 1;
+    }
+
+    if (Number.isFinite(sample.directionalF5Runs) && Number.isFinite(sample.directionalLateRuns)) {
+      const totalRuns = sample.directionalF5Runs + sample.directionalLateRuns;
+      if (totalRuns > 0) {
+        sideComponents[side].f5ShareSum += (sample.directionalF5Runs / totalRuns) * 100;
+        sideComponents[side].lateShareSum += (sample.directionalLateRuns / totalRuns) * 100;
+        sideComponents[side].shareCount += 1;
+      }
+    }
+  }
+
+  const preGateTotal = stageSideCounts.total_candidates_created.OVER + stageSideCounts.total_candidates_created.UNDER;
+  const postGateTotal = stageSideCounts.final_official_plays.OVER + stageSideCounts.final_official_plays.UNDER;
+
+  const dropBySide = {};
+  for (let idx = 1; idx < stageOrder.length; idx += 1) {
+    const prevStage = stageOrder[idx - 1][0];
+    const currStage = stageOrder[idx][0];
+    const prevOver = stageSideCounts[prevStage].OVER;
+    const prevUnder = stageSideCounts[prevStage].UNDER;
+    const currOver = stageSideCounts[currStage].OVER;
+    const currUnder = stageSideCounts[currStage].UNDER;
+
+    dropBySide[currStage] = {
+      OVER: computeStageDropPct(prevOver, currOver),
+      UNDER: computeStageDropPct(prevUnder, currUnder),
+    };
+  }
+
+  const avgModelTotal = modelTotalCount > 0 ? roundPct(modelTotalSum / modelTotalCount) : null;
+  const avgRawModelTotal = rawModelTotalCount > 0 ? roundPct(rawModelTotalSum / rawModelTotalCount) : null;
+  const avgMarketTotal = marketTotalCount > 0 ? roundPct(marketTotalSum / marketTotalCount) : null;
+  const avgRawDelta = rawDeltaCount > 0 ? roundPct(rawDeltaSum / rawDeltaCount) : null;
+  const avgShrunkDelta = shrunkDeltaCount > 0 ? roundPct(shrunkDeltaSum / shrunkDeltaCount) : null;
+  const componentAverages = {
+    OVER: {
+      average_edge: sideComponents.OVER.edgeCount > 0
+        ? roundPct(sideComponents.OVER.edgeSum / sideComponents.OVER.edgeCount)
+        : null,
+      average_abs_edge: sideComponents.OVER.edgeCount > 0
+        ? roundPct(sideComponents.OVER.absEdgeSum / sideComponents.OVER.edgeCount)
+        : null,
+      average_confidence: sideComponents.OVER.confidenceCount > 0
+        ? roundPct(sideComponents.OVER.confidenceSum / sideComponents.OVER.confidenceCount)
+        : null,
+      average_f5_share_pct: sideComponents.OVER.shareCount > 0
+        ? roundPct(sideComponents.OVER.f5ShareSum / sideComponents.OVER.shareCount)
+        : null,
+      average_late_share_pct: sideComponents.OVER.shareCount > 0
+        ? roundPct(sideComponents.OVER.lateShareSum / sideComponents.OVER.shareCount)
+        : null,
+    },
+    UNDER: {
+      average_edge: sideComponents.UNDER.edgeCount > 0
+        ? roundPct(sideComponents.UNDER.edgeSum / sideComponents.UNDER.edgeCount)
+        : null,
+      average_abs_edge: sideComponents.UNDER.edgeCount > 0
+        ? roundPct(sideComponents.UNDER.absEdgeSum / sideComponents.UNDER.edgeCount)
+        : null,
+      average_confidence: sideComponents.UNDER.confidenceCount > 0
+        ? roundPct(sideComponents.UNDER.confidenceSum / sideComponents.UNDER.confidenceCount)
+        : null,
+      average_f5_share_pct: sideComponents.UNDER.shareCount > 0
+        ? roundPct(sideComponents.UNDER.f5ShareSum / sideComponents.UNDER.shareCount)
+        : null,
+      average_late_share_pct: sideComponents.UNDER.shareCount > 0
+        ? roundPct(sideComponents.UNDER.lateShareSum / sideComponents.UNDER.shareCount)
+        : null,
+    },
+  };
+
+  return {
+    sample_size: directional.length,
+    window_size: MLB_FULL_GAME_DIRECTIONAL_FUNNEL_WINDOW,
+    averages: {
+      average_model_total: avgModelTotal,
+      average_model_total_raw: avgRawModelTotal,
+      average_market_total: avgMarketTotal,
+      average_proj_minus_line_raw: avgRawDelta,
+      average_proj_minus_line_shrunk: avgShrunkDelta,
+      degraded_share: directional.length > 0
+        ? roundPct((degradedCount / directional.length) * 100)
+        : 0,
+    },
+    pre_gate: {
+      over_count: stageSideCounts.total_candidates_created.OVER,
+      under_count: stageSideCounts.total_candidates_created.UNDER,
+      over_pct: preGateTotal > 0
+        ? roundPct((stageSideCounts.total_candidates_created.OVER / preGateTotal) * 100)
+        : 0,
+      under_pct: preGateTotal > 0
+        ? roundPct((stageSideCounts.total_candidates_created.UNDER / preGateTotal) * 100)
+        : 0,
+    },
+    post_gate: {
+      over_count: stageSideCounts.final_official_plays.OVER,
+      under_count: stageSideCounts.final_official_plays.UNDER,
+      over_pct: postGateTotal > 0
+        ? roundPct((stageSideCounts.final_official_plays.OVER / postGateTotal) * 100)
+        : 0,
+      under_pct: postGateTotal > 0
+        ? roundPct((stageSideCounts.final_official_plays.UNDER / postGateTotal) * 100)
+        : 0,
+    },
+    stage_side_counts: stageSideCounts,
+    stage_drop_pct_by_side: dropBySide,
+    side_component_averages: componentAverages,
   };
 }
 
@@ -738,9 +1349,7 @@ function buildMlbFullGameSuppressionFunnelReport(samples = []) {
   for (let idx = 1; idx < stageOrder.length; idx += 1) {
     const prev = counts[stageOrder[idx - 1]];
     const curr = counts[stageOrder[idx]];
-    dropPct[stageOrder[idx]] = prev > 0
-      ? roundPct(((prev - curr) / prev) * 100)
-      : 0;
+    dropPct[stageOrder[idx]] = computeStageDropPct(prev, curr);
   }
 
   const topSuppressors = Object.entries(suppressorCounts)
@@ -920,14 +1529,63 @@ function deriveMlbExecutionEnvelope({
   };
 }
 
-function resolveSnapshotAgeMs(oddsSnapshot, nowMs = Date.now()) {
-  const capturedAt = oddsSnapshot?.captured_at ?? oddsSnapshot?.fetched_at ?? null;
-  if (!capturedAt) return null;
+function resolveSnapshotTimestampMeta(oddsSnapshot, payload, nowMs = Date.now()) {
+  const nowIso = new Date(nowMs).toISOString();
+  try {
+    const capturedAt = oddsSnapshot?.captured_at ?? oddsSnapshot?.fetched_at ?? null;
+    const pulledAt = oddsSnapshot?.pulled_at ?? null;
+    const updatedAt = oddsSnapshot?.updated_at ?? null;
+    const resolution = resolveSnapshotAge(
+      {
+        captured_at: capturedAt,
+        pulled_at: pulledAt,
+        updated_at: updatedAt,
+      },
+      {
+        snapshotId: oddsSnapshot?.id ?? null,
+        sport: payload?.sport ?? 'MLB',
+        gameId: oddsSnapshot?.game_id ?? payload?.game_id ?? null,
+        nowMs,
+      },
+    );
 
-  const capturedAtMs = new Date(capturedAt).getTime();
-  if (!Number.isFinite(capturedAtMs)) return null;
+    const snapshotTimestamp = {
+      captured_at: capturedAt,
+      pulled_at: pulledAt,
+      updated_at: updatedAt,
+      resolved_timestamp: resolution.resolved_timestamp,
+      resolved_source: resolution.source_field,
+      resolved_age_ms: resolution.resolved_age_ms,
+    };
 
-  return Math.max(0, nowMs - capturedAtMs);
+    return { resolution, snapshotTimestamp };
+  } catch (error) {
+    const errorMessage = error?.message || String(error);
+    console.warn(
+      `[MLBModel] Snapshot timestamp resolver failed; falling back to now: ${errorMessage}`,
+    );
+    return {
+      resolution: {
+        resolved_timestamp: nowIso,
+        resolved_age_ms: 0,
+        source_field: 'now',
+        status: 'RESOLUTION_ERROR',
+        fields_inspected: {},
+        fallback_chain_executed: true,
+        violations: [`resolver_error:${errorMessage}`],
+        diagnostic: null,
+      },
+      snapshotTimestamp: {
+        captured_at: null,
+        pulled_at: null,
+        updated_at: null,
+        resolved_timestamp: nowIso,
+        resolved_source: 'now',
+        resolved_age_ms: 0,
+        resolver_error: errorMessage,
+      },
+    };
+  }
 }
 
 function toExecutionGatePassReasonCode(reason) {
@@ -986,6 +1644,57 @@ function resolveMlbMoneylineExecutionInputs({
   };
 }
 
+function resolveMlbTotalExecutionInputs({
+  prediction,
+  projectedTotal,
+  marketLine,
+  overPrice,
+  underPrice,
+  pOver,
+  pUnder,
+}) {
+  const side = String(prediction || '').toUpperCase();
+  const selectedPrice =
+    side === 'OVER'
+      ? toFiniteNumber(overPrice)
+      : side === 'UNDER'
+        ? toFiniteNumber(underPrice)
+        : null;
+  const pFair =
+    side === 'OVER'
+      ? toFiniteNumber(pOver)
+      : side === 'UNDER'
+        ? toFiniteNumber(pUnder)
+        : null;
+  const pImplied =
+    selectedPrice !== null
+      ? americanOddsToImpliedProbability(selectedPrice)
+      : null;
+  const edge =
+    pFair !== null && pImplied !== null
+      ? pFair - pImplied
+      : null;
+  const edgePoints =
+    Number.isFinite(projectedTotal) && Number.isFinite(marketLine)
+      ? projectedTotal - marketLine
+      : null;
+
+  return {
+    edge,
+    edge_pct: edge,
+    edge_points: edgePoints,
+    price: selectedPrice,
+    p_fair: pFair,
+    p_implied: pImplied,
+    model_prob: pFair,
+  };
+}
+
+function isMlbMoneylineSelection(selection) {
+  const side = String(selection || '').toUpperCase();
+  return side === 'HOME' || side === 'AWAY';
+}
+
 function resolveMlbMarketGroup(driver = {}) {
   const market = String(driver.market || '').toLowerCase();
   if (market === 'full_game_total') return MLB_MARKET_GROUP.FULL_GAME_TOTAL;
@@ -994,6 +1703,37 @@ function resolveMlbMarketGroup(driver = {}) {
   if (market === 'f5_ml') return MLB_MARKET_GROUP.F5_ML;
   if (market.startsWith('pitcher_k_')) return MLB_MARKET_GROUP.PITCHER_K;
   return MLB_MARKET_GROUP.OTHER_PROP;
+}
+
+function isMlbMoneylinePayload(payload) {
+  if (!payload || typeof payload !== 'object') return false;
+  const marketType = String(payload.market_type || '').toUpperCase();
+  const recommendedBetType = String(payload.recommended_bet_type || '').toUpperCase();
+  return marketType === 'MONEYLINE' || recommendedBetType === 'MONEYLINE';
+}
+
+function emitMlbMoneylineSuppressionLog({
+  payload,
+  layer,
+  reason,
+  cardStatus,
+  detail = null,
+}) {
+  if (!isMlbMoneylinePayload(payload)) return;
+  console.log(
+    JSON.stringify({
+      timestamp: new Date().toISOString(),
+      event: 'moneyline_suppression',
+      layer,
+      reason: canonicalizeMoneylineSuppressionReason(reason, layer),
+      game_id: payload?.game_id ?? null,
+      sport: String(payload?.sport || 'MLB').toLowerCase(),
+      market: 'moneyline',
+      card_id: payload?.source_card_id ?? payload?.game_id ?? null,
+      card_status: cardStatus ?? payload?.execution_status ?? 'BLOCKED',
+      detail,
+    }),
+  );
 }
 
 function resolveMlbTrustClass(marketGroup) {
@@ -1039,7 +1779,13 @@ function applyExecutionGateToMlbPayload(payload, { oddsSnapshot, nowMs = Date.no
     String(payload.action || '').toUpperCase() === 'PASS' ||
     String(payload.classification || '').toUpperCase() === 'PASS';
   const resolvedModelStatus = String(payload.model_status || 'MODEL_OK').toUpperCase();
-  const snapshotAgeMs = resolveSnapshotAgeMs(oddsSnapshot, nowMs);
+  const { resolution: snapshotResolution, snapshotTimestamp } = resolveSnapshotTimestampMeta(
+    oddsSnapshot,
+    payload,
+    nowMs,
+  );
+  const snapshotAgeMs = snapshotResolution?.resolved_age_ms ?? null;
+  payload.snapshot_timestamp = snapshotTimestamp;
   if (executionStatus !== 'EXECUTABLE' || alreadyPass) {
     const earlyExitDropReasonCode = alreadyPass
       ? 'NOT_BET_ELIGIBLE'
@@ -1053,14 +1799,63 @@ function applyExecutionGateToMlbPayload(payload, { oddsSnapshot, nowMs = Date.no
       blocked_by: [earlyExitDropReasonCode],
       model_status: resolvedModelStatus,
       snapshot_age_ms: snapshotAgeMs,
+      freshness_decision: null,
       evaluated_at: new Date(nowMs).toISOString(),
       drop_reason: {
         drop_reason_code: earlyExitDropReasonCode,
         drop_reason_layer: 'worker_gate',
       },
     };
+    payload.execution_envelope = {
+      snapshot_id: oddsSnapshot?.id ?? null,
+      snapshot_timestamp: snapshotTimestamp,
+      freshness_decision: null,
+    };
+    emitMlbMoneylineSuppressionLog({
+      payload,
+      layer: 'MODEL',
+      reason: earlyExitDropReasonCode,
+      cardStatus: executionStatus || 'BLOCKED',
+      detail: alreadyPass ? 'already_pass' : 'not_executable_path',
+    });
     return { evaluated: false, blocked: false };
   }
+
+  // WI-0944: MLB full-game ML uses relaxed execution thresholds.
+  // The model's confidence is structurally capped at 5-6/10 and raw edges of
+  // 6-11pp are meaningful signal. A positive ML edge must be the primary
+  // decision driver; support/confidence can downgrade tier but must not hard-veto.
+  // Large edge (rawEdge >= 0.06): near-bypass thresholds so conf=5/10 cannot
+  // nullify a +9-11pp model call.
+  // Standard relaxed (rawEdge < 0.06): lower but still meaningful floors.
+  const _rawEdgeForGate = Number.isFinite(payload.edge) ? payload.edge : 0;
+  const _sportToken = String(payload.sport || 'MLB').toUpperCase();
+  const _cardTypeToken = String(payload.card_type || '').toLowerCase();
+  const _marketTypeToken = String(payload.market_type || '').toUpperCase();
+  const _recommendedBetTypeToken = String(payload.recommended_bet_type || '').toUpperCase();
+  const _periodToken = String(payload.period ?? payload.market?.period ?? '').toUpperCase();
+  const _cardTitleToken = String(payload.card_title || payload.title || '').toUpperCase();
+  const _isFullGamePeriod =
+    _periodToken === '' ||
+    _periodToken === 'NA' ||
+    _periodToken === 'FULL_GAME' ||
+    _periodToken === 'GAME';
+  const _isMlbMoneylineLike =
+    _marketTypeToken === 'MONEYLINE' &&
+    (_recommendedBetTypeToken === 'MONEYLINE' || _cardTitleToken.includes('FULL GAME ML'));
+  const _isMlbFullGameMl =
+    _sportToken === 'MLB' &&
+    (
+      _cardTypeToken === 'mlb-full-game-ml' ||
+      _cardTypeToken === 'mlb-full-game' ||
+      (_isMlbMoneylineLike && _isFullGamePeriod)
+    );
+  const _mlbGateOverrides = _isMlbFullGameMl
+    ? {
+        minNetEdge: _rawEdgeForGate >= 0.06 ? 0.01 : 0.02,
+        minConfidence: _rawEdgeForGate >= 0.06 ? 0.45 : 0.50,
+      }
+    : {};
 
   const gateResult = evaluateExecution({
     modelStatus: resolvedModelStatus,
@@ -1073,20 +1868,96 @@ function applyExecutionGateToMlbPayload(payload, { oddsSnapshot, nowMs = Date.no
     marketType: payload.market_type ?? null,
     period: payload.period ?? payload.market?.period ?? null,
     cardType: payload.card_type ?? null,
+    ..._mlbGateOverrides,
   });
+
+  const edgeOverrideEligible =
+    _isMlbFullGameMl &&
+    _rawEdgeForGate >= 0.06 &&
+    resolvedModelStatus === 'MODEL_OK';
+  const edgeOverrideBlockers = new Set([
+    'CONFIDENCE_BELOW_THRESHOLD',
+    'NET_EDGE_INSUFFICIENT',
+  ]);
+  const blockedByOnlySoftEdgeOrConfidence =
+    Array.isArray(gateResult.blocked_by) &&
+    gateResult.blocked_by.length > 0 &&
+    gateResult.blocked_by.every((reason) =>
+      edgeOverrideBlockers.has(String(reason || '').split(':')[0]),
+    );
+  const applyHighEdgeOverride =
+    !gateResult.shouldBet && edgeOverrideEligible && blockedByOnlySoftEdgeOrConfidence;
+
+  const gateShouldBet = applyHighEdgeOverride ? true : gateResult.shouldBet;
+  const gateBlockedBy = applyHighEdgeOverride ? [] : gateResult.blocked_by;
+  const gateDropReason = applyHighEdgeOverride ? null : gateResult.drop_reason;
+  const reasonCodes = Array.isArray(payload.reason_codes) ? payload.reason_codes : [];
+  const hasWeakSupportSignal = reasonCodes.some((code) => {
+    const token = String(code || '').toUpperCase();
+    return token === 'SOFT_WEAK_DRIVER_SUPPORT' || token === 'PASS_DRIVER_SUPPORT_WEAK';
+  });
+  const hasLowConfidenceSignal = Number.isFinite(payload.confidence) && payload.confidence < 0.55;
+  const downgradeHighEdgeToLean =
+    _isMlbFullGameMl &&
+    _rawEdgeForGate >= 0.06 &&
+    resolvedModelStatus === 'MODEL_OK' &&
+    gateShouldBet &&
+    (hasWeakSupportSignal || hasLowConfidenceSignal);
 
   payload.execution_gate = {
     evaluated: true,
-    should_bet: gateResult.shouldBet,
+    should_bet: gateShouldBet,
     net_edge: gateResult.netEdge,
-    blocked_by: gateResult.blocked_by,
+    blocked_by: gateBlockedBy,
     model_status: resolvedModelStatus,
     snapshot_age_ms: snapshotAgeMs,
+    freshness_decision: gateResult.freshness_decision || null,
     evaluated_at: new Date(nowMs).toISOString(),
-    drop_reason: gateResult.drop_reason,
+    drop_reason: gateDropReason,
+    overridden_by_edge: applyHighEdgeOverride || downgradeHighEdgeToLean,
+    override_context: applyHighEdgeOverride || downgradeHighEdgeToLean
+      ? {
+          raw_edge: _rawEdgeForGate,
+          threshold: 0.06,
+          original_blocked_by: gateResult.blocked_by,
+          resolution: 'DOWNGRADED_TO_LEAN',
+        }
+      : null,
+  };
+  payload.execution_envelope = {
+    snapshot_id: oddsSnapshot?.id ?? null,
+    snapshot_timestamp: snapshotTimestamp,
+    freshness_decision: gateResult.freshness_decision || null,
   };
 
-  if (!gateResult.shouldBet) {
+  if (applyHighEdgeOverride || downgradeHighEdgeToLean) {
+    payload.status = 'LEAN';
+    payload.action = 'LEAN';
+    payload.classification = 'LEAN';
+    payload.ev_passed = true;
+    payload.execution_status = 'EXECUTABLE';
+    payload.actionable = true;
+    payload.publish_ready = true;
+    payload.pass_reason_code = null;
+    payload.reason_codes = Array.from(
+      new Set(
+        (Array.isArray(payload.reason_codes) ? payload.reason_codes : []).filter(
+          (code) => !String(code || '').startsWith('PASS_EXECUTION_GATE_'),
+        ),
+      ),
+    ).sort();
+    payload._publish_state = {
+      ...(payload._publish_state && typeof payload._publish_state === 'object'
+        ? payload._publish_state
+        : {}),
+      publish_ready: true,
+      emit_allowed: true,
+      execution_status: 'EXECUTABLE',
+      block_reason: null,
+    };
+  }
+
+  if (!gateShouldBet) {
     const passReasonCode = toExecutionGatePassReasonCode(gateResult.reason);
     payload.status = 'PASS';
     payload.action = 'PASS';
@@ -1108,12 +1979,141 @@ function applyExecutionGateToMlbPayload(payload, { oddsSnapshot, nowMs = Date.no
       execution_status: 'BLOCKED',
       block_reason: gateResult.reason,
     };
+    emitMlbMoneylineSuppressionLog({
+      payload,
+      layer: 'GATE',
+      reason: gateResult.reason,
+      cardStatus: 'BLOCKED',
+      detail: gateResult.drop_reason || null,
+    });
   }
 
   return {
     evaluated: true,
-    blocked: !gateResult.shouldBet,
+    blocked: !gateShouldBet,
   };
+}
+
+function fetchLatestOddsSnapshotForGame(gameId) {
+  if (!gameId) return null;
+  return getDatabase()
+    .prepare(
+      `SELECT *
+       FROM odds_snapshots
+       WHERE game_id = ?
+       ORDER BY captured_at DESC
+       LIMIT 1`,
+    )
+    .get(gameId);
+}
+
+async function applyExecutionGateWithStaleRecoveryToMlbPayload(
+  payload,
+  {
+    oddsSnapshot,
+    nowMs = Date.now(),
+    gameId,
+    slotStartIso,
+    modelRunUuid,
+    attemptCount = 0,
+    refreshOddsFn = refreshStaleOdds,
+    fetchLatestSnapshotFn = null,
+    dedupCache = staleRecoveryDedupCache,
+    logger = console,
+  } = {},
+) {
+  const retrySeed = captureMlbExecutionRetrySeed(payload);
+  const initialOutcome = applyExecutionGateToMlbPayload(payload, {
+    oddsSnapshot,
+    nowMs,
+  });
+  if (initialOutcome.blocked !== true) {
+    return initialOutcome;
+  }
+
+  const attemptDecision = shouldAttemptStaleRecoveryFromGate({
+    gate: payload.execution_gate,
+    sport: payload.sport || 'MLB',
+  });
+  if (!attemptDecision.shouldAttempt) {
+    return initialOutcome;
+  }
+  if (attemptCount >= STALE_RECOVERY_MAX_ATTEMPTS) {
+    logger.log('[MLBModel] stale recovery skipped: attempt count exceeded');
+    return initialOutcome;
+  }
+
+  const recoveryKey = buildStaleRecoveryKey({
+    sport: payload.sport || 'MLB',
+    gameId: gameId || payload.game_id,
+    slotStartIso: slotStartIso || payload.start_time_utc || oddsSnapshot?.game_time_utc,
+    modelRunUuid,
+  });
+  if (!claimStaleRecoveryKey(dedupCache, recoveryKey, nowMs)) {
+    logger.log(`[MLBModel] stale recovery dedup hit on key ${recoveryKey}`);
+    return initialOutcome;
+  }
+
+  const recoveryMeta = {
+    attempted: true,
+    triggered_at: new Date(nowMs).toISOString(),
+    refresh_executed: false,
+    refresh_snapshot_age_before_ms: payload.execution_gate?.snapshot_age_ms ?? null,
+    refresh_snapshot_age_after_ms: payload.execution_gate?.snapshot_age_ms ?? null,
+    refresh_duration_ms: null,
+    retry_executed: false,
+    retry_gate_result: payload.pass_reason_code || 'PASS_EXECUTION_GATE_BLOCKED',
+    final_status: payload.execution_status || 'BLOCKED',
+    attempt_count: 1,
+    dedup_key: recoveryKey,
+  };
+
+  const refreshStartedAt = Date.now();
+  try {
+    recoveryMeta.refresh_executed = true;
+    await refreshOddsFn({
+      jobKey: `pull_odds:${String(payload.sport || 'MLB').toLowerCase()}:emergency:${modelRunUuid || 'run'}`,
+      dryRun: false,
+    });
+    recoveryMeta.refresh_duration_ms = Date.now() - refreshStartedAt;
+  } catch (error) {
+    recoveryMeta.refresh_duration_ms = Date.now() - refreshStartedAt;
+    recoveryMeta.retry_gate_result = 'BLOCKED_AFTER_RETRY';
+    recoveryMeta.final_status = 'BLOCKED';
+    payload.stale_recovery = recoveryMeta;
+    logger.warn(`[MLBModel] stale recovery refresh failed: ${error.message}`);
+    return initialOutcome;
+  }
+
+  let latestSnapshot = oddsSnapshot;
+  if (typeof fetchLatestSnapshotFn === 'function') {
+    try {
+      latestSnapshot = (await fetchLatestSnapshotFn()) || oddsSnapshot;
+    } catch (error) {
+      logger.warn(`[MLBModel] stale recovery snapshot reload failed: ${error.message}`);
+    }
+  }
+
+  const refreshedAge = resolveSnapshotAge(
+    latestSnapshot,
+    `run_mlb_model:${String(payload.sport || 'MLB').toLowerCase()}:stale_recovery`,
+  );
+  recoveryMeta.refresh_snapshot_age_after_ms =
+    refreshedAge?.age_ms ?? payload.execution_gate?.snapshot_age_ms ?? null;
+
+  restoreMlbExecutionRetrySeed(payload, retrySeed);
+  recoveryMeta.retry_executed = true;
+  const retryNowMs = Number.isFinite(nowMs) ? nowMs : Date.now();
+  const retryOutcome = applyExecutionGateToMlbPayload(payload, {
+    oddsSnapshot: latestSnapshot,
+    nowMs: retryNowMs,
+  });
+  recoveryMeta.retry_gate_result = payload.execution_gate?.should_bet
+    ? 'PASS_EXECUTION_GATE'
+    : payload.pass_reason_code || 'BLOCKED_AFTER_RETRY';
+  recoveryMeta.final_status = payload.execution_status || (retryOutcome.blocked ? 'BLOCKED' : 'EXECUTABLE');
+  payload.stale_recovery = recoveryMeta;
+  return retryOutcome;
 }
 
 function assertMlbExecutionInvariant(payload) {
@@ -2526,11 +3526,21 @@ async function runMLBModel({
               },
             );
             if (f5MlResult) {
+              const normalizedSelection = String(
+                f5MlResult.prediction ?? '',
+              ).toUpperCase();
+              if (!isMlbMoneylineSelection(normalizedSelection)) {
+                console.log(
+                  '[MLBModel] F5 ML projection skipped (invalid selection prediction=' +
+                    normalizedSelection +
+                    ')',
+                );
+              } else {
               const confidence = f5MlResult.confidence / 10;
               const isStrongProjection = f5MlResult.ev_threshold_passed === true;
               f5MlDriverCard = {
                 market: 'f5_ml',
-                prediction: f5MlResult.prediction,
+                prediction: normalizedSelection,
                 confidence,
                 ev_threshold_passed: isStrongProjection,
                 status: isStrongProjection ? 'FIRE' : 'WATCH',
@@ -2551,6 +3561,7 @@ async function runMLBModel({
                 ml_f5_home: f5MlHomePrice,
                 ml_f5_away: f5MlAwayPrice,
               };
+              }
             }
           } else {
             console.log('[MLBModel] NO_F5_ML_PRICE_CONTEXT: ' + gameId + ' — F5 ML projection skipped (no dedicated F5 or full-game ML prices)');
@@ -2871,6 +3882,22 @@ async function runMLBModel({
                       : gameOddsSnapshot?.h2h_away,
                     rawEdge: driverDetail.edge,
                   })
+                : isFullGameTotal
+                  ? (() => {
+                      const fgCtx = resolveMlbFullGameTotalContext(gameOddsSnapshot);
+                      return resolveMlbTotalExecutionInputs({
+                        prediction: driver.prediction,
+                        projectedTotal:
+                          driver.projection?.projected_total ??
+                          driverDetail.projected ??
+                          null,
+                        marketLine: fgCtx.line,
+                        overPrice: fgCtx.over_price,
+                        underPrice: fgCtx.under_price,
+                        pOver: driver.projection?.p_over ?? null,
+                        pUnder: driver.projection?.p_under ?? null,
+                      });
+                    })()
                 : {}),
               // Projection-only cards are explicitly tagged for downstream separation.
               // projection_floor is only set when the driver itself is a synthetic floor driver.
@@ -2952,6 +3979,7 @@ async function runMLBModel({
             });
             driver.execution_envelope = executionEnvelope;
             Object.assign(payloadData, executionEnvelope);
+            payloadData.card_type = cardType;
             payloadData.market_contract = buildMlbMarketContract({
               driver,
               oddsSnapshot: gameOddsSnapshot,
@@ -2988,18 +4016,30 @@ async function runMLBModel({
                 },
               });
             } else {
+              const projectionOnlySnapshotMeta = resolveSnapshotTimestampMeta(
+                gameOddsSnapshot,
+                payloadData,
+                Date.now(),
+              );
+              payloadData.snapshot_timestamp = projectionOnlySnapshotMeta.snapshotTimestamp;
               payloadData.execution_gate = {
                 evaluated: false,
                 should_bet: null,
                 net_edge: null,
                 blocked_by: ['PROJECTION_ONLY_MARKET'],
                 model_status: String(payloadData.model_status || 'MODEL_OK').toUpperCase(),
-                snapshot_age_ms: resolveSnapshotAgeMs(gameOddsSnapshot),
+                snapshot_age_ms: projectionOnlySnapshotMeta.resolution?.resolved_age_ms ?? null,
+                freshness_decision: null,
                 evaluated_at: new Date().toISOString(),
                 drop_reason: {
                   drop_reason_code: 'PROJECTION_ONLY_MARKET',
                   drop_reason_layer: 'worker_gate',
                 },
+              };
+              payloadData.execution_envelope = {
+                snapshot_id: gameOddsSnapshot?.id ?? null,
+                snapshot_timestamp: projectionOnlySnapshotMeta.snapshotTimestamp,
+                freshness_decision: null,
               };
             }
             assertMlbExecutionInvariant(payloadData);
@@ -3120,6 +4160,24 @@ async function runMLBModel({
             }
             insertCardPayload(card);
 
+            if (isFullGameTotal && payloadData?.projection?.component_breakdown) {
+              const modelTotal = Number(payloadData?.projection?.projected_total);
+              const marketTotal = Number(payloadData?.odds_context?.total ?? payloadData?.line);
+              const edge = Number.isFinite(modelTotal) && Number.isFinite(marketTotal)
+                ? modelTotal - marketTotal
+                : null;
+              console.log(
+                `[MLB_PROJECTION_COMPONENTS] ${JSON.stringify({
+                  gameId,
+                  prediction: driver.prediction,
+                  model_total: Number.isFinite(modelTotal) ? modelTotal : null,
+                  market_total: Number.isFinite(marketTotal) ? marketTotal : null,
+                  edge,
+                  components: payloadData.projection.component_breakdown,
+                })}`,
+              );
+            }
+
                         _cardLogs.push(`  ✅ ${gameId} [${cardType}]: ${driver.prediction} (${(driver.confidence * 100).toFixed(0)}%)`);
           }
           });
@@ -3168,8 +4226,42 @@ async function runMLBModel({
       const suppressionFunnel = buildMlbFullGameSuppressionFunnelReport(
         mlbFullGameFunnelSamples,
       );
+      const directionalFunnel = buildMlbFullGameDirectionalFunnelReport(
+        mlbFullGameFunnelSamples,
+      );
       console.log(
         `[MLB_SUPPRESSION_FUNNEL] ${JSON.stringify(suppressionFunnel)}`,
+      );
+      console.log(
+        `[MLB_DIRECTIONAL_FUNNEL] ${JSON.stringify(directionalFunnel)}`,
+      );
+      if (directionalFunnel.sample_size >= MLB_FULL_GAME_DIRECTIONAL_SKEW_ALERT_MIN_SAMPLES) {
+        const preOver = Number(directionalFunnel?.pre_gate?.over_pct || 0);
+        const preUnder = Number(directionalFunnel?.pre_gate?.under_pct || 0);
+        const postOver = Number(directionalFunnel?.post_gate?.over_pct || 0);
+        const postUnder = Number(directionalFunnel?.post_gate?.under_pct || 0);
+        if (
+          preOver > MLB_FULL_GAME_DIRECTIONAL_SKEW_ALERT_PCT ||
+          preUnder > MLB_FULL_GAME_DIRECTIONAL_SKEW_ALERT_PCT ||
+          postOver > MLB_FULL_GAME_DIRECTIONAL_SKEW_ALERT_PCT ||
+          postUnder > MLB_FULL_GAME_DIRECTIONAL_SKEW_ALERT_PCT
+        ) {
+          console.warn(
+            `[DIRECTIONAL_SKEW_ALERT] ${JSON.stringify({
+              market: 'FULL_GAME_TOTAL',
+              sample_size: directionalFunnel.sample_size,
+              pre_gate: directionalFunnel.pre_gate,
+              post_gate: directionalFunnel.post_gate,
+              averages: directionalFunnel.averages,
+            })}`,
+          );
+        }
+      }
+      
+      // Killshot audit: show exactly where overs die
+      const killshotAudit = buildMlbKillshotGateAudit(mlbFullGameFunnelSamples);
+      console.log(
+        `[MLB_KILLSHOT_GATE_AUDIT] ${JSON.stringify(killshotAudit)}`,
       );
 
       if (errors.length > 0) {
@@ -3239,9 +4331,14 @@ module.exports = {
   filterSnapshotsByGameIds,
   evaluatePitcherPropPublishability,
   deriveMlbExecutionEnvelope,
+  resolveMlbTotalExecutionInputs,
   resolveMlbMoneylineExecutionInputs,
   assertMlbExecutionInvariant,
   applyExecutionGateToMlbPayload,
+  applyExecutionGateWithStaleRecoveryToMlbPayload,
+  shouldAttemptStaleRecoveryFromGate,
+  buildStaleRecoveryKey,
+  claimStaleRecoveryKey,
   // Exported for WI-0596 unit tests
   checkPitcherFreshness,
   validatePitcherKInputs,
@@ -3256,8 +4353,11 @@ module.exports = {
   MIN_MLB_GAMES_FOR_RECAL,
   // Exported for WI-0944 funnel instrumentation
   buildMlbFullGameSuppressionFunnelReport,
+  buildMlbFullGameDirectionalFunnelReport,
+  buildMlbKillshotGateAudit,
   evaluateMlbFullGameFunnelCandidate,
   getMlbFullGameMarketKey,
   normalizeReasonCodeSet,
   MLB_FULL_GAME_FUNNEL_WINDOW,
+  MLB_FULL_GAME_DIRECTIONAL_FUNNEL_WINDOW,
 };

@@ -236,4 +236,24 @@ console.log('🧪 final_market_decision contract tests');
   assert.equal(decision?.show_model_context, true);
 }
 
+{
+  const game = buildGame({
+    cardType: 'mlb-full-game',
+    reason_codes: ['MODEL_DEGRADED_INPUTS'],
+    action: 'HOLD',
+    classification: 'LEAN',
+    status: 'WATCH',
+  });
+  game.sport = 'MLB';
+  game.true_play = game.plays[0];
+  delete game.plays[0].decision_v2;
+
+  const card = transformToGameCard(game);
+  const decision = card.play?.final_market_decision;
+  assert.equal(decision?.surfaced_status, 'SLIGHT EDGE');
+  assert.equal(decision?.verification_state, 'VERIFIED');
+  assert.equal(decision?.certainty_state, 'CONFIRMED');
+  assert.equal(decision?.show_model_context, true);
+}
+
 console.log('✅ final_market_decision contract tests passed');

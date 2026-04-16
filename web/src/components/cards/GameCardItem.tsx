@@ -1246,9 +1246,9 @@ export default function GameCardItem({
                       </div>
                     ))
                   ) : (
-                    fallbackDecision.topContributors.map(({ driver, polarity }) => (
+                    fallbackDecision.topContributors.map(({ driver, polarity }, idx) => (
                       <div
-                        key={driverRowKey(driver)}
+                        key={`${driverRowKey(driver)}-${idx}`}
                         className="bg-white/5 rounded-md px-3 py-2"
                       >
                         <div className="flex items-center gap-2 flex-wrap mb-1">
@@ -1323,9 +1323,9 @@ export default function GameCardItem({
                       </button>
                       {showAllDrivers && (
                         <div className="space-y-2">
-                          {fallbackDecision.allDrivers.map((driver) => (
+                          {fallbackDecision.allDrivers.map((driver, idx) => (
                             <div
-                              key={`all-${driverRowKey(driver)}`}
+                              key={`all-${driverRowKey(driver)}-${idx}`}
                               className="bg-white/5 rounded-md px-3 py-2"
                             >
                               <div className="flex items-center gap-2 flex-wrap mb-1">

@@ -1,6 +1,10 @@
 'use strict';
 
 const { isMarketCalibrationEnabled } = require('../calibration/calibration-gate');
+const {
+  getEffectiveContract,
+  parseContractFromEnv,
+} = require('./execution-gate-freshness-contract');
 
 /**
  * Map the primary blocked_by entry to the bounded drop reason taxonomy.
@@ -25,11 +29,69 @@ function mapBlockedByToDropReasonCode(blocked_by) {
 
 const VIG_COST_STANDARD = 0.045;
 const SLIPPAGE_ESTIMATE = 0.005;
-// Default: 5 minutes for the automated pipeline (odds pull → model run back-to-back).
-// Set EXECUTION_GATE_MAX_SNAPSHOT_AGE_MS env var (ms) to override for manual recovery runs
-// e.g. EXECUTION_GATE_MAX_SNAPSHOT_AGE_MS=3600000 allows up to 1 hour.
-const MAX_SNAPSHOT_AGE_MS =
-  parseInt(process.env.EXECUTION_GATE_MAX_SNAPSHOT_AGE_MS, 10) || 5 * 60 * 1000;
+
+// Cache env var overrides (parse once at module load)
+let cachedEnvOverrides = null;
+
+/**
+ * Evaluate freshness tier for a snapshot (WI-0950).
+ *
+ * Three tiers based on freshness contract:
+ * - FRESH: age <= cadence (fully trusted)
+ * - STALE_VALID: cadence < age <= hardMax (allowed if flag set, prevents silent edge loss)
+ * - EXPIRED: age > hardMax (always block)
+ *
+ * @param {number} snapshotAgeMs - Snapshot age in milliseconds
+ * @param {object} contract - Freshness contract (cadenceMinutes, graceMultiplier, hardMaxMinutes, allowStaleIfNoNewOdds)
+ * @returns { { tier: string, blockedByFreshness: boolean, reason: string, metadata: object } }
+ */
+function evaluateFreshnessTier(snapshotAgeMs, contract) {
+  if (!Number.isFinite(snapshotAgeMs) || !contract) {
+    return {
+      tier: 'UNKNOWN',
+      blockedByFreshness: false,
+      reason: 'snapshot_age_or_contract_invalid',
+      metadata: {},
+    };
+  }
+
+  const cadenceMs = contract.cadenceMinutes * 60_000;
+  const thresholdMs = cadenceMs * contract.graceMultiplier;
+  const hardMaxMs = contract.hardMaxMinutes * 60_000;
+
+  let tier = 'UNKNOWN';
+  let blockedByFreshness = false;
+  let reason = '';
+
+  if (snapshotAgeMs <= cadenceMs) {
+    // FRESH: within cadence window
+    tier = 'FRESH';
+    blockedByFreshness = false;
+    reason = 'within_cadence_window';
+  } else if (snapshotAgeMs <= hardMaxMs) {
+    // STALE_VALID: between cadence and hardMax
+    tier = 'STALE_VALID';
+    blockedByFreshness = !contract.allowStaleIfNoNewOdds;
+    reason = blockedByFreshness ? 'stale_beyond_grace' : 'within_cadence_grace_window';
+  } else {
+    // EXPIRED: beyond hardMax
+    tier = 'EXPIRED';
+    blockedByFreshness = true;
+    reason = 'expired_beyond_hardmax';
+  }
+
+  return {
+    tier,
+    blockedByFreshness,
+    reason,
+    metadata: {
+      snapshot_age_ms: snapshotAgeMs,
+      cadence_ms: cadenceMs,
+      threshold_ms: thresholdMs,
+      hard_max_ms: hardMaxMs,
+    },
+  };
+}
 
 /**
  * Evaluate whether a model output is executable as a live bet.
@@ -51,7 +113,7 @@ const MAX_SNAPSHOT_AGE_MS =
  * @param {number} [params.slippageCost]
  * @param {number} [params.minNetEdge]
  * @param {number} [params.minConfidence]
- * @returns {{ shouldBet: boolean, should_bet: boolean, reason: string, block_reason: string|null, netEdge: number|null, blocked_by: string[] }}
+ * @returns {{ shouldBet: boolean, should_bet: boolean, reason: string, block_reason: string|null, netEdge: number|null, blocked_by: string[], freshness_decision: object }}
  */
 function evaluateExecution(params) {
   const {
@@ -70,10 +132,6 @@ function evaluateExecution(params) {
     vigCost = VIG_COST_STANDARD,
     slippageCost = SLIPPAGE_ESTIMATE,
     minNetEdge = 0.025,
-    // COUPLING: input-gate.js DEGRADED_CONSTRAINTS.MAX_CONFIDENCE = 0.55.
-    // These two values must stay in sync: DEGRADED plays are capped at 0.55, so
-    // this floor must be <=0.55 for DEGRADED plays to reach the UI as WATCH-tier.
-    // If you change DEGRADED_CONSTRAINTS.MAX_CONFIDENCE, update this value too.
     minConfidence = 0.55,
   } = params;
 
@@ -81,6 +139,15 @@ function evaluateExecution(params) {
   const hasRawEdge = rawEdge !== null && rawEdge !== undefined && Number.isFinite(rawEdge);
   const hasConfidence = confidence !== null && confidence !== undefined && Number.isFinite(confidence);
   const hasSnapshotAge = snapshotAgeMs !== null && snapshotAgeMs !== undefined && Number.isFinite(snapshotAgeMs);
+
+  // Initialize freshness decision (non-blocking addition)
+  let freshness_decision = {
+    snapshot_age_ms: snapshotAgeMs,
+    sport: sport || 'unknown',
+    tier: 'UNKNOWN',
+    blocked_by_freshness: false,
+    reason: 'no_snapshot_age',
+  };
 
   if (modelStatus !== 'MODEL_OK') {
     blocked_by.push(`MODEL_STATUS_${modelStatus}`);
@@ -100,8 +167,40 @@ function evaluateExecution(params) {
     blocked_by.push(`CONFIDENCE_BELOW_THRESHOLD:${confidence.toFixed(3)}`);
   }
 
-  if (hasSnapshotAge && snapshotAgeMs > MAX_SNAPSHOT_AGE_MS) {
-    blocked_by.push(`STALE_SNAPSHOT:${Math.round(snapshotAgeMs / 1000)}s`);
+  // Freshness evaluation (three-tier logic per WI-0950)
+  if (hasSnapshotAge && sport) {
+    if (!cachedEnvOverrides) {
+      cachedEnvOverrides = parseContractFromEnv();
+    }
+    const contract = getEffectiveContract(sport, cachedEnvOverrides);
+    const freshnessTier = evaluateFreshnessTier(snapshotAgeMs, contract);
+
+    freshness_decision = {
+      snapshot_age_ms: snapshotAgeMs,
+      sport,
+      cadence_ms: freshnessTier.metadata.cadence_ms,
+      threshold_ms: freshnessTier.metadata.threshold_ms,
+      tier: freshnessTier.tier,
+      blocked_by_freshness: freshnessTier.blockedByFreshness,
+      reason: freshnessTier.reason,
+    };
+
+    if (freshnessTier.blockedByFreshness) {
+      if (freshnessTier.tier === 'EXPIRED') {
+        blocked_by.push(`STALE_SNAPSHOT:EXPIRED_HARDMAX:${Math.round(snapshotAgeMs / 1000)}s`);
+      } else if (freshnessTier.tier === 'STALE_VALID') {
+        blocked_by.push(`STALE_SNAPSHOT:VALID_WITHIN_CADENCE:${Math.round(snapshotAgeMs / 1000)}s`);
+      }
+    }
+  } else if (hasSnapshotAge && !sport) {
+    // Legacy fallback: if sport not provided, use old 5-minute logic for backward compatibility
+    const LEGACY_MAX_SNAPSHOT_AGE_MS = 5 * 60 * 1000;
+    if (snapshotAgeMs > LEGACY_MAX_SNAPSHOT_AGE_MS) {
+      blocked_by.push(`STALE_SNAPSHOT:${Math.round(snapshotAgeMs / 1000)}s`);
+      freshness_decision.tier = 'EXPIRED';
+      freshness_decision.blocked_by_freshness = true;
+      freshness_decision.reason = 'legacy_5min_threshold';
+    }
   }
 
   if (
@@ -138,6 +237,7 @@ function evaluateExecution(params) {
     block_reason,
     netEdge,
     blocked_by,
+    freshness_decision,
     drop_reason: shouldBet
       ? null
       : {
@@ -149,6 +249,7 @@ function evaluateExecution(params) {
 
 module.exports = {
   evaluateExecution,
+  evaluateFreshnessTier,
   mapBlockedByToDropReasonCode,
   VIG_COST_STANDARD,
   SLIPPAGE_ESTIMATE,

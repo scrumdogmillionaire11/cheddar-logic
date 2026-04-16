@@ -429,6 +429,91 @@ describe('run_nba_model job', () => {
     else delete process.env.DISCORD_ALERT_WEBHOOK_URL;
   });
 
+  test('suppresses single-run NO_GAMES null alerts pending persistence', async () => {
+    const origEnabled = process.env.ENABLE_DISCORD_CARD_WEBHOOKS;
+    const origWebhook = process.env.DISCORD_ALERT_WEBHOOK_URL;
+    process.env.ENABLE_DISCORD_CARD_WEBHOOKS = 'true';
+    process.env.DISCORD_ALERT_WEBHOOK_URL = 'https://discord.example/webhook';
+
+    const sendDiscordMessagesFn = jest.fn();
+    const wasJobRecentlySuccessfulFn = jest.fn((jobName) => {
+      if (String(jobName).startsWith('espn_null_seen_nba_')) return false;
+      return false;
+    });
+    const insertJobRunFn = jest.fn();
+    const markJobRunSuccessFn = jest.fn();
+    const markJobRunFailureFn = jest.fn();
+    const logger = { log: jest.fn(), warn: jest.fn() };
+
+    const result = await sendEspnNullDiscordAlert({
+      sport: 'NBA',
+      nullMetricTeams: [
+        { team: 'Boston Celtics', reason: 'NO_GAMES' },
+        { team: 'New York Knicks', reason: 'NO_GAMES' },
+      ],
+      logger,
+      sendDiscordMessagesFn,
+      wasJobRecentlySuccessfulFn,
+      insertJobRunFn,
+      markJobRunSuccessFn,
+      markJobRunFailureFn,
+    });
+
+    expect(result).toMatchObject({ sent: false, reason: 'below_threshold', count: 0 });
+    expect(sendDiscordMessagesFn).not.toHaveBeenCalled();
+    expect(insertJobRunFn).toHaveBeenCalledTimes(2);
+    expect(markJobRunSuccessFn).toHaveBeenCalledTimes(2);
+
+    if (origEnabled !== undefined) process.env.ENABLE_DISCORD_CARD_WEBHOOKS = origEnabled;
+    else delete process.env.ENABLE_DISCORD_CARD_WEBHOOKS;
+    if (origWebhook !== undefined) process.env.DISCORD_ALERT_WEBHOOK_URL = origWebhook;
+    else delete process.env.DISCORD_ALERT_WEBHOOK_URL;
+  });
+
+  test('sends NO_GAMES alerts once recurrence threshold is met for each team', async () => {
+    const origEnabled = process.env.ENABLE_DISCORD_CARD_WEBHOOKS;
+    const origWebhook = process.env.DISCORD_ALERT_WEBHOOK_URL;
+    process.env.ENABLE_DISCORD_CARD_WEBHOOKS = 'true';
+    process.env.DISCORD_ALERT_WEBHOOK_URL = 'https://discord.example/webhook';
+
+    const sendDiscordMessagesFn = jest.fn().mockResolvedValue(1);
+    const wasJobRecentlySuccessfulFn = jest.fn((jobName) => {
+      if (String(jobName).startsWith('espn_null_seen_nba_')) return true;
+      return false;
+    });
+    const insertJobRunFn = jest.fn();
+    const markJobRunSuccessFn = jest.fn();
+    const markJobRunFailureFn = jest.fn();
+    const logger = { log: jest.fn(), warn: jest.fn() };
+
+    const result = await sendEspnNullDiscordAlert({
+      sport: 'NBA',
+      nullMetricTeams: [
+        { team: 'Boston Celtics', reason: 'NO_GAMES' },
+        { team: 'New York Knicks', reason: 'NO_GAMES' },
+      ],
+      logger,
+      sendDiscordMessagesFn,
+      wasJobRecentlySuccessfulFn,
+      insertJobRunFn,
+      markJobRunSuccessFn,
+      markJobRunFailureFn,
+    });
+
+    expect(result).toMatchObject({ sent: true, reason: 'sent', count: 2 });
+    expect(sendDiscordMessagesFn).toHaveBeenCalledTimes(1);
+    expect(sendDiscordMessagesFn.mock.calls[0][0].messages[0]).toContain('NO_GAMES');
+    // 2 observation runs + 1 alert run
+    expect(insertJobRunFn).toHaveBeenCalledTimes(3);
+    expect(markJobRunSuccessFn).toHaveBeenCalledTimes(3);
+    expect(markJobRunFailureFn).not.toHaveBeenCalled();
+
+    if (origEnabled !== undefined) process.env.ENABLE_DISCORD_CARD_WEBHOOKS = origEnabled;
+    else delete process.env.ENABLE_DISCORD_CARD_WEBHOOKS;
+    if (origWebhook !== undefined) process.env.DISCORD_ALERT_WEBHOOK_URL = origWebhook;
+    else delete process.env.DISCORD_ALERT_WEBHOOK_URL;
+  });
+
   test('job_runs table records job execution as success', async () => {
     const result = await queryDb((db) => {
       const stmt = db.prepare(`

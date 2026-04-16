@@ -94,6 +94,7 @@ const ENABLE_WELCOME_HOME = process.env.ENABLE_WELCOME_HOME === 'true';
 const TEAM_CONTEXT_WEIGHT = 0.25;
 const ESPN_NULL_ALERT_WINDOW_MINUTES = 60;
 const ESPN_NULL_ALERT_THRESHOLD_DEFAULT = 2;
+const ESPN_NULL_NO_GAMES_PERSIST_WINDOW_MINUTES_DEFAULT = 20;
 
 function normalizeEspnNullReason(reason) {
   return (
@@ -114,8 +115,66 @@ function getEspnNullAlertThreshold() {
     : ESPN_NULL_ALERT_THRESHOLD_DEFAULT;
 }
 
+function getEspnNullNoGamesPersistWindowMinutes() {
+  const parsed = Number.parseInt(
+    process.env.ESPN_NULL_NO_GAMES_PERSIST_WINDOW_MINUTES ?? `${ESPN_NULL_NO_GAMES_PERSIST_WINDOW_MINUTES_DEFAULT}`,
+    10,
+  );
+  return Number.isFinite(parsed) && parsed > 0
+    ? parsed
+    : ESPN_NULL_NO_GAMES_PERSIST_WINDOW_MINUTES_DEFAULT;
+}
+
+function slugifyEspnNullToken(value, maxLength = 40) {
+  const normalized = String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+  const fallback = normalized || 'unknown';
+  return fallback.length > maxLength ? fallback.slice(0, maxLength) : fallback;
+}
+
 function buildEspnNullTeamKey(team, reason) {
   return `${String(team || '').trim().toUpperCase()}::${normalizeEspnNullReason(reason)}`;
+}
+
+function isNoGamesEspnNullReason(reason) {
+  return normalizeEspnNullReason(reason) === 'NO_GAMES';
+}
+
+function buildEspnNullSeenJobName(sport, entry) {
+  const sportToken = slugifyEspnNullToken(sport, 12);
+  const teamToken = slugifyEspnNullToken(entry?.team, 28);
+  const reasonToken = slugifyEspnNullToken(entry?.reason, 24);
+  return `espn_null_seen_${sportToken}_${teamToken}_${reasonToken}`;
+}
+
+function markEspnNullSeenSignal({
+  sport,
+  entry,
+  logger = console,
+  wasJobRecentlySuccessfulFn = wasJobRecentlySuccessful,
+  insertJobRunFn = insertJobRun,
+  markJobRunSuccessFn = markJobRunSuccess,
+  markJobRunFailureFn = markJobRunFailure,
+}) {
+  const seenJobName = buildEspnNullSeenJobName(sport, entry);
+  const seenRecently = wasJobRecentlySuccessfulFn(
+    seenJobName,
+    getEspnNullNoGamesPersistWindowMinutes(),
+  );
+  const seenRunId = uuidV4();
+  try {
+    insertJobRunFn(seenJobName, seenRunId);
+    markJobRunSuccessFn(seenRunId);
+  } catch (error) {
+    markJobRunFailureFn(seenRunId, error.message);
+    logger.warn(
+      `[${sport}Model] Failed to record ESPN null observation for ${entry?.team || 'UNKNOWN_TEAM'}: ${error.message}`,
+    );
+  }
+  return seenRecently;
 }
 
 function buildEspnNullAlertMessage(sport, nullMetricTeams) {
@@ -194,23 +253,52 @@ async function sendEspnNullDiscordAlert({
     dedupedTeams.push(normalizedEntry);
   }
 
-  if (dedupedTeams.length < getEspnNullAlertThreshold()) {
-    return { sent: false, reason: 'below_threshold', count: dedupedTeams.length };
+  const persistentTeams = [];
+  let suppressedNoGamesCount = 0;
+  for (const entry of dedupedTeams) {
+    if (!isNoGamesEspnNullReason(entry.reason)) {
+      persistentTeams.push(entry);
+      continue;
+    }
+
+    const seenRecently = markEspnNullSeenSignal({
+      sport,
+      entry,
+      logger,
+      wasJobRecentlySuccessfulFn,
+      insertJobRunFn,
+      markJobRunSuccessFn,
+      markJobRunFailureFn,
+    });
+    if (seenRecently) {
+      persistentTeams.push(entry);
+    } else {
+      suppressedNoGamesCount += 1;
+    }
+  }
+
+  if (persistentTeams.length < getEspnNullAlertThreshold()) {
+    if (suppressedNoGamesCount > 0) {
+      logger.log(
+        `[${sport}Model] Suppressed ${suppressedNoGamesCount} transient ESPN null NO_GAMES alert candidate(s) pending persistence`,
+      );
+    }
+    return { sent: false, reason: 'below_threshold', count: persistentTeams.length };
   }
 
   if (process.env.ENABLE_DISCORD_CARD_WEBHOOKS !== 'true') {
-    return { sent: false, reason: 'discord_disabled', count: dedupedTeams.length };
+    return { sent: false, reason: 'discord_disabled', count: persistentTeams.length };
   }
 
   const webhookUrl = String(process.env.DISCORD_ALERT_WEBHOOK_URL || '').trim();
   if (!webhookUrl) {
     logger.warn(`[${sport}Model] DISCORD_ALERT_WEBHOOK_URL not set — skipping ESPN null alert`);
-    return { sent: false, reason: 'missing_webhook_url', count: dedupedTeams.length };
+    return { sent: false, reason: 'missing_webhook_url', count: persistentTeams.length };
   }
 
   const alertJobName = `espn_null_alert_${sport.toLowerCase()}`;
   if (wasJobRecentlySuccessfulFn(alertJobName, ESPN_NULL_ALERT_WINDOW_MINUTES)) {
-    return { sent: false, reason: 'cooldown_active', count: dedupedTeams.length };
+    return { sent: false, reason: 'cooldown_active', count: persistentTeams.length };
   }
 
   const alertRunId = uuidV4();
@@ -218,19 +306,19 @@ async function sendEspnNullDiscordAlert({
   try {
     await sendDiscordMessagesFn({
       webhookUrl,
-      messages: [buildEspnNullAlertMessage(sport, dedupedTeams)],
+      messages: [buildEspnNullAlertMessage(sport, persistentTeams)],
     });
     markJobRunSuccessFn(alertRunId);
     logger.log(
-      `[${sport}Model] Sent ESPN null alert for ${dedupedTeams.length} team(s)`,
+      `[${sport}Model] Sent ESPN null alert for ${persistentTeams.length} team(s)`,
     );
-    return { sent: true, reason: 'sent', count: dedupedTeams.length };
+    return { sent: true, reason: 'sent', count: persistentTeams.length };
   } catch (error) {
     markJobRunFailureFn(alertRunId, error.message);
     logger.warn(
       `[${sport}Model] Failed to send ESPN null alert: ${error.message}`,
     );
-    return { sent: false, reason: 'send_failed', count: dedupedTeams.length };
+    return { sent: false, reason: 'send_failed', count: persistentTeams.length };
   }
 }
 

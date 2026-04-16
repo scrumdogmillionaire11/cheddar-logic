@@ -29,6 +29,7 @@ const {
 
 const {
   isFixedDue, keyFixed, keyTminus, keyOddsHourly, keyEspnGamesDirect, keyNightlySweep,
+  keyOddsNearTipBackstop,
   keyPullScheduleNba, keyPullScheduleNhl, keyDiscordCardsSnapshot,
   getOddsIntervalMinutes, getScheduleRefreshDue, shouldRefreshOddsForGame,
   dueTminusMinutes, TMINUS_BANDS,
@@ -37,6 +38,7 @@ const {
   keySettlementHealthReport, keyHourlySettlementSweep, keyHourlySettlementJob,
   keyNightlySettlementJob, keyPublicSplits, keyVsinSplits,
   isHourlySettlementDue, isNightlySettlementOwningHourlyWindow,
+  isNearTipOddsBackstopDue,
   isProjectionModelSport,
 } = require('./windows');
 
@@ -81,6 +83,7 @@ const TEAM_METRICS_MAX_AGE_MINUTES = Number(process.env.TEAM_METRICS_MAX_AGE_MIN
 const ODDS_FETCH_SLOT_MINUTES = Number(process.env.ODDS_FETCH_SLOT_MINUTES || 180);
 const ODDS_FETCH_START_HOUR = Number(process.env.ODDS_FETCH_START_HOUR ?? 9);
 const ENABLE_ODDS_BACKSTOP = process.env.ENABLE_ODDS_BACKSTOP === 'true';
+const ENABLE_ODDS_NEAR_TIP_BACKSTOP = process.env.ENABLE_ODDS_NEAR_TIP_BACKSTOP !== 'false';
 const ENABLE_PULL_SCHEDULE_NBA = process.env.ENABLE_PULL_SCHEDULE_NBA !== 'false';
 const ENABLE_PULL_SCHEDULE_NHL = process.env.ENABLE_PULL_SCHEDULE_NHL !== 'false';
 const ENABLE_POTD = process.env.ENABLE_POTD === 'true';
@@ -222,6 +225,20 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
     if (ENABLE_ODDS_BACKSTOP && quotaTier === 'FULL' && nowUtc.minute % 10 === 0) {
       const jobKey = `odds|global-backstop|${nowUtc.toISO().slice(0, 16)}`;
       jobs.push({ jobName: 'refresh_stale_odds', jobKey, execute: refreshStaleOdds, args: { jobKey, dryRun }, reason: 'global odds backstop (find + refresh stale snapshots within T-6h)' });
+    }
+    if (
+      ENABLE_ODDS_NEAR_TIP_BACKSTOP &&
+      quotaTier === 'FULL' &&
+      isNearTipOddsBackstopDue(nowEt)
+    ) {
+      const jobKey = keyOddsNearTipBackstop(nowEt);
+      jobs.push({
+        jobName: 'refresh_stale_odds',
+        jobKey,
+        execute: refreshStaleOdds,
+        args: { jobKey, dryRun },
+        reason: `deterministic near-tip odds backstop (slot midpoint, every ${ODDS_FETCH_SLOT_MINUTES}m)`,
+      });
     }
   }
 
@@ -467,9 +484,10 @@ if (require.main === module) start();
 module.exports = {
   start, tick, computeDueJobs, enabledSports,
   keyOddsHourly, keyFixed, keyDiscordCardsSnapshot, keyTminus, keyNightlySweep,
+  keyOddsNearTipBackstop,
   keyNhlPlayerAvailabilitySync, keyNhlGoalieStarters, keyNhlSogPlayerSync,
   keySettlementHealthReport, keyHourlySettlementSweep, keyHourlySettlementJob, keyNightlySettlementJob,
-  isHourlySettlementDue, isFixedDue, dueTminusMinutes, TMINUS_BANDS,
+  isHourlySettlementDue, isFixedDue, isNearTipOddsBackstopDue, dueTminusMinutes, TMINUS_BANDS,
   getOddsIntervalMinutes, getScheduleRefreshDue, shouldRefreshOddsForGame,
   getPipelineHealthJobs, getDrClairePersistJobs, getOddsHealthJobs, keyPullScheduleNba, keyPullScheduleNhl,
   computePotdScheduleMetadata,

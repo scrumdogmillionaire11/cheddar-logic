@@ -791,6 +791,12 @@ function neutral(reason = 'UNKNOWN') {
   };
 }
 
+const TEAM_METRICS_NULL_REASONS = Object.freeze({
+  UNKNOWN: 'UNKNOWN',
+  NO_GAMES: 'NO_GAMES',
+  NO_SCORED_GAMES: 'NO_SCORED_GAMES',
+});
+
 /**
  * Compute metrics from an array of completed game objects.
  * @param {Array} games
@@ -803,9 +809,9 @@ function computeMetricsFromGames(games, sport) {
     'computeMetricsFromGames'
   ) || String(sport || '').trim().toUpperCase();
 
-  if (!games || games.length === 0) return neutral('NO_GAMES');
+  if (!games || games.length === 0) return neutral(TEAM_METRICS_NULL_REASONS.NO_GAMES);
   const scored = games.filter(g => g.pointsFor !== null && g.pointsAgainst !== null);
-  if (scored.length === 0) return neutral('NO_SCORED_GAMES');
+  if (scored.length === 0) return neutral(TEAM_METRICS_NULL_REASONS.NO_SCORED_GAMES);
 
   const avgPoints = scored.reduce((s, g) => s + g.pointsFor, 0) / scored.length;
   const avgPointsAllowed = scored.reduce((s, g) => s + g.pointsAgainst, 0) / scored.length;

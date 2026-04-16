@@ -4,6 +4,7 @@ type GoalieStatus = 'CONFIRMED' | 'EXPECTED' | 'UNKNOWN' | null | undefined;
 
 interface BuildFinalMarketDecisionInput {
   decisionV2?: DecisionV2 | null;
+  fallbackOfficialStatus?: 'PLAY' | 'LEAN' | 'PASS' | null;
   reasonCodes?: string[];
   passReasonCode?: string | null;
   edge?: number | null;
@@ -61,6 +62,8 @@ const SURFACED_REASON_LABELS: Record<string, string> = {
   GATE_GOALIE_UNCONFIRMED: 'Waiting on goalie confirmation',
   PASS_NO_EDGE: 'No edge',
   NO_EDGE_AT_PRICE: 'Price too sharp',
+  PASS_EXECUTION_GATE_CONFIDENCE_BELOW_THRESHOLD: 'Model edge present, blocked by confidence gate',
+  PASS_EXECUTION_GATE_NET_EDGE_INSUFFICIENT: 'No edge at current price',
   PASS_LOW_CONFIDENCE: 'Low confidence',
   PASS_SHARP_MONEY_OPPOSITE: 'Sharp money against',
   MODEL_PROB_MISSING: 'Model incomplete',
@@ -102,7 +105,9 @@ export function buildFinalMarketDecision(input: BuildFinalMarketDecisionInput): 
     decisionV2?.primary_reason_code || '',
   ].filter(Boolean);
 
-  let surfacedStatus = mapOfficialToSurfaced(decisionV2?.official_status);
+  let surfacedStatus = mapOfficialToSurfaced(
+    decisionV2?.official_status ?? input.fallbackOfficialStatus,
+  );
   const certaintyState = resolveCertaintyState(input.goalieHomeStatus, input.goalieAwayStatus);
   const verificationState = resolveVerificationState(decisionV2, reasonCodes);
   const marketStable = resolveMarketStable(reasonCodes);

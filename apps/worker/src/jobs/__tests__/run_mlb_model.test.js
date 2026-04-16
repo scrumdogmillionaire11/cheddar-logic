@@ -51,6 +51,7 @@ const {
   buildMlbPitcherKPayloadFields,
   resolvePitcherKPayloadIdentity,
   computeSyntheticLineF5Driver,
+  resolveMlbTotalExecutionInputs,
   resolveMlbMoneylineExecutionInputs,
 } = require('../run_mlb_model');
 
@@ -1564,6 +1565,201 @@ describe('WI-0720 MLB execution envelope', () => {
       },
     });
   });
+
+  // WI-0944: MLB full-game ML execution gate relaxation tests
+  test('mlb-full-game-ml with large edge (>=0.06) + conf=0.50 is downgraded to LEAN (not PASS)', () => {
+    // Scenario: Boston @ Minnesota — pWin 56.1%, edge +9.5pp, conf=5/10=0.50
+    // With the old global minConfidence=0.55 this would be BLOCKED; with the MLB
+    // full-game ML large-edge override (minConfidence=0.45) it must pass.
+    const payload = {
+      card_type: 'mlb-full-game-ml',
+      execution_status: 'EXECUTABLE',
+      edge: 0.095,
+      confidence: 0.50,
+      model_status: 'MODEL_OK',
+      status: 'FIRE',
+      action: 'FIRE',
+      classification: 'BASE',
+      ev_passed: true,
+      reason_codes: ['SOFT_WEAK_DRIVER_SUPPORT'],
+      actionable: true,
+      publish_ready: true,
+      _publish_state: { publish_ready: true, emit_allowed: true, execution_status: 'EXECUTABLE' },
+    };
+    const oddsSnapshot = { captured_at: '2026-04-15T17:00:00Z' };
+    const nowMs = new Date(oddsSnapshot.captured_at).getTime() + 60_000;
+
+    const result = applyExecutionGateToMlbPayload(payload, { oddsSnapshot, nowMs });
+
+    expect(result).toEqual({ evaluated: true, blocked: false });
+    expect(payload.status).toBe('LEAN');
+    expect(payload.action).toBe('LEAN');
+    expect(payload.classification).toBe('LEAN');
+    expect(payload.execution_gate.should_bet).toBe(true);
+    expect(payload.execution_gate.blocked_by).toHaveLength(0);
+  });
+
+  test('mlb-full-game-ml with standard high edge (0.07) + conf=0.50 is downgraded to LEAN', () => {
+    // Scenario: Blue Jays @ Brewers — edge +7pp, conf=5/10=0.50
+    // Old global thresholds: minNetEdge=0.025, minConfidence=0.55 → BLOCKED (net=0.02 AND conf 0.50<0.55)
+    // New MLB relaxed: minNetEdge=0.02, minConfidence=0.50 → net=0.02 passes (>=), conf=0.50 passes (>=)
+    const payload = {
+      card_type: 'mlb-full-game-ml',
+      execution_status: 'EXECUTABLE',
+      edge: 0.07,
+      confidence: 0.50,
+      model_status: 'MODEL_OK',
+      status: 'FIRE',
+      action: 'FIRE',
+      classification: 'BASE',
+      ev_passed: true,
+      reason_codes: ['SOFT_WEAK_DRIVER_SUPPORT'],
+      actionable: true,
+      publish_ready: true,
+      _publish_state: { publish_ready: true, emit_allowed: true, execution_status: 'EXECUTABLE' },
+    };
+    const oddsSnapshot = { captured_at: '2026-04-15T17:00:00Z' };
+    const nowMs = new Date(oddsSnapshot.captured_at).getTime() + 60_000;
+
+    const result = applyExecutionGateToMlbPayload(payload, { oddsSnapshot, nowMs });
+
+    expect(result).toEqual({ evaluated: true, blocked: false });
+    expect(payload.status).toBe('LEAN');
+    expect(payload.action).toBe('LEAN');
+    expect(payload.classification).toBe('LEAN');
+  });
+
+  test('non-full-game-ml card with conf=0.50 still gets blocked (override is type-specific)', () => {
+    // Gate relaxation must not apply to pitcher-K or other card types.
+    const payload = {
+      card_type: 'mlb-pitcher-k',
+      execution_status: 'EXECUTABLE',
+      edge: 0.08,
+      confidence: 0.50,
+      model_status: 'MODEL_OK',
+      status: 'FIRE',
+      action: 'FIRE',
+      classification: 'BASE',
+      ev_passed: true,
+      reason_codes: [],
+      actionable: true,
+      publish_ready: true,
+      _publish_state: { publish_ready: true, emit_allowed: true, execution_status: 'EXECUTABLE' },
+    };
+    const oddsSnapshot = { captured_at: '2026-04-15T17:00:00Z' };
+    const nowMs = new Date(oddsSnapshot.captured_at).getTime() + 60_000;
+
+    const result = applyExecutionGateToMlbPayload(payload, { oddsSnapshot, nowMs });
+
+    expect(result).toEqual({ evaluated: true, blocked: true });
+    expect(payload.status).toBe('PASS');
+    expect(payload.execution_gate.blocked_by).toContain(
+      'CONFIDENCE_BELOW_THRESHOLD:0.500',
+    );
+  });
+
+  test('resolveMlbTotalExecutionInputs maps full-game total edge into canonical execution fields', () => {
+    const result = resolveMlbTotalExecutionInputs({
+      prediction: 'UNDER',
+      projectedTotal: 7.09,
+      marketLine: 9.5,
+      overPrice: -108,
+      underPrice: -112,
+      pOver: 0.215,
+      pUnder: 0.785,
+    });
+
+    expect(result.price).toBe(-112);
+    expect(result.p_fair).toBeCloseTo(0.785, 6);
+    expect(result.p_implied).toBeCloseTo(112 / 212, 6);
+    expect(result.edge).toBeCloseTo(0.2567, 3);
+    expect(result.edge_pct).toBeCloseTo(result.edge, 6);
+    expect(result.edge_points).toBeCloseTo(-2.41, 6);
+    expect(result.model_prob).toBeCloseTo(0.785, 6);
+  });
+
+  test('mlb full-game total with strong fair edge no longer trips missing-edge at execution gate', () => {
+    const payload = {
+      card_type: 'mlb-full-game',
+      execution_status: 'EXECUTABLE',
+      sport: 'MLB',
+      market_type: 'FULL_GAME',
+      recommended_bet_type: 'total',
+      prediction: 'UNDER',
+      edge: 0.2567,
+      edge_pct: 0.2567,
+      edge_points: -2.41,
+      p_fair: 0.785,
+      p_implied: 112 / 212,
+      price: -112,
+      confidence: 0.6,
+      model_status: 'MODEL_OK',
+      status: 'WATCH',
+      action: 'HOLD',
+      classification: 'LEAN',
+      ev_passed: true,
+      reason_codes: ['MODEL_DEGRADED_INPUTS'],
+      actionable: true,
+      publish_ready: true,
+      _publish_state: {
+        publish_ready: true,
+        emit_allowed: true,
+        execution_status: 'EXECUTABLE',
+      },
+    };
+    const oddsSnapshot = { captured_at: '2026-04-15T18:00:00Z' };
+    const nowMs = new Date(oddsSnapshot.captured_at).getTime() + 60_000;
+
+    const result = applyExecutionGateToMlbPayload(payload, { oddsSnapshot, nowMs });
+
+    expect(result).toEqual({ evaluated: true, blocked: false });
+    expect(payload.execution_gate.should_bet).toBe(true);
+    expect(payload.execution_gate.blocked_by).not.toContain('NO_EDGE_COMPUTED');
+    expect(payload.status).toBe('WATCH');
+    expect(payload.classification).toBe('LEAN');
+  });
+
+  test('high-edge MLB full-game moneyline is downgraded to LEAN even when payload.card_type is missing', () => {
+    // Regression for live payload shape: card_type may be null in payload_data while
+    // market_type/recommended_bet_type still indicate FULL GAME ML.
+    const payload = {
+      execution_status: 'EXECUTABLE',
+      sport: 'MLB',
+      card_title: 'Full Game ML HOME: CHICAGO CUBS @ PHILADELPHIA PHILLIES',
+      market_type: 'MONEYLINE',
+      recommended_bet_type: 'moneyline',
+      period: null,
+      edge: 0.061,
+      confidence: 0.5,
+      model_status: 'MODEL_OK',
+      status: 'FIRE',
+      action: 'FIRE',
+      classification: 'BASE',
+      ev_passed: true,
+      reason_codes: ['SOFT_WEAK_DRIVER_SUPPORT'],
+      actionable: true,
+      publish_ready: true,
+      _publish_state: {
+        publish_ready: true,
+        emit_allowed: true,
+        execution_status: 'EXECUTABLE',
+      },
+    };
+    const oddsSnapshot = { captured_at: '2026-04-15T17:00:00Z' };
+    const nowMs = new Date(oddsSnapshot.captured_at).getTime() + 60_000;
+
+    const result = applyExecutionGateToMlbPayload(payload, { oddsSnapshot, nowMs });
+
+    expect(result).toEqual({ evaluated: true, blocked: false });
+    expect(payload.status).toBe('LEAN');
+    expect(payload.action).toBe('LEAN');
+    expect(payload.classification).toBe('LEAN');
+    expect(payload.execution_gate).toMatchObject({
+      should_bet: true,
+      overridden_by_edge: true,
+    });
+    expect(payload.execution_gate.blocked_by).toEqual([]);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -2333,13 +2529,45 @@ describe('multi-market insertion (IME-01-03)', () => {
         xfip: 4.1,
         bbPct: 0.08,
       })),
+      resolveSnapshotAge: jest.fn((snapshotRow, opts = {}) => {
+        const nowMs = Number.isFinite(opts.nowMs)
+          ? opts.nowMs
+          : Date.parse('2026-04-15T19:30:00Z');
+        const resolvedTimestamp =
+          snapshotRow?.captured_at ?? snapshotRow?.pulled_at ?? snapshotRow?.updated_at ?? new Date(nowMs).toISOString();
+        const resolvedAgeMs = Math.max(0, nowMs - new Date(resolvedTimestamp).getTime());
+        return {
+          resolved_timestamp: new Date(resolvedTimestamp).toISOString(),
+          resolved_age_ms: Number.isFinite(resolvedAgeMs) ? resolvedAgeMs : 0,
+          source_field: snapshotRow?.captured_at
+            ? 'captured_at'
+            : snapshotRow?.pulled_at
+              ? 'pulled_at'
+              : snapshotRow?.updated_at
+                ? 'updated_at'
+                : 'now',
+          status: 'VALID',
+          fields_inspected: {},
+          fallback_chain_executed: false,
+          violations: [],
+          diagnostic: {},
+        };
+      }),
     };
   }
 
-  async function runImeScenario({ gameDriverCards, snapshot = BASE_SNAPSHOT } = {}) {
+  async function runImeScenario({
+    gameDriverCards,
+    snapshot = BASE_SNAPSHOT,
+    projectF5MLResult = null,
+    insertCardPayloadImpl = null,
+  } = {}) {
     jest.resetModules();
 
     const dataMocks = buildImeDataMocks(snapshot);
+    if (typeof insertCardPayloadImpl === 'function') {
+      dataMocks.insertCardPayload.mockImplementation(insertCardPayloadImpl);
+    }
 
     jest.doMock('@cheddar-logic/data', () => dataMocks);
     jest.doMock('@cheddar-logic/adapters', () => ({
@@ -2379,7 +2607,7 @@ describe('multi-market insertion (IME-01-03)', () => {
       const actual = jest.requireActual('../../models/mlb-model');
       return {
         ...actual,
-        projectF5ML: jest.fn(() => null),
+        projectF5ML: jest.fn(() => projectF5MLResult),
         projectTeamF5RunsAgainstStarter: jest.fn(() => ({
           f5_runs: null,
           degraded_inputs: [],
@@ -2603,6 +2831,60 @@ describe('multi-market insertion (IME-01-03)', () => {
     infoSpy.mockRestore();
     errorSpy.mockRestore();
   });
+
+  test('skips invalid PASS F5 ML projection instead of attempting moneyline write', async () => {
+    const gameDriverCards = [
+      {
+        market: 'f5_total',
+        prediction: 'OVER',
+        confidence: 0.85,
+        ev_threshold_passed: true,
+        status: 'FIRE',
+        action: 'FIRE',
+        classification: 'BASE',
+        reasoning: 'F5 edge qualifies',
+        reason_codes: [],
+        missing_inputs: [],
+        projection: { projected_total: 5.6 },
+        drivers: [{ projected: 5.6, edge: 1.1 }],
+      },
+    ];
+
+    const { result, dataMocks } = await runImeScenario({
+      gameDriverCards,
+      projectF5MLResult: {
+        prediction: 'PASS',
+        confidence: 6,
+        ev_threshold_passed: false,
+        edge: 0,
+        projected_win_prob_home: 0.5,
+        reasoning: 'No edge at current price',
+      },
+      insertCardPayloadImpl: (card) => {
+        if (
+          card.cardType === 'mlb-f5-ml' &&
+          String(card.payloadData?.selection?.side || '').toUpperCase() !== 'HOME' &&
+          String(card.payloadData?.selection?.side || '').toUpperCase() !== 'AWAY'
+        ) {
+          throw new Error(
+            'Invalid moneyline selection "' +
+              String(card.payloadData?.selection?.side) +
+              '"',
+          );
+        }
+      },
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.cardsFailed).toBe(0);
+    expect(result.cardsGenerated).toBe(1);
+
+    const insertedCardTypes = dataMocks.insertCardPayload.mock.calls.map(
+      ([card]) => card.cardType,
+    );
+    expect(insertedCardTypes).toEqual(['mlb-f5']);
+    expect(insertedCardTypes).not.toContain('mlb-f5-ml');
+  });
 });
 
 describe('runMLBModel without-odds mode selection', () => {
@@ -2639,6 +2921,30 @@ describe('runMLBModel without-odds mode selection', () => {
         xfip: 4.1,
         bbPct: 0.08,
       })),
+      resolveSnapshotAge: jest.fn((snapshotRow, opts = {}) => {
+        const nowMs = Number.isFinite(opts.nowMs)
+          ? opts.nowMs
+          : Date.parse('2026-04-15T19:30:00Z');
+        const resolvedTimestamp =
+          snapshotRow?.captured_at ?? snapshotRow?.pulled_at ?? snapshotRow?.updated_at ?? new Date(nowMs).toISOString();
+        const resolvedAgeMs = Math.max(0, nowMs - new Date(resolvedTimestamp).getTime());
+        return {
+          resolved_timestamp: new Date(resolvedTimestamp).toISOString(),
+          resolved_age_ms: Number.isFinite(resolvedAgeMs) ? resolvedAgeMs : 0,
+          source_field: snapshotRow?.captured_at
+            ? 'captured_at'
+            : snapshotRow?.pulled_at
+              ? 'pulled_at'
+              : snapshotRow?.updated_at
+                ? 'updated_at'
+                : 'now',
+          status: 'VALID',
+          fields_inspected: {},
+          fallback_chain_executed: false,
+          violations: [],
+          diagnostic: {},
+        };
+      }),
     }));
     jest.doMock('@cheddar-logic/odds/src/config', () => ({
       SPORTS_CONFIG: { MLB: { active: true } },
@@ -2803,18 +3109,22 @@ describe('WI-0943 MLB runner log schema cleanup', () => {
  */
 describe('MLB Full-Game Suppression Funnel (WI-0944)', () => {
   let buildMlbFullGameSuppressionFunnelReport;
+  let buildMlbFullGameDirectionalFunnelReport;
   let evaluateMlbFullGameFunnelCandidate;
   let getMlbFullGameMarketKey;
   let normalizeReasonCodeSet;
   let MLB_FULL_GAME_FUNNEL_WINDOW;
+  let MLB_FULL_GAME_DIRECTIONAL_FUNNEL_WINDOW;
 
   beforeAll(() => {
     ({
       buildMlbFullGameSuppressionFunnelReport,
+      buildMlbFullGameDirectionalFunnelReport,
       evaluateMlbFullGameFunnelCandidate,
       getMlbFullGameMarketKey,
       normalizeReasonCodeSet,
       MLB_FULL_GAME_FUNNEL_WINDOW,
+      MLB_FULL_GAME_DIRECTIONAL_FUNNEL_WINDOW,
     } = require('../run_mlb_model'));
   });
 
@@ -3069,6 +3379,7 @@ describe('MLB Full-Game Suppression Funnel (WI-0944)', () => {
       'PASS_NO_EDGE_OR_RUN_DIFF',
       'PASS_PROBABILITY_EDGE_WEAK_OR_MATH_ONLY',
       'PASS_CONFIDENCE_GATE',
+      'PASS_DEGRADED_TOTAL_MODEL',
       'PASS_F5_CONTRADICTION',
       'PASS_DRIVER_SUPPORT',
       'PROJECTION_SOURCE_NO_BET',
@@ -3130,6 +3441,249 @@ describe('MLB Full-Game Suppression Funnel (WI-0944)', () => {
     const lastOnly = samples.slice(-50);
     const reportLastOnly = buildMlbFullGameSuppressionFunnelReport(lastOnly);
     expect(report.counts).toEqual(reportLastOnly.counts);
+  });
+
+  test('builds directional OVER/UNDER report with pre/post rates and stage drop percentages', () => {
+    const samples = [];
+
+    for (let i = 0; i < 6; i++) {
+      samples.push(
+        evaluateMlbFullGameFunnelCandidate(
+          {
+            market: 'full_game_total',
+            prediction: 'OVER',
+            confidence: 0.72,
+            projection_source: 'FULL_MODEL',
+            projection: {
+              projected_total: 9.4,
+              home_f5_runs: 2.7,
+              away_f5_runs: 2.2,
+              home_late_runs: 2.3,
+              away_late_runs: 2.2,
+            },
+            drivers: [{ projected: 9.4, edge: 1.1 }],
+            reason_codes: [],
+          },
+          true,
+        ),
+      );
+    }
+
+    for (let i = 0; i < 4; i++) {
+      samples.push(
+        evaluateMlbFullGameFunnelCandidate(
+          {
+            market: 'full_game_total',
+            prediction: 'UNDER',
+            confidence: 0.66,
+            projection_source: 'FULL_MODEL',
+            projection: {
+              projected_total: 7.1,
+              home_f5_runs: 2.1,
+              away_f5_runs: 1.9,
+              home_late_runs: 1.7,
+              away_late_runs: 1.4,
+            },
+            drivers: [{ projected: 7.1, edge: -0.9 }],
+            reason_codes: ['PASS_NO_EDGE'],
+          },
+          false,
+        ),
+      );
+    }
+
+    const report = buildMlbFullGameDirectionalFunnelReport(samples);
+
+    expect(report.sample_size).toBe(10);
+    expect(report.window_size).toBe(MLB_FULL_GAME_DIRECTIONAL_FUNNEL_WINDOW);
+    expect(report.averages).toEqual(
+      expect.objectContaining({
+        average_model_total: expect.any(Number),
+        average_market_total: expect.any(Number),
+      }),
+    );
+    expect(report.pre_gate.over_count).toBe(6);
+    expect(report.pre_gate.under_count).toBe(4);
+    expect(report.pre_gate.over_pct).toBe(60);
+    expect(report.pre_gate.under_pct).toBe(40);
+    expect(report.post_gate.over_count).toBe(6);
+    expect(report.post_gate.under_count).toBe(0);
+    expect(report.stage_side_counts).toHaveProperty('passed_edge_threshold');
+    expect(report.stage_side_counts.passed_edge_threshold.OVER).toBe(6);
+    expect(report.stage_side_counts.passed_edge_threshold.UNDER).toBe(0);
+    expect(report.stage_drop_pct_by_side).toHaveProperty('passed_edge_threshold');
+    expect(typeof report.stage_drop_pct_by_side.passed_edge_threshold.OVER).toBe('number');
+    expect(typeof report.stage_drop_pct_by_side.passed_edge_threshold.UNDER).toBe('number');
+    expect(report.side_component_averages).toHaveProperty('OVER');
+    expect(report.side_component_averages).toHaveProperty('UNDER');
+    expect(typeof report.side_component_averages.OVER.average_abs_edge).toBe('number');
+    expect(typeof report.side_component_averages.UNDER.average_abs_edge).toBe('number');
+    expect(report.side_component_averages.OVER.average_late_share_pct).toBeGreaterThan(0);
+    expect(report.side_component_averages.OVER.average_late_share_pct).toBeLessThan(100);
+  });
+
+  test('directional report respects 200-sample window using latest full-game total entries', () => {
+    const samples = [];
+    for (let i = 0; i < 240; i++) {
+      const isOver = i % 2 === 0;
+      samples.push(
+        evaluateMlbFullGameFunnelCandidate(
+          {
+            market: 'full_game_total',
+            prediction: isOver ? 'OVER' : 'UNDER',
+            confidence: 0.7,
+            projection_source: 'FULL_MODEL',
+            projection: { projected_total: isOver ? 9.2 : 7.6 },
+            drivers: [{ projected: isOver ? 9.2 : 7.6, edge: isOver ? 0.8 : -0.8 }],
+            reason_codes: [],
+          },
+          true,
+        ),
+      );
+    }
+
+    const report = buildMlbFullGameDirectionalFunnelReport(samples);
+    expect(report.sample_size).toBe(200);
+
+    const lastOnly = samples.slice(-200);
+    const reportLastOnly = buildMlbFullGameDirectionalFunnelReport(lastOnly);
+    expect(report.stage_side_counts).toEqual(reportLastOnly.stage_side_counts);
+    expect(report.pre_gate).toEqual(reportLastOnly.pre_gate);
+  });
+
+  test('never emits negative drop percentages for non-cascading stage counts', () => {
+    const samples = [];
+
+    for (let i = 0; i < 10; i += 1) {
+      samples.push(
+        evaluateMlbFullGameFunnelCandidate(
+          {
+            market: 'full_game_total',
+            prediction: 'UNDER',
+            confidence: 0.7,
+            projection_source: 'FULL_MODEL',
+            projection: { projected_total: 7.1 },
+            line: 8.5,
+            drivers: [{ projected: 7.1, edge: -1.4 }],
+            reason_codes: ['PASS_PROBABILITY_EDGE_WEAK'],
+          },
+          false,
+        ),
+      );
+    }
+
+    for (let i = 0; i < 8; i += 1) {
+      samples.push(
+        evaluateMlbFullGameFunnelCandidate(
+          {
+            market: 'full_game_total',
+            prediction: 'UNDER',
+            confidence: 0.7,
+            projection_source: 'FULL_MODEL',
+            projection: { projected_total: 7.4 },
+            line: 8.5,
+            drivers: [{ projected: 7.4, edge: -1.1 }],
+            reason_codes: ['PASS_NO_EDGE'],
+          },
+          false,
+        ),
+      );
+    }
+
+    const suppressionReport = buildMlbFullGameSuppressionFunnelReport(samples);
+    Object.values(suppressionReport.drop_pct).forEach((value) => {
+      expect(value).toBeGreaterThanOrEqual(0);
+    });
+
+    const directionalReport = buildMlbFullGameDirectionalFunnelReport(samples);
+    Object.values(directionalReport.stage_drop_pct_by_side).forEach((stageDrop) => {
+      expect(stageDrop.OVER).toBeGreaterThanOrEqual(0);
+      expect(stageDrop.UNDER).toBeGreaterThanOrEqual(0);
+    });
+  });
+
+  test('uses directional audit shrunk side and marks degraded model suppressor', () => {
+    const sample = evaluateMlbFullGameFunnelCandidate(
+      {
+        market: 'full_game_total',
+        prediction: 'OVER',
+        confidence: 0.72,
+        projection_source: 'DEGRADED_MODEL',
+        reason_codes: ['PASS_DEGRADED_TOTAL_MODEL'],
+        directional_audit: {
+          direction_after_shrink: 'UNDER',
+          shrunk_model_total: 7.3,
+          raw_model_total: 6.1,
+          market_total: 8.0,
+          proj_minus_line_raw: -1.9,
+          proj_minus_line_shrunk: -0.7,
+          degraded_mode: true,
+          degraded_inputs_count: 3,
+        },
+      },
+      false,
+    );
+
+    expect(sample.directionalSide).toBe('UNDER');
+    expect(sample.directionalModelTotal).toBe(7.3);
+    expect(sample.directionalRawModelTotal).toBe(6.1);
+    expect(sample.directionalEdge).toBe(-0.7);
+    expect(sample.directionalRawEdge).toBe(-1.9);
+    expect(sample.degradedMode).toBe(true);
+    expect(sample.degradedInputsCount).toBe(3);
+    expect(sample.suppressor).toBe('PASS_DEGRADED_TOTAL_MODEL');
+  });
+
+  test('directional report includes raw/shrunk delta averages and degraded share', () => {
+    const samples = [
+      evaluateMlbFullGameFunnelCandidate(
+        {
+          market: 'full_game_total',
+          prediction: 'UNDER',
+          confidence: 0.7,
+          projection_source: 'DEGRADED_MODEL',
+          reason_codes: ['PASS_DEGRADED_TOTAL_MODEL'],
+          directional_audit: {
+            direction_after_shrink: 'UNDER',
+            shrunk_model_total: 7.4,
+            raw_model_total: 6.2,
+            market_total: 8.1,
+            proj_minus_line_raw: -1.9,
+            proj_minus_line_shrunk: -0.7,
+            degraded_mode: true,
+            degraded_inputs_count: 3,
+          },
+        },
+        false,
+      ),
+      evaluateMlbFullGameFunnelCandidate(
+        {
+          market: 'full_game_total',
+          prediction: 'OVER',
+          confidence: 0.74,
+          projection_source: 'FULL_MODEL',
+          reason_codes: [],
+          directional_audit: {
+            direction_after_shrink: 'OVER',
+            shrunk_model_total: 8.8,
+            raw_model_total: 9.3,
+            market_total: 8.1,
+            proj_minus_line_raw: 1.2,
+            proj_minus_line_shrunk: 0.7,
+            degraded_mode: false,
+            degraded_inputs_count: 0,
+          },
+        },
+        true,
+      ),
+    ];
+
+    const report = buildMlbFullGameDirectionalFunnelReport(samples);
+    expect(report.averages).toHaveProperty('average_model_total_raw');
+    expect(report.averages).toHaveProperty('average_proj_minus_line_raw');
+    expect(report.averages).toHaveProperty('average_proj_minus_line_shrunk');
+    expect(report.averages).toHaveProperty('degraded_share');
+    expect(report.averages.degraded_share).toBe(50);
   });
 });
 
@@ -3205,5 +3759,48 @@ describe('Pitcher stats lookup by mlb_id and full_name (not team-only)', () => {
 
     expect(gameStartingPitcher.mlb_id).toBe(408014);
     expect(gameStartingPitcher.full_name).toBe('Luis Severino');
+  });
+});
+
+describe('applyExecutionGateToMlbPayload timestamp provenance', () => {
+  test('attaches execution_envelope.snapshot_timestamp and freshness_decision', () => {
+    const payload = {
+      sport: 'MLB',
+      game_id: 'mlb_1',
+      card_type: 'mlb-full-game-ml',
+      market_type: 'MONEYLINE',
+      recommended_bet_type: 'MONEYLINE',
+      period: 'FULL_GAME',
+      execution_status: 'EXECUTABLE',
+      status: 'WATCH',
+      action: 'LEAN',
+      classification: 'LEAN',
+      model_status: 'MODEL_OK',
+      edge: 0.04,
+      confidence: 0.62,
+    };
+
+    applyExecutionGateToMlbPayload(payload, {
+      oddsSnapshot: {
+        id: 'odds_mlb_test_1',
+        game_id: 'mlb_1',
+        captured_at: '2026-04-15T19:20:00Z',
+        pulled_at: '2026-04-15T19:20:05Z',
+        updated_at: '2026-04-15T19:20:07Z',
+      },
+      nowMs: Date.parse('2026-04-15T19:30:00Z'),
+    });
+
+    expect(payload.snapshot_timestamp).toBeDefined();
+    expect(payload.snapshot_timestamp).toMatchObject({
+      captured_at: '2026-04-15T19:20:00Z',
+      resolved_source: 'captured_at',
+      resolved_timestamp: expect.any(String),
+      resolved_age_ms: expect.any(Number),
+    });
+    expect(payload.execution_envelope).toBeDefined();
+    expect(payload.execution_envelope.snapshot_timestamp).toBeDefined();
+    expect(payload.execution_gate).toBeDefined();
+    expect(payload.execution_gate).toHaveProperty('freshness_decision');
   });
 });

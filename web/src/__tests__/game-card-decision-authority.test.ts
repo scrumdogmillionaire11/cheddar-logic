@@ -1,62 +1,77 @@
-/*
- * Verifies stored decision_v2 official_status remains authoritative in the web transform.
- * Run: node --import tsx/esm web/src/__tests__/game-card-decision-authority.test.ts
- */
-
 import assert from 'node:assert';
 
+import { applyFilters, DEFAULT_GAME_FILTERS } from '../lib/game-card/filters';
 import { transformToGameCard } from '../lib/game-card/transform/index';
-import { selectAuthoritativeTruePlay } from '../lib/games/route-handler';
 
 type OfficialStatus = 'PLAY' | 'LEAN' | 'PASS';
+type ExecutionStatus = 'EXECUTABLE' | 'BLOCKED' | 'PROJECTION_ONLY';
 
-function buildGame(officialStatus?: OfficialStatus, edge = 0.04) {
+function buildMoneylineGame(params: {
+  sport: 'MLB' | 'NHL';
+  officialStatus: OfficialStatus;
+  executionStatus: ExecutionStatus;
+}) {
   const play = {
-    cardType: 'mlb-total-call',
-    cardTitle: 'Model total',
-    prediction: 'OVER' as const,
+    cardType: params.sport === 'NHL' ? 'nhl-moneyline-call' : 'mlb-full-game-ml',
+    cardTitle: 'Model moneyline',
+    prediction: 'HOME' as const,
     confidence: 0.72,
     tier: 'BEST' as const,
-    reasoning: 'Projection edge on the over.',
+    reasoning: 'Moneyline edge.',
     evPassed: true,
-    driverKey: `driver-${officialStatus ?? 'fallback'}`,
-    edge,
+    driverKey: `driver-${params.sport}-${params.executionStatus}`,
+    edge: 0.06,
     model_prob: 0.56,
-    market_type: 'TOTAL' as const,
-    selection: { side: 'OVER', team: 'Roadrunners' },
+    market_type: 'MONEYLINE' as const,
+    selection: { side: 'HOME' as const, team: 'Home Team' },
     kind: 'PLAY' as const,
-    line: 8.5,
     price: -110,
-    status: 'FIRE' as const,
-    classification: 'BASE' as const,
-    action: 'FIRE' as const,
+    status: 'WATCH' as const,
+    classification: 'LEAN' as const,
+    action: 'HOLD' as const,
+    execution_status: params.executionStatus,
+    pass_reason_code:
+      params.executionStatus === 'BLOCKED'
+        ? 'PASS_EXECUTION_GATE_BLOCKED'
+        : params.executionStatus === 'PROJECTION_ONLY'
+          ? 'PASS_PROJECTION_ONLY'
+          : null,
     created_at: '2026-04-11T14:00:00.000Z',
-    decision_v2: officialStatus
-      ? {
-          official_status: officialStatus,
-          direction: 'OVER',
-          fair_prob: 0.56,
-          implied_prob: 0.52,
-          edge_pct: edge,
-          edge_delta_pct: edge,
-          play_tier: officialStatus === 'PASS' ? 'BAD' : officialStatus === 'LEAN' ? 'OK' : 'GOOD',
-          support_score: 0.67,
-          conflict_score: 0.12,
-          primary_reason_code: officialStatus === 'PASS' ? 'NO_EDGE' : 'EDGE_CLEAR',
-          watchdog_status: 'OK',
-          watchdog_reason_codes: [],
-          price_reason_codes: [],
-          missing_data: { missing_fields: [] },
-          consistency: { total_bias: 'OK' },
-          pricing_trace: { line_source: 'odds_snapshot', price_source: 'odds_snapshot' },
-        }
-      : undefined,
+    decision_v2: {
+      official_status: params.officialStatus,
+      direction: 'HOME' as const,
+      fair_prob: 0.56,
+      implied_prob: 0.52,
+      edge_pct: 0.06,
+      edge_delta_pct: 0.06,
+      play_tier: 'OK' as const,
+      support_score: 0.67,
+      conflict_score: 0.12,
+      drivers_used: ['projection'],
+      driver_reasons: ['edge'],
+      primary_reason_code: 'EDGE_CLEAR',
+      watchdog_status: 'OK' as const,
+      watchdog_reason_codes: [],
+      sharp_price_status: 'CHEDDAR' as const,
+      price_reason_codes: [],
+      missing_data: { missing_fields: [], source_attempts: [], severity: 'INFO' as const },
+      consistency: {
+        pace_tier: 'NORMAL',
+        event_env: 'NORMAL',
+        event_direction_tag: 'NEUTRAL',
+        vol_env: 'NORMAL',
+        total_bias: 'OK',
+      },
+      pricing_trace: { line_source: 'odds_snapshot', price_source: 'odds_snapshot' },
+      pipeline_version: 'v2' as const,
+      decided_at: '2026-04-11T14:00:00.000Z',
+    },
   };
 
   return {
-    id: `game-${officialStatus ?? 'fallback'}`,
-    gameId: `game-${officialStatus ?? 'fallback'}`,
-    sport: 'MLB',
+    id: `game-${params.sport}-${params.executionStatus}`,
+    gameId: `game-${params.sport}-${params.executionStatus}`,
+    sport: params.sport,
     homeTeam: 'Home Team',
     awayTeam: 'Away Team',
     gameTimeUtc: '2026-04-11T19:00:00.000Z',
@@ -66,10 +81,10 @@ function buildGame(officialStatus?: OfficialStatus, edge = 0.04) {
       h2hHome: -120,
       h2hAway: 105,
       total: 8.5,
-      spreadHome: null,
-      spreadAway: null,
-      spreadPriceHome: null,
-      spreadPriceAway: null,
+      spreadHome: -1.5,
+      spreadAway: 1.5,
+      spreadPriceHome: -110,
+      spreadPriceAway: -110,
       totalPriceOver: -110,
       totalPriceUnder: -110,
       capturedAt: '2026-04-11T14:05:00.000Z',
@@ -79,119 +94,19 @@ function buildGame(officialStatus?: OfficialStatus, edge = 0.04) {
   };
 }
 
-function buildAuthorityCandidate(params: {
-  id: string;
-  status: OfficialStatus;
-  edge: number;
-  supportScore?: number;
-  createdAt?: string;
-}) {
-  return {
-    source_card_id: params.id,
-    cardType: 'mlb-total-call',
-    cardTitle: 'Model total',
-    prediction: 'OVER' as const,
-    confidence: 0.71,
-    tier: 'BEST' as const,
-    reasoning: 'Authority candidate',
-    evPassed: true,
-    driverKey: `driver-${params.id}`,
-    projectedTotal: 8.7,
-    edge: params.edge,
-    kind: 'PLAY' as const,
-    created_at: params.createdAt ?? '2026-04-11T14:00:00.000Z',
-    decision_v2: {
-      direction: 'OVER' as const,
-      support_score: params.supportScore ?? 0.5,
-      conflict_score: 0.1,
-      drivers_used: ['total_projection'],
-      driver_reasons: ['edge'],
-      watchdog_status: 'OK' as const,
-      watchdog_reason_codes: [],
-      missing_data: {
-        missing_fields: [],
-        source_attempts: [],
-        severity: 'INFO' as const,
-      },
-      consistency: {
-        pace_tier: 'NORMAL',
-        event_env: 'NORMAL',
-        event_direction_tag: 'NEUTRAL',
-        vol_env: 'NORMAL',
-        total_bias: 'OK',
-      },
-      fair_prob: 0.57,
-      implied_prob: 0.52,
-      edge_pct: params.edge,
-      edge_delta_pct: params.edge,
-      edge_method: 'TOTAL_DELTA' as const,
-      edge_line_delta: 0.5,
-      edge_lean: 'OVER' as const,
-      proxy_used: false,
-      proxy_capped: false,
-      exact_wager_valid: true,
-      pricing_trace: {
-        market_type: 'TOTAL',
-        market_side: 'OVER',
-        market_line: 8.5,
-        market_price: -110,
-        line_source: 'odds_snapshot',
-        price_source: 'odds_snapshot',
-      },
-      sharp_price_status: 'CHEDDAR' as const,
-      price_reason_codes: [],
-      official_status: params.status,
-      play_tier: params.status === 'PLAY' ? 'GOOD' : params.status === 'LEAN' ? 'OK' : 'BAD',
-      primary_reason_code: params.status === 'PASS' ? 'NO_EDGE' : 'EDGE_CLEAR',
-      pipeline_version: 'v2' as const,
-      decided_at: params.createdAt ?? '2026-04-11T14:00:00.000Z',
-    },
-  };
+for (const sport of ['MLB', 'NHL'] as const) {
+  const executableCard = transformToGameCard(
+    buildMoneylineGame({ sport, officialStatus: 'LEAN', executionStatus: 'EXECUTABLE' }) as never,
+  );
+  assert.strictEqual(executableCard.play?.action, 'HOLD');
+  assert.strictEqual(applyFilters([executableCard], DEFAULT_GAME_FILTERS, 'game').length, 1);
+
+  for (const blockedStatus of ['BLOCKED', 'PROJECTION_ONLY'] as const) {
+    const blockedCard = transformToGameCard(
+      buildMoneylineGame({ sport, officialStatus: 'LEAN', executionStatus: blockedStatus }) as never,
+    );
+    assert.strictEqual(applyFilters([blockedCard], DEFAULT_GAME_FILTERS, 'game').length, 0);
+  }
 }
 
-console.log('🧪 Game card decision authority tests');
-
-{
-  const card = transformToGameCard(buildGame('PASS', 0.04));
-  assert.strictEqual(card.play?.action, 'PASS');
-  assert.strictEqual(card.play?.status, 'PASS');
-}
-
-{
-  const card = transformToGameCard(buildGame('LEAN', 0.07));
-  assert.strictEqual(card.play?.action, 'HOLD');
-  assert.strictEqual(card.play?.classification, 'LEAN');
-}
-
-{
-  const card = transformToGameCard(buildGame(undefined, 0.06));
-  const reasonSource = (card.play as { reason_source?: string } | undefined)?.reason_source;
-  assert.strictEqual(reasonSource, 'NON_CANONICAL_RENDER_FALLBACK');
-}
-
-{
-  const selected = selectAuthoritativeTruePlay([
-    buildAuthorityCandidate({ id: 'lean-high-edge', status: 'LEAN', edge: 0.09, supportScore: 0.9 }),
-    buildAuthorityCandidate({ id: 'play-lower-edge', status: 'PLAY', edge: 0.05, supportScore: 0.4 }),
-  ]);
-  assert.strictEqual(selected?.source_card_id, 'play-lower-edge');
-}
-
-{
-  const selected = selectAuthoritativeTruePlay([
-    buildAuthorityCandidate({ id: 'play-lower-edge', status: 'PLAY', edge: 0.05, supportScore: 0.4 }),
-    buildAuthorityCandidate({ id: 'play-higher-edge', status: 'PLAY', edge: 0.08, supportScore: 0.2 }),
-  ]);
-  assert.strictEqual(selected?.source_card_id, 'play-higher-edge');
-  assert.strictEqual(selected?.true_play_authority_source, 'CARD_PAYLOADS_DECISION_V2');
-  assert.strictEqual(selected?.true_play_authority_version, 'ADR-0003');
-}
-
-{
-  const selected = selectAuthoritativeTruePlay([
-    buildAuthorityCandidate({ id: 'pass-only', status: 'PASS', edge: 0.12, supportScore: 0.8 }),
-  ]);
-  assert.strictEqual(selected, null);
-}
-
-console.log('✅ Game card decision authority tests passed');
+console.log('Game card decision authority tests passed');

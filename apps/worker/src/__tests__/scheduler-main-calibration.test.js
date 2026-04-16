@@ -208,7 +208,7 @@ describe('scheduler: run_calibration_report nightly at 04:00 ET (WI-0860)', () =
     expect(pendingIndex).toBeLessThan(f5Index);
   });
 
-  test('nightly settlement queues settle_pending_cards before settle_mlb_f5 at 02:00 ET', () => {
+  test('nightly settlement queues settle_pending_cards before settle_mlb_f5 at 02:00 ET (WI-0860)', () => {
     process.env.ENABLE_MLB_MODEL = 'true';
     const scheduler = loadSchedulerModule();
 
@@ -229,5 +229,196 @@ describe('scheduler: run_calibration_report nightly at 04:00 ET (WI-0860)', () =
     expect(pendingIndex).toBeGreaterThanOrEqual(0);
     expect(f5Index).toBeGreaterThanOrEqual(0);
     expect(pendingIndex).toBeLessThan(f5Index);
+  });
+});
+
+// ============================================================
+// WI-0951: MLB T-minus freshness override — pre-model pull and logging
+// ============================================================
+
+describe('MLB T-minus freshness override — pre-model pull and logging (WI-0951)', () => {
+  const { DateTime } = require('luxon');
+  let claimTminusPullSlotMock;
+
+  function buildMlbContext(claimFn) {
+    return {
+      nowUtc: null, // set per-test
+      games: [],
+      dryRun: true,
+      quotaTier: 'FULL',
+      maybeQueueTeamMetricsRefresh: jest.fn(),
+      claimTminusPullSlot: claimFn || jest.fn(() => true),
+      pullOddsHourly: jest.fn(),
+      ENABLE_WITHOUT_ODDS_MODE: false,
+      ODDS_SPORTS_CONFIG: {},
+    };
+  }
+
+  function computeMlbJobsForGame(gameMinutesFromNow, claimFn) {
+    jest.resetModules();
+    // Re-setup feature flag mock after module reset (outer beforeEach sets ENABLE_MLB_MODEL=false)
+    jest.doMock('@cheddar-logic/data/src/feature-flags', () => ({
+      isFeatureEnabled: jest.fn((sport, feature) => sport === 'mlb' && feature === 'model'),
+    }));
+    const { computeMlbDueJobs } = require('../schedulers/mlb');
+    // Set nowUtc so that the game starts in exactly gameMinutesFromNow minutes
+    const nowUtc = DateTime.fromISO('2026-04-15T19:00:00Z', { zone: 'utc' });
+    // Place game start at nowUtc + gameMinutesFromNow. We need to land within a TMINUS_BAND.
+    // TMINUS_BANDS: [120±5, 90±5, 60±5, 30±5]. Use T-30 band (28–30 min range) for band 45 tests.
+    const startUtc = nowUtc.plus({ minutes: gameMinutesFromNow });
+    const nowEt = nowUtc.setZone('America/New_York');
+    const ctx = buildMlbContext(claimFn);
+    ctx.nowUtc = nowUtc;
+    ctx.games = [{ game_id: 'mlb_test_game_1', sport: 'mlb', game_time_utc: startUtc.toISO() }];
+    return computeMlbDueJobs(nowEt, ctx);
+  }
+
+  beforeEach(() => {
+    jest.resetModules();
+    claimTminusPullSlotMock = jest.fn(() => true);
+    // Enable MLB model
+    jest.doMock('@cheddar-logic/data/src/feature-flags', () => ({
+      isFeatureEnabled: jest.fn((sport, feature) => {
+        if (sport === 'mlb' && feature === 'model') return true;
+        return false;
+      }),
+    }));
+  });
+
+  afterEach(() => {
+    jest.restoreAllMocks();
+    // Ensure windows module mock from FALLBACK_BASELINE test doesn't leak into subsequent tests
+    jest.unmock('../schedulers/windows');
+  });
+
+  test('minutesToGame in 16-45 range (band 45): pull_odds_hourly premodel appears before T-minus run_mlb_model', () => {
+    // T-30 band: game starts in 28-30 min, minutesToGame ~30, which falls in band 45 (16-45)
+    jest.doMock('@cheddar-logic/data/src/feature-flags', () => ({
+      isFeatureEnabled: jest.fn((sport, feature) => sport === 'mlb' && feature === 'model'),
+    }));
+    const jobs = computeMlbJobsForGame(28, jest.fn(() => true));
+    const oddsPremodelIdx = jobs.findIndex(
+      (j) => j.jobName === 'pull_odds_hourly' && j.jobKey && j.jobKey.includes('premodel'),
+    );
+    const tminusModelIdx = jobs.findIndex(
+      (j) => j.jobName === 'run_mlb_model' && j.jobKey && j.jobKey.includes('tminus'),
+    );
+    expect(oddsPremodelIdx).toBeGreaterThanOrEqual(0);
+    expect(tminusModelIdx).toBeGreaterThanOrEqual(0);
+    expect(oddsPremodelIdx).toBeLessThan(tminusModelIdx);
+  });
+
+  test('pull_odds_hourly job key uses pull-odds:mlb:premodel:... schema', () => {
+    jest.doMock('@cheddar-logic/data/src/feature-flags', () => ({
+      isFeatureEnabled: jest.fn((sport, feature) => sport === 'mlb' && feature === 'model'),
+    }));
+    const jobs = computeMlbJobsForGame(28, jest.fn(() => true));
+    const oddsJob = jobs.find((j) => j.jobName === 'pull_odds_hourly');
+    expect(oddsJob).toBeDefined();
+    expect(oddsJob.jobKey).toMatch(/^pull-odds:mlb:premodel:/);
+    expect(oddsJob.jobKey).toContain('mlb_test_game_1');
+    expect(oddsJob.jobKey).toContain(':45:');
+  });
+
+  test('minutesToGame in 91-180 range (band 180, triggerPreModelRefresh=false): no pre-model odds pull', () => {
+    // T-120 band: game starts in 117 min (within [115,120] tolerance), minutesToGame ~117 => band 180
+    jest.doMock('@cheddar-logic/data/src/feature-flags', () => ({
+      isFeatureEnabled: jest.fn((sport, feature) => sport === 'mlb' && feature === 'model'),
+    }));
+    const jobs = computeMlbJobsForGame(118, jest.fn(() => true));
+    const oddsPremodelJob = jobs.find(
+      (j) => j.jobName === 'pull_odds_hourly' && j.jobKey && j.jobKey.includes('premodel'),
+    );
+    expect(oddsPremodelJob).toBeUndefined();
+  });
+
+  test('EXECUTION_FRESHNESS_TMINUS log emitted with ALLOW for band 180 (triggerPreModelRefresh=false)', () => {
+    jest.doMock('@cheddar-logic/data/src/feature-flags', () => ({
+      isFeatureEnabled: jest.fn((sport, feature) => sport === 'mlb' && feature === 'model'),
+    }));
+    const consoleSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+    computeMlbJobsForGame(118, jest.fn(() => true));
+    const calls = consoleSpy.mock.calls.map((c) => {
+      try { return JSON.parse(c[0]); } catch { return null; }
+    }).filter(Boolean);
+    const freshnessLog = calls.find((c) => c.type === 'EXECUTION_FRESHNESS_TMINUS');
+    expect(freshnessLog).toBeDefined();
+    expect(freshnessLog.matched_band).toBe(180);
+    expect(freshnessLog.decision).toBe('ALLOW');
+    consoleSpy.mockRestore();
+  });
+
+  test('EXECUTION_FRESHNESS_TMINUS log emitted with ALLOW_AFTER_REFRESH for triggered band (band 45)', () => {
+    jest.doMock('@cheddar-logic/data/src/feature-flags', () => ({
+      isFeatureEnabled: jest.fn((sport, feature) => sport === 'mlb' && feature === 'model'),
+    }));
+    const consoleSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+    computeMlbJobsForGame(28, jest.fn(() => true));
+    const calls = consoleSpy.mock.calls.map((c) => {
+      try { return JSON.parse(c[0]); } catch { return null; }
+    }).filter(Boolean);
+    const freshnessLog = calls.find((c) => c.type === 'EXECUTION_FRESHNESS_TMINUS');
+    expect(freshnessLog).toBeDefined();
+    expect(freshnessLog.matched_band).toBe(45);
+    expect(freshnessLog.decision).toBe('ALLOW_AFTER_REFRESH');
+    expect(freshnessLog.triggered_refresh).toBe(true);
+    consoleSpy.mockRestore();
+  });
+
+  test('EXECUTION_FRESHNESS_TMINUS log emitted with FALLBACK_BASELINE when minutesToGame > 180', () => {
+    // minutesToGame > 180 means no override row matches; we need a game far enough out
+    // but still in a TMINUS_BAND (which max at T-120). Since max TMINUS_BAND is 120 mins,
+    // minutesToGame will never exceed 125. So let's use a custom override ladder with no match.
+    // Instead, test via computeMlbDueJobs directly with a game at 118 min (band 180) but
+    // use a custom overrides ladder that excludes 118. We can do this by injecting a
+    // mocked windows module.
+    // Actually: minutesToGame > 180 never happens in TMINUS_BANDS (max is ~125).
+    // We test FALLBACK_BASELINE by mocking resolveTMinusFreshnessOverride to return null.
+    jest.resetModules();
+    jest.doMock('@cheddar-logic/data/src/feature-flags', () => ({
+      isFeatureEnabled: jest.fn((sport, feature) => sport === 'mlb' && feature === 'model'),
+    }));
+    jest.doMock('../schedulers/windows', () => ({
+      ...jest.requireActual('../schedulers/windows'),
+      resolveTMinusFreshnessOverride: jest.fn(() => null),
+    }));
+    const { computeMlbDueJobs } = require('../schedulers/mlb');
+    const nowUtc = DateTime.fromISO('2026-04-15T19:00:00Z', { zone: 'utc' });
+    const startUtc = nowUtc.plus({ minutes: 118 });
+    const nowEt = nowUtc.setZone('America/New_York');
+    const consoleSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+    const ctx = buildMlbContext(jest.fn(() => true));
+    ctx.nowUtc = nowUtc;
+    ctx.games = [{ game_id: 'mlb_test_game_fallback', sport: 'mlb', game_time_utc: startUtc.toISO() }];
+    computeMlbDueJobs(nowEt, ctx);
+    const calls = consoleSpy.mock.calls.map((c) => {
+      try { return JSON.parse(c[0]); } catch { return null; }
+    }).filter(Boolean);
+    const freshnessLog = calls.find((c) => c.type === 'EXECUTION_FRESHNESS_TMINUS');
+    expect(freshnessLog).toBeDefined();
+    expect(freshnessLog.decision).toBe('FALLBACK_BASELINE');
+    expect(freshnessLog.matched_band).toBeNull();
+    consoleSpy.mockRestore();
+  });
+
+  test('dedupe: same game+band+slot under repeated calls returns only one pull_odds_hourly pre-model job total', () => {
+    // First call claims slot (returns true), second call returns false (slot already taken)
+    let callCount = 0;
+    const claimFn = jest.fn(() => {
+      callCount += 1;
+      return callCount === 1; // first claim: true; subsequent: false
+    });
+    const jobs1 = computeMlbJobsForGame(28, claimFn);
+    // After computeMlbJobsForGame, modules are reset. We need to call again with same claimFn.
+    // computeMlbJobsForGame re-requires the mlb module each time but uses the passed claimFn.
+    const jobs2 = computeMlbJobsForGame(28, claimFn);
+
+    const allJobs = [...jobs1, ...jobs2];
+    const oddsPremodelJobs = allJobs
+      .filter((j) => j.jobName === 'pull_odds_hourly' && j.jobKey && j.jobKey.includes('premodel'));
+
+    // Should have exactly one pre-model pull (first call claimed; second call claimFn returns false, no enqueue)
+    expect(oddsPremodelJobs).toHaveLength(1);
+    expect(oddsPremodelJobs[0].jobKey).toMatch(/^pull-odds:mlb:premodel:mlb_test_game_1:45:/);
   });
 });
