@@ -339,6 +339,138 @@ describe('pull_odds_hourly job', () => {
     });
   });
 
+  describe('after-odds settlement sweep job keys', () => {
+    const originalEnableSettlement = process.env.ENABLE_SETTLEMENT;
+    const originalAppEnv = process.env.APP_ENV;
+
+    beforeEach(() => {
+      jest.resetModules();
+      process.env.ENABLE_SETTLEMENT = 'true';
+      process.env.APP_ENV = 'test';
+    });
+
+    afterEach(() => {
+      jest.resetModules();
+      process.env.ENABLE_SETTLEMENT = originalEnableSettlement;
+      process.env.APP_ENV = originalAppEnv;
+    });
+
+    async function loadSubject({
+      settleGameResultsImpl,
+      settleProjectionsImpl,
+      settlePendingCardsImpl,
+    } = {}) {
+      const mocks = {
+        settleGameResults: settleGameResultsImpl || jest.fn().mockResolvedValue({ success: true }),
+        settleProjections: settleProjectionsImpl || jest.fn().mockResolvedValue({ success: true }),
+        settlePendingCards: settlePendingCardsImpl || jest.fn().mockResolvedValue({ success: true }),
+        insertJobRun: jest.fn(),
+        markJobRunSuccess: jest.fn(),
+        markJobRunFailure: jest.fn(),
+      };
+
+      jest.doMock('dotenv', () => ({ config: jest.fn() }));
+      jest.doMock('@cheddar-logic/data', () => ({
+        insertJobRun: mocks.insertJobRun,
+        markJobRunSuccess: mocks.markJobRunSuccess,
+        markJobRunFailure: mocks.markJobRunFailure,
+        shouldRunJobKey: jest.fn().mockReturnValue(true),
+        getDatabase: jest.fn(),
+        upsertGame: jest.fn(),
+        insertOddsSnapshot: jest.fn(),
+        recordOddsIngestFailure: jest.fn(),
+        withDb: jest.fn(async (fn) => fn()),
+        getQuotaLedger: jest.fn(),
+        upsertQuotaLedger: jest.fn(),
+        isQuotaCircuitOpen: jest.fn(() => ({ open: false })),
+        resolveSnapshotAge: jest.fn(),
+      }));
+      jest.doMock('@cheddar-logic/data/src/normalize', () => ({
+        resolveTeamVariant: jest.fn(),
+      }));
+      jest.doMock('@cheddar-logic/odds/src/normalize', () => ({
+        validateMarketContract: jest.fn(),
+      }));
+      jest.doMock('@cheddar-logic/odds', () => ({
+        fetchOdds: jest.fn().mockResolvedValue({
+          games: [],
+          errors: [],
+          rawCount: 0,
+          windowRawCount: 0,
+          remainingTokens: null,
+        }),
+        getActiveSports: jest.fn(() => ['NHL']),
+        getTokensForFetch: jest.fn(() => 1),
+      }));
+      jest.doMock('../settle_game_results', () => ({
+        settleGameResults: mocks.settleGameResults,
+      }));
+      jest.doMock('../settle_projections', () => ({
+        settleProjections: mocks.settleProjections,
+      }));
+      jest.doMock('../settle_pending_cards', () => ({
+        settlePendingCards: mocks.settlePendingCards,
+      }));
+
+      const { pullOddsHourly } = require('../pull_odds_hourly');
+      return { pullOddsHourly, mocks };
+    }
+
+    test('uses canonical game-results, projections, and pending-cards keys', async () => {
+      const { pullOddsHourly, mocks } = await loadSubject();
+
+      const result = await pullOddsHourly({
+        jobKey: 'hourly|2026-04-15|01',
+        dryRun: false,
+      });
+
+      expect(result.success).toBe(true);
+      expect(mocks.settleGameResults).toHaveBeenCalledWith({
+        jobKey: 'settle|after-odds|hourly|2026-04-15|01|game-results',
+        dryRun: false,
+        minHoursAfterStart: 0,
+      });
+      expect(mocks.settleProjections).toHaveBeenCalledWith({
+        jobKey: 'settle|after-odds|hourly|2026-04-15|01|projections',
+        dryRun: false,
+      });
+      expect(mocks.settlePendingCards).toHaveBeenCalledWith({
+        jobKey: 'settle|after-odds|hourly|2026-04-15|01|pending-cards',
+        dryRun: false,
+      });
+    });
+
+    test('continues through canonical guarded keys when game-results returns skipped', async () => {
+      const { pullOddsHourly, mocks } = await loadSubject({
+        settleGameResultsImpl: jest.fn().mockResolvedValue({
+          success: true,
+          skipped: true,
+          guardedBy: 'another-process',
+        }),
+      });
+
+      const result = await pullOddsHourly({
+        jobKey: 'nightly|2026-04-15',
+        dryRun: false,
+      });
+
+      expect(result.success).toBe(true);
+      expect(mocks.settleGameResults).toHaveBeenCalledWith({
+        jobKey: 'settle|after-odds|nightly|2026-04-15|game-results',
+        dryRun: false,
+        minHoursAfterStart: 0,
+      });
+      expect(mocks.settleProjections).toHaveBeenCalledWith({
+        jobKey: 'settle|after-odds|nightly|2026-04-15|projections',
+        dryRun: false,
+      });
+      expect(mocks.settlePendingCards).toHaveBeenCalledWith({
+        jobKey: 'settle|after-odds|nightly|2026-04-15|pending-cards',
+        dryRun: false,
+      });
+    });
+  });
+
   if (!hasOddsKey) {
     console.warn('[pull_odds_hourly.test] Skipping: ODDS_API_KEY not set.');
   }

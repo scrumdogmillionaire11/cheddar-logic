@@ -42,6 +42,7 @@ const { resolveTeamVariant } = require('@cheddar-logic/data/src/normalize');
 const { validateMarketContract } = require('@cheddar-logic/odds/src/normalize');
 
 const { settleGameResults } = require('./settle_game_results');
+const { settleProjections } = require('./settle_projections');
 const { settlePendingCards } = require('./settle_pending_cards');
 
 // Import odds fetching package (no DB writes)
@@ -578,19 +579,29 @@ async function pullOddsHourly({ jobKey = null, dryRun = false } = {}) {
         const settleKey = jobKey
           ? `settle|after-odds|${jobKey}`
           : `settle|after-odds|${jobRunId}`;
+        const settlementJobKeys = {
+          gameResults: `${settleKey}|game-results`,
+          projections: `${settleKey}|projections`,
+          pendingCards: `${settleKey}|pending-cards`,
+        };
         console.log(
           `[PullOdds] Triggering settlement sweep after odds update (${settleKey})...`,
         );
 
         try {
           await settleGameResults({
-            jobKey: `${settleKey}|games`,
+            jobKey: settlementJobKeys.gameResults,
             dryRun,
             minHoursAfterStart: 0,
           });
 
+          await settleProjections({
+            jobKey: settlementJobKeys.projections,
+            dryRun,
+          });
+
           await settlePendingCards({
-            jobKey: `${settleKey}|cards`,
+            jobKey: settlementJobKeys.pendingCards,
             dryRun,
           });
         } catch (settleErr) {
