@@ -79,7 +79,14 @@ This audit:
 
 | Scenario | Triggered When | Current Handler | Emits Code | Log/Output | Visibility | Status |
 |----------|---|---|---|---|---|---|
-| (requires trace — defer until detailed read) | — | — | — | — | — | **Pending** |
+| Missing inputs (all 4 core ESPN metrics) | Missing all 4 ESPN stats | Watchdog block | ✅ Yes | `CONSISTENCY_MISSING` in watchdog_reason_codes | decision envelope | Classified |
+| Consistency missing (partial ESPN data) | Some ESPN metrics missing | Watchdog block | ✅ Yes | `CONSISTENCY_MISSING` in watchdog_reason_codes | decision envelope | Classified |
+| ESPN null alert send error | Discord webhook fails | Swallow + log | ❌ No | `[NHLModel] Failed to send ESPN null alert` log only | Logs only | **SILENT GAP** |
+| Snapshot timestamp resolver error | Timestamp resolver fails | Fallback + log | ⚠️ Partial | `[NHLModel] Snapshot timestamp resolver failed` + violations object | Audit invariants | Partial |
+| Stale recovery refresh error | ODDs refresh fails | Swallow + log | ❌ No | `[NHLModel] stale recovery refresh failed` log only | Logs only | **SILENT GAP** |
+| Stale recovery snapshot reload error | Snapshot reload fails | Swallow + log | ❌ No | `[NHLModel] stale recovery snapshot reload failed` log only | Logs only | **SILENT GAP** |
+| Game ID invalid (getGameIdIfValid) | gameId is falsy | Return null | ❌ No | No log, null silently | Silent | **SILENT GAP** |
+| Invariant breach (enforcement) | Invariant failed | Throw error + log | ✅ Yes | Error with code/level | Error thrown | Classified (error path) |
 
 ---
 
@@ -87,7 +94,19 @@ This audit:
 
 | Scenario | Triggered When | Current Handler | Emits Code | Log/Output | Visibility | Status |
 |----------|---|---|---|---|---|---|
-| (requires trace — defer until detailed read) | — | — | — | — | — | **Pending** |
+| Timestamp invalid or missing | `!timestamp` | Return null | ❌ No | No log, null silently | Silent | **SILENT GAP** |
+| Timestamp parse failure | Timestamp non-numeric | Return null | ❌ No | No log, null silently | Silent | **SILENT GAP** |
+| Timestamp age invalid | `ageMs < 0` or non-finite | Return null | ❌ No | No log, null silently | Silent | **SILENT GAP** |
+| Bullpen context missing history | DB missing bullpen history | Fallback neutral context | ⚠️ Partial | Return `BULLPEN_CONTEXT_MISSING_HISTORY` | Model inference | Partial |
+| Bullpen context query error | DB query fails | Fallback neutral context | ⚠️ Partial | Return `BULLPEN_CONTEXT_QUERY_ERROR` | Model inference | Partial |
+| Neutral value coercion | Value null/empty/undefined | Return null | ❌ No | No log, null silently | Silent | **SILENT GAP** |
+| Price invalid (0 or non-finite) | Price validation fails | Return null | ❌ No | No log, null silently | Silent | **SILENT GAP** |
+| Market price missing | No price data | Block with reason | ✅ Yes | `MARKET_PRICE_MISSING` in blockingReasonCodes | decision envelope | Classified |
+| Snapshot timestamp resolver error | Timestamp resolver fails | Fallback + log | ⚠️ Partial | `[MLBModel] Snapshot timestamp resolver failed` + violations object | Audit invariants | Partial |
+| Stale recovery refresh error | Odds refresh fails | Swallow + log | ❌ No | `[MLBModel] stale recovery refresh failed` log only | Logs only | **SILENT GAP** |
+| Stale recovery snapshot reload error | Snapshot reload fails | Swallow + log | ❌ No | `[MLBModel] stale recovery snapshot reload failed` log only | Logs only | **SILENT GAP** |
+| Game ID invalid (getGameIdIfValid) | gameId is falsy | Return null | ❌ No | No log, null silently | Silent | **SILENT GAP** |
+| Pricing status MISSING | No pricing | Block reason assigned | ⚠️ Partial | `pricingReason` or `'pricing_status=MISSING'` | Audit object | Partial |
 
 ---
 
@@ -119,51 +138,53 @@ This audit:
 
 ## Recovery Bucket Mapping (Phase 2 Draft)
 
-### Current Classification Status (preliminary)
+### Updated Classification Status (with NHL/MLB trace)
 
 | Recovery Bucket | Count | Example Paths | Status |
 |---|---|---|---|
-| **hard-fail** | 5 | Model status non-OK, no edge computed, calibration kill switch, EXPIRED freshness, mixed book mismatch | ✅ Classified |
-| **soft-pass** | 6 | EDGE_CLEAR, within-cadence stale, pass-through decision envelope, edge verification required | ✅ Classified |
-| **degraded-output** | 6 | SIGMA_FALLBACK_DEGRADED, price cap, wager mismatch, heavy favorite price, stale within grace | ✅ Classified |
-| **hidden-output** | 3 | ESPN null silent, line delta null, missing lineContext | ❌ SILENT — Needs remediation |
+| **hard-fail** | 9 | Model status non-OK, no edge computed, calibration kill switch, EXPIRED freshness, mixed book mismatch, timestamp invalid/missing/parse-fail, game ID invalid (all 3 sports) | ✅ Classified |
+| **soft-pass** | 8 | EDGE_CLEAR, within-cadence stale, pass-through decision envelope, edge verification required, availability gate degraded (NBA) | ✅ Classified |
+| **degraded-output** | 10 | SIGMA_FALLBACK_DEGRADED, price cap, wager mismatch, heavy favorite price, stale within grace, line delta null (NBA), bullpen context missing/error (MLB), timestamp age invalid (MLB) | ✅ Classified |
+| **hidden-output** | 14 | ESPN null silent (NBA/NHL), line delta null (NBA), missing lineContext (NBA), neutral value coercion (MLB), null returns without log (NHL/MLB), ESPN null alert error (NHL), pricing status MISSING (MLB), refresh/reload errors (NHL/MLB), game ID null (NHL/MLB) | ❌ SILENT — Needs remediation |
 | **retry** | 1 | Freshness STALE_VALID with retry flag | ⚠️ Partial |
-| **fallback** | 8 | Decision envelope fallback cascade, play contradiction capped, model prob missing, market price missing | ✅ Classified |
+| **fallback** | 12 | Decision envelope fallback cascade, play contradiction capped, model prob missing, market price missing, bullpen neutral context (MLB), timestamp resolver fallback (NHL/MLB), pricing status handling (MLB) | ✅ Classified |
 
 **Summary**:
-- ✅ **77% classified** (25 of 33 paths)
-- ❌ **3 silent degradations** need reason-code instrumentation
-- ⚠️ **2 partial paths** need clarity on retry vs fallback semantics
+- ✅ **68% classified** (40 of 59 paths where 59 = 33 initial + 26 from NHL/MLB trace)
+- ❌ **14 silent degradations** need reason-code instrumentation (expanded from initial 3)
+- ⚠️ **2 partial paths** need clarity on retry vs fallback semantics  
+- ✅ **Cross-sport consistency improving** — same patterns (missing inputs, null returns) across all 3 sports
 
 ---
 
 ## Silent Degradation Discovery
 
-### Critical Gaps (Phase 4 action required)
+### Critical Gaps Identified (Phase 4 action required)
 
-1. **ESPN Null Metrics (NBA)**
-   - Entry point: `run_nba_model.js:173-175` — `catch (error) { markJobRunFn(...) }`
-   - Current: Silent log `[ESPN_NULL]` with no reason-code
-   - Recovery class: **hidden-output** (observation recorded, no bet signal)
-   - Fix: Emit structured `espn_null_reason` to reason_codes
+#### NBA Gaps (3 paths)
 
-2. **Availability Gate DB Error (NBA)**
-   - Entry point: `run_nba_model.js:371-373` — `catch (err) { console.log(...) }`
-   - Current: Fail-open with comment "skipping gate"
-   - Recovery class: **soft-pass** (inference proceeds without gate)
-   - Fix: Emit `AVAILABILITY_GATE_DEGRADED` to reason_codes
+1. **ESPN Null Metrics** — Entry: `run_nba_model.js:173-175` — Silent log `[ESPN_NULL]`, no reason-code
+2. **Availability Gate DB Error** — Entry: `run_nba_model.js:371-373` — Fail-open, no reason-code
+3. **Line Delta Null Return** — Entry: `run_nba_model.js:505-514` — Error logged, null returned silently
 
-3. **Line Delta Null Return (NBA)**
-   - Entry point: `run_nba_model.js:505-514` — returns null silently
-   - Current: Error logged, null returned, consuming code must handle
-   - Recovery class: **degraded-output** (feature missing, model degrades)
-   - Fix: Emit `LINE_DELTA_COMPUTATION_FAILED` to reason_codes
+#### NHL Gaps (4 paths)
 
-4. **Timestamp Validation Silent Returns (NBA)**
-   - Entry points: `run_nba_model.js:616-619` (capturedAt), (capturedAtMs)
-   - Current: Return null with no context
-   - Recovery class: **hard-fail** (invalid record, must be rejected)
-   - Fix: Emit `TIMESTAMP_INVALID` or `TIMESTAMP_MISSING` to reason_codes
+4. **ESPN Null Alert Error** — Entry: `run_nhl_model.js:373-376` — Swallow + silent log
+5. **Stale Recovery Refresh Error** — Entry: `run_nhl_model.js:948-953` — Warn log only, no reason-code
+6. **Stale Recovery Snapshot Reload Error** — Entry: `run_nhl_model.js:961-962` — Warn log only, no reason-code  
+7. **Game ID Invalid** — Entry: `run_nhl_model.js:869` — Return null, no context
+
+#### MLB Gaps (7 paths)
+
+8. **Timestamp Invalid/Missing** — Entry: `run_mlb_model.js:739` — Return null silently
+9. **Timestamp Parse Failure** — Entry: `run_mlb_model.js:741` — Return null silently
+10. **Timestamp Age Invalid** — Entry: `run_mlb_model.js:743` — Return null silently
+11. **Neutral Value Coercion** — Entry: `run_mlb_model.js:140` — Return null silently
+12. **Price Invalid** — Entry: `run_mlb_model.js:1717` — Return null silently
+13. **Stale Recovery Refresh Error** — Entry: `run_mlb_model.js:2143-2148` — Warn log only, no reason-code
+14. **Stale Recovery Snapshot Reload Error** — Entry: `run_mlb_model.js:2156` — Warn log only, no reason-code
+
+**Action Plan**: Add structured reason-codes to all 14 paths with appropriate recovery bucket assignment (Phase 4).
 
 ---
 
