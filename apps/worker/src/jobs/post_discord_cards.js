@@ -208,6 +208,10 @@ const TEAM_ABBREVIATIONS = {
   'calgary flames': 'CGY',     'buffalo sabres': 'BUF',     'anaheim ducks': 'ANA',
   'arizona coyotes': 'ARI',    'columbus blue jackets': 'CBJ', 'montreal canadiens': 'MTL',
   'boston bruins': 'BOS',      'carolina hurricanes': 'CAR',
+  // WI-0957: 2025-26 renamed MLB venues
+  'oakland athletics': 'ATH',           'athletics': 'ATH',
+  'sacramento athletics': 'ATH',        'guaranteed rate field': 'CWS', 'rate field': 'CWS',
+  'minute maid park': 'HOU',            'daikin park': 'HOU',
 };
 
 // Mascot/nickname for each team — combined with abbreviation (e.g. "STL Blues")
@@ -248,6 +252,9 @@ const TEAM_NICKNAMES = {
   'anaheim ducks': 'Ducks',            'arizona coyotes': 'Coyotes',        'columbus blue jackets': 'Blue Jackets',
   'montreal canadiens': 'Canadiens',   'boston bruins': 'Bruins',           'boston celtics': 'Celtics',
   'boston red sox': 'Red Sox',
+  // WI-0957: 2025-26 renamed MLB venues
+  'oakland athletics': 'Athletics',   'athletics': 'Athletics',
+  'sacramento athletics': 'Athletics',
 };
 
 function abbreviateTeam(name) {

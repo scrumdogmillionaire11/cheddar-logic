@@ -113,6 +113,8 @@ const MLB_TEAM_VARIANT_ALIASES = Object.freeze({
   'A S': 'Athletics',
   AS: 'Athletics',
   ATHLETICS: 'Athletics',
+  'OAKLAND ATHLETICS': 'Athletics',
+  'SACRAMENTO ATHLETICS': 'Athletics',
   'WHITE SOX': 'Chicago White Sox',
   'RED SOX': 'Boston Red Sox',
   'BLUE JAYS': 'Toronto Blue Jays',

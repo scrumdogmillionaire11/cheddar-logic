@@ -329,6 +329,50 @@ function normalizeReasonCode(value: unknown): string | null {
   return normalized.length > 0 ? normalized : null;
 }
 
+function stringifyMissingInputValue(value: unknown): string | null {
+  if (typeof value === 'string') {
+    const normalized = value.trim();
+    return normalized.length > 0 ? normalized : null;
+  }
+
+  if (typeof value === 'number' || typeof value === 'boolean') {
+    return String(value);
+  }
+
+  if (!value || typeof value !== 'object') {
+    return null;
+  }
+
+  const entry = value as Record<string, unknown>;
+  for (const key of ['reason', 'code', 'label', 'message', 'field', 'key']) {
+    if (typeof entry[key] === 'string' && entry[key].trim().length > 0) {
+      return entry[key].trim();
+    }
+  }
+
+  try {
+    const json = JSON.stringify(value);
+    return json && json !== '{}' ? json : null;
+  } catch {
+    return null;
+  }
+}
+
+function normalizeMissingInputs(values: unknown): string[] {
+  if (!Array.isArray(values)) return [];
+
+  const normalized: string[] = [];
+  const seen = new Set<string>();
+  for (const value of values) {
+    const display = stringifyMissingInputValue(value);
+    if (!display || seen.has(display)) continue;
+    seen.add(display);
+    normalized.push(display);
+  }
+
+  return normalized;
+}
+
 function normalizeDropReasonMeta(
   value: ApiPlay['execution_gate'] extends { drop_reason?: infer T } ? T : unknown,
 ): DropReasonMeta | null {
@@ -517,7 +561,7 @@ function collectNoActionablePlayInputs(game: GameData): string[] {
         unknownSignalCodes.push(code);
       }
     }
-    for (const missingInput of play.missing_inputs ?? []) {
+    for (const missingInput of normalizeMissingInputs(play.missing_inputs)) {
       push(toDiagnosticToken('fetch_missing', missingInput));
     }
     for (const mappingFailure of play.source_mapping_failures ?? []) {
@@ -843,6 +887,28 @@ function actionFromOfficial(
   if (official === 'PLAY') return 'FIRE';
   if (official === 'LEAN') return 'HOLD';
   return 'PASS';
+}
+
+function resolveMoneylineExecutionActionOverride(
+  play: ApiPlay | null | undefined,
+  fallbackAction: 'FIRE' | 'HOLD' | 'PASS',
+): 'FIRE' | 'HOLD' | 'PASS' | null {
+  if (!play || play.market_type !== 'MONEYLINE') return null;
+
+  if (play.execution_status === 'BLOCKED') return 'PASS';
+  if (play.execution_status === 'PROJECTION_ONLY') return 'PASS';
+  if (play.execution_status !== 'EXECUTABLE') return null;
+
+  const canonicalStatus = resolveCanonicalOfficialStatus(play);
+  if (canonicalStatus === 'PLAY') return 'FIRE';
+  if (canonicalStatus === 'LEAN') return 'HOLD';
+  if (canonicalStatus === 'PASS') return 'PASS';
+
+  if (fallbackAction === 'PASS') {
+    return play.action === 'FIRE' || play.action === 'HOLD' ? play.action : 'HOLD';
+  }
+
+  return fallbackAction;
 }
 
 function selectWave1DecisionCandidate(
@@ -1293,7 +1359,9 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
       },
       transform_meta: {
         quality: effectiveDecisionV2.watchdog_status === 'BLOCKED' ? 'DEGRADED' : 'OK',
-        missing_inputs: effectiveDecisionV2.missing_data.missing_fields,
+        missing_inputs: normalizeMissingInputs(
+          effectiveDecisionV2.missing_data.missing_fields,
+        ),
         placeholders_found: [],
         drop_reason: resolvePlayDropReason(wave1DecisionPlay),
       },
@@ -1318,6 +1386,7 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
         : undefined,
       reason_codes: mergedReasonCodes,
       tags: Array.from(new Set(tags)),
+      execution_status: wave1DecisionPlay.execution_status,
       classification:
         officialStatus === 'PLAY' ? 'BASE' : officialStatus === 'LEAN' ? 'LEAN' : 'PASS',
       action,
@@ -1410,11 +1479,9 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
     );
     const projectionMissingInputs = Array.from(
       new Set([
-        ...(Array.isArray(game.projection_missing_inputs)
-          ? game.projection_missing_inputs
-          : []),
+        ...normalizeMissingInputs(game.projection_missing_inputs),
         ...game.plays.flatMap((play) =>
-          Array.isArray(play.missing_inputs) ? play.missing_inputs : [],
+          normalizeMissingInputs(play.missing_inputs),
         ),
       ]),
     );
@@ -1728,7 +1795,9 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
   const authoritativeCanonicalStatus = resolveCanonicalOfficialStatus(
     canonicalTruePlay,
   );
-  const authoritativeAction = getSourcePlayAction(canonicalTruePlay);
+  const authoritativeAction = canonicalTruePlay
+    ? getSourcePlayAction(canonicalTruePlay)
+    : undefined;
   const authoritativeSelectedSource =
     canonicalTruePlay &&
     (authoritativeCanonicalStatus === 'PLAY' ||
@@ -1765,7 +1834,9 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
         ? 'HOLD'
         : sourceCanonicalStatus === 'PASS'
           ? 'PASS'
-          : getSourcePlayAction(sourcePlay);
+          : (getSourcePlayAction(sourcePlay) ?? 'PASS');
+  const moneylineExecutionActionOverride =
+    resolveMoneylineExecutionActionOverride(sourcePlay, sourceAction);
   const sourceExplicitPass = sourceAction === 'PASS';
   const sourceInference =
     selectedSource?.inference ??
@@ -2421,6 +2492,13 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
   ) {
     finalDecision = canonicalTruePlayStatus === 'PLAY' ? 'FIRE' : 'WATCH';
   }
+  if (
+    !hardPass &&
+    !hasExplicitTotalsConsistencyBlock &&
+    moneylineExecutionActionOverride
+  ) {
+    finalDecision = decisionFromAction(moneylineExecutionActionOverride);
+  }
   if (hardPass) finalDecision = 'PASS';
 
   // Canonical NHL totals status must come from worker payload only.
@@ -2451,6 +2529,10 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
   if (hasBlockingGate && !shouldKeepBetDespiteGates) {
     finalBet = null;
     if (finalDecision !== 'PASS') finalDecision = 'WATCH';
+  }
+  if (moneylineExecutionActionOverride === 'PASS') {
+    finalBet = null;
+    finalDecision = 'PASS';
   }
   if (!finalBet && finalDecision === 'FIRE') {
     finalDecision = 'WATCH';
@@ -2688,6 +2770,7 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
           : undefined,
     reason_codes: reasonCodesUnique,
     tags: dedupedTags,
+    execution_status: sourcePlay?.execution_status,
     reason_source: decision.reason_source,
     // Canonical fields (preferred)
     classification: resolvedDisplayDecision.classification,
@@ -3336,8 +3419,9 @@ export function transformPropGames(games: GameData[]): PropGameCard[] {
       const projectionSource =
         rawPropDecision?.projection_source ?? play.projection_source ?? null;
       const statusCap = rawPropDecision?.status_cap ?? play.status_cap ?? null;
-      const missingInputs =
-        rawPropDecision?.missing_inputs ?? play.missing_inputs ?? undefined;
+      const missingInputs = normalizeMissingInputs(
+        rawPropDecision?.missing_inputs ?? play.missing_inputs,
+      );
       const passReasonCode =
         rawPropDecision?.pass_reason_code ?? play.pass_reason_code ?? null;
       const passReason =
@@ -3381,7 +3465,7 @@ export function transformPropGames(games: GameData[]): PropGameCard[] {
         roleGatePass: play.role_gate_pass,
         dataQuality: play.data_quality ?? null,
         reasonCodes: play.reason_codes,
-        missingInputs,
+        missingInputs: missingInputs.length > 0 ? missingInputs : undefined,
         projectionSource,
         statusCap,
         playability,

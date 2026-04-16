@@ -58,6 +58,32 @@ export const BUCKET_LABELS: Record<
   projectionOnly: 'Projection only',
 };
 
+function normalizeMissingInputs(values: unknown): string[] {
+  if (!Array.isArray(values)) return [];
+
+  const normalized: string[] = [];
+  for (const value of values) {
+    if (typeof value === 'string' && value.trim().length > 0) {
+      normalized.push(value.trim());
+      continue;
+    }
+
+    if (value && typeof value === 'object') {
+      const entry = value as Record<string, unknown>;
+      const label =
+        (typeof entry.reason === 'string' && entry.reason.trim()) ||
+        (typeof entry.code === 'string' && entry.code.trim()) ||
+        (typeof entry.label === 'string' && entry.label.trim()) ||
+        '';
+      if (label) {
+        normalized.push(label);
+      }
+    }
+  }
+
+  return normalized;
+}
+
 export function createEmptySportCounts(): SportCountMap {
   return TRACKED_SPORTS.reduce<SportCountMap>((acc, sport) => {
     acc[sport] = 0;
@@ -149,7 +175,11 @@ export function getCardDebugMeta(card: GameCard) {
 
   const playCount = card.drivers.length;
   const hasAnyPlay = playCount > 0;
+  const hasExecutableMoneyline =
+    card.play?.market_type === 'MONEYLINE' &&
+    card.play?.execution_status === 'EXECUTABLE';
   const hasBettable =
+    hasExecutableMoneyline ||
     card.tags.includes(GAME_TAGS.HAS_FIRE) ||
     card.tags.includes(GAME_TAGS.HAS_WATCH);
   const playDisplayAction = getPlayDisplayAction(card.play);
@@ -162,7 +192,9 @@ export function getCardDebugMeta(card: GameCard) {
   // "missing: play" alone means no gameline model fired for this sport/game — not a
   // pipeline failure. Only flag as a data error when drivers failed to load or other
   // real error codes are present.
-  const missingInputs: string[] = card.play?.transform_meta?.missing_inputs ?? [];
+  const missingInputs = normalizeMissingInputs(
+    card.play?.transform_meta?.missing_inputs,
+  );
   const onlyMissingPlay =
     missingInputs.length > 0 &&
     missingInputs.every((inp) => inp === 'play') &&

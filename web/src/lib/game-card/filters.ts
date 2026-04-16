@@ -358,6 +358,21 @@ function filterByActionability(
 
   const includePass = filters.statuses.includes('PASS');
   const displayAction = getPlayDisplayAction(card.play);
+  const moneylineExecutionStatus =
+    card.play?.market_type === 'MONEYLINE'
+      ? card.play.execution_status
+      : undefined;
+
+  if (!includePass && moneylineExecutionStatus === 'EXECUTABLE') {
+    return true;
+  }
+  if (
+    !includePass &&
+    (moneylineExecutionStatus === 'BLOCKED' ||
+      moneylineExecutionStatus === 'PROJECTION_ONLY')
+  ) {
+    return false;
+  }
 
   // Full Slate mode: include any game with a play or blocked totals
   if (includePass) {
@@ -382,6 +397,15 @@ function filterByActionability(
     status = 'FIRE';
   } else if (displayAction === 'HOLD') {
     status = 'WATCH';
+  }
+  if (moneylineExecutionStatus === 'EXECUTABLE' && status === 'PASS') {
+    status = 'WATCH';
+  }
+  if (
+    moneylineExecutionStatus === 'BLOCKED' ||
+    moneylineExecutionStatus === 'PROJECTION_ONLY'
+  ) {
+    status = 'PASS';
   }
 
   const explicitPassPlay =
@@ -505,6 +529,16 @@ function filterBySearch(card: GameCard, filters: CommonFilters): boolean {
 function hasActionablePlayCall(card: GameCard): boolean {
   const play = card.play;
   if (!play) return false;
+
+  if (play.market_type === 'MONEYLINE') {
+    if (play.execution_status === 'EXECUTABLE') return true;
+    if (
+      play.execution_status === 'BLOCKED' ||
+      play.execution_status === 'PROJECTION_ONLY'
+    ) {
+      return false;
+    }
+  }
 
   const canonicalActionable = resolveCanonicalIsActionable(play);
   if (canonicalActionable === false) return false;

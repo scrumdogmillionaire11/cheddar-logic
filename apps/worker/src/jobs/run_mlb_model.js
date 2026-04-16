@@ -70,6 +70,11 @@ const {
   dedupeFlags,
 } = require('./mlb-k-input-classifier');
 const { evaluateExecution } = require('./execution-gate');
+const { refreshStaleOdds } = require('./refresh_stale_odds');
+const {
+  parseContractFromEnv,
+  getEffectiveContract,
+} = require('./execution-gate-freshness-contract');
 const { applyCalibration } = require('../utils/calibration');
 const { assertFeatureTimeliness } = require('../models/feature-time-guard');
 const { pullMlbStatcast } = require('./pull_mlb_statcast');
@@ -112,6 +117,11 @@ const MLB_PROJECTION_ONLY_MARKET_FLAGS = Object.freeze([
   'PROJECTION_ONLY_NOT_ACTIONABLE',
   'NO_ANCHOR_PRICE_VALIDATION',
 ]);
+const STALE_RECOVERY_MAX_ATTEMPTS = 1;
+const STALE_RECOVERY_DEDUP_TTL_MS = 10 * 60 * 1000;
+const staleRecoveryDedupCache = new Map();
+
+let cachedFreshnessEnvOverrides = null;
 
 const loggedUnknownMlbTeamVariants = new Set();
 const MLB_TEAM_CANONICAL_BY_TOKEN = Object.freeze(
@@ -144,6 +154,104 @@ function uniqueReasonCodes(codes = []) {
       ),
     ),
   );
+}
+
+function normalizeSlotStartIso(value) {
+  const parsed = new Date(value || Date.now());
+  if (!Number.isFinite(parsed.getTime())) {
+    return new Date(Date.now()).toISOString().replace(/\.\d{3}Z$/, 'Z');
+  }
+  parsed.setUTCSeconds(0, 0);
+  return parsed.toISOString().replace(/\.\d{3}Z$/, 'Z');
+}
+
+function buildStaleRecoveryKey({ sport, gameId, slotStartIso, modelRunUuid }) {
+  return `${String(sport || '').toLowerCase()}:${String(gameId || 'unknown')}:${normalizeSlotStartIso(slotStartIso)}:${String(modelRunUuid || 'unknown')}`;
+}
+
+function claimStaleRecoveryKey(cache, key, nowMs = Date.now(), ttlMs = STALE_RECOVERY_DEDUP_TTL_MS) {
+  for (const [existingKey, expiresAt] of cache.entries()) {
+    if (!Number.isFinite(expiresAt) || expiresAt <= nowMs) {
+      cache.delete(existingKey);
+    }
+  }
+  if (cache.has(key)) {
+    return false;
+  }
+  cache.set(key, nowMs + ttlMs);
+  return true;
+}
+
+function hasOnlyStaleBlockers(blockedBy = []) {
+  if (!Array.isArray(blockedBy) || blockedBy.length === 0) return false;
+  return blockedBy.every((reason) => String(reason || '').startsWith('STALE_SNAPSHOT'));
+}
+
+function shouldAttemptStaleRecoveryFromGate({ gate, sport }) {
+  if (!gate || gate.should_bet !== false) {
+    return { shouldAttempt: false, reason: 'not_blocked' };
+  }
+
+  const freshnessDecision = gate.freshness_decision || null;
+  const tier = String(freshnessDecision?.tier || '').toUpperCase();
+  const blockedByFreshness = freshnessDecision?.blocked_by_freshness === true;
+
+  if (!blockedByFreshness) {
+    return { shouldAttempt: false, reason: 'freshness_not_primary' };
+  }
+  if (!hasOnlyStaleBlockers(gate.blocked_by)) {
+    return { shouldAttempt: false, reason: 'mixed_blockers' };
+  }
+  if (tier === 'STALE_VALID') {
+    return { shouldAttempt: true, reason: 'stale_valid' };
+  }
+  if (tier !== 'EXPIRED') {
+    return { shouldAttempt: false, reason: 'unsupported_tier' };
+  }
+
+  if (!cachedFreshnessEnvOverrides) {
+    cachedFreshnessEnvOverrides = parseContractFromEnv();
+  }
+  const contract = getEffectiveContract(String(sport || '').toLowerCase(), cachedFreshnessEnvOverrides);
+  if (contract?.allowStaleIfNoNewOdds === true) {
+    return { shouldAttempt: true, reason: 'expired_allow_stale' };
+  }
+  return { shouldAttempt: false, reason: 'expired_disallowed' };
+}
+
+function cloneValue(value) {
+  return value == null ? value : JSON.parse(JSON.stringify(value));
+}
+
+function captureMlbExecutionRetrySeed(payload) {
+  return {
+    status: payload.status,
+    action: payload.action,
+    classification: payload.classification,
+    ev_passed: payload.ev_passed,
+    execution_status: payload.execution_status,
+    actionable: payload.actionable,
+    publish_ready: payload.publish_ready,
+    pass_reason_code: payload.pass_reason_code,
+    reason_codes: cloneValue(payload.reason_codes),
+    _publish_state: cloneValue(payload._publish_state),
+  };
+}
+
+function restoreMlbExecutionRetrySeed(payload, seed) {
+  Object.assign(payload, {
+    status: seed.status,
+    action: seed.action,
+    classification: seed.classification,
+    ev_passed: seed.ev_passed,
+    execution_status: seed.execution_status,
+    actionable: seed.actionable,
+    publish_ready: seed.publish_ready,
+    pass_reason_code: seed.pass_reason_code,
+    reason_codes: cloneValue(seed.reason_codes),
+    _publish_state: cloneValue(seed._publish_state),
+  });
+  delete payload.execution_gate;
 }
 
 function normalizeMlbTeamVariant(value) {
@@ -1336,30 +1444,62 @@ function deriveMlbExecutionEnvelope({
 }
 
 function resolveSnapshotTimestampMeta(oddsSnapshot, payload, nowMs = Date.now()) {
-  const resolution = resolveSnapshotAge(
-    {
-      captured_at: oddsSnapshot?.captured_at ?? oddsSnapshot?.fetched_at ?? null,
-      pulled_at: oddsSnapshot?.pulled_at ?? null,
-      updated_at: oddsSnapshot?.updated_at ?? null,
-    },
-    {
-      snapshotId: oddsSnapshot?.id ?? null,
-      sport: payload?.sport ?? 'MLB',
-      gameId: oddsSnapshot?.game_id ?? payload?.game_id ?? null,
-      nowMs,
-    },
-  );
+  const nowIso = new Date(nowMs).toISOString();
+  try {
+    const capturedAt = oddsSnapshot?.captured_at ?? oddsSnapshot?.fetched_at ?? null;
+    const pulledAt = oddsSnapshot?.pulled_at ?? null;
+    const updatedAt = oddsSnapshot?.updated_at ?? null;
+    const resolution = resolveSnapshotAge(
+      {
+        captured_at: capturedAt,
+        pulled_at: pulledAt,
+        updated_at: updatedAt,
+      },
+      {
+        snapshotId: oddsSnapshot?.id ?? null,
+        sport: payload?.sport ?? 'MLB',
+        gameId: oddsSnapshot?.game_id ?? payload?.game_id ?? null,
+        nowMs,
+      },
+    );
 
-  const snapshotTimestamp = {
-    captured_at: oddsSnapshot?.captured_at ?? null,
-    pulled_at: oddsSnapshot?.pulled_at ?? null,
-    updated_at: oddsSnapshot?.updated_at ?? null,
-    resolved_timestamp: resolution.resolved_timestamp,
-    resolved_source: resolution.source_field,
-    resolved_age_ms: resolution.resolved_age_ms,
-  };
+    const snapshotTimestamp = {
+      captured_at: capturedAt,
+      pulled_at: pulledAt,
+      updated_at: updatedAt,
+      resolved_timestamp: resolution.resolved_timestamp,
+      resolved_source: resolution.source_field,
+      resolved_age_ms: resolution.resolved_age_ms,
+    };
 
-  return { resolution, snapshotTimestamp };
+    return { resolution, snapshotTimestamp };
+  } catch (error) {
+    const errorMessage = error?.message || String(error);
+    console.warn(
+      `[MLBModel] Snapshot timestamp resolver failed; falling back to now: ${errorMessage}`,
+    );
+    return {
+      resolution: {
+        resolved_timestamp: nowIso,
+        resolved_age_ms: 0,
+        source_field: 'now',
+        status: 'RESOLUTION_ERROR',
+        fields_inspected: {},
+        fallback_chain_executed: true,
+        violations: [`resolver_error:${errorMessage}`],
+        diagnostic: null,
+      },
+      snapshotTimestamp: {
+        captured_at: null,
+        pulled_at: null,
+        updated_at: null,
+        resolved_timestamp: nowIso,
+        resolved_source: 'now',
+        resolved_age_ms: 0,
+        resolver_error: errorMessage,
+      },
+    };
+  }
 }
 
 function toExecutionGatePassReasonCode(reason) {
@@ -1721,6 +1861,128 @@ function applyExecutionGateToMlbPayload(payload, { oddsSnapshot, nowMs = Date.no
     evaluated: true,
     blocked: !gateShouldBet,
   };
+}
+
+function fetchLatestOddsSnapshotForGame(gameId) {
+  if (!gameId) return null;
+  return getDatabase()
+    .prepare(
+      `SELECT *
+       FROM odds_snapshots
+       WHERE game_id = ?
+       ORDER BY captured_at DESC
+       LIMIT 1`,
+    )
+    .get(gameId);
+}
+
+async function applyExecutionGateWithStaleRecoveryToMlbPayload(
+  payload,
+  {
+    oddsSnapshot,
+    nowMs = Date.now(),
+    gameId,
+    slotStartIso,
+    modelRunUuid,
+    attemptCount = 0,
+    refreshOddsFn = refreshStaleOdds,
+    fetchLatestSnapshotFn = null,
+    dedupCache = staleRecoveryDedupCache,
+    logger = console,
+  } = {},
+) {
+  const retrySeed = captureMlbExecutionRetrySeed(payload);
+  const initialOutcome = applyExecutionGateToMlbPayload(payload, {
+    oddsSnapshot,
+    nowMs,
+  });
+  if (initialOutcome.blocked !== true) {
+    return initialOutcome;
+  }
+
+  const attemptDecision = shouldAttemptStaleRecoveryFromGate({
+    gate: payload.execution_gate,
+    sport: payload.sport || 'MLB',
+  });
+  if (!attemptDecision.shouldAttempt) {
+    return initialOutcome;
+  }
+  if (attemptCount >= STALE_RECOVERY_MAX_ATTEMPTS) {
+    logger.log('[MLBModel] stale recovery skipped: attempt count exceeded');
+    return initialOutcome;
+  }
+
+  const recoveryKey = buildStaleRecoveryKey({
+    sport: payload.sport || 'MLB',
+    gameId: gameId || payload.game_id,
+    slotStartIso: slotStartIso || payload.start_time_utc || oddsSnapshot?.game_time_utc,
+    modelRunUuid,
+  });
+  if (!claimStaleRecoveryKey(dedupCache, recoveryKey, nowMs)) {
+    logger.log(`[MLBModel] stale recovery dedup hit on key ${recoveryKey}`);
+    return initialOutcome;
+  }
+
+  const recoveryMeta = {
+    attempted: true,
+    triggered_at: new Date(nowMs).toISOString(),
+    refresh_executed: false,
+    refresh_snapshot_age_before_ms: payload.execution_gate?.snapshot_age_ms ?? null,
+    refresh_snapshot_age_after_ms: payload.execution_gate?.snapshot_age_ms ?? null,
+    refresh_duration_ms: null,
+    retry_executed: false,
+    retry_gate_result: payload.pass_reason_code || 'PASS_EXECUTION_GATE_BLOCKED',
+    final_status: payload.execution_status || 'BLOCKED',
+    attempt_count: 1,
+    dedup_key: recoveryKey,
+  };
+
+  const refreshStartedAt = Date.now();
+  try {
+    recoveryMeta.refresh_executed = true;
+    await refreshOddsFn({
+      jobKey: `pull_odds:${String(payload.sport || 'MLB').toLowerCase()}:emergency:${modelRunUuid || 'run'}`,
+      dryRun: false,
+    });
+    recoveryMeta.refresh_duration_ms = Date.now() - refreshStartedAt;
+  } catch (error) {
+    recoveryMeta.refresh_duration_ms = Date.now() - refreshStartedAt;
+    recoveryMeta.retry_gate_result = 'BLOCKED_AFTER_RETRY';
+    recoveryMeta.final_status = 'BLOCKED';
+    payload.stale_recovery = recoveryMeta;
+    logger.warn(`[MLBModel] stale recovery refresh failed: ${error.message}`);
+    return initialOutcome;
+  }
+
+  let latestSnapshot = oddsSnapshot;
+  if (typeof fetchLatestSnapshotFn === 'function') {
+    try {
+      latestSnapshot = (await fetchLatestSnapshotFn()) || oddsSnapshot;
+    } catch (error) {
+      logger.warn(`[MLBModel] stale recovery snapshot reload failed: ${error.message}`);
+    }
+  }
+
+  const refreshedAge = resolveSnapshotAge(
+    latestSnapshot,
+    `run_mlb_model:${String(payload.sport || 'MLB').toLowerCase()}:stale_recovery`,
+  );
+  recoveryMeta.refresh_snapshot_age_after_ms =
+    refreshedAge?.age_ms ?? payload.execution_gate?.snapshot_age_ms ?? null;
+
+  restoreMlbExecutionRetrySeed(payload, retrySeed);
+  recoveryMeta.retry_executed = true;
+  const retryNowMs = Number.isFinite(nowMs) ? nowMs : Date.now();
+  const retryOutcome = applyExecutionGateToMlbPayload(payload, {
+    oddsSnapshot: latestSnapshot,
+    nowMs: retryNowMs,
+  });
+  recoveryMeta.retry_gate_result = payload.execution_gate?.should_bet
+    ? 'PASS_EXECUTION_GATE'
+    : payload.pass_reason_code || 'BLOCKED_AFTER_RETRY';
+  recoveryMeta.final_status = payload.execution_status || (retryOutcome.blocked ? 'BLOCKED' : 'EXECUTABLE');
+  payload.stale_recovery = recoveryMeta;
+  return retryOutcome;
 }
 
 function assertMlbExecutionInvariant(payload) {
@@ -3920,6 +4182,10 @@ module.exports = {
   resolveMlbMoneylineExecutionInputs,
   assertMlbExecutionInvariant,
   applyExecutionGateToMlbPayload,
+  applyExecutionGateWithStaleRecoveryToMlbPayload,
+  shouldAttemptStaleRecoveryFromGate,
+  buildStaleRecoveryKey,
+  claimStaleRecoveryKey,
   // Exported for WI-0596 unit tests
   checkPitcherFreshness,
   validatePitcherKInputs,
