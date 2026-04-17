@@ -108,6 +108,7 @@ describe('team-metrics', () => {
       record: null,
       freeThrowPct: null,
       freeThrowPctSource: null,
+      espn_null_reason: 'NO_GAMES',
     });
   });
 

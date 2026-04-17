@@ -3,7 +3,7 @@
 **Generated**: 2026-04-17  
 **Scope**: NBA, NHL, MLB models + POTD engine + execution gates  
 **Auditor**: claude-executor  
-**Git revision**: $(git rev-parse --short HEAD)  
+**Git revision**: 0c5fb5d8  
 **JSON export**: [env-var-truth-table.json](env-var-truth-table.json)
 
 ---
