@@ -114,6 +114,11 @@ web-bundles/
 # Planning documents
 .planning/*
 
+# Work queue archive/status folders
+WORK_QUEUE/COMPLETE/
+WORK_QUEUE/OBSOLETE/
+WORK_QUEUE/VERIFICATIONS/
+
 # Duplicate/temporary files
 *copy.*
 *backup.*

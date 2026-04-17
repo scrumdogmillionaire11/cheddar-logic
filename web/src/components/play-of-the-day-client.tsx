@@ -82,11 +82,13 @@ type PotdNominee = {
 };
 
 type PotdResponseData = {
+  featuredPick: PotdApiPlay | null;
   today: PotdApiPlay | null;
   history: PotdApiPlay[];
   bankroll: PotdBankrollSummary;
   schedule: PotdSchedule | null;
   nominees: PotdNominee[];
+  diagnosticNominees: PotdNominee[];
   winnerStatus: 'FIRED' | 'NO_PICK' | null;
 };
 
@@ -105,6 +107,13 @@ function formatCurrency(value: number | null | undefined): string {
 function formatPercent(value: number | null | undefined): string {
   if (value === null || value === undefined || Number.isNaN(value)) return 'N/A';
   return `${(value * 100).toFixed(1)}%`;
+}
+
+function formatNomineeEdgeLabel(value: number | null | undefined): string {
+  if (value === null || value === undefined || Number.isNaN(value)) return 'N/A';
+  if (Math.abs(value) < 0.001) return 'N/A';
+  if (value <= 0) return 'No positive edge';
+  return formatPercent(value);
 }
 
 function formatSignedDollars(value: number | null | undefined): string {
@@ -273,7 +282,12 @@ function renderTodayCard(today: PotdApiPlay) {
   );
 }
 
-function renderEmptyState(schedule: PotdSchedule | null) {
+function renderEmptyState(
+  schedule: PotdSchedule | null,
+  winnerStatus: 'FIRED' | 'NO_PICK' | null,
+) {
+  const isNoPick = winnerStatus === 'NO_PICK';
+
   return (
     <section className="rounded-[28px] border border-white/10 bg-[linear-gradient(135deg,rgba(255,255,255,0.06),rgba(10,16,28,0.9))] p-6">
       <p className="text-[11px] uppercase tracking-[0.26em] text-cloud/55">
@@ -283,8 +297,9 @@ function renderEmptyState(schedule: PotdSchedule | null) {
         Play of the Day
       </h1>
       <p className="mt-4 max-w-2xl text-base text-cloud/72">
-        No play posted yet. The worker will publish one card inside the daily window
-        after odds-backed games are available.
+        {isNoPick
+          ? 'No official POTD today. The strongest monitored candidates stayed below the live edge gate.'
+          : 'No play posted yet. The worker will publish one card inside the daily window after odds-backed games are available.'}
       </p>
 
       {schedule ? (
@@ -322,9 +337,9 @@ function renderNominees(nominees: PotdNominee[], winnerStatus: 'FIRED' | 'NO_PIC
   if (nominees.length === 0) return null;
 
   const isNoPick = !winnerStatus || winnerStatus === 'NO_PICK';
-  const heading = isNoPick ? "Today's Closest Looks" : 'Nominees';
+  const heading = isNoPick ? 'Monitored Candidates' : 'Nominees';
   const subheading = isNoPick
-    ? 'Top monitored candidates — no official POTD posted today'
+    ? 'No official POTD today. These did not clear the live edge gate.'
     : 'Other top sport leaders considered today';
 
   return (
@@ -368,7 +383,7 @@ function renderNominees(nominees: PotdNominee[], winnerStatus: 'FIRED' | 'NO_PIC
               </div>
               <div className="text-right">
                 <div className="text-lg font-semibold text-cloud">
-                  {nominee.edgePct !== null ? formatPercent(nominee.edgePct) : '—'}
+                  {formatNomineeEdgeLabel(nominee.edgePct)}
                 </div>
                 <div className="text-[11px] uppercase tracking-[0.18em] text-cloud/40">edge</div>
               </div>
@@ -389,10 +404,92 @@ function renderNominees(nominees: PotdNominee[], winnerStatus: 'FIRED' | 'NO_PIC
   );
 }
 
+function renderDiagnosticNominees(
+  diagnosticNominees: PotdNominee[],
+  winnerStatus: 'FIRED' | 'NO_PICK' | null,
+) {
+  if (winnerStatus !== 'NO_PICK' || diagnosticNominees.length === 0) return null;
+
+  return (
+    <details className="rounded-[28px] border border-white/10 bg-surface/70 p-6">
+      <summary className="cursor-pointer list-none select-none">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <p className="text-[11px] uppercase tracking-[0.26em] text-cloud/55">
+              Diagnostics
+            </p>
+            <p className="mt-1 text-sm text-cloud/50">
+              No official POTD today. These did not clear the live edge gate.
+            </p>
+          </div>
+          <span className="rounded-full border border-white/15 bg-white/5 px-3 py-1 text-xs font-semibold tracking-[0.22em] text-cloud/55">
+            {diagnosticNominees.length} play{diagnosticNominees.length !== 1 ? 's' : ''}
+          </span>
+        </div>
+      </summary>
+
+      <div className="mt-6 space-y-3">
+        {diagnosticNominees.map((nominee) => (
+          <article
+            key={`${nominee.sport}-${nominee.gameId ?? nominee.rank}-${nominee.marketType ?? ''}-diagnostic`}
+            className="rounded-2xl border border-white/10 bg-night/35 p-4"
+          >
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="rounded-full border border-white/15 bg-white/5 px-2 py-0.5 text-[10px] font-semibold tracking-[0.2em] text-cloud/60">
+                    {nominee.sport}
+                  </span>
+                  {nominee.confidenceLabel && (
+                    <span className="text-[10px] uppercase tracking-[0.18em] text-cloud/40">
+                      {nominee.confidenceLabel}
+                    </span>
+                  )}
+                </div>
+                <div className="mt-2 text-sm font-semibold text-cloud">
+                  {nominee.selectionLabel ?? '—'}
+                </div>
+                <div className="mt-0.5 text-xs text-cloud/55">
+                  {nominee.awayTeam} @ {nominee.homeTeam}
+                </div>
+              </div>
+              <div className="text-right">
+                <div className="text-lg font-semibold text-cloud">
+                  {formatNomineeEdgeLabel(nominee.edgePct)}
+                </div>
+                <div className="text-[11px] uppercase tracking-[0.18em] text-cloud/40">edge</div>
+              </div>
+            </div>
+            <div className="mt-3 flex flex-wrap gap-4 text-xs text-cloud/50">
+              <span>
+                Score{' '}
+                <span className="font-medium text-cloud/75">
+                  {nominee.totalScore !== null ? nominee.totalScore.toFixed(3) : '—'}
+                </span>
+              </span>
+              <span>{nominee.gameTimeEtLabel}</span>
+            </div>
+          </article>
+        ))}
+      </div>
+    </details>
+  );
+}
+
 export default function PlayOfTheDayClient({
   initialData,
 }: PlayOfTheDayClientProps) {
-  const { today, history, bankroll, schedule, nominees, winnerStatus } = initialData;
+  const {
+    featuredPick,
+    today,
+    history,
+    bankroll,
+    schedule,
+    nominees,
+    diagnosticNominees,
+    winnerStatus,
+  } = initialData;
+  const activePick = featuredPick ?? today;
 
   return (
     <div className="min-h-screen bg-night px-4 py-8 text-cloud sm:px-6 lg:px-8">
@@ -424,9 +521,10 @@ export default function PlayOfTheDayClient({
           </div>
         </div>
 
-        {today ? renderTodayCard(today) : renderEmptyState(schedule)}
+        {activePick ? renderTodayCard(activePick) : renderEmptyState(schedule, winnerStatus)}
 
         {renderNominees(nominees ?? [], winnerStatus ?? null)}
+        {renderDiagnosticNominees(diagnosticNominees ?? [], winnerStatus ?? null)}
 
         <section className="grid gap-4 lg:grid-cols-3">
           {bankrollStat('Current Bankroll', formatCurrency(bankroll.current), metricTone(bankroll.netProfit))}

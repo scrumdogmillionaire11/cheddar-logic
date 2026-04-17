@@ -48,11 +48,15 @@ async function validatePotdSourceContract(assert) {
   );
   [
     'No play posted yet',
+    'No official POTD today',
     'Play of the Day',
     'Bankroll',
     'Recent History',
     'No settled-history rows yet',
     'Today&apos;s Card',
+    'Monitored Candidates',
+    'Diagnostics',
+    'No positive edge',
     'WIN',
     'LOSS',
     'PUSH',
