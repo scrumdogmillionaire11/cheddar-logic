@@ -340,22 +340,22 @@ async function sendEspnNullDiscordAlert({
   }
 
   if (dedupedTeams.length < getEspnNullAlertThreshold()) {
-    return { sent: false, reason: 'below_threshold', count: dedupedTeams.length };
+    return { sent: false, reason: 'below_threshold', count: dedupedTeams.length, reason_code: null };
   }
 
   if (process.env.ENABLE_DISCORD_CARD_WEBHOOKS !== 'true') {
-    return { sent: false, reason: 'discord_disabled', count: dedupedTeams.length };
+    return { sent: false, reason: 'discord_disabled', count: dedupedTeams.length, reason_code: null };
   }
 
   const webhookUrl = String(process.env.DISCORD_ALERT_WEBHOOK_URL || '').trim();
   if (!webhookUrl) {
     logger.warn(`[${sport}Model] DISCORD_ALERT_WEBHOOK_URL not set — skipping ESPN null alert`);
-    return { sent: false, reason: 'missing_webhook_url', count: dedupedTeams.length };
+    return { sent: false, reason: 'missing_webhook_url', count: dedupedTeams.length, reason_code: null };
   }
 
   const alertJobName = `espn_null_alert_${sport.toLowerCase()}`;
   if (wasJobRecentlySuccessfulFn(alertJobName, ESPN_NULL_ALERT_WINDOW_MINUTES)) {
-    return { sent: false, reason: 'cooldown_active', count: dedupedTeams.length };
+    return { sent: false, reason: 'cooldown_active', count: dedupedTeams.length, reason_code: null };
   }
 
   const alertRunId = uuidV4();
@@ -369,13 +369,18 @@ async function sendEspnNullDiscordAlert({
     logger.log(
       `[${sport}Model] Sent ESPN null alert for ${dedupedTeams.length} team(s)`,
     );
-    return { sent: true, reason: 'sent', count: dedupedTeams.length };
+    return { sent: true, reason: 'sent', count: dedupedTeams.length, reason_code: null };
   } catch (error) {
     markJobRunFailureFn(alertRunId, error.message);
     logger.warn(
       `[${sport}Model] Failed to send ESPN null alert: ${error.message}`,
     );
-    return { sent: false, reason: 'send_failed', count: dedupedTeams.length };
+    return {
+      sent: false,
+      reason: 'send_failed',
+      count: dedupedTeams.length,
+      reason_code: WATCHDOG_REASONS.ESPN_NULL_ALERT_FAILED,
+    };
   }
 }
 
@@ -683,6 +688,23 @@ function toExecutionGatePassReasonCode(reason) {
     : 'PASS_EXECUTION_GATE_BLOCKED';
 }
 
+function appendNhlReasonCode(payload, reasonCode) {
+  if (!payload || typeof payload !== 'object' || !reasonCode) return;
+  payload.reason_codes = Array.from(
+    new Set([...(Array.isArray(payload.reason_codes) ? payload.reason_codes : []), reasonCode]),
+  ).sort();
+  if (payload.decision_v2 && typeof payload.decision_v2 === 'object') {
+    payload.decision_v2.watchdog_reason_codes = Array.from(
+      new Set([
+        ...(Array.isArray(payload.decision_v2.watchdog_reason_codes)
+          ? payload.decision_v2.watchdog_reason_codes
+          : []),
+        reasonCode,
+      ]),
+    ).sort();
+  }
+}
+
 function isNhlMoneylinePayload(payload) {
   if (!payload || typeof payload !== 'object') return false;
   const marketType = String(payload.market_type || '').toUpperCase();
@@ -912,6 +934,12 @@ async function applyExecutionGateWithStaleRecoveryToNhlCard(
     return initialOutcome;
   }
 
+  if (!gameId && !payload?.game_id) {
+    appendNhlReasonCode(payload, WATCHDOG_REASONS.GAME_ID_INVALID);
+    logger.warn('[NHLModel] stale recovery skipped: GAME_ID_INVALID');
+    return initialOutcome;
+  }
+
   const recoveryKey = buildStaleRecoveryKey({
     sport: payload.sport || card?.sport || 'NHL',
     gameId: gameId || payload.game_id,
@@ -949,7 +977,9 @@ async function applyExecutionGateWithStaleRecoveryToNhlCard(
     recoveryMeta.refresh_duration_ms = Date.now() - refreshStartedAt;
     recoveryMeta.retry_gate_result = 'BLOCKED_AFTER_RETRY';
     recoveryMeta.final_status = 'BLOCKED';
+    recoveryMeta.reason_code = WATCHDOG_REASONS.STALE_RECOVERY_REFRESH_FAILED;
     payload.stale_recovery = recoveryMeta;
+    appendNhlReasonCode(payload, WATCHDOG_REASONS.STALE_RECOVERY_REFRESH_FAILED);
     logger.warn(`[NHLModel] stale recovery refresh failed: ${error.message}`);
     return initialOutcome;
   }
@@ -959,6 +989,8 @@ async function applyExecutionGateWithStaleRecoveryToNhlCard(
     try {
       latestSnapshot = (await fetchLatestSnapshotFn()) || oddsSnapshot;
     } catch (error) {
+      recoveryMeta.reason_code = WATCHDOG_REASONS.STALE_RECOVERY_RELOAD_FAILED;
+      appendNhlReasonCode(payload, WATCHDOG_REASONS.STALE_RECOVERY_RELOAD_FAILED);
       logger.warn(`[NHLModel] stale recovery snapshot reload failed: ${error.message}`);
     }
   }
@@ -3559,10 +3591,18 @@ async function runNHLModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
           `[NHLModel] Failed to update run state: ${runStateError.message}`,
         );
       }
-      await sendEspnNullDiscordAlert({
+      const espnNullAlertOutcome = await sendEspnNullDiscordAlert({
         sport: 'NHL',
         nullMetricTeams: [...espnNullRegistry.values()],
       });
+      if (espnNullAlertOutcome?.reason_code) {
+        summary.reason_codes = Array.from(
+          new Set([
+            ...(Array.isArray(summary.reason_codes) ? summary.reason_codes : []),
+            espnNullAlertOutcome.reason_code,
+          ]),
+        ).sort();
+      }
       console.log(
         `[NHLModel] ✅ Job complete: ${cardsGenerated} cards generated, ${cardsFailed} failed`,
       );
