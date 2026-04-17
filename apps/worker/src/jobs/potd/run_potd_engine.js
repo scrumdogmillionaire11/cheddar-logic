@@ -473,6 +473,46 @@ async function runPotdEngine({
         };
       }
 
+      // Continuity guard (WI-0906): reject fragile-confidence picks even if a
+      // caller injects a permissive selector. This keeps stake sizing aligned
+      // with the documented HIGH/ELITE confidence policy for surfaced POTD plays.
+      const minHighConfidenceScore = confidenceThreshold('HIGH');
+      const bestScore = Number(bestCandidate.totalScore);
+      const bestLabel = String(bestCandidate.confidenceLabel || '').toUpperCase();
+      const lowConfidenceCandidate =
+        !Number.isFinite(bestScore) ||
+        bestScore < minHighConfidenceScore ||
+        bestLabel === 'LOW';
+
+      if (lowConfidenceCandidate) {
+        writeDailyStats(db, {
+          playDate,
+          potdFired: false,
+          candidateCount: candidatesCount,
+          viableCount,
+          topEdgePct: bestCandidate.edgePct ?? null,
+          topScore: Number.isFinite(bestScore) ? bestScore : null,
+          selectedEdgePct: null,
+          selectedScore: null,
+          stakePctOfBankroll: null,
+        });
+        markJobRunSuccess(jobRunId, {
+          no_play: true,
+          reason: 'confidence_below_high_gate',
+          confidence_label: bestCandidate.confidenceLabel ?? null,
+          total_score: Number.isFinite(bestScore) ? bestScore : null,
+          min_total_score: minHighConfidenceScore,
+          play_date: playDate,
+        });
+        return {
+          success: true,
+          jobRunId,
+          noPlay: true,
+          reason: 'confidence_below_high_gate',
+          playDate,
+        };
+      }
+
       const rawWager = kellySizeFn({
         edgePct: bestCandidate.edgePct,
         impliedProb: bestCandidate.impliedProb,

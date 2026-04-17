@@ -14,6 +14,9 @@ const {
   loadSettledRows,
 } = require('./performance_drift_report');
 const {
+  runClosingLineSubstitutionValidation,
+} = require('./validate_no_closing_line_sub');
+const {
   defaultRunScope,
   OUTPUT_ROOT,
   runAuditCli,
@@ -488,6 +491,27 @@ function runCli(argv = process.argv.slice(2), io = {}) {
     performanceContext,
     runScope: paths.run_scope,
   });
+
+  const closingLineValidation = runClosingLineSubstitutionValidation({
+    outPath: path.join(paths.output_dir, 'closing-line-substitution-report.json'),
+  });
+  scorecard.closing_line_substitution = {
+    excluded_game_rate: closingLineValidation.report.summary.excluded_game_rate,
+    games_excluded_no_qualifying_snapshot:
+      closingLineValidation.report.summary.games_excluded_no_qualifying_snapshot,
+    games_with_known_event_start:
+      closingLineValidation.report.summary.games_with_known_event_start,
+    max_excluded_rate:
+      closingLineValidation.report.policy.max_excluded_rate,
+    should_fail: closingLineValidation.report.summary.should_fail,
+  };
+
+  if (!closingLineValidation.ok) {
+    throw new Error(
+      'Closing-line substitution validation failed: excluded-game rate exceeds threshold. ' +
+        'See closing-line-substitution-report.json for details.',
+    );
+  }
 
   writeJsonOutput(scorecard, paths.scorecard_path);
   fs.writeFileSync(paths.markdown_path, formatScorecardMarkdown(scorecard), 'utf8');

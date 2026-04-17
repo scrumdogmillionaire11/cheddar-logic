@@ -42,7 +42,6 @@ const MLB_FULL_GAME_ML_POLICY = Object.freeze({
   }),
   softBlockers: Object.freeze([
     'CONFIDENCE_BELOW_THRESHOLD',
-    'NET_EDGE_INSUFFICIENT',
   ]),
 });
 
@@ -333,7 +332,11 @@ function evaluateMlbExecution(payload, executionParams) {
       softBlockers.has(String(reason || '').split(':')[0]),
     );
   const applyHighEdgeOverride =
-    !gateResult.shouldBet && edgeOverrideEligible && blockedByOnlySoftEdgeOrConfidence;
+    !gateResult.shouldBet &&
+    edgeOverrideEligible &&
+    Number.isFinite(gateResult.netEdge) &&
+    gateResult.netEdge > 0 &&
+    blockedByOnlySoftEdgeOrConfidence;
 
   const gateShouldBet = applyHighEdgeOverride ? true : gateResult.shouldBet;
 

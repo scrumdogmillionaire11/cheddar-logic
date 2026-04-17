@@ -2529,10 +2529,21 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
   let reasonCodesUnique = Array.from(new Set(reasonCodes));
   const gates: CanonicalGate[] = [];
   const gateCodes = new Set<string>();
+  const sourceExecutionGateShouldBet =
+    sourcePlay?.execution_gate?.should_bet === true;
+  const sourceStoredActionable =
+    sourceAction === 'FIRE' || sourceAction === 'HOLD';
   const nonBlockingReasonCodes = new Set<string>([
     'PASS_DRIVER_SUPPORT_WEAK',
     'PASS_DRIVER_CONFLICT',
   ]);
+  if (sourceStoredActionable && sourceExecutionGateShouldBet) {
+    // Legacy MLB degraded-total cards can carry this diagnostic while the
+    // worker execution gate still marks the LEAN executable. In that case the
+    // stored action/gate owns actionability; keep the code visible as context
+    // without removing the bet.
+    nonBlockingReasonCodes.add('PASS_CONFIDENCE_GATE');
+  }
   for (const code of reasonCodesUnique) {
     if (nonBlockingReasonCodes.has(code)) {
       gates.push({ code, severity: 'WARN', blocks_bet: false });

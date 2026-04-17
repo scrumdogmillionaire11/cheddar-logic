@@ -470,6 +470,50 @@ function hasFiniteNumber(value) {
   return typeof value === 'number' && Number.isFinite(value);
 }
 
+function extractSameBookOddsContext(oddsSnapshot) {
+  const rawData =
+    oddsSnapshot?.raw_data && typeof oddsSnapshot.raw_data === 'object'
+      ? oddsSnapshot.raw_data
+      : null;
+  const executionPairs =
+    rawData?._execution_pairs && typeof rawData._execution_pairs === 'object'
+      ? rawData._execution_pairs
+      : {};
+
+  return {
+    h2h_same_book_away_for_home:
+      oddsSnapshot?.h2h_same_book_away_for_home ??
+      oddsSnapshot?.h2hSameBookAwayForHome ??
+      executionPairs.h2h_same_book_away_for_home ??
+      null,
+    h2h_same_book_home_for_away:
+      oddsSnapshot?.h2h_same_book_home_for_away ??
+      oddsSnapshot?.h2hSameBookHomeForAway ??
+      executionPairs.h2h_same_book_home_for_away ??
+      null,
+    spread_same_book_away_for_home:
+      oddsSnapshot?.spread_same_book_away_for_home ??
+      oddsSnapshot?.spreadSameBookAwayForHome ??
+      executionPairs.spread_same_book_away_for_home ??
+      null,
+    spread_same_book_home_for_away:
+      oddsSnapshot?.spread_same_book_home_for_away ??
+      oddsSnapshot?.spreadSameBookHomeForAway ??
+      executionPairs.spread_same_book_home_for_away ??
+      null,
+    total_same_book_under_for_over:
+      oddsSnapshot?.total_same_book_under_for_over ??
+      oddsSnapshot?.totalSameBookUnderForOver ??
+      executionPairs.total_same_book_under_for_over ??
+      null,
+    total_same_book_over_for_under:
+      oddsSnapshot?.total_same_book_over_for_under ??
+      oddsSnapshot?.totalSameBookOverForUnder ??
+      executionPairs.total_same_book_over_for_under ??
+      null,
+  };
+}
+
 function clamp(value, min, max) {
   return Math.min(Math.max(value, min), max);
 }
@@ -1232,6 +1276,7 @@ function generateNBAMarketCallCards(
         odds_context: {
           h2h_home: oddsSnapshot?.h2h_home,
           h2h_away: oddsSnapshot?.h2h_away,
+          ...extractSameBookOddsContext(oddsSnapshot),
           spread_home: oddsSnapshot?.spread_home,
           spread_away: oddsSnapshot?.spread_away,
           total: oddsSnapshot?.total,
@@ -1418,6 +1463,7 @@ function generateNBAMarketCallCards(
         odds_context: {
           h2h_home: oddsSnapshot?.h2h_home,
           h2h_away: oddsSnapshot?.h2h_away,
+          ...extractSameBookOddsContext(oddsSnapshot),
           spread_home: oddsSnapshot?.spread_home,
           spread_away: oddsSnapshot?.spread_away,
           total: oddsSnapshot?.total,

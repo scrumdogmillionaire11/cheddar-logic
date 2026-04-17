@@ -37,6 +37,14 @@ const cardsPageContextSource = fs.readFileSync(
   path.resolve(repoRoot, 'web/src/components/cards/CardsPageContext.tsx'),
   'utf8',
 );
+const cardsSharedSource = fs.readFileSync(
+  path.resolve(repoRoot, 'web/src/components/cards/shared.ts'),
+  'utf8',
+);
+const gameCardItemSource = fs.readFileSync(
+  path.resolve(repoRoot, 'web/src/components/cards/GameCardItem.tsx'),
+  'utf8',
+);
 
 console.log('🧪 Cards projection exclusion source tests');
 
@@ -102,6 +110,22 @@ assert.ok(
 assert.ok(
   cardsPageContextSource.includes("modeParam === 'projections'"),
   '/cards should support projections mode via URL param',
+);
+
+assert.ok(
+  cardsSharedSource.includes('export function isActionableProjectionPlay(') &&
+    cardsSharedSource.includes("decision_v2?: {") &&
+    cardsSharedSource.includes("signal === 'PASS' || signal === 'HOLD' || signal === 'WATCH'"),
+  'projection play actionability helper must reject PASS/HOLD/WATCH using decision_v2 + status/action signals',
+);
+
+assert.ok(
+  gameCardItemSource.includes("const baseDriverLine =") &&
+    gameCardItemSource.includes("visibleDecision === 'PASS'") &&
+    gameCardItemSource.includes("const hasDriverDetails =") &&
+    gameCardItemSource.includes("visibleDecision !== 'PASS' &&") &&
+    gameCardItemSource.includes("visibleDecision !== 'PASS' && <MarketSignalPills pills={deriveMarketSignals(card)} />"),
+  'PASS cards must suppress driver and market-signal internals in GameCardItem',
 );
 
 console.log('✅ Cards projection exclusion source tests passed');

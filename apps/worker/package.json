@@ -64,6 +64,7 @@
     "audit:nhl": "node src/audit/run_model_audit.js --sport NHL",
     "audit:mlb": "node src/audit/run_model_audit.js --sport MLB",
     "audit:all": "node src/audit/run_model_audit.js --all",
+    "audit:validate-no-closing-line-sub": "node src/audit/validate_no_closing_line_sub.js",
     "audit:performance": "node src/audit/performance_drift_report.js --all",
     "audit:scorecard": "node src/audit/scorecard.js --all",
     "test": "jest",

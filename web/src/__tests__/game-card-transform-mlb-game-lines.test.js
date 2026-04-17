@@ -196,4 +196,130 @@ function makeBaseGame(overrides = {}) {
   );
 }
 
+{
+  const actionableDegradedTotalLean = makeBaseGame({
+    id: 'game-mlb-full-game-total-legacy-pass-diagnostic',
+    gameId: 'game-mlb-full-game-total-legacy-pass-diagnostic',
+    consistency: { total_bias: 'UNKNOWN' },
+    odds: {
+      h2hHome: -105,
+      h2hAway: -104,
+      total: 9.25,
+      spreadHome: null,
+      spreadAway: null,
+      totalPriceOver: 110,
+      totalPriceUnder: -102,
+      capturedAt: '2026-04-17T01:48:48.067Z',
+    },
+    true_play: {
+      source_card_id: 'card-mlb-full-game-total-legacy-pass-diagnostic',
+      cardType: 'mlb-full-game',
+      cardTitle: 'Full Game Total OVER: ATLANTA BRAVES @ PHILADELPHIA PHILLIES',
+      prediction: 'OVER',
+      confidence: 0.5,
+      tier: 'WATCH',
+      reasoning:
+        'FG TOTAL DEGRADED_MODEL raw 10.78 recentered 10.52 shrunk 10.16 vs line 9.5 finalEdge +0.66 drivers=SP_MISMATCH conf=5/10',
+      evPassed: true,
+      driverKey: 'mlb-full-game',
+      projectedTotal: 10.8,
+      edge: 0.1238,
+      p_fair: 0.6,
+      p_implied: 0.4762,
+      model_prob: 0.6,
+      kind: 'PLAY',
+      market_type: 'TOTAL',
+      selection: { side: 'OVER' },
+      line: 9.5,
+      price: 110,
+      status: 'WATCH',
+      classification: 'LEAN',
+      action: 'HOLD',
+      pass_reason_code: null,
+      reason_codes: [
+        'MODEL_DEGRADED_INPUTS',
+        'PASS_CONFIDENCE_GATE',
+        'SOFT_DEGRADED_TOTAL_MODEL',
+      ],
+      execution_status: 'EXECUTABLE',
+      execution_gate: {
+        evaluated: true,
+        should_bet: true,
+        net_edge: 0.0738,
+        blocked_by: [],
+        model_status: 'MODEL_OK',
+      },
+      tags: [],
+    },
+    plays: [
+      {
+        source_card_id: 'card-mlb-full-game-total-legacy-pass-diagnostic',
+        cardType: 'mlb-full-game',
+        cardTitle: 'Full Game Total OVER: ATLANTA BRAVES @ PHILADELPHIA PHILLIES',
+        prediction: 'OVER',
+        confidence: 0.5,
+        tier: 'WATCH',
+        reasoning:
+          'FG TOTAL DEGRADED_MODEL raw 10.78 recentered 10.52 shrunk 10.16 vs line 9.5 finalEdge +0.66 drivers=SP_MISMATCH conf=5/10',
+        evPassed: true,
+        driverKey: 'mlb-full-game',
+        projectedTotal: 10.8,
+        edge: 0.1238,
+        p_fair: 0.6,
+        p_implied: 0.4762,
+        model_prob: 0.6,
+        kind: 'PLAY',
+        market_type: 'TOTAL',
+        selection: { side: 'OVER' },
+        line: 9.5,
+        price: 110,
+        status: 'WATCH',
+        classification: 'LEAN',
+        action: 'HOLD',
+        pass_reason_code: null,
+        reason_codes: [
+          'MODEL_DEGRADED_INPUTS',
+          'PASS_CONFIDENCE_GATE',
+          'SOFT_DEGRADED_TOTAL_MODEL',
+        ],
+        execution_status: 'EXECUTABLE',
+        execution_gate: {
+          evaluated: true,
+          should_bet: true,
+          net_edge: 0.0738,
+          blocked_by: [],
+          model_status: 'MODEL_OK',
+        },
+        tags: [],
+      },
+    ],
+  });
+
+  const [card] = transformGames([actionableDegradedTotalLean]);
+  assert(card, 'actionable degraded MLB total lean should create a game card');
+  assert.strictEqual(
+    card.play.action,
+    'HOLD',
+    'stored MLB total LEAN/HOLD should remain a lean after transform',
+  );
+  assert.strictEqual(
+    card.play.betAction,
+    'BET',
+    'legacy PASS_CONFIDENCE_GATE diagnostic must not remove an executable MLB total bet',
+  );
+  assert(
+    card.play.bet,
+    'executable MLB total lean should retain its canonical bet',
+  );
+  assert.deepStrictEqual(
+    card.play.gates.find((gate) => gate.code === 'PASS_CONFIDENCE_GATE'),
+    {
+      code: 'PASS_CONFIDENCE_GATE',
+      severity: 'WARN',
+      blocks_bet: false,
+    },
+    'legacy confidence diagnostic should stay visible as a warning, not a blocking gate',
+  );
+}
+
 console.log('✅ MLB game-line transform regressions passed');

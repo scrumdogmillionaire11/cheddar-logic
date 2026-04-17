@@ -467,6 +467,50 @@ function hasFiniteNumber(value) {
   return typeof value === 'number' && Number.isFinite(value);
 }
 
+function extractSameBookOddsContext(oddsSnapshot) {
+  const rawData =
+    oddsSnapshot?.raw_data && typeof oddsSnapshot.raw_data === 'object'
+      ? oddsSnapshot.raw_data
+      : null;
+  const executionPairs =
+    rawData?._execution_pairs && typeof rawData._execution_pairs === 'object'
+      ? rawData._execution_pairs
+      : {};
+
+  return {
+    h2h_same_book_away_for_home:
+      oddsSnapshot?.h2h_same_book_away_for_home ??
+      oddsSnapshot?.h2hSameBookAwayForHome ??
+      executionPairs.h2h_same_book_away_for_home ??
+      null,
+    h2h_same_book_home_for_away:
+      oddsSnapshot?.h2h_same_book_home_for_away ??
+      oddsSnapshot?.h2hSameBookHomeForAway ??
+      executionPairs.h2h_same_book_home_for_away ??
+      null,
+    spread_same_book_away_for_home:
+      oddsSnapshot?.spread_same_book_away_for_home ??
+      oddsSnapshot?.spreadSameBookAwayForHome ??
+      executionPairs.spread_same_book_away_for_home ??
+      null,
+    spread_same_book_home_for_away:
+      oddsSnapshot?.spread_same_book_home_for_away ??
+      oddsSnapshot?.spreadSameBookHomeForAway ??
+      executionPairs.spread_same_book_home_for_away ??
+      null,
+    total_same_book_under_for_over:
+      oddsSnapshot?.total_same_book_under_for_over ??
+      oddsSnapshot?.totalSameBookUnderForOver ??
+      executionPairs.total_same_book_under_for_over ??
+      null,
+    total_same_book_over_for_under:
+      oddsSnapshot?.total_same_book_over_for_under ??
+      oddsSnapshot?.totalSameBookOverForUnder ??
+      executionPairs.total_same_book_over_for_under ??
+      null,
+  };
+}
+
 function hasMoneylineOdds(oddsSnapshot) {
   const homePrice = oddsSnapshot?.h2h_home ?? oddsSnapshot?.moneyline_home;
   const awayPrice = oddsSnapshot?.h2h_away ?? oddsSnapshot?.moneyline_away;
@@ -835,34 +879,27 @@ function applyExecutionGateToNhlCard(card, { oddsSnapshot, nowMs = Date.now() } 
   if (!gateResult.shouldBet) {
     const isStaleBlock = String(gateResult.reason || '').startsWith('STALE_SNAPSHOT');
     const isMixedBookBlock = String(gateResult.reason || '').startsWith('MIXED_BOOK_SOURCE_MISMATCH');
-
+    const passReasonCode = toExecutionGatePassReasonCode(gateResult.reason);
+    applyDecisionVeto(payload, passReasonCode);
     if (isStaleBlock || isMixedBookBlock) {
       const blockReasonCode = isStaleBlock
         ? 'BLOCK_STALE_DATA'
         : 'EDGE_VERIFICATION_REQUIRED';
-      payload.action = 'HOLD';
-      payload.status = 'WATCH';
-      payload.classification = 'LEAN';
-      payload.execution_status = 'BLOCKED';
-      payload.pass_reason_code = null;
       payload.blocked_reason_code = blockReasonCode;
       payload.gate_reason = blockReasonCode;
       payload.reason_codes = Array.from(
         new Set([...(Array.isArray(payload.reason_codes) ? payload.reason_codes : []), blockReasonCode]),
       );
       if (payload.decision_v2 && typeof payload.decision_v2 === 'object') {
-        payload.decision_v2.official_status = 'LEAN';
-        payload.decision_v2.primary_reason_code = blockReasonCode;
+        payload.decision_v2.watchdog_reason_codes = Array.from(
+          new Set([
+            ...(Array.isArray(payload.decision_v2.watchdog_reason_codes)
+              ? payload.decision_v2.watchdog_reason_codes
+              : []),
+            blockReasonCode,
+          ]),
+        );
       }
-      syncCanonicalDecisionEnvelope(payload, {
-        official_status: 'LEAN',
-        primary_reason_code: blockReasonCode,
-        execution_status: 'BLOCKED',
-        publish_ready: false,
-      });
-    } else {
-      const passReasonCode = toExecutionGatePassReasonCode(gateResult.reason);
-      applyDecisionVeto(payload, passReasonCode);
     }
     payload._publish_state = {
       ...(payload._publish_state && typeof payload._publish_state === 'object'
@@ -1679,6 +1716,54 @@ function lookupGoalieStarterFetchedAt(db, teamId) {
   }
 }
 
+function ensureFeatureTimestampsContainer(rawData) {
+  if (!rawData || typeof rawData !== 'object') return null;
+  if (!rawData.feature_timestamps || typeof rawData.feature_timestamps !== 'object') {
+    rawData.feature_timestamps = {};
+  }
+  return rawData.feature_timestamps;
+}
+
+function stampFeatureTimestamp(rawData, field, availableAt) {
+  if (!field || !availableAt) return;
+  const timestamps = ensureFeatureTimestampsContainer(rawData);
+  if (!timestamps) return;
+  if (timestamps[field] == null) {
+    timestamps[field] = availableAt;
+  }
+}
+
+function stampNhlEspnFeatureTimestamps(rawData, availableAt) {
+  if (!availableAt || !rawData || typeof rawData !== 'object') return;
+
+  const homeMetrics = rawData?.espn_metrics?.home?.metrics;
+  const awayMetrics = rawData?.espn_metrics?.away?.metrics;
+
+  const homeGoalsFor = toFiniteNumber(homeMetrics?.avgGoalsFor);
+  const awayGoalsFor = toFiniteNumber(awayMetrics?.avgGoalsFor);
+  const homeGoalsAgainst = toFiniteNumber(homeMetrics?.avgGoalsAgainst);
+  const awayGoalsAgainst = toFiniteNumber(awayMetrics?.avgGoalsAgainst);
+
+  // Phase 1 provenance aliasing: persist explicit high-risk keys when ESPN
+  // rolling metrics are present so feature-time guard can enforce event-time ordering.
+  if (homeGoalsFor !== null) {
+    if (rawData.homeGoalsForL5 == null) rawData.homeGoalsForL5 = homeGoalsFor;
+    stampFeatureTimestamp(rawData, 'homeGoalsForL5', availableAt);
+  }
+  if (awayGoalsFor !== null) {
+    if (rawData.awayGoalsForL5 == null) rawData.awayGoalsForL5 = awayGoalsFor;
+    stampFeatureTimestamp(rawData, 'awayGoalsForL5', availableAt);
+  }
+  if (homeGoalsAgainst !== null) {
+    if (rawData.homeGoalsAgainstL5 == null) rawData.homeGoalsAgainstL5 = homeGoalsAgainst;
+    stampFeatureTimestamp(rawData, 'homeGoalsAgainstL5', availableAt);
+  }
+  if (awayGoalsAgainst !== null) {
+    if (rawData.awayGoalsAgainstL5 == null) rawData.awayGoalsAgainstL5 = awayGoalsAgainst;
+    stampFeatureTimestamp(rawData, 'awayGoalsAgainstL5', availableAt);
+  }
+}
+
 function attachNhlDriverContextToRawData(rawData) {
   const normalized = normalizeRawDataPayload(rawData);
   const context = extractNhlDriverDataQualityContext(normalized);
@@ -2351,6 +2436,7 @@ function generateNHLMarketCallCards(
         odds_context: {
           h2h_home: oddsSnapshot?.h2h_home,
           h2h_away: oddsSnapshot?.h2h_away,
+          ...extractSameBookOddsContext(oddsSnapshot),
           spread_home: oddsSnapshot?.spread_home,
           spread_away: oddsSnapshot?.spread_away,
           total: oddsSnapshot?.total,
@@ -2550,6 +2636,7 @@ function generateNHLMarketCallCards(
         odds_context: {
           h2h_home: oddsSnapshot?.h2h_home,
           h2h_away: oddsSnapshot?.h2h_away,
+          ...extractSameBookOddsContext(oddsSnapshot),
           spread_home: oddsSnapshot?.spread_home,
           spread_away: oddsSnapshot?.spread_away,
           total: oddsSnapshot?.total,
@@ -2785,6 +2872,7 @@ function generateNHLMarketCallCards(
         odds_context: {
           h2h_home: oddsSnapshot?.h2h_home,
           h2h_away: oddsSnapshot?.h2h_away,
+          ...extractSameBookOddsContext(oddsSnapshot),
           spread_home: oddsSnapshot?.spread_home,
           spread_away: oddsSnapshot?.spread_away,
           total: oddsSnapshot?.total,
@@ -3145,18 +3233,30 @@ async function runNHLModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
           {
             const _homeGoalieFetchedAt = lookupGoalieStarterFetchedAt(getDatabase(), oddsSnapshot.home_team);
             const _awayGoalieFetchedAt = lookupGoalieStarterFetchedAt(getDatabase(), oddsSnapshot.away_team);
-            if (_homeGoalieFetchedAt || _awayGoalieFetchedAt) {
+            const _snapshotCapturedAt = oddsSnapshot?.captured_at ?? null;
+            if (_homeGoalieFetchedAt || _awayGoalieFetchedAt || _snapshotCapturedAt) {
               if (typeof oddsSnapshot.raw_data !== 'object' || !oddsSnapshot.raw_data) {
                 oddsSnapshot.raw_data = {};
               }
-              if (!oddsSnapshot.raw_data.feature_timestamps) {
-                oddsSnapshot.raw_data.feature_timestamps = {};
-              }
               if (_homeGoalieFetchedAt) {
-                oddsSnapshot.raw_data.feature_timestamps.homeGoalieCertainty = _homeGoalieFetchedAt;
+                stampFeatureTimestamp(
+                  oddsSnapshot.raw_data,
+                  'homeGoalieCertainty',
+                  _homeGoalieFetchedAt,
+                );
               }
               if (_awayGoalieFetchedAt) {
-                oddsSnapshot.raw_data.feature_timestamps.awayGoalieCertainty = _awayGoalieFetchedAt;
+                stampFeatureTimestamp(
+                  oddsSnapshot.raw_data,
+                  'awayGoalieCertainty',
+                  _awayGoalieFetchedAt,
+                );
+              }
+              if (_snapshotCapturedAt) {
+                stampNhlEspnFeatureTimestamps(
+                  oddsSnapshot.raw_data,
+                  _snapshotCapturedAt,
+                );
               }
             }
           }

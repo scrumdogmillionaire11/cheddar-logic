@@ -142,6 +142,93 @@ function toFiniteNumber(value) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function findNestedKeyValue(source, key, maxDepth = 5, seen = new Set()) {
+  if (!source || typeof source !== 'object' || maxDepth < 0 || seen.has(source)) {
+    return null;
+  }
+  seen.add(source);
+
+  if (Object.prototype.hasOwnProperty.call(source, key)) {
+    const value = source[key];
+    if (value !== null && value !== undefined && value !== '') {
+      return value;
+    }
+  }
+
+  for (const value of Object.values(source)) {
+    if (value && typeof value === 'object') {
+      const found = findNestedKeyValue(value, key, maxDepth - 1, seen);
+      if (found !== null && found !== undefined && found !== '') {
+        return found;
+      }
+    }
+  }
+
+  return null;
+}
+
+function stampMlbFeatureTimestamps(rawData, capturedAt) {
+  if (!capturedAt || !rawData || typeof rawData !== 'object') return;
+  if (!rawData.feature_timestamps || typeof rawData.feature_timestamps !== 'object') {
+    rawData.feature_timestamps = {};
+  }
+
+  const highRiskCandidates = ['umpire_factor', 'rolling_14d_wrc_plus_vs_hand'];
+  for (const field of highRiskCandidates) {
+    const existingTimestamp = rawData.feature_timestamps[field];
+    if (existingTimestamp) continue;
+
+    const value = findNestedKeyValue(rawData, field);
+    if (value !== null && value !== undefined && value !== '') {
+      rawData.feature_timestamps[field] = capturedAt;
+    }
+  }
+}
+
+function extractSameBookOddsContext(oddsSnapshot) {
+  const rawData =
+    oddsSnapshot?.raw_data && typeof oddsSnapshot.raw_data === 'object'
+      ? oddsSnapshot.raw_data
+      : null;
+  const executionPairs =
+    rawData?._execution_pairs && typeof rawData._execution_pairs === 'object'
+      ? rawData._execution_pairs
+      : {};
+
+  return {
+    h2h_same_book_away_for_home:
+      oddsSnapshot?.h2h_same_book_away_for_home ??
+      oddsSnapshot?.h2hSameBookAwayForHome ??
+      executionPairs.h2h_same_book_away_for_home ??
+      null,
+    h2h_same_book_home_for_away:
+      oddsSnapshot?.h2h_same_book_home_for_away ??
+      oddsSnapshot?.h2hSameBookHomeForAway ??
+      executionPairs.h2h_same_book_home_for_away ??
+      null,
+    spread_same_book_away_for_home:
+      oddsSnapshot?.spread_same_book_away_for_home ??
+      oddsSnapshot?.spreadSameBookAwayForHome ??
+      executionPairs.spread_same_book_away_for_home ??
+      null,
+    spread_same_book_home_for_away:
+      oddsSnapshot?.spread_same_book_home_for_away ??
+      oddsSnapshot?.spreadSameBookHomeForAway ??
+      executionPairs.spread_same_book_home_for_away ??
+      null,
+    total_same_book_under_for_over:
+      oddsSnapshot?.total_same_book_under_for_over ??
+      oddsSnapshot?.totalSameBookUnderForOver ??
+      executionPairs.total_same_book_under_for_over ??
+      null,
+    total_same_book_over_for_under:
+      oddsSnapshot?.total_same_book_over_for_under ??
+      oddsSnapshot?.totalSameBookOverForUnder ??
+      executionPairs.total_same_book_over_for_under ??
+      null,
+  };
+}
+
 function pickFirstFinite(...values) {
   for (const value of values) {
     const parsed = toFiniteNumber(value);
@@ -4118,12 +4205,16 @@ async function runMLBModel({
                 : isFullGameTotal
                   ? (() => {
                       const fgCtx = resolveMlbFullGameTotalContext(gameOddsSnapshot);
+                      const sameBookOddsContext = extractSameBookOddsContext(
+                        gameOddsSnapshot,
+                      );
                       return {
                         recommended_bet_type: 'total',
                         odds_context: {
                           total: fgCtx.line ?? null,
                           total_price_over: fgCtx.over_price ?? null,
                           total_price_under: fgCtx.under_price ?? null,
+                          ...sameBookOddsContext,
                           captured_at: gameOddsSnapshot?.captured_at ?? null,
                         },
                         projection: driver.projection ?? null,
@@ -4136,6 +4227,7 @@ async function runMLBModel({
                       odds_context: {
                         h2h_home: gameOddsSnapshot?.h2h_home ?? null,
                         h2h_away: gameOddsSnapshot?.h2h_away ?? null,
+                        ...extractSameBookOddsContext(gameOddsSnapshot),
                         captured_at: gameOddsSnapshot?.captured_at ?? null,
                       },
                       projection: {
@@ -4334,8 +4426,13 @@ async function runMLBModel({
             {
               const _betPlacedAt = baseOddsSnapshot?.captured_at ?? null;
               if (_betPlacedAt) {
+                const _rawData =
+                  (typeof baseOddsSnapshot?.raw_data === 'object'
+                    ? baseOddsSnapshot.raw_data
+                    : {}) ?? {};
+                stampMlbFeatureTimestamps(_rawData, _betPlacedAt);
                 const _timeliness = assertFeatureTimeliness(
-                  (typeof baseOddsSnapshot?.raw_data === 'object' ? baseOddsSnapshot.raw_data : {}) ?? {},
+                  _rawData,
                   _betPlacedAt,
                 );
                 if (!_timeliness.ok) {

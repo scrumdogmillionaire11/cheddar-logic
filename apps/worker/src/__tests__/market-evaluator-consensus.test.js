@@ -142,6 +142,8 @@ describe('market evaluator consensus', () => {
       best_price_home_book: 'betmgm',
       best_price_away: 102,
       best_price_away_book: 'draftkings',
+      same_book_away_for_home: -120,
+      same_book_home_for_away: -118,
     });
   });
 
@@ -164,6 +166,8 @@ describe('market evaluator consensus', () => {
       best_price_over_book: 'betmgm',
       best_price_under: 100,
       best_price_under_book: 'draftkings',
+      same_book_under_for_over: -120,
+      same_book_over_for_under: -115,
     });
   });
 
@@ -182,6 +186,8 @@ describe('market evaluator consensus', () => {
       best_price_home_book: 'fanduel',
       best_price_away: 125,
       best_price_away_book: 'betmgm',
+      same_book_away_for_home: null,
+      same_book_home_for_away: null,
     });
   });
 

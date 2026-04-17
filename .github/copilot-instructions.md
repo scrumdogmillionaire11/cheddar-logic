@@ -4,7 +4,7 @@ This repo stores PAX agent definitions and workflows for cross-tool usage.
 
 ## Source of Truth
 
-- Agent prompts: `.claude/agents/pax-*.md`
+- Agent prompts: `pax-agents/.claude/agents/pax-*.md` (canonical PAX agents)
 - Commands: `.claude/commands/pax/*.md`
 - Workflow templates/references: `.claude/process-acceleration-executors/**`
 
@@ -21,7 +21,7 @@ This repo stores PAX agent definitions and workflows for cross-tool usage.
 
 - Interpret user intent against PAX commands (e.g., "plan phase", "execute phase", "verify work").
 - Reference corresponding docs in `.claude/commands/pax/` and `.claude/process-acceleration-executors/workflows/`.
-- For implementation changes, edit canonical files in `.claude/agents/` and related workflow docs.
+- For implementation changes, edit canonical files in `pax-agents/.claude/agents/` and related workflow docs.
 
 ## Tool Access & Capabilities
 

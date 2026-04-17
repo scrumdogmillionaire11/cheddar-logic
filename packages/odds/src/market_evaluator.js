@@ -78,6 +78,15 @@ function pickBestValue(entries, valueKey, comparator = (candidate, current) => c
   };
 }
 
+function findEntryByBook(entries, book, valueKey) {
+  if (!book) return null;
+  for (const entry of Array.isArray(entries) ? entries : []) {
+    if (entry?.book !== book) continue;
+    if (isFiniteNumber(entry?.[valueKey])) return entry;
+  }
+  return null;
+}
+
 function americanToDecimal(price) {
   if (!isFiniteNumber(price) || price === 0) return null;
   if (price > 0) return Number((1 + price / 100).toFixed(4));
@@ -205,6 +214,16 @@ function selectSpreadExecution(entries) {
   const bestLineAway = pickBestValue(entries, 'away_line');
   const bestPriceHome = pickBestValue(entries, 'home_price');
   const bestPriceAway = pickBestValue(entries, 'away_price');
+  const homeBookEntry = findEntryByBook(
+    entries,
+    bestPriceHome.book,
+    'away_price',
+  );
+  const awayBookEntry = findEntryByBook(
+    entries,
+    bestPriceAway.book,
+    'home_price',
+  );
 
   return {
     best_line_home: bestLineHome.value,
@@ -215,6 +234,8 @@ function selectSpreadExecution(entries) {
     best_price_home_book: bestPriceHome.book,
     best_price_away: bestPriceAway.value,
     best_price_away_book: bestPriceAway.book,
+    same_book_away_for_home: homeBookEntry?.away_price ?? null,
+    same_book_home_for_away: awayBookEntry?.home_price ?? null,
   };
 }
 
@@ -227,6 +248,8 @@ function selectTotalExecution(entries) {
   const bestLineUnder = pickBestValue(entries, 'line');
   const bestPriceOver = pickBestValue(entries, 'over');
   const bestPriceUnder = pickBestValue(entries, 'under');
+  const overBookEntry = findEntryByBook(entries, bestPriceOver.book, 'under');
+  const underBookEntry = findEntryByBook(entries, bestPriceUnder.book, 'over');
 
   return {
     best_line_over: bestLineOver.value,
@@ -237,18 +260,24 @@ function selectTotalExecution(entries) {
     best_price_over_book: bestPriceOver.book,
     best_price_under: bestPriceUnder.value,
     best_price_under_book: bestPriceUnder.book,
+    same_book_under_for_over: overBookEntry?.under ?? null,
+    same_book_over_for_under: underBookEntry?.over ?? null,
   };
 }
 
 function selectH2HExecution(entries) {
   const bestPriceHome = pickBestValue(entries, 'home');
   const bestPriceAway = pickBestValue(entries, 'away');
+  const homeBookEntry = findEntryByBook(entries, bestPriceHome.book, 'away');
+  const awayBookEntry = findEntryByBook(entries, bestPriceAway.book, 'home');
 
   return {
     best_price_home: bestPriceHome.value,
     best_price_home_book: bestPriceHome.book,
     best_price_away: bestPriceAway.value,
     best_price_away_book: bestPriceAway.book,
+    same_book_away_for_home: homeBookEntry?.away ?? null,
+    same_book_home_for_away: awayBookEntry?.home ?? null,
   };
 }
 

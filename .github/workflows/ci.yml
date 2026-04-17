@@ -36,7 +36,7 @@ jobs:
           if [ -f ./scripts/doctor.sh ]; then
             ./scripts/doctor.sh .
           elif [ -f ./pax-agents/scripts/doctor.sh ]; then
-            ./pax-agents/scripts/doctor.sh .
+            ./pax-agents/scripts/doctor.sh ./pax-agents
           else
             echo "doctor.sh not found, skipping validation"
           fi
