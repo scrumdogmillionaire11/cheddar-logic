@@ -23,17 +23,18 @@ const listSource = fs.readFileSync(
 
 assert.ok(
   sharedSource.includes('export function isActionableProjectionPlay('),
-  'shared projection actionable helper should be defined',
+  'legacy shared projection actionable helper should remain available for non-provider callers',
 );
 
 assert.ok(
-  contextSource.includes('if (!isActionableProjectionPlay(play1p))'),
-  'CardsPageContext must use shared projection actionable helper when building projectionItems',
+  contextSource.includes('createProjectionFilterCard(game, play1p)') &&
+    contextSource.includes("evaluateCardFilter(filterCard, f, 'projections')"),
+  'CardsPageContext must use the canonical card predicate when building projectionItems',
 );
 
 assert.ok(
-  listSource.includes('.filter(({ play }) => isActionableProjectionPlay(play))'),
-  'CardsList must use shared projection actionable helper as render-time defense-in-depth',
+  !listSource.includes('.filter(({ play }) => isActionableProjectionPlay(play))'),
+  'CardsList must not apply a second projection actionability filter after provider filtering',
 );
 
 console.log('✅ WI-0968 PASS projection filter regression test passed');

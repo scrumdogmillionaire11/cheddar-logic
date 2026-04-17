@@ -16,6 +16,8 @@ function resolveSrc(rel) {
 
 const presetsSource = fs.readFileSync(resolveSrc('lib/game-card/presets.ts'), 'utf8');
 const filtersSource = fs.readFileSync(resolveSrc('lib/game-card/filters.ts'), 'utf8');
+const helpersSource = fs.readFileSync(resolveSrc('lib/game-card/preset-helpers.ts'), 'utf8');
+const filterPanelSource = fs.readFileSync(resolveSrc('components/filter-panel.tsx'), 'utf8');
 
 console.log('🧪 Filter presets + sort source-contract checks');
 
@@ -120,7 +122,7 @@ assert(
 
 // ─── FT Trend: filterByCardType checks ALL drivers ────────────────────────
 assert(
-  filtersSource.includes('card.drivers.some((d) => filters.cardTypes!.includes(d.cardType ?? \'\'))'),
+  filtersSource.includes('card.drivers.some((d) => allowedTypes.includes(d.cardType ?? \'\'))'),
   'filterByCardType must check all drivers, not just drivers[0]',
 );
 assert(
@@ -143,10 +145,25 @@ assert(
 {
   const fsIdx = presetsSource.indexOf("id: 'full_slate'");
   const fsBlock = presetsSource.slice(fsIdx, fsIdx + 300);
-  assert(
-    fsBlock.includes('statuses: FIRE_WATCH_PASS'),
+assert(
+  fsBlock.includes('statuses: FIRE_WATCH_PASS'),
     'full_slate preset must include PASS',
   );
 }
+
+// ─── Canonical helper ownership ──────────────────────────────────────────
+assert(
+  helpersSource.includes('export function togglePresetFilters') &&
+    helpersSource.includes('export function doesPresetMatchFilters'),
+  'preset apply/reset and active matching helpers must be exported from preset-helpers.ts',
+);
+assert(
+  filterPanelSource.includes("from '@/lib/game-card/preset-helpers'"),
+  'filter panel must consume canonical preset helpers',
+);
+assert(
+  !filterPanelSource.includes('doesPresetMatchCurrentFilters'),
+  'filter panel must not keep bespoke preset matching logic',
+);
 
 console.log('✅ All filter preset + sort contract checks passed');

@@ -5,7 +5,6 @@ import PropGameCard from '@/components/prop-game-card';
 import { useCardsPageActions, useCardsPageState, BUCKET_LABELS } from './CardsPageContext';
 import GameCardItem from './GameCardItem';
 import SportDiagnosticsPanel from './SportDiagnosticsPanel';
-import { isActionableProjectionPlay } from './shared';
 
 export default function CardsList() {
   const {
@@ -59,7 +58,8 @@ export default function CardsList() {
       {diagnosticsEnabled && viewMode === 'game' && diagnosticFilter && (
         <div className="mb-3 flex items-center gap-2 rounded-md border border-white/10 bg-surface/40 px-3 py-1.5 text-xs text-cloud/70">
           <span>
-            Showing {diagnosticCards.length} blocked {diagnosticFilter.sport} games
+            Debug diagnostics filter: {diagnosticCards.length} blocked{' '}
+            {diagnosticFilter.sport} games
             {' — '}
             {BUCKET_LABELS[diagnosticFilter.bucket]}
           </span>
@@ -142,9 +142,7 @@ export default function CardsList() {
 
       {viewMode === 'projections' && projectionItems.length > 0 && (
         <div className="space-y-4">
-          {projectionItems
-            .filter(({ play }) => isActionableProjectionPlay(play))
-            .map(({ game, play }) => (
+          {projectionItems.map(({ game, play }) => (
             <ProjectionCard
               key={`${game.gameId}-gameprops`}
               homeTeam={game.homeTeam}

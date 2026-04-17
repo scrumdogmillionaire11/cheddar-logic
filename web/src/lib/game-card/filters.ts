@@ -41,6 +41,7 @@ export type FilterDebugFlags = {
   timeWindow: boolean;
   oddsFreshness: boolean;
   market: boolean;
+  cardType: boolean;
   actionability: boolean;
   driverStrength: boolean;
   riskFlags: boolean;
@@ -50,6 +51,11 @@ export type FilterDebugFlags = {
   clearPlay: boolean;
   totalProjection: boolean;
   minEdge: boolean;
+};
+
+export type CardFilterPredicateResult = {
+  passes: boolean;
+  flags: FilterDebugFlags;
 };
 
 /**
@@ -337,9 +343,19 @@ function filterByMarketAvailability(
 
   const includePass = filters.statuses.includes('PASS');
   const displayAction = getPlayDisplayAction(card.play);
+  const officialStatus = resolveCanonicalOfficialStatus(card.play);
+  const envelope = getCanonicalEnvelope(card.play);
+  const explicitOfficialPass =
+    card.play?.decision_v2?.official_status === 'PASS' ||
+    envelope?.official_status === 'PASS' ||
+    card.play?.action === 'PASS' ||
+    card.play?.classification === 'PASS';
 
   // Full Slate lenient mode: let PASS plays through regardless of market
-  if (includePass && displayAction === 'PASS') {
+  if (
+    includePass &&
+    (displayAction === 'PASS' || officialStatus === 'PASS' || explicitOfficialPass)
+  ) {
     return true;
   }
 
@@ -651,11 +667,15 @@ function filterByTotalProjection(
 function filterByCardType(card: GameCard, filters: GameModeFilters): boolean {
   if (!filters.cardTypes || filters.cardTypes.length === 0) return true;
 
+  const allowedTypes = filters.cardTypes;
+  const playCardType = card.play?.cardType;
+  if (playCardType && allowedTypes.includes(playCardType)) return true;
+
   // Check if any driver matches the required card types
-  return card.drivers.some((d) => filters.cardTypes!.includes(d.cardType ?? ''));
+  return card.drivers.some((d) => allowedTypes.includes(d.cardType ?? ''));
 }
 
-export function getFilterDebugFlags(
+function buildFilterDebugFlags(
   card: GameCard,
   filters: GameFilters,
   mode: ViewMode = 'game',
@@ -666,6 +686,7 @@ export function getFilterDebugFlags(
       timeWindow: filterByTimeWindow(card, filters),
       oddsFreshness: true,
       market: filterByPropAvailability(card),
+      cardType: true,
       actionability: filterByActionability(card, filters),
       driverStrength: true,
       riskFlags: true,
@@ -684,6 +705,7 @@ export function getFilterDebugFlags(
     timeWindow: filterByTimeWindow(card, gameFilters),
     oddsFreshness: filterByOddsFreshness(card, gameFilters),
     market: filterByMarketAvailability(card, gameFilters),
+    cardType: filterByCardType(card, gameFilters),
     actionability: filterByActionability(card, gameFilters),
     driverStrength: filterByDriverStrength(card, gameFilters),
     riskFlags: filterByRiskFlags(card, gameFilters),
@@ -694,6 +716,26 @@ export function getFilterDebugFlags(
     totalProjection: filterByTotalProjection(card, gameFilters),
     minEdge: filterByMinEdgePct(card, gameFilters),
   };
+}
+
+export function evaluateCardFilter(
+  card: GameCard,
+  filters: GameFilters,
+  mode: ViewMode = 'game',
+): CardFilterPredicateResult {
+  const flags = buildFilterDebugFlags(card, filters, mode);
+  return {
+    flags,
+    passes: Object.values(flags).every(Boolean),
+  };
+}
+
+export function getFilterDebugFlags(
+  card: GameCard,
+  filters: GameFilters,
+  mode: ViewMode = 'game',
+): FilterDebugFlags {
+  return evaluateCardFilter(card, filters, mode).flags;
 }
 
 /**
@@ -783,22 +825,11 @@ function sortCards(cards: GameCard[], sortMode: SortMode): GameCard[] {
 function applyGameFilters(
   cards: GameCard[],
   filters: GameModeFilters,
+  mode: ViewMode = 'game',
 ): GameCard[] {
-  const filtered = cards
-    .filter((card) => filterBySport(card, filters))
-    .filter((card) => filterByTimeWindow(card, filters))
-    .filter((card) => filterByOddsFreshness(card, filters))
-    .filter((card) => filterByMarketAvailability(card, filters))
-    .filter((card) => filterByActionability(card, filters))
-    .filter((card) => filterByDriverStrength(card, filters))
-    .filter((card) => filterByRiskFlags(card, filters))
-    .filter((card) => filterByCardType(card, filters))
-    .filter((card) => filterBySearch(card, filters))
-    .filter((card) => filterByWelcomeHome(card, filters))
-    .filter((card) => filterByHasPicks(card, filters))
-    .filter((card) => filterByClearPlay(card, filters))
-    .filter((card) => filterByTotalProjection(card, filters))
-    .filter((card) => filterByMinEdgePct(card, filters));
+  const filtered = cards.filter(
+    (card) => evaluateCardFilter(card, filters, mode).passes,
+  );
 
   return sortCards(filtered, filters.sortMode);
 }
@@ -809,17 +840,14 @@ export function applyFilters(
   mode: ViewMode = 'game',
 ): GameCard[] {
   if (mode === 'props' && isPropsModeFilters(filters)) {
-    const filtered = cards
-      .filter((card) => filterByPropAvailability(card))
-      .filter((card) => filterBySport(card, filters))
-      .filter((card) => filterByTimeWindow(card, filters))
-      .filter((card) => filterByActionability(card, filters))
-      .filter((card) => filterBySearch(card, filters));
+    const filtered = cards.filter(
+      (card) => evaluateCardFilter(card, filters, mode).passes,
+    );
 
     return sortCards(filtered, filters.sortMode);
   }
 
-  return applyGameFilters(cards, filters as GameModeFilters);
+  return applyGameFilters(cards, filters as GameModeFilters, mode);
 }
 
 /**

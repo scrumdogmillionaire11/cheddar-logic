@@ -13,7 +13,6 @@ import type {
   SortMode,
   ViewMode,
 } from '@/lib/game-card/filters';
-import { resetFilters } from '@/lib/game-card/filters';
 import type {
   Sport,
   Market,
@@ -21,6 +20,10 @@ import type {
   ExpressionStatus,
 } from '@/lib/types';
 import { getPresetsForMode } from '@/lib/game-card/presets';
+import {
+  doesPresetMatchFilters,
+  togglePresetFilters,
+} from '@/lib/game-card/preset-helpers';
 import { isNflSeason } from '@/lib/game-card/season-gates';
 
 interface FilterPanelProps {
@@ -39,12 +42,6 @@ export default function FilterPanel({
   activeCount,
 }: FilterPanelProps) {
   const [isExpanded, setIsExpanded] = useState(false);
-  const now = new Date();
-
-  const getWatchNext4hRange = () => ({
-    start: now.toISOString(),
-    end: new Date(now.getTime() + 4 * 60 * 60 * 1000).toISOString(),
-  });
 
   const updateFilters = (updates: Partial<GameFilters>) => {
     onFiltersChange({ ...filters, ...updates });
@@ -80,76 +77,8 @@ export default function FilterPanel({
     updateFilters({ propStatGroups });
   };
 
-  const doesPresetMatchCurrentFilters = (
-    presetFilters: Partial<GameFilters>,
-    presetId?: string,
-  ) => {
-    if (presetId === 'watch_next_4h') {
-      if (filters.timeWindow !== 'custom' || !filters.customTimeRange) {
-        return false;
-      }
-
-      const startMs = new Date(filters.customTimeRange.start).getTime();
-      const endMs = new Date(filters.customTimeRange.end).getTime();
-      const durationMs = endMs - startMs;
-      const fourHoursMs = 4 * 60 * 60 * 1000;
-
-      return Math.abs(durationMs - fourHoursMs) <= 60 * 1000;
-    }
-
-    return (Object.keys(presetFilters) as (keyof GameFilters)[]).every(
-      (key) => {
-        if (key === 'customTimeRange') {
-          const presetRange = presetFilters.customTimeRange;
-          const currentRange = filters.customTimeRange;
-
-          if (!presetRange && !currentRange) return true;
-          if (!presetRange || !currentRange) return false;
-
-          return (
-            presetRange.start === currentRange.start &&
-            presetRange.end === currentRange.end
-          );
-        }
-
-        const presetValue = presetFilters[key];
-        const currentValue = filters[key];
-
-        if (Array.isArray(presetValue)) {
-          if (!Array.isArray(currentValue) || currentValue.length !== presetValue.length) {
-            return false;
-          }
-
-          const presetSorted = [...presetValue].sort();
-          const currentSorted = [...currentValue].sort();
-          return presetSorted.every((value, index) => value === currentSorted[index]);
-        }
-
-        return presetValue === currentValue;
-      },
-    );
-  };
-
   const applyPreset = (presetId: string) => {
-    const preset = getPresetsForMode(viewMode).find((p) => p.id === presetId);
-    if (preset) {
-      if (doesPresetMatchCurrentFilters(preset.filters, preset.id)) {
-        onFiltersChange(resetFilters(viewMode));
-        return;
-      }
-
-      if (preset.id === 'watch_next_4h') {
-        onFiltersChange({
-          ...resetFilters(viewMode),
-          ...preset.filters,
-          timeWindow: 'custom',
-          customTimeRange: getWatchNext4hRange(),
-        });
-        return;
-      }
-
-      onFiltersChange({ ...resetFilters(viewMode), ...preset.filters });
-    }
+    onFiltersChange(togglePresetFilters(viewMode, filters, presetId));
   };
 
   const sportOptions: Sport[] = isNflSeason()
@@ -220,10 +149,7 @@ export default function FilterPanel({
             </p>
             <div className="flex flex-wrap gap-2">
               {getPresetsForMode(viewMode).map((preset) => {
-                const isActive = doesPresetMatchCurrentFilters(
-                  preset.filters,
-                  preset.id,
-                );
+                const isActive = doesPresetMatchFilters(viewMode, filters, preset);
 
                 return (
                   <button
