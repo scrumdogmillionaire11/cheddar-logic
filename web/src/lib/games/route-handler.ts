@@ -148,6 +148,7 @@ import {
   getTableColumnNames,
   buildOptionalOddsSelect,
 } from '@/lib/games/query-builder';
+import { isProjectionSurfaceCardType } from '@/lib/games/projection-surface';
 
 const { getDatabaseReadOnly, closeReadOnlyInstance } = cheddarData as {
   getDatabaseReadOnly: typeof import('@cheddar-logic/data').getDatabaseReadOnly;
@@ -3562,19 +3563,15 @@ export async function GET(request: NextRequest) {
         // - PROP plays are shown in the Player Props tab with propVerdict='PROJECTION'
         // - these card types are the sole source for Game Props surfaces in degraded windows
         // Filtering them here means those tabs are permanently empty.
-        const isProjectionSurfaceCardType =
-          cardRow.card_type === 'nhl-pace-1p' ||
-          cardRow.card_type === 'mlb-f5' ||
-          cardRow.card_type === 'mlb-f5-ml' ||
-          cardRow.card_type === 'mlb-full-game' ||
-          cardRow.card_type === 'mlb-full-game-ml';
+        const isProjectionSurfaceType =
+          isProjectionSurfaceCardType(cardRow.card_type);
         const isPropMarket = play.market_type === 'PROP';
 
         if (play.execution_gate?.drop_reason) {
           parsedDropReasons.push(play.execution_gate.drop_reason);
         }
 
-        if (isProjectionOnlyPlayPayload(play) && !isPropMarket && !isProjectionSurfaceCardType) {
+        if (isProjectionOnlyPlayPayload(play) && !isPropMarket && !isProjectionSurfaceType) {
           continue;
         }
 
@@ -3720,7 +3717,7 @@ export async function GET(request: NextRequest) {
         const isPropPlay = play.market_type === 'PROP';
 
         const shouldSkipWave1DecisionV2Enforcement =
-          isProjectionSurfaceCardType;
+          isProjectionSurfaceType;
 
         if (wave1Eligible && !isPropPlay) {
           if (!shouldSkipWave1DecisionV2Enforcement) {

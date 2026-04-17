@@ -14,6 +14,7 @@ import { GAME_TAGS } from '../types';
 import { getPlayDisplayAction } from './decision';
 import { isNflSeason } from './season-gates';
 import { isWelcomeHomeCardType } from './welcome-home';
+import { PROJECTION_SURFACE_CARD_TYPES } from '../games/projection-surface';
 
 // Season-gated sports list: NFL excluded during off-season (Mar–Aug)
 const NFL_SPORTS: Sport[] = isNflSeason()
@@ -240,7 +241,7 @@ export const DEFAULT_PROJECTIONS_FILTERS: GameModeFilters = {
   hasClearPlay: false,
   requireTotalProjection: false,
   onlyWelcomeHome: false,
-  cardTypes: ['nhl-pace-1p', 'mlb-f5'],
+  cardTypes: [...PROJECTION_SURFACE_CARD_TYPES],
   minEdgePct: null,
   hideFragility: false,
   hideBlowout: false,

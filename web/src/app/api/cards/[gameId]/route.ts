@@ -45,6 +45,10 @@ import {
   requireEntitlementForRequest,
   RESOURCE,
 } from '../../../../lib/api-security';
+import {
+  PROJECTION_SURFACE_CARD_TYPES_SQL,
+  isProjectionSurfaceCardType,
+} from '@/lib/games/projection-surface';
 
 const ENABLE_WELCOME_HOME =
   process.env.ENABLE_WELCOME_HOME === 'true' ||
@@ -361,7 +365,7 @@ export async function GET(
     // Exclude FPL cards - they are served from cheddar-fpl-sage backend
     baseWhere.push("sport != 'FPL'");
     baseWhere.push(
-      `(LOWER(card_type) IN ('nhl-pace-1p', 'mlb-f5', 'mlb-f5-ml', 'mlb-full-game', 'mlb-full-game-ml') OR ${buildBettingSurfacePayloadPredicate('card_payloads.payload_data')})`,
+      `(LOWER(card_type) IN (${PROJECTION_SURFACE_CARD_TYPES_SQL}) OR ${buildBettingSurfacePayloadPredicate('card_payloads.payload_data')})`,
     );
     baseWhere.push(`NOT EXISTS (
       SELECT 1
@@ -441,12 +445,9 @@ export async function GET(
     const response = cards.flatMap((card) => {
       const parsed = safeJsonParse(card.payload_data);
       const normalizedPayload = normalizePayloadMeta(parsed.data);
-      const isProjectionSurfaceCardType = card.card_type === 'nhl-pace-1p' ||
-        card.card_type === 'mlb-f5' ||
-        card.card_type === 'mlb-f5-ml' ||
-        card.card_type === 'mlb-full-game' ||
-        card.card_type === 'mlb-full-game-ml';
-      if (!parsed.error && !isProjectionSurfaceCardType && !isBettingSurfacePayload(normalizedPayload)) {
+      const isProjectionSurfaceType =
+        isProjectionSurfaceCardType(card.card_type);
+      if (!parsed.error && !isProjectionSurfaceType && !isBettingSurfacePayload(normalizedPayload)) {
         return [];
       }
       return [{
