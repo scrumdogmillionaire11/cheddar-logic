@@ -99,6 +99,18 @@ Your cheddar board updates automatically. See [AUTOMATED_SETUP.md](AUTOMATED_SET
 
 ---
 
+### DB Lock Warnings in Dev
+
+Local mode still follows the single-writer contract: worker/scheduler jobs own writes, and web reads only. If a manual non-production command opens the same DB while another local process owns `$CHEDDAR_DB_PATH.lock`, you may see:
+
+```text
+[DB] Refusing to open ... because another process holds the lock (..., pid=...). Set CHEDDAR_DB_ALLOW_MULTI_PROCESS=true to bypass.
+```
+
+In non-production this warning is informational and rate-limited for the same DB path, lock path, and owner PID. Fresh Node processes may suppress repeat warnings for 10 minutes, so lack of a repeated warning does not mean the lock disappeared.
+
+Action is only needed when the DB path, lock path, or owner PID changes unexpectedly, the warning keeps returning after the rate-limit window, or the command is running against production. For production or maintenance/backfill work, stop the worker/scheduler first, run the job, then restart it. Do not use `CHEDDAR_DB_ALLOW_MULTI_PROCESS=true` in production.
+
 ## Manual Job Execution (For Testing)
 
 ### Worker Model Jobs (NBA/NHL/MLB)
@@ -469,7 +481,7 @@ npm --prefix apps/worker run job:run-mlb-model
 ./scripts/manage-scheduler.sh start
 ```
 
-**Note:** The single-writer contract prevents simultaneous DB access. Always stop the scheduler before manual runs to avoid "Refusing to open /opt/data/cheddar-prod.db because another process holds the lock" errors.
+**Note:** The single-writer contract prevents simultaneous DB access. Always stop the scheduler before production manual runs to avoid "Refusing to open /opt/data/cheddar-prod.db because another process holds the lock" errors. Non-production warnings for the same DB path, lock path, and owner PID are rate-limited and may be informational; production lock contention remains actionable.
 
 ---
 

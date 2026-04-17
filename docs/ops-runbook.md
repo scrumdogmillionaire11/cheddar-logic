@@ -49,6 +49,13 @@ ssh babycheeses11@100.71.1.87
 - **Web server** is strictly read-only (SELECT/PRAGMA only, uses `closeDatabaseReadOnly()`)
 - See [docs/decisions/ADR-0002-single-writer-db-contract.md](decisions/ADR-0002-single-writer-db-contract.md) for rationale
 
+**Lock Management:**
+
+- The active writer owns `$CHEDDAR_DB_PATH.lock`, normally `/opt/data/cheddar-prod.db.lock` in production.
+- Production lock contention is actionable. Stop the worker/scheduler, confirm no writer owns the DB, run the maintenance or backfill command, then restart the worker/scheduler.
+- Non-production lock warnings can be informational and are rate-limited for the same DB path, lock path, and owner PID for 10 minutes. This only reduces repeated log noise; it does not bypass lock acquisition or change DB safety behavior.
+- Never set `CHEDDAR_DB_ALLOW_MULTI_PROCESS=true` in production. It bypasses the single-writer guardrail and is not a production lock-conflict fix.
+
 **Validation Commands:**
 
 ```bash
