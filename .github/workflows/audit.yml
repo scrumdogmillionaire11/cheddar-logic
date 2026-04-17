@@ -36,6 +36,12 @@ jobs:
           npm --prefix packages/data ci
           npm --prefix apps/worker ci
 
+      - name: Initialize audit DB
+        run: |
+          mkdir -p "$(dirname "$CHEDDAR_DB_PATH")"
+          npm --prefix packages/data run migrate
+          test -f "$CHEDDAR_DB_PATH"
+
       - name: Validate no closing-line substitution
         run: |
           OUTPUT_DIR="$GITHUB_WORKSPACE/apps/worker/audit-output/${RUN_SCOPE}"
