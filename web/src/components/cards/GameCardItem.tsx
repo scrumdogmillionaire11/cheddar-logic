@@ -640,8 +640,11 @@ export default function GameCardItem({
       : null;
   const isActionableDecision =
     displayDecisionResolved === 'PLAY' || displayDecisionResolved === 'LEAN';
+  // shouldPreserveNoBetLean means the bet was intentionally blocked for
+  // edge-sanity verification or proxy-cap — not truly missing. Don't demote
+  // to PASS in that case; the card should show LEAN with a verification state.
   const shouldDemoteForMissingOdds =
-    isActionableDecision && !hasVisibleBetOdds && !isProjectionOnlyCard;
+    isActionableDecision && !hasVisibleBetOdds && !isProjectionOnlyCard && !shouldPreserveNoBetLean;
   const visibleDecision = shouldDemoteForMissingOdds ? 'PASS' : displayDecisionResolved;
   const visibleVerdict = getDisplayVerdict(visibleDecision);
   const visibleStatusLabel = visibleVerdict ? visibleVerdict.label : visibleDecision;
