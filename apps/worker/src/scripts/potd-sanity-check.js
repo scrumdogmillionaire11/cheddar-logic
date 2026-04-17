@@ -104,12 +104,15 @@ function normalizeCandidate(row, source) {
     source,
     playDate: row.play_date,
     rank: row.nominee_rank ?? null,
+    winnerStatus: row.winner_status ?? null,
     sport: row.sport ?? null,
     marketType: row.market_type ?? null,
+    selection: row.selection ?? null,
     selectionLabel: row.selection_label ?? null,
     homeTeam: row.home_team ?? null,
     awayTeam: row.away_team ?? null,
     gameId: row.game_id ?? null,
+    candidateIdentityKey: row.candidate_identity_key ?? null,
     edgePct: toNumber(row.edge_pct),
     totalScore: toNumber(row.total_score),
     confidenceLabel: row.confidence_label ?? null,
@@ -158,6 +161,138 @@ function summarizeEligibility(candidates) {
   };
 }
 
+function bucketEdge(edgePct) {
+  if (!isFiniteNumber(edgePct)) return null;
+  if (edgePct < 0) return '<0%';
+  if (edgePct < 0.005) return '0-0.5%';
+  if (edgePct < 0.01) return '0.5-1.0%';
+  if (edgePct < 0.015) return '1.0-1.5%';
+  if (edgePct < 0.02) return '1.5-2.0%';
+  return '2.0%+';
+}
+
+function bucketHighScore(totalScore) {
+  if (!isFiniteNumber(totalScore) || totalScore < 0.70) return null;
+  if (totalScore < 0.72) return '0.70-0.72';
+  if (totalScore < 0.75) return '0.72-0.75';
+  return '0.75+';
+}
+
+function summarizeBuckets(candidates) {
+  const edgeBuckets = {
+    '<0%': 0,
+    '0-0.5%': 0,
+    '0.5-1.0%': 0,
+    '1.0-1.5%': 0,
+    '1.5-2.0%': 0,
+    '2.0%+': 0,
+  };
+  const highScoreBuckets = {
+    '0.70-0.72': 0,
+    '0.72-0.75': 0,
+    '0.75+': 0,
+  };
+
+  for (const row of candidates) {
+    const edgeKey = bucketEdge(row.edgePct);
+    if (edgeKey) edgeBuckets[edgeKey] += 1;
+    const scoreKey = bucketHighScore(row.totalScore);
+    if (scoreKey) highScoreBuckets[scoreKey] += 1;
+  }
+
+  return { edgeBuckets, highScoreBuckets };
+}
+
+function summarizeSportBreakdown(candidates) {
+  const bySport = {};
+  for (const row of candidates) {
+    const sport = String(row.sport || 'UNKNOWN').toUpperCase();
+    if (!bySport[sport]) {
+      bySport[sport] = {
+        strictQualified: 0,
+        softQualified: 0,
+        dynamicQualified: 0,
+        dynamicOnly: 0,
+      };
+    }
+    if (row.strictEligible) bySport[sport].strictQualified += 1;
+    if (row.softEligible) bySport[sport].softQualified += 1;
+    if (row.dynamicEligible) bySport[sport].dynamicQualified += 1;
+    if (row.dynamicShadowOnly) bySport[sport].dynamicOnly += 1;
+  }
+
+  return Object.entries(bySport)
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([sport, counts]) => ({ sport, ...counts }));
+}
+
+function buildDailyComparisonRows({ candidates, nomineeRows }) {
+  const byDate = new Map();
+  for (const row of candidates) {
+    if (!row.playDate) continue;
+    if (!byDate.has(row.playDate)) byDate.set(row.playDate, []);
+    byDate.get(row.playDate).push(row);
+  }
+
+  const firedByDate = new Map();
+  for (const row of nomineeRows) {
+    if (!row.playDate) continue;
+    const fired = String(row.winnerStatus || '').toUpperCase() === 'FIRED' ? 1 : 0;
+    if (!firedByDate.has(row.playDate) || fired === 1) {
+      firedByDate.set(row.playDate, fired);
+    }
+  }
+
+  return Array.from(byDate.entries())
+    .sort((a, b) => b[0].localeCompare(a[0]))
+    .map(([playDate, rows]) => {
+      const strictRows = rows.filter((row) => row.strictEligible);
+      const softRows = rows.filter((row) => row.softEligible);
+      const dynamicRows = rows.filter((row) => row.dynamicEligible);
+      const dynamicOnlyRows = rows.filter((row) => row.dynamicShadowOnly);
+      const bestStrictEdge = strictRows
+        .map((row) => row.edgePct)
+        .filter(isFiniteNumber)
+        .sort((a, b) => b - a)[0] ?? null;
+      const bestDynamicOnly = dynamicOnlyRows
+        .filter((row) => isFiniteNumber(row.edgePct) && isFiniteNumber(row.totalScore))
+        .sort((a, b) => {
+          if (b.edgePct !== a.edgePct) return b.edgePct - a.edgePct;
+          return b.totalScore - a.totalScore;
+        })[0] || null;
+
+      return {
+        date: playDate,
+        strictCount: strictRows.length,
+        softCount: softRows.length,
+        dynamicCount: dynamicRows.length,
+        officialPotdFired: firedByDate.get(playDate) ?? 0,
+        bestStrictEdge,
+        bestDynamicOnlyEdge: bestDynamicOnly ? bestDynamicOnly.edgePct : null,
+        bestDynamicOnlyScore: bestDynamicOnly ? bestDynamicOnly.totalScore : null,
+      };
+    });
+}
+
+function summarizeDynamicOnlySettlement(candidates) {
+  const settledRows = candidates.filter((row) => row.dynamicShadowOnly && row.shadowSettlement && row.shadowSettlement.status === 'settled');
+  const wins = settledRows.filter((row) => row.shadowSettlement.result === 'win').length;
+  const losses = settledRows.filter((row) => row.shadowSettlement.result === 'loss').length;
+  const pushes = settledRows.filter((row) => row.shadowSettlement.result === 'push').length;
+  const pnlUnits = settledRows.reduce((sum, row) => sum + (toNumber(row.shadowSettlement.pnl_units) || 0), 0);
+  const riskedUnits = settledRows.reduce((sum, row) => sum + (toNumber(row.shadowSettlement.virtual_stake_units) || 0), 0);
+  const roi = riskedUnits > 0 ? pnlUnits / riskedUnits : null;
+
+  return {
+    settledCount: settledRows.length,
+    wins,
+    losses,
+    pushes,
+    pnlUnits: round(pnlUnits, 6),
+    roi: round(roi, 6),
+  };
+}
+
 function sortCandidatesForReport(a, b) {
   if (a.playDate !== b.playDate) return a.playDate < b.playDate ? 1 : -1;
   if (a.dynamicShadowOnly !== b.dynamicShadowOnly) return a.dynamicShadowOnly ? -1 : 1;
@@ -175,6 +310,7 @@ function sortCandidatesForReport(a, b) {
 function buildShadowEligibilityReport({
   nomineeRows = [],
   shadowRows = [],
+  shadowResultRows = [],
   thresholds: thresholdOverrides = {},
   dynamicLimit = DEFAULT_DYNAMIC_LIMIT,
 } = {}) {
@@ -182,9 +318,25 @@ function buildShadowEligibilityReport({
   const nominees = nomineeRows
     .map((row) => normalizeCandidate(row, 'nominee'))
     .map((row) => classifyCandidate(row, thresholds));
+
+  const settlementByIdentity = new Map(
+    shadowResultRows
+      .filter((row) => row.play_date && row.candidate_identity_key)
+      .map((row) => [`${row.play_date}|${row.candidate_identity_key}`, row]),
+  );
+
   const shadowCandidates = shadowRows
     .map((row) => normalizeCandidate(row, 'shadow'))
-    .map((row) => classifyCandidate(row, thresholds));
+    .map((row) => {
+      const classified = classifyCandidate(row, thresholds);
+      const key = classified.playDate && classified.candidateIdentityKey
+        ? `${classified.playDate}|${classified.candidateIdentityKey}`
+        : null;
+      return {
+        ...classified,
+        shadowSettlement: key ? settlementByIdentity.get(key) || null : null,
+      };
+    });
   const allCandidates = nominees.concat(shadowCandidates);
   const latestDate = allCandidates
     .map((row) => row.playDate)
@@ -198,6 +350,20 @@ function buildShadowEligibilityReport({
     .filter((row) => row.dynamicEligible)
     .sort(sortCandidatesForReport)
     .slice(0, dynamicLimit);
+
+  const dynamicOnlyRows = allCandidates
+    .filter((row) => row.dynamicShadowOnly)
+    .sort(sortCandidatesForReport)
+    .slice(0, dynamicLimit);
+
+  const dailyComparisonRows = buildDailyComparisonRows({
+    candidates: allCandidates,
+    nomineeRows: nominees,
+  });
+
+  const sportBreakdown = summarizeSportBreakdown(allCandidates);
+  const bucketSummary = summarizeBuckets(allCandidates);
+  const dynamicOnlySettlement = summarizeDynamicOnlySettlement(allCandidates);
 
   return {
     thresholds,
@@ -215,6 +381,11 @@ function buildShadowEligibilityReport({
       summary: summarizeEligibility(allCandidates),
       distribution: summarizeCandidateDistribution(allCandidates),
     },
+    dailyComparisonRows,
+    sportBreakdown,
+    bucketSummary,
+    dynamicOnlySettlement,
+    dynamicOnlyRows,
     dynamicFloorCandidates,
   };
 }
@@ -265,6 +436,106 @@ function formatShadowEligibilityReport(report) {
   if (report.shadow.distribution.count > 0) {
     lines.push(formatDistribution('shadow', report.shadow.distribution));
   }
+
+  lines.push('');
+  lines.push('Daily strict/soft/dynamic comparison');
+  lines.push(
+    'date'.padEnd(12) +
+      'strict'.padEnd(8) +
+      'soft'.padEnd(8) +
+      'dynamic'.padEnd(10) +
+      'fired'.padEnd(7) +
+      'best_strict'.padEnd(13) +
+      'best_dyn_edge'.padEnd(14) +
+      'best_dyn_score',
+  );
+  for (const row of report.dailyComparisonRows) {
+    lines.push(
+      String(row.date || '').padEnd(12) +
+        String(row.strictCount ?? 0).padEnd(8) +
+        String(row.softCount ?? 0).padEnd(8) +
+        String(row.dynamicCount ?? 0).padEnd(10) +
+        String(row.officialPotdFired ?? 0).padEnd(7) +
+        formatPctInline(row.bestStrictEdge).padEnd(13) +
+        formatPctInline(row.bestDynamicOnlyEdge).padEnd(14) +
+        formatScore(row.bestDynamicOnlyScore),
+    );
+  }
+
+  lines.push('');
+  lines.push('Dynamic-only settlement performance');
+  lines.push(
+    `settled=${report.dynamicOnlySettlement.settledCount} ` +
+      `wins=${report.dynamicOnlySettlement.wins} ` +
+      `losses=${report.dynamicOnlySettlement.losses} ` +
+      `pushes=${report.dynamicOnlySettlement.pushes} ` +
+      `pnl_units=${report.dynamicOnlySettlement.pnlUnits != null ? report.dynamicOnlySettlement.pnlUnits.toFixed(3) : 'n/a'} ` +
+      `roi=${report.dynamicOnlySettlement.roi != null ? formatPctInline(report.dynamicOnlySettlement.roi) : 'n/a'}`,
+  );
+
+  lines.push('');
+  lines.push('Sport breakdown (strict/soft/dynamic/dynamic_only)');
+  for (const row of report.sportBreakdown) {
+    lines.push(
+      `${row.sport.padEnd(6)} strict=${String(row.strictQualified).padStart(3)} ` +
+        `soft=${String(row.softQualified).padStart(3)} ` +
+        `dynamic=${String(row.dynamicQualified).padStart(3)} ` +
+        `dynamic_only=${String(row.dynamicOnly).padStart(3)}`,
+    );
+  }
+
+  lines.push('');
+  lines.push('Edge buckets');
+  lines.push(
+    `<0%=${report.bucketSummary.edgeBuckets['<0%']} ` +
+      `0-0.5%=${report.bucketSummary.edgeBuckets['0-0.5%']} ` +
+      `0.5-1.0%=${report.bucketSummary.edgeBuckets['0.5-1.0%']} ` +
+      `1.0-1.5%=${report.bucketSummary.edgeBuckets['1.0-1.5%']} ` +
+      `1.5-2.0%=${report.bucketSummary.edgeBuckets['1.5-2.0%']} ` +
+      `2.0%+=${report.bucketSummary.edgeBuckets['2.0%+']}`,
+  );
+
+  lines.push('High-score buckets');
+  lines.push(
+    `0.70-0.72=${report.bucketSummary.highScoreBuckets['0.70-0.72']} ` +
+      `0.72-0.75=${report.bucketSummary.highScoreBuckets['0.72-0.75']} ` +
+      `0.75+=${report.bucketSummary.highScoreBuckets['0.75+']}`,
+  );
+
+  lines.push('');
+  lines.push('Dynamic-only candidate rows');
+  if (report.dynamicOnlyRows.length === 0) {
+    lines.push('No dynamic-only rows in lookback window.');
+  } else {
+    lines.push(
+      'date'.padEnd(12) +
+        'sport'.padEnd(7) +
+        'play'.padEnd(22) +
+        'edge'.padEnd(10) +
+        'score'.padEnd(8) +
+        'floor'.padEnd(10) +
+        'result'.padEnd(8) +
+        'pnl'.padEnd(9) +
+        'rank',
+    );
+    for (const row of report.dynamicOnlyRows) {
+      const settledResult = row.shadowSettlement?.result || 'pending';
+      const settledPnl = row.shadowSettlement?.pnl_units;
+      const playLabel = row.selectionLabel || row.selection || row.marketType || 'n/a';
+      lines.push(
+        String(row.playDate || '').padEnd(12) +
+          String(row.sport || '').padEnd(7) +
+          String(playLabel).padEnd(22) +
+          formatPctInline(row.edgePct).padEnd(10) +
+          formatScore(row.totalScore).padEnd(8) +
+          formatPctInline(row.dynamicFloor).padEnd(10) +
+          String(settledResult).padEnd(8) +
+          (isFiniteNumber(toNumber(settledPnl)) ? Number(settledPnl).toFixed(3) : 'n/a').padEnd(9) +
+          String(row.rank ?? '-'),
+      );
+    }
+  }
+
   lines.push('');
   lines.push('Score-based dynamic floor candidates');
   if (report.dynamicFloorCandidates.length === 0) {
@@ -332,7 +603,7 @@ function loadNomineeRows(db, lookbackDays = LOOKBACK_DAYS) {
        )
        SELECT play_date, nominee_rank, sport, game_id, home_team, away_team,
               market_type, selection_label, line, price, edge_pct, total_score,
-              confidence_label
+        confidence_label, winner_status
        FROM potd_nominees
        WHERE play_date IN (SELECT play_date FROM recent_dates)
        ORDER BY play_date DESC, nominee_rank ASC`,
@@ -351,10 +622,30 @@ function loadShadowRows(db, lookbackDays = LOOKBACK_DAYS) {
          LIMIT ?
        )
        SELECT play_date, sport, game_id, home_team, away_team,
-              market_type, selection_label, line, price, edge_pct, total_score
+        market_type, selection, selection_label, line, price,
+        edge_pct, total_score, candidate_identity_key
        FROM potd_shadow_candidates
        WHERE play_date IN (SELECT play_date FROM recent_dates)
        ORDER BY play_date DESC, total_score DESC, edge_pct DESC`,
+    )
+    .all(lookbackDays);
+}
+
+function loadShadowResultRows(db, lookbackDays = LOOKBACK_DAYS) {
+  if (!tableExists(db, 'potd_shadow_results')) return [];
+  return db
+    .prepare(
+      `WITH recent_dates AS (
+         SELECT DISTINCT play_date
+         FROM potd_shadow_results
+         ORDER BY play_date DESC
+         LIMIT ?
+       )
+       SELECT play_date, candidate_identity_key, status, result,
+              pnl_units, virtual_stake_units
+       FROM potd_shadow_results
+       WHERE play_date IN (SELECT play_date FROM recent_dates)
+       ORDER BY play_date DESC`,
     )
     .all(lookbackDays);
 }
@@ -417,6 +708,7 @@ async function runSanityCheck() {
     const report = buildShadowEligibilityReport({
       nomineeRows: loadNomineeRows(db),
       shadowRows: loadShadowRows(db),
+      shadowResultRows: loadShadowResultRows(db),
     });
     for (const line of formatShadowEligibilityReport(report)) {
       console.log(line);
@@ -440,6 +732,7 @@ module.exports = {
   loadDailyRows,
   loadNomineeRows,
   loadShadowRows,
+  loadShadowResultRows,
   runSanityCheck,
   summarizeValues,
 };
