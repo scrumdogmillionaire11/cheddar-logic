@@ -17,11 +17,13 @@ export async function GET(request: NextRequest) {
     const response = NextResponse.json({
       success: true,
       data: {
+        featuredPick: data.featuredPick,
         today: data.today,
         history: data.history,
         bankroll: data.bankroll,
         schedule: data.schedule,
         nominees: data.nominees,
+        diagnosticNominees: data.diagnosticNominees,
         winnerStatus: data.winnerStatus,
       },
     });

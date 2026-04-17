@@ -208,13 +208,46 @@ export type PotdSchedule = {
 };
 
 export type PotdResponseData = {
+  featuredPick: PotdApiPlay | null;
   today: PotdApiPlay | null;
   history: PotdApiPlay[];
   bankroll: PotdBankrollSummary;
   schedule: PotdSchedule | null;
   nominees: PotdNominee[];
+  diagnosticNominees: PotdNominee[];
   winnerStatus: 'FIRED' | 'NO_PICK' | null;
 };
+
+function splitNomineesByPresentation(
+  nominees: PotdNominee[],
+  winnerStatus: 'FIRED' | 'NO_PICK' | null,
+): {
+  nominees: PotdNominee[];
+  diagnosticNominees: PotdNominee[];
+} {
+  if (winnerStatus !== 'NO_PICK') {
+    return {
+      nominees,
+      diagnosticNominees: [],
+    };
+  }
+
+  const monitoredCandidates: PotdNominee[] = [];
+  const diagnosticNominees: PotdNominee[] = [];
+
+  for (const nominee of nominees) {
+    if (typeof nominee.edgePct === 'number' && nominee.edgePct > 0) {
+      monitoredCandidates.push(nominee);
+    } else {
+      diagnosticNominees.push(nominee);
+    }
+  }
+
+  return {
+    nominees: monitoredCandidates,
+    diagnosticNominees,
+  };
+}
 
 function mapNomineeRow(row: PotdNomineeRow): PotdNominee {
   return {
@@ -541,6 +574,7 @@ export async function getPotdResponseData(now = new Date()): Promise<PotdRespons
       : null;
 
     const todayPlay = todayRow ? mapPlayRow(todayRow) : null;
+    const nomineeBuckets = splitNomineesByPresentation(nomineesRows, winnerStatus);
     const bankrollSummary = buildBankrollSummary(
       Number(latestLedgerRow?.amount_after || 0),
       Number(startingLedgerRow?.amount_after || 0),
@@ -549,11 +583,13 @@ export async function getPotdResponseData(now = new Date()): Promise<PotdRespons
     const schedule = buildSchedule(todayPlay, todayGames, now);
 
     return {
+      featuredPick: todayPlay,
       today: todayPlay,
       history: historyRows,
       bankroll: bankrollSummary,
       schedule,
-      nominees: nomineesRows,
+      nominees: nomineeBuckets.nominees,
+      diagnosticNominees: nomineeBuckets.diagnosticNominees,
       winnerStatus,
     };
   } finally {
