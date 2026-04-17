@@ -245,7 +245,7 @@ describe('settle_pending_cards market contract', () => {
     expect(entry.oddsAtPick).toBe(-110);
   });
 
-  test('strict legacy fallback treats WATCH/HOLD as non-actionable', () => {
+  test('strict legacy fallback treats PASS/WATCH/HOLD as non-actionable', () => {
     expect(
       __private.resolveBackfillOfficialStatus({
         decision_v2: { official_status: 'LEAN' },
@@ -267,9 +267,7 @@ describe('settle_pending_cards market contract', () => {
     expect(__private.resolveBackfillOfficialStatus({ status: 'LEAN' })).toBe(
       'LEAN',
     );
-    expect(__private.resolveBackfillOfficialStatus({ status: 'PASS' })).toBe(
-      'PASS',
-    );
+    expect(__private.resolveBackfillOfficialStatus({ status: 'PASS' })).toBe('');
     expect(__private.resolveBackfillOfficialStatus({ status: 'WATCH' })).toBe(
       '',
     );

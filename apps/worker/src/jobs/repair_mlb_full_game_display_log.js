@@ -11,21 +11,11 @@
 require('dotenv').config();
 
 const { getDatabase, withDb } = require('@cheddar-logic/data');
+const { resolveNormalizedDecisionStatus } = require('@cheddar-logic/data/src');
 
 function toUpperToken(value) {
   if (value === null || value === undefined) return '';
   return String(value).trim().toUpperCase();
-}
-
-function hasOwnValue(source, key) {
-  return (
-    source &&
-    typeof source === 'object' &&
-    Object.prototype.hasOwnProperty.call(source, key) &&
-    source[key] !== null &&
-    source[key] !== undefined &&
-    String(source[key]).trim() !== ''
-  );
 }
 
 function parseJsonObject(value) {
@@ -52,24 +42,7 @@ function normalizeMarketType(value) {
 }
 
 function resolveStrictStatus(payloadData) {
-  const decisionV2 =
-    payloadData?.decision_v2 && typeof payloadData.decision_v2 === 'object'
-      ? payloadData.decision_v2
-      : null;
-  if (hasOwnValue(decisionV2, 'official_status')) {
-    const explicit = toUpperToken(decisionV2.official_status);
-    return explicit === 'PLAY' || explicit === 'LEAN' || explicit === 'PASS'
-      ? explicit
-      : '';
-  }
-
-  const fallback = hasOwnValue(payloadData, 'status')
-    ? toUpperToken(payloadData.status)
-    : toUpperToken(payloadData?.action);
-  if (fallback === 'PLAY' || fallback === 'FIRE') return 'PLAY';
-  if (fallback === 'LEAN') return 'LEAN';
-  if (fallback === 'PASS') return 'PASS';
-  return '';
+  return resolveNormalizedDecisionStatus(payloadData);
 }
 
 function resolveExecutionStatus(payloadData) {

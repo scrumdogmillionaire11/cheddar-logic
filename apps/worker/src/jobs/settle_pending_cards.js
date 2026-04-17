@@ -39,6 +39,11 @@ const {
   shouldRunJobKey,
   withDb,
 } = require('@cheddar-logic/data');
+const {
+  resolveExplicitOfficialDecisionStatus,
+  resolveLegacyDecisionStatusToken,
+  resolveNormalizedDecisionStatus,
+} = require('@cheddar-logic/data/src');
 
 function parseLockedPrice(value) {
   if (value === null || value === undefined || value === '') return null;
@@ -403,17 +408,6 @@ function toBackfillUpperToken(value) {
   return String(value).trim().toUpperCase();
 }
 
-function hasBackfillOwnValue(source, key) {
-  return (
-    source &&
-    typeof source === 'object' &&
-    Object.prototype.hasOwnProperty.call(source, key) &&
-    source[key] !== null &&
-    source[key] !== undefined &&
-    String(source[key]).trim() !== ''
-  );
-}
-
 function toBackfillFiniteNumberOrNull(value) {
   if (value === null || value === undefined || value === '') return null;
   const parsed = Number(value);
@@ -439,25 +433,7 @@ function normalizeBackfillMarketType(value) {
 }
 
 function resolveBackfillOfficialStatus(payloadData) {
-  const decisionV2 =
-    payloadData?.decision_v2 && typeof payloadData.decision_v2 === 'object'
-      ? payloadData.decision_v2
-      : null;
-  if (hasBackfillOwnValue(decisionV2, 'official_status')) {
-    const explicit = toBackfillUpperToken(decisionV2.official_status);
-    if (explicit === 'PLAY' || explicit === 'LEAN' || explicit === 'PASS') {
-      return explicit;
-    }
-    return '';
-  }
-
-  const fallbackStatus = hasBackfillOwnValue(payloadData, 'status')
-    ? toBackfillUpperToken(payloadData.status)
-    : toBackfillUpperToken(payloadData?.action);
-  if (fallbackStatus === 'PLAY' || fallbackStatus === 'FIRE') return 'PLAY';
-  if (fallbackStatus === 'LEAN') return 'LEAN';
-  if (fallbackStatus === 'PASS') return 'PASS';
-  return '';
+  return resolveNormalizedDecisionStatus(payloadData);
 }
 
 function resolveBackfillSelection(payloadData, fallbackSelection) {
@@ -980,9 +956,7 @@ function resolveNonActionableFinalReason(payloadData, row) {
     };
   }
 
-  const officialStatus = toBackfillUpperToken(
-    payloadData?.decision_v2?.official_status,
-  );
+  const officialStatus = resolveExplicitOfficialDecisionStatus(payloadData);
   if (officialStatus === 'PASS') {
     return {
       code: 'NON_ACTIONABLE_FINAL_PASS',
@@ -991,9 +965,7 @@ function resolveNonActionableFinalReason(payloadData, row) {
     };
   }
 
-  const legacyStatus = hasBackfillOwnValue(payloadData, 'status')
-    ? toBackfillUpperToken(payloadData.status)
-    : toBackfillUpperToken(payloadData?.action);
+  const legacyStatus = resolveLegacyDecisionStatusToken(payloadData);
   if (!officialStatus && legacyStatus === 'PASS') {
     return {
       code: 'NON_ACTIONABLE_FINAL_PASS',
