@@ -786,3 +786,213 @@ describe('backfill_period_token job (backfillPeriodToken)', () => {
     expect(JSON.parse(rowFg.metadata).market_period_token).toBe('FULL_GAME');
   });
 });
+
+describe('MLB full-game WATCH/HOLD auto-close (legacy non-actionable)', () => {
+  const MLB_WATCH_HOLD_DB_PATH = '/tmp/cheddar-test-mlb-watch-hold.db';
+  const MLB_WATCH_HOLD_LOCK_PATH = `${MLB_WATCH_HOLD_DB_PATH}.lock`;
+
+  function removeMlbWatchHoldBackups() {
+    const backupsDir = path.join(path.dirname(MLB_WATCH_HOLD_DB_PATH), 'backups');
+    if (!fs.existsSync(backupsDir)) return;
+    for (const entry of fs.readdirSync(backupsDir)) {
+      if (entry.startsWith('cheddar-before-settle-cards-') && entry.endsWith('.db')) {
+        try { fs.unlinkSync(path.join(backupsDir, entry)); } catch {}
+      }
+    }
+  }
+
+  beforeEach(async () => {
+    process.env.CHEDDAR_DB_PATH = MLB_WATCH_HOLD_DB_PATH;
+    process.env.CHEDDAR_DB_AUTODISCOVER = 'false';
+    process.env.CHEDDAR_DB_ALLOW_MULTI_PROCESS = 'false';
+
+    removeIfExists(MLB_WATCH_HOLD_DB_PATH);
+    removeIfExists(MLB_WATCH_HOLD_LOCK_PATH);
+    removeMlbWatchHoldBackups();
+
+    await runMigrations();
+  });
+
+  afterEach(() => {
+    closeDatabase();
+    removeIfExists(MLB_WATCH_HOLD_DB_PATH);
+    removeIfExists(MLB_WATCH_HOLD_LOCK_PATH);
+    removeMlbWatchHoldBackups();
+  });
+
+  function insertMlbWatchHoldScenario(db, {
+    gameId,
+    cardId,
+    resultId,
+    cardType,
+    marketType,
+    selection,
+    line,
+    lockedPrice,
+    legacyStatus,
+    now,
+  }) {
+    const gameRowId = `g-${gameId}`;
+
+    // INSERT game (status='completed')
+    db.prepare(`
+      INSERT INTO games (id, sport, game_id, home_team, away_team, game_time_utc, status)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(gameRowId, 'mlb', gameId, 'Home MLB', 'Away MLB', now, 'completed');
+
+    // INSERT game_results (status='final', home=5, away=3 — OVER 7.5 wins)
+    db.prepare(`
+      INSERT INTO game_results (
+        id, game_id, sport, final_score_home, final_score_away, status, result_source, settled_at, metadata
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      `gr-${gameId}`,
+      gameId,
+      'mlb',
+      5,
+      3,
+      'final',
+      'manual',
+      now,
+      JSON.stringify({ firstPeriodScores: null }),
+    );
+
+    // Build payload_data — no decision_v2.official_status
+    // WATCH uses `status: legacyStatus`, HOLD uses `action: legacyStatus`
+    const payloadData = {
+      game_id: gameId,
+      sport: 'MLB',
+      kind: 'PLAY',
+      market_type: marketType,
+      selection: { side: selection },
+      line,
+      price: lockedPrice,
+    };
+    if (legacyStatus === 'HOLD') {
+      payloadData.action = legacyStatus;
+    } else {
+      payloadData.status = legacyStatus;
+    }
+
+    // INSERT card_payloads (no card_display_log insert — that's intentional for non-actionable path)
+    db.prepare(`
+      INSERT INTO card_payloads (id, game_id, sport, card_type, card_title, created_at, payload_data)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      cardId,
+      gameId,
+      'mlb',
+      cardType,
+      `Card ${cardId}`,
+      now,
+      JSON.stringify(payloadData),
+    );
+
+    // INSERT card_results (status='pending')
+    const marketKey = buildMarketKey({
+      gameId,
+      marketType,
+      selection,
+      line,
+      period: 'FULL_GAME',
+    });
+
+    db.prepare(`
+      INSERT INTO card_results (
+        id, card_id, game_id, sport, card_type, recommended_bet_type,
+        status, market_key, market_type, selection, line, locked_price
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      resultId,
+      cardId,
+      gameId,
+      'mlb',
+      cardType,
+      marketType === 'MONEYLINE' ? 'moneyline' : 'total',
+      'pending',
+      marketKey,
+      marketType,
+      selection,
+      line,
+      lockedPrice,
+    );
+  }
+
+  test('auto-closes MLB full-game WATCH row as non-actionable void', async () => {
+    const db = getDatabase();
+    const now = new Date().toISOString();
+
+    insertMlbWatchHoldScenario(db, {
+      gameId: 'mlb-watch-total',
+      cardId: 'card-mlb-watch-total',
+      resultId: 'result-mlb-watch-total',
+      cardType: 'mlb-full-game',
+      marketType: 'TOTAL',
+      selection: 'OVER',
+      line: 7.5,
+      lockedPrice: -110,
+      legacyStatus: 'WATCH',
+      now,
+    });
+
+    const result = await settlePendingCards();
+    expect(result.success).toBe(true);
+
+    const db2 = getDatabase();
+    const row = db2.prepare('SELECT status, result, metadata FROM card_results WHERE id = ?')
+      .get('result-mlb-watch-total');
+
+    expect(row.status).toBe('error');
+    expect(row.result).toBe('void');
+
+    const meta = JSON.parse(row.metadata);
+    expect(meta.settlement_error.code).toBe('NON_ACTIONABLE_FINAL_LEGACY_WATCH_HOLD');
+    expect(meta.settlement_error.details.legacyStatus).toBe('WATCH');
+
+    // Auto-closed rows are excluded from the main loop, so they don't appear in marketDailyCounts
+    expect(result.coverage.marketDailyCounts).toEqual(
+      expect.objectContaining({
+        MLB_TOTAL: { pending: 0, settled: 0, failed: 0 },
+      }),
+    );
+  });
+
+  test('auto-closes MLB full-game-ml HOLD row as non-actionable void', async () => {
+    const db = getDatabase();
+    const now = new Date().toISOString();
+
+    insertMlbWatchHoldScenario(db, {
+      gameId: 'mlb-hold-moneyline',
+      cardId: 'card-mlb-hold-moneyline',
+      resultId: 'result-mlb-hold-moneyline',
+      cardType: 'mlb-full-game-ml',
+      marketType: 'MONEYLINE',
+      selection: 'HOME',
+      line: null,
+      lockedPrice: -125,
+      legacyStatus: 'HOLD',
+      now,
+    });
+
+    const result = await settlePendingCards();
+    expect(result.success).toBe(true);
+
+    const db2 = getDatabase();
+    const row = db2.prepare('SELECT status, result, metadata FROM card_results WHERE id = ?')
+      .get('result-mlb-hold-moneyline');
+
+    expect(row.status).toBe('error');
+    expect(row.result).toBe('void');
+
+    const meta = JSON.parse(row.metadata);
+    expect(meta.settlement_error.code).toBe('NON_ACTIONABLE_FINAL_LEGACY_WATCH_HOLD');
+    expect(meta.settlement_error.details.legacyStatus).toBe('HOLD');
+
+    // Auto-closed rows are excluded from the main loop, so they don't appear in marketDailyCounts
+    expect(result.coverage.marketDailyCounts).toEqual(
+      expect.objectContaining({
+        MLB_MONEYLINE: { pending: 0, settled: 0, failed: 0 },
+      }),
+    );
+  });
+});
