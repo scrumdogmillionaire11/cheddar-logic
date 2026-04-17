@@ -205,7 +205,11 @@ interface ApiPlay {
   basis?: 'PROJECTION_ONLY' | 'ODDS_BACKED';
   execution_status?: 'EXECUTABLE' | 'PROJECTION_ONLY' | 'BLOCKED';
   execution_gate?: {
-    drop_reason?: { drop_reason_code: string; drop_reason_layer: string } | null;
+    drop_reason?: {
+      drop_reason_code: string;
+      drop_reason_layer: string;
+      recovery_bucket?: RecoveryBucket;
+    } | null;
     blocked_by?: string[];
   } | null;
   prop_decision?: ApiPropDecision | null;
@@ -313,7 +317,104 @@ interface GameData {
 type DropReasonMeta = {
   drop_reason_code: string;
   drop_reason_layer: string;
+  recovery_bucket?: RecoveryBucket;
 };
+
+type RecoveryBucket =
+  | 'hard-fail'
+  | 'soft-pass'
+  | 'degraded-output'
+  | 'hidden-output'
+  | 'retry'
+  | 'fallback';
+
+function resolveRecoveryBucket(code: string, layer: string): RecoveryBucket {
+  const normalized = code.trim().toUpperCase();
+  const normalizedLayer = layer.trim().toLowerCase();
+
+  if (
+    normalized.includes('MODEL_STATUS') ||
+    normalized.includes('MISSING_EDGE') ||
+    normalized.includes('CALIBRATION') ||
+    normalized === 'TIMESTAMP_MISSING' ||
+    normalized === 'TIMESTAMP_PARSE_ERROR' ||
+    normalized === 'GAME_ID_INVALID' ||
+    normalized === 'INVARIANT_BREACH'
+  ) {
+    return 'hard-fail';
+  }
+
+  if (normalized.includes('RETRYABLE')) {
+    return 'retry';
+  }
+
+  if (
+    normalized === 'ESPN_NULL_OBSERVATION' ||
+    normalized === 'ESPN_NULL_ALERT_FAILED' ||
+    normalized === 'STALE_RECOVERY_REFRESH_FAILED' ||
+    normalized === 'STALE_RECOVERY_RELOAD_FAILED' ||
+    normalized === 'NEUTRAL_VALUE_COERCE_SILENT' ||
+    normalized === 'PRICE_VALIDATION_FAILED' ||
+    normalized === 'LINE_CONTEXT_MISSING' ||
+    normalized === 'CAPTURED_AT_MISSING' ||
+    normalized === 'CAPTURED_AT_MS_INVALID'
+  ) {
+    return 'hidden-output';
+  }
+
+  if (
+    normalized === 'SIGMA_FALLBACK_DEGRADED' ||
+    normalized === 'HEAVY_FAVORITE_PRICE_CAP' ||
+    normalized === 'PLAY_CONTRADICTION_CAPPED' ||
+    normalized === 'LINE_DELTA_COMPUTATION_FAILED' ||
+    normalized === 'TIMESTAMP_AGE_INVALID' ||
+    normalized === 'PRICING_STATUS_MISSING' ||
+    normalized.startsWith('BULLPEN_CONTEXT_')
+  ) {
+    return 'degraded-output';
+  }
+
+  if (
+    normalized === 'NO_EDGE_AT_PRICE' ||
+    normalized === 'MODEL_PROB_MISSING' ||
+    normalized === 'WATCHDOG_MARKET_UNAVAILABLE' ||
+    normalized === 'STALE_MARKET_INPUT' ||
+    normalized === 'WATCHDOG_PARSE_FAILURE' ||
+    normalized === 'WATCHDOG_CONSISTENCY_MISSING' ||
+    normalized === 'GOALIE_UNCONFIRMED' ||
+    normalized === 'GOALIE_CONFLICTING' ||
+    normalized === 'INJURY_UNCERTAIN' ||
+    normalized === 'TIMESTAMP_RESOLVER_FALLBACK' ||
+    normalized === 'PRICING_STATUS_FALLBACK' ||
+    normalized === 'DECISION_ENVELOPE_FALLBACK'
+  ) {
+    return 'fallback';
+  }
+
+  if (
+    normalized === 'EDGE_CLEAR' ||
+    normalized === 'AVAILABILITY_GATE_DEGRADED' ||
+    normalized.startsWith('PASS_EXECUTION_GATE_') ||
+    normalized === 'PROJECTION_ONLY_EXCLUSION' ||
+    normalizedLayer === 'worker_gate'
+  ) {
+    return 'soft-pass';
+  }
+
+  return 'fallback';
+}
+
+function buildDropReasonMeta(
+  code: string,
+  layer: string,
+  recoveryBucket?: RecoveryBucket,
+): DropReasonMeta {
+  return {
+    drop_reason_code: code,
+    drop_reason_layer: layer,
+    recovery_bucket: recoveryBucket ?? resolveRecoveryBucket(code, layer),
+  };
+}
 
 function resolveDecisionV2EdgePct(
   decisionV2: Pick<DecisionV2, 'edge_pct' | 'edge_delta_pct'> | null | undefined,
@@ -388,10 +489,15 @@ function normalizeDropReasonMeta(
 
   if (!code || layer.length === 0) return null;
 
-  return {
-    drop_reason_code: code,
-    drop_reason_layer: layer,
-  };
+  const normalizedBucket =
+    typeof (value as { recovery_bucket?: unknown }).recovery_bucket === 'string' &&
+    String((value as { recovery_bucket?: unknown }).recovery_bucket).trim().length > 0
+      ? (String((value as { recovery_bucket?: unknown }).recovery_bucket)
+          .trim()
+          .toLowerCase() as RecoveryBucket)
+      : undefined;
+
+  return buildDropReasonMeta(code, layer, normalizedBucket);
 }
 
 function getCanonicalEnvelopeFromPlay(
@@ -461,10 +567,7 @@ function resolvePlayDropReason(play: ApiPlay | null | undefined): DropReasonMeta
     (canonicalEnvelope?.official_status === 'PASS' ||
       canonicalEnvelope?.official_status === 'LEAN')
   ) {
-    return {
-      drop_reason_code: envelopePrimary,
-      drop_reason_layer: 'decision_canonical_envelope',
-    };
+    return buildDropReasonMeta(envelopePrimary, 'decision_canonical_envelope');
   }
 
   const watchdogReasonCode =
@@ -473,10 +576,7 @@ function resolvePlayDropReason(play: ApiPlay | null | undefined): DropReasonMeta
       ? normalizeReasonCode(play.decision_v2.watchdog_reason_codes[0])
       : null;
   if (play.decision_v2?.watchdog_status === 'BLOCKED' && watchdogReasonCode) {
-    return {
-      drop_reason_code: watchdogReasonCode,
-      drop_reason_layer: 'decision_watchdog',
-    };
+    return buildDropReasonMeta(watchdogReasonCode, 'decision_watchdog');
   }
 
   const priceReasonCode =
@@ -491,18 +591,12 @@ function resolvePlayDropReason(play: ApiPlay | null | undefined): DropReasonMeta
       play.decision_v2?.official_status === 'LEAN') &&
     priceReasonCode
   ) {
-    return {
-      drop_reason_code: priceReasonCode,
-      drop_reason_layer: 'decision_price',
-    };
+    return buildDropReasonMeta(priceReasonCode, 'decision_price');
   }
 
   const passReasonCode = normalizePassReasonCode(play.pass_reason_code ?? null);
   if (passReasonCode) {
-    return {
-      drop_reason_code: passReasonCode,
-      drop_reason_layer: 'publish_pass_reason',
-    };
+    return buildDropReasonMeta(passReasonCode, 'publish_pass_reason');
   }
 
   const primaryReasonCode = normalizeReasonCode(play.decision_v2?.primary_reason_code);
@@ -511,10 +605,7 @@ function resolvePlayDropReason(play: ApiPlay | null | undefined): DropReasonMeta
       play.decision_v2?.official_status === 'LEAN') &&
     primaryReasonCode
   ) {
-    return {
-      drop_reason_code: primaryReasonCode,
-      drop_reason_layer: 'decision_primary',
-    };
+    return buildDropReasonMeta(primaryReasonCode, 'decision_primary');
   }
 
   return null;

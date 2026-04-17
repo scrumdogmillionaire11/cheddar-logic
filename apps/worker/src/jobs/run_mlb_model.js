@@ -735,13 +735,26 @@ function formatMlbDualRunLog(record = {}) {
   });
 }
 
-function computeLineAgeMinutes(timestamp, now = Date.now()) {
-  if (!timestamp) return null;
+function computeLineAgeMeta(timestamp, now = Date.now()) {
+  if (!timestamp) {
+    return { lineAgeMinutes: null, reasonCode: WATCHDOG_REASONS.TIMESTAMP_MISSING };
+  }
   const parsed = Date.parse(timestamp);
-  if (!Number.isFinite(parsed)) return null;
+  if (!Number.isFinite(parsed)) {
+    return { lineAgeMinutes: null, reasonCode: WATCHDOG_REASONS.TIMESTAMP_PARSE_ERROR };
+  }
   const ageMs = now - parsed;
-  if (!Number.isFinite(ageMs) || ageMs < 0) return null;
-  return Math.round((ageMs / (60 * 1000)) * 10) / 10;
+  if (!Number.isFinite(ageMs) || ageMs < 0) {
+    return { lineAgeMinutes: null, reasonCode: WATCHDOG_REASONS.TIMESTAMP_AGE_INVALID };
+  }
+  return {
+    lineAgeMinutes: Math.round((ageMs / (60 * 1000)) * 10) / 10,
+    reasonCode: null,
+  };
+}
+
+function computeLineAgeMinutes(timestamp, now = Date.now()) {
+  return computeLineAgeMeta(timestamp, now).lineAgeMinutes;
 }
 
 function buildMlbPitcherKAuditLog({
@@ -752,15 +765,20 @@ function buildMlbPitcherKAuditLog({
   pitcher,
   marketType = 'PITCHER_K',
 }) {
+  const lineAgeMeta = computeLineAgeMeta(driver?.line_fetched_at);
+  const mergedReasonCodes = uniqueReasonCodes([
+    ...(Array.isArray(reasonCodes) ? reasonCodes : []),
+    lineAgeMeta.reasonCode,
+  ]);
   return {
     gameId: gameId ?? 'unknown',
     pitcherId: driver?.player_id ?? pitcher?.id ?? null,
     starterQuality: starterQuality ?? 'UNKNOWN',
     bookmaker: driver?.best_line_bookmaker ?? null,
-    lineAgeMinutes: computeLineAgeMinutes(driver?.line_fetched_at),
+    lineAgeMinutes: lineAgeMeta.lineAgeMinutes,
     marketType,
     decisionState: driver?.status ?? driver?.prop_decision?.verdict ?? 'UNKNOWN',
-    reasonCodes: Array.isArray(reasonCodes) ? reasonCodes : [],
+    reasonCodes: mergedReasonCodes,
   };
 }
 
@@ -1713,6 +1731,22 @@ function toExecutionGatePassReasonCode(reason) {
     : 'PASS_EXECUTION_GATE_BLOCKED';
 }
 
+function appendMlbReasonCode(payload, reasonCode) {
+  if (!payload || typeof payload !== 'object' || !reasonCode) return;
+  payload.reason_codes = uniqueReasonCodes([
+    ...(Array.isArray(payload.reason_codes) ? payload.reason_codes : []),
+    reasonCode,
+  ]).sort();
+  if (payload.decision_v2 && typeof payload.decision_v2 === 'object') {
+    payload.decision_v2.watchdog_reason_codes = uniqueReasonCodes([
+      ...(Array.isArray(payload.decision_v2.watchdog_reason_codes)
+        ? payload.decision_v2.watchdog_reason_codes
+        : []),
+      reasonCode,
+    ]).sort();
+  }
+}
+
 function americanOddsToImpliedProbability(price) {
   if (!Number.isFinite(price) || price === 0) return null;
   if (price > 0) {
@@ -1730,12 +1764,23 @@ function resolveMlbMoneylineExecutionInputs({
 }) {
 
   const side = String(prediction || '').toUpperCase();
+  const reasonCodes = [];
+  if (winProbHome === null || winProbHome === undefined || winProbHome === '') {
+    reasonCodes.push(WATCHDOG_REASONS.NEUTRAL_VALUE_COERCE_SILENT);
+  }
   const selectedPrice =
     side === 'HOME'
       ? toFiniteNumber(homePrice)
       : side === 'AWAY'
         ? toFiniteNumber(awayPrice)
         : null;
+  const rawSelectedPrice =
+    side === 'HOME' ? homePrice : side === 'AWAY' ? awayPrice : null;
+  if (rawSelectedPrice !== null && rawSelectedPrice !== undefined && rawSelectedPrice !== '') {
+    if (selectedPrice === null || selectedPrice === 0) {
+      reasonCodes.push(WATCHDOG_REASONS.PRICE_VALIDATION_FAILED);
+    }
+  }
   const pFairHome = toFiniteNumber(winProbHome);
   const pFair =
     pFairHome !== null
@@ -1754,6 +1799,7 @@ function resolveMlbMoneylineExecutionInputs({
       selectedPrice !== null
         ? americanOddsToImpliedProbability(selectedPrice)
         : null,
+    execution_input_reason_codes: uniqueReasonCodes(reasonCodes),
   };
 }
 
@@ -1767,18 +1813,29 @@ function resolveMlbTotalExecutionInputs({
   pUnder,
 }) {
   const side = String(prediction || '').toUpperCase();
+  const reasonCodes = [];
   const selectedPrice =
     side === 'OVER'
       ? toFiniteNumber(overPrice)
       : side === 'UNDER'
         ? toFiniteNumber(underPrice)
         : null;
+  const rawSelectedPrice = side === 'OVER' ? overPrice : side === 'UNDER' ? underPrice : null;
+  if (rawSelectedPrice !== null && rawSelectedPrice !== undefined && rawSelectedPrice !== '') {
+    if (selectedPrice === null || selectedPrice === 0) {
+      reasonCodes.push(WATCHDOG_REASONS.PRICE_VALIDATION_FAILED);
+    }
+  }
   const pFair =
     side === 'OVER'
       ? toFiniteNumber(pOver)
       : side === 'UNDER'
         ? toFiniteNumber(pUnder)
         : null;
+  const rawPFair = side === 'OVER' ? pOver : side === 'UNDER' ? pUnder : null;
+  if (rawPFair === null || rawPFair === undefined || rawPFair === '') {
+    reasonCodes.push(WATCHDOG_REASONS.NEUTRAL_VALUE_COERCE_SILENT);
+  }
   const pImplied =
     selectedPrice !== null
       ? americanOddsToImpliedProbability(selectedPrice)
@@ -1800,6 +1857,7 @@ function resolveMlbTotalExecutionInputs({
     p_fair: pFair,
     p_implied: pImplied,
     model_prob: pFair,
+    execution_input_reason_codes: uniqueReasonCodes(reasonCodes),
   };
 }
 
@@ -2107,6 +2165,12 @@ async function applyExecutionGateWithStaleRecoveryToMlbPayload(
     return initialOutcome;
   }
 
+  if (!gameId && !payload?.game_id) {
+    appendMlbReasonCode(payload, WATCHDOG_REASONS.GAME_ID_INVALID);
+    logger.warn('[MLBModel] stale recovery skipped: GAME_ID_INVALID');
+    return initialOutcome;
+  }
+
   const recoveryKey = buildStaleRecoveryKey({
     sport: payload.sport || 'MLB',
     gameId: gameId || payload.game_id,
@@ -2144,7 +2208,9 @@ async function applyExecutionGateWithStaleRecoveryToMlbPayload(
     recoveryMeta.refresh_duration_ms = Date.now() - refreshStartedAt;
     recoveryMeta.retry_gate_result = 'BLOCKED_AFTER_RETRY';
     recoveryMeta.final_status = 'BLOCKED';
+    recoveryMeta.reason_code = WATCHDOG_REASONS.STALE_RECOVERY_REFRESH_FAILED;
     payload.stale_recovery = recoveryMeta;
+    appendMlbReasonCode(payload, WATCHDOG_REASONS.STALE_RECOVERY_REFRESH_FAILED);
     logger.warn(`[MLBModel] stale recovery refresh failed: ${error.message}`);
     return initialOutcome;
   }
@@ -2154,6 +2220,8 @@ async function applyExecutionGateWithStaleRecoveryToMlbPayload(
     try {
       latestSnapshot = (await fetchLatestSnapshotFn()) || oddsSnapshot;
     } catch (error) {
+      recoveryMeta.reason_code = WATCHDOG_REASONS.STALE_RECOVERY_RELOAD_FAILED;
+      appendMlbReasonCode(payload, WATCHDOG_REASONS.STALE_RECOVERY_RELOAD_FAILED);
       logger.warn(`[MLBModel] stale recovery snapshot reload failed: ${error.message}`);
     }
   }
@@ -3943,44 +4011,8 @@ async function runMLBModel({
                 : driver.confidence >= 0.8
                 ? 'BEST'
                 : 'WATCH';
-            const payloadData = {
-              game_id: gameId,
-              sport: 'MLB',
-              model_version: 'mlb-model-v1',
-              home_team: gameOddsSnapshot?.home_team ?? null,
-              away_team: gameOddsSnapshot?.away_team ?? null,
-              matchup,
-              start_time_utc: gameOddsSnapshot?.game_time_utc ?? null,
-              market_type: (isF5 || isF5ML) ? 'FIRST_5_INNINGS' : (isFullGameTotal || isFullGameML) ? 'FULL_GAME' : 'PROP',
-              market_group: marketGroup,
-              trust_class: trustClass,
-              status: driver.status ?? (driver.ev_threshold_passed ? 'FIRE' : 'PASS'),
-              action: driver.action ?? (driver.ev_threshold_passed ? 'FIRE' : 'PASS'),
-              classification: driver.classification ?? (driver.ev_threshold_passed ? 'BASE' : 'PASS'),
-              prediction: driver.prediction,
-              selection: {
-                side: pitcherKPayloadConfig?.selectionSide ?? driver.prediction,
-              },
-              line: pitcherKPayloadConfig?.line ?? line,
-              model_status: driver.model_status ?? 'MODEL_OK',
-              confidence: driver.confidence,
-              tier,
-              ev_passed:
-                isPitcherK
-                  ? driver.card_verdict === 'PLAY' ||
-                    driver.card_verdict === 'WATCH'
-                  : driver.ev_threshold_passed === true,
-              reasoning: driver.reasoning,
-              reason_codes: Array.isArray(driver.reason_codes) ? driver.reason_codes : [],
-              pass_reason_code: driver.pass_reason_code ?? null,
-              projection_source: driver.projection_source ?? null,
-              status_cap: driver.status_cap ?? null,
-              playability: driver.playability ?? null,
-              missing_inputs: dedupeFlags(Array.isArray(driver.missing_inputs) ? driver.missing_inputs : []),
-              disclaimer: 'Analysis provided for educational purposes. Not a recommendation.',
-              // Note: driver.prop_decision already carries model_quality (set by WI-0747 classifier block above)
-              generated_at: now,
-              ...(isF5ML || isFullGameML
+            const executionInputData =
+              isF5ML || isFullGameML
                 ? resolveMlbMoneylineExecutionInputs({
                     prediction: driver.prediction,
                     winProbHome:
@@ -4011,7 +4043,50 @@ async function runMLBModel({
                         pUnder: driver.projection?.p_under ?? null,
                       });
                     })()
-                : {}),
+                  : {};
+            const payloadData = {
+              game_id: gameId,
+              sport: 'MLB',
+              model_version: 'mlb-model-v1',
+              home_team: gameOddsSnapshot?.home_team ?? null,
+              away_team: gameOddsSnapshot?.away_team ?? null,
+              matchup,
+              start_time_utc: gameOddsSnapshot?.game_time_utc ?? null,
+              market_type: (isF5 || isF5ML) ? 'FIRST_5_INNINGS' : (isFullGameTotal || isFullGameML) ? 'FULL_GAME' : 'PROP',
+              market_group: marketGroup,
+              trust_class: trustClass,
+              status: driver.status ?? (driver.ev_threshold_passed ? 'FIRE' : 'PASS'),
+              action: driver.action ?? (driver.ev_threshold_passed ? 'FIRE' : 'PASS'),
+              classification: driver.classification ?? (driver.ev_threshold_passed ? 'BASE' : 'PASS'),
+              prediction: driver.prediction,
+              selection: {
+                side: pitcherKPayloadConfig?.selectionSide ?? driver.prediction,
+              },
+              line: pitcherKPayloadConfig?.line ?? line,
+              model_status: driver.model_status ?? 'MODEL_OK',
+              confidence: driver.confidence,
+              tier,
+              ev_passed:
+                isPitcherK
+                  ? driver.card_verdict === 'PLAY' ||
+                    driver.card_verdict === 'WATCH'
+                  : driver.ev_threshold_passed === true,
+              reasoning: driver.reasoning,
+              reason_codes: uniqueReasonCodes([
+                ...(Array.isArray(driver.reason_codes) ? driver.reason_codes : []),
+                ...(Array.isArray(executionInputData.execution_input_reason_codes)
+                  ? executionInputData.execution_input_reason_codes
+                  : []),
+              ]),
+              pass_reason_code: driver.pass_reason_code ?? null,
+              projection_source: driver.projection_source ?? null,
+              status_cap: driver.status_cap ?? null,
+              playability: driver.playability ?? null,
+              missing_inputs: dedupeFlags(Array.isArray(driver.missing_inputs) ? driver.missing_inputs : []),
+              disclaimer: 'Analysis provided for educational purposes. Not a recommendation.',
+              // Note: driver.prop_decision already carries model_quality (set by WI-0747 classifier block above)
+              generated_at: now,
+              ...executionInputData,
               // Projection-only cards are explicitly tagged for downstream separation.
               // projection_floor is only set when the driver itself is a synthetic floor driver.
               ...(driver.without_odds_mode ? { without_odds_mode: true, tags: ['no_odds_mode'] } : {}),
@@ -4075,6 +4150,7 @@ async function runMLBModel({
                       canonical_market_key: 'pitcher_strikeouts',
                     }),
             };
+            delete payloadData.execution_input_reason_codes;
             const projectionOnlyMarket = trustClass === MLB_MARKET_TRUST_CLASS.PROJECTION_ONLY;
             const executionEnvelope = driver.execution_envelope || deriveMlbExecutionEnvelope({
               driver,

@@ -329,6 +329,30 @@ describe('decision publisher v2 pipeline', () => {
     expect(payload.decision_v2.consistency.vol_env).toBeTruthy();
   });
 
+  test('publishDecisionForCard preserves synthesized totals consistency envelope for NHL totals', () => {
+    const payload = buildWave1Payload({
+      sport: 'NHL',
+      market_type: 'TOTAL',
+      recommended_bet_type: 'total',
+      consistency: {
+        pace_tier: '',
+        event_env: '',
+        total_bias: '',
+      },
+    });
+
+    publishDecisionForCard({
+      card: { gameId: 'nhl-test-game', payloadData: payload },
+      oddsSnapshot: { game_time_utc: minutesFromNowIso(180) },
+    });
+
+    expect(payload.consistency).toMatchObject({
+      pace_tier: expect.any(String),
+      event_env: 'INDOOR',
+      total_bias: expect.any(String),
+    });
+  });
+
   test('marks freshness as CAUTION when odds_context.captured_at is between 5 and 30 minutes old', () => {
     const payload = buildWave1Payload({
       sport: 'NHL',

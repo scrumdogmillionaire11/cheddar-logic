@@ -80,6 +80,7 @@ const {
   applyUiActionFields,
   applyDecisionVeto,
   syncCanonicalDecisionEnvelope,
+  ensureDecisionConsistencyEnvelope,
 } = require('../utils/decision-publisher');
 const { 
   assertNoSilentMarketDrop,
@@ -340,22 +341,22 @@ async function sendEspnNullDiscordAlert({
   }
 
   if (dedupedTeams.length < getEspnNullAlertThreshold()) {
-    return { sent: false, reason: 'below_threshold', count: dedupedTeams.length };
+    return { sent: false, reason: 'below_threshold', count: dedupedTeams.length, reason_code: null };
   }
 
   if (process.env.ENABLE_DISCORD_CARD_WEBHOOKS !== 'true') {
-    return { sent: false, reason: 'discord_disabled', count: dedupedTeams.length };
+    return { sent: false, reason: 'discord_disabled', count: dedupedTeams.length, reason_code: null };
   }
 
   const webhookUrl = String(process.env.DISCORD_ALERT_WEBHOOK_URL || '').trim();
   if (!webhookUrl) {
     logger.warn(`[${sport}Model] DISCORD_ALERT_WEBHOOK_URL not set — skipping ESPN null alert`);
-    return { sent: false, reason: 'missing_webhook_url', count: dedupedTeams.length };
+    return { sent: false, reason: 'missing_webhook_url', count: dedupedTeams.length, reason_code: null };
   }
 
   const alertJobName = `espn_null_alert_${sport.toLowerCase()}`;
   if (wasJobRecentlySuccessfulFn(alertJobName, ESPN_NULL_ALERT_WINDOW_MINUTES)) {
-    return { sent: false, reason: 'cooldown_active', count: dedupedTeams.length };
+    return { sent: false, reason: 'cooldown_active', count: dedupedTeams.length, reason_code: null };
   }
 
   const alertRunId = uuidV4();
@@ -369,13 +370,18 @@ async function sendEspnNullDiscordAlert({
     logger.log(
       `[${sport}Model] Sent ESPN null alert for ${dedupedTeams.length} team(s)`,
     );
-    return { sent: true, reason: 'sent', count: dedupedTeams.length };
+    return { sent: true, reason: 'sent', count: dedupedTeams.length, reason_code: null };
   } catch (error) {
     markJobRunFailureFn(alertRunId, error.message);
     logger.warn(
       `[${sport}Model] Failed to send ESPN null alert: ${error.message}`,
     );
-    return { sent: false, reason: 'send_failed', count: dedupedTeams.length };
+    return {
+      sent: false,
+      reason: 'send_failed',
+      count: dedupedTeams.length,
+      reason_code: WATCHDOG_REASONS.ESPN_NULL_ALERT_FAILED,
+    };
   }
 }
 
@@ -683,6 +689,23 @@ function toExecutionGatePassReasonCode(reason) {
     : 'PASS_EXECUTION_GATE_BLOCKED';
 }
 
+function appendNhlReasonCode(payload, reasonCode) {
+  if (!payload || typeof payload !== 'object' || !reasonCode) return;
+  payload.reason_codes = Array.from(
+    new Set([...(Array.isArray(payload.reason_codes) ? payload.reason_codes : []), reasonCode]),
+  ).sort();
+  if (payload.decision_v2 && typeof payload.decision_v2 === 'object') {
+    payload.decision_v2.watchdog_reason_codes = Array.from(
+      new Set([
+        ...(Array.isArray(payload.decision_v2.watchdog_reason_codes)
+          ? payload.decision_v2.watchdog_reason_codes
+          : []),
+        reasonCode,
+      ]),
+    ).sort();
+  }
+}
+
 function isNhlMoneylinePayload(payload) {
   if (!payload || typeof payload !== 'object') return false;
   const marketType = String(payload.market_type || '').toUpperCase();
@@ -912,6 +935,12 @@ async function applyExecutionGateWithStaleRecoveryToNhlCard(
     return initialOutcome;
   }
 
+  if (!gameId && !payload?.game_id) {
+    appendNhlReasonCode(payload, WATCHDOG_REASONS.GAME_ID_INVALID);
+    logger.warn('[NHLModel] stale recovery skipped: GAME_ID_INVALID');
+    return initialOutcome;
+  }
+
   const recoveryKey = buildStaleRecoveryKey({
     sport: payload.sport || card?.sport || 'NHL',
     gameId: gameId || payload.game_id,
@@ -949,7 +978,9 @@ async function applyExecutionGateWithStaleRecoveryToNhlCard(
     recoveryMeta.refresh_duration_ms = Date.now() - refreshStartedAt;
     recoveryMeta.retry_gate_result = 'BLOCKED_AFTER_RETRY';
     recoveryMeta.final_status = 'BLOCKED';
+    recoveryMeta.reason_code = WATCHDOG_REASONS.STALE_RECOVERY_REFRESH_FAILED;
     payload.stale_recovery = recoveryMeta;
+    appendNhlReasonCode(payload, WATCHDOG_REASONS.STALE_RECOVERY_REFRESH_FAILED);
     logger.warn(`[NHLModel] stale recovery refresh failed: ${error.message}`);
     return initialOutcome;
   }
@@ -959,6 +990,8 @@ async function applyExecutionGateWithStaleRecoveryToNhlCard(
     try {
       latestSnapshot = (await fetchLatestSnapshotFn()) || oddsSnapshot;
     } catch (error) {
+      recoveryMeta.reason_code = WATCHDOG_REASONS.STALE_RECOVERY_RELOAD_FAILED;
+      appendNhlReasonCode(payload, WATCHDOG_REASONS.STALE_RECOVERY_RELOAD_FAILED);
       logger.warn(`[NHLModel] stale recovery snapshot reload failed: ${error.message}`);
     }
   }
@@ -1456,6 +1489,19 @@ function applyNhlGoalieExecutionStatusGuard(card, paceResult) {
   card.payloadData.execution_status = 'PROJECTION_ONLY';
 }
 
+function shouldEnforceNhlConsistencySnapshotInvariant(payload) {
+  const marketType = String(
+    payload?.market_type || payload?.recommended_bet_type || '',
+  ).toUpperCase();
+  if (marketType !== 'TOTAL') return false;
+
+  const canonicalPublishReady =
+    payload?.decision_v2?.canonical_envelope_v2?.publish_ready;
+  if (canonicalPublishReady === true) return true;
+
+  return payload?.publish_ready === true || payload?._publish_state?.publish_ready === true;
+}
+
 function buildNhlModelSnapshot({ paceResult, payload, sigmaTotal }) {
   const missingFields = [];
   const requiredFields = [
@@ -1484,11 +1530,17 @@ function buildNhlModelSnapshot({ paceResult, payload, sigmaTotal }) {
     event_env: payload?.consistency?.event_env ?? null,
     total_bias: payload?.consistency?.total_bias ?? null,
   };
-  Object.entries(consistency).forEach(([field, value]) => {
-    if (!isNonEmptyString(value)) {
-      missingFields.push(`consistency.${field}`);
-    }
-  });
+  const enforceConsistencyInvariant =
+    shouldEnforceNhlConsistencySnapshotInvariant(payload);
+  // Recovery-bucket boundary: soft-pass/degraded/hidden paths are not required
+  // to carry full totals consistency fields at snapshot time.
+  if (enforceConsistencyInvariant) {
+    Object.entries(consistency).forEach(([field, value]) => {
+      if (!isNonEmptyString(value)) {
+        missingFields.push(`consistency.${field}`);
+      }
+    });
+  }
 
   const snapshot = {
     homeExpected: paceResult?.homeExpected ?? null,
@@ -1557,6 +1609,16 @@ function attachNhlSnapshotAuditFields(card, { paceResult, sigmaTotal } = {}) {
       `pace snapshot source missing for ${card.cardType} (${card.payloadData.game_id || 'unknown-game'})`,
     );
     return;
+  }
+
+  // Defensive, idempotent re-derivation: snapshotting can run on driver cards
+  // that bypass Wave1 finalizeDecisionFields consistency synthesis.
+  if (
+    !isNonEmptyString(card.payloadData?.consistency?.pace_tier) ||
+    !isNonEmptyString(card.payloadData?.consistency?.event_env) ||
+    !isNonEmptyString(card.payloadData?.consistency?.total_bias)
+  ) {
+    ensureDecisionConsistencyEnvelope(card.payloadData);
   }
 
   card.payloadData._model_snapshot = buildNhlModelSnapshot({
@@ -3559,10 +3621,18 @@ async function runNHLModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
           `[NHLModel] Failed to update run state: ${runStateError.message}`,
         );
       }
-      await sendEspnNullDiscordAlert({
+      const espnNullAlertOutcome = await sendEspnNullDiscordAlert({
         sport: 'NHL',
         nullMetricTeams: [...espnNullRegistry.values()],
       });
+      if (espnNullAlertOutcome?.reason_code) {
+        summary.reason_codes = Array.from(
+          new Set([
+            ...(Array.isArray(summary.reason_codes) ? summary.reason_codes : []),
+            espnNullAlertOutcome.reason_code,
+          ]),
+        ).sort();
+      }
       console.log(
         `[NHLModel] ✅ Job complete: ${cardsGenerated} cards generated, ${cardsFailed} failed`,
       );

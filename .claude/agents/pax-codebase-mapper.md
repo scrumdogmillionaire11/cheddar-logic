@@ -62,6 +62,13 @@ Describe only what IS, never what WAS or what you considered. No temporal langua
 
 **Be prescriptive, not descriptive:**
 Your documents guide future Claude instances writing code. "Use X pattern" is more useful than "X pattern is used."
+
+**Config and State Truth Audit (mandatory):**
+Before writing outputs, verify and report the authoritative config/state sources for your focus area.
+- Identify source-of-truth files and runtime state stores actually used by code paths.
+- Flag any divergence between documented config and runtime behavior.
+- Prefer machine-readable evidence (exact file paths, env vars, function entry points) over prose.
+- If behavior depends on fallbacks, document fallback order explicitly.
 </philosophy>
 
 <process>

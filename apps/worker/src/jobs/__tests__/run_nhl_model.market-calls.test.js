@@ -259,6 +259,75 @@ describe('run_nhl_model market call generation', () => {
     }).toThrow();
   });
 
+  test('buildNhlModelSnapshot accepts post-publish totals payloads with synthesized consistency envelope', () => {
+    const oddsSnapshot = buildBaseOddsSnapshot();
+    const marketDecisions = buildBaseDecisions();
+    const cards = generateNHLMarketCallCards(
+      'nhl-test-game',
+      marketDecisions,
+      oddsSnapshot,
+    );
+    const totalCard = cards.find((card) => card.cardType === 'nhl-totals-call');
+
+    totalCard.payloadData.consistency = {};
+    finalizeDecisionFields(totalCard.payloadData, { oddsSnapshot });
+
+    expect(totalCard.payloadData.consistency).toMatchObject({
+      pace_tier: expect.any(String),
+      event_env: expect.any(String),
+      total_bias: expect.any(String),
+    });
+    expect(() =>
+      buildNhlModelSnapshot({
+        paceResult: buildPaceResult(),
+        payload: totalCard.payloadData,
+        sigmaTotal: 1.8,
+      }),
+    ).not.toThrow();
+  });
+
+  test('buildNhlModelSnapshot skips consistency invariant on non-publish-ready totals paths', () => {
+    const payload = {
+      game_id: 'nhl-test-game',
+      market_type: 'TOTAL',
+      execution_status: 'BLOCKED',
+      decision_v2: {
+        official_status: 'PASS',
+        canonical_envelope_v2: { publish_ready: false },
+      },
+      consistency: {},
+    };
+
+    expect(() =>
+      buildNhlModelSnapshot({
+        paceResult: buildPaceResult(),
+        payload,
+        sigmaTotal: 1.8,
+      }),
+    ).not.toThrow();
+  });
+
+  test('buildNhlModelSnapshot enforces consistency invariant on publish-ready totals paths', () => {
+    const payload = {
+      game_id: 'nhl-test-game',
+      market_type: 'TOTAL',
+      execution_status: 'EXECUTABLE',
+      decision_v2: {
+        official_status: 'LEAN',
+        canonical_envelope_v2: { publish_ready: true },
+      },
+      consistency: {},
+    };
+
+    expect(() =>
+      buildNhlModelSnapshot({
+        paceResult: buildPaceResult(),
+        payload,
+        sigmaTotal: 1.8,
+      }),
+    ).toThrow(/snapshot fields missing.*consistency\.pace_tier/);
+  });
+
   test('buildNhlModelSnapshot rejects unknown-goalie totals payloads that remain EXECUTABLE', () => {
     const payload = {
       game_id: 'nhl-test-game',

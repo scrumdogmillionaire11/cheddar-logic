@@ -334,7 +334,7 @@ async function sendEspnNullDiscordAlert({
  * @returns {{ missingFlags: string[], uncertainFlags: string[], availabilityFlags: Array<object> }}
  */
 function buildNbaAvailabilityGate(homeImpactContext, awayImpactContext) {
-  const EMPTY = { missingFlags: [], uncertainFlags: [], availabilityFlags: [] };
+  const EMPTY = { missingFlags: [], uncertainFlags: [], availabilityFlags: [], gateFailedError: null };
   try {
     const missingFlags = [];
     const uncertainFlags = [];
@@ -370,8 +370,9 @@ function buildNbaAvailabilityGate(homeImpactContext, awayImpactContext) {
     return { missingFlags, uncertainFlags, availabilityFlags };
   } catch (err) {
     // Fail-open: DB query errors must not block card generation
+    // WI-0907 Phase 4 Task 2: Track gate failure so cards emit AVAILABILITY_GATE_DEGRADED
     console.log(`  [availability] buildNbaAvailabilityGate error (${err.message}) — skipping gate`);
-    return EMPTY;
+    return { ...EMPTY, gateFailedError: err.message };
   }
 }
 
@@ -506,7 +507,8 @@ function buildMarketLineContext({
     console.warn(
       `[NBAModel] Failed to compute ${marketType} line delta for ${gameId}: ${error.message}`,
     );
-    return null;
+    // WI-0907 Phase 4 Task 3: Return error info so cards emit LINE_DELTA_COMPUTATION_FAILED
+    return { value: null, computationError: error.message };
   }
 }
 
@@ -611,14 +613,27 @@ function canPriceCard(card) {
   return Boolean(sharpPriceStatus && sharpPriceStatus !== 'UNPRICED');
 }
 
-function resolveSnapshotAgeMs(oddsSnapshot, nowMs = Date.now()) {
+function resolveSnapshotAgeMeta(oddsSnapshot, nowMs = Date.now()) {
   const capturedAt = oddsSnapshot?.captured_at ?? oddsSnapshot?.fetched_at ?? null;
-  if (!capturedAt) return null;
+  if (!capturedAt) {
+    return {
+      snapshotAgeMs: null,
+      reasonCode: WATCHDOG_REASONS.CAPTURED_AT_MISSING,
+    };
+  }
 
   const capturedAtMs = new Date(capturedAt).getTime();
-  if (!Number.isFinite(capturedAtMs)) return null;
+  if (!Number.isFinite(capturedAtMs)) {
+    return {
+      snapshotAgeMs: null,
+      reasonCode: WATCHDOG_REASONS.CAPTURED_AT_MS_INVALID,
+    };
+  }
 
-  return Math.max(0, nowMs - capturedAtMs);
+  return {
+    snapshotAgeMs: Math.max(0, nowMs - capturedAtMs),
+    reasonCode: null,
+  };
 }
 
 function toExecutionGatePassReasonCode(reason) {
@@ -646,7 +661,29 @@ function applyExecutionGateToNbaCard(card, { oddsSnapshot, nowMs = Date.now() } 
     String(payload.classification || '').toUpperCase() === 'PASS' ||
     String(payload.decision_v2?.official_status || '').toUpperCase() === 'PASS';
   const resolvedModelStatus = String(payload.model_status || 'MODEL_OK').toUpperCase();
-  const snapshotAgeMs = resolveSnapshotAgeMs(oddsSnapshot, nowMs);
+  const {
+    snapshotAgeMs,
+    reasonCode: snapshotAgeReasonCode,
+  } = resolveSnapshotAgeMeta(oddsSnapshot, nowMs);
+
+  if (snapshotAgeReasonCode) {
+    payload.reason_codes = Array.from(
+      new Set([
+        ...(Array.isArray(payload.reason_codes) ? payload.reason_codes : []),
+        snapshotAgeReasonCode,
+      ]),
+    ).sort();
+    if (payload.decision_v2 && typeof payload.decision_v2 === 'object') {
+      payload.decision_v2.watchdog_reason_codes = Array.from(
+        new Set([
+          ...(Array.isArray(payload.decision_v2.watchdog_reason_codes)
+            ? payload.decision_v2.watchdog_reason_codes
+            : []),
+          snapshotAgeReasonCode,
+        ]),
+      ).sort();
+    }
+  }
 
   if (executionStatus !== 'EXECUTABLE' || alreadyPass) {
     const earlyExitDropReasonCode = alreadyPass
@@ -1776,6 +1813,25 @@ async function runNBAModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
               // WI-0646: effectiveSigma applies PLAYOFF_SIGMA_MULTIPLIER when isPlayoff.
               options: { sigmaOverride: effectiveSigma },
             });
+            
+            // WI-0907 Phase 4: Emit reason codes for silent degradation paths (Tasks 1-2)
+            if (!Array.isArray(card.payloadData.reason_codes)) {
+              card.payloadData.reason_codes = [];
+            }
+            const reasonSet = new Set(card.payloadData.reason_codes);
+            
+            // Task 1: ESPN null observation
+            if (teamCtx.nullMetricTeams && teamCtx.nullMetricTeams.length > 0) {
+              reasonSet.add(WATCHDOG_REASONS.ESPN_NULL_OBSERVATION);
+            }
+            
+            // Task 2: Availability gate degraded
+            if (availabilityGate.gateFailedError) {
+              reasonSet.add(WATCHDOG_REASONS.AVAILABILITY_GATE_DEGRADED);
+            }
+            
+            card.payloadData.reason_codes = Array.from(reasonSet).sort();
+            
             if (decisionOutcome.gated) gatedCount++;
             if (decisionOutcome.gated && !decisionOutcome.allow) {
               blockedCount++;
@@ -1860,14 +1916,34 @@ async function runNBAModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
               // WI-0646: effectiveSigma applies PLAYOFF_SIGMA_MULTIPLIER when isPlayoff.
               options: { sigmaOverride: effectiveSigma },
             });
-            if (decisionOutcome.gated) gatedCount++;
-            if (decisionOutcome.gated && !decisionOutcome.allow) {
-              blockedCount++;
-              console.log(
-                `  [gate] ${gameId} [${card.cardType}]: ${decisionOutcome.reasonCode}`,
-              );
+            
+            // WI-0907 Phase 4: Emit reason codes for silent degradation paths (Tasks 1-2)
+            if (!Array.isArray(card.payloadData.reason_codes)) {
+              card.payloadData.reason_codes = [];
             }
-            // WI-0941 TD-02: Post-publish TOTAL no-odds-mode LEAN reason-code stamping
+            const callCardReasonSet = new Set(card.payloadData.reason_codes);
+            
+            // Task 1: ESPN null observation
+            if (teamCtx.nullMetricTeams && teamCtx.nullMetricTeams.length > 0) {
+              callCardReasonSet.add(WATCHDOG_REASONS.ESPN_NULL_OBSERVATION);
+            }
+            
+            // Task 2: Availability gate degraded
+            if (availabilityGate.gateFailedError) {
+              callCardReasonSet.add(WATCHDOG_REASONS.AVAILABILITY_GATE_DEGRADED);
+            }
+
+            // Task 3: Line delta computation failure on call-card line context
+            if (card.payloadData?.line_context?.computationError) {
+              callCardReasonSet.add(WATCHDOG_REASONS.LINE_DELTA_COMPUTATION_FAILED);
+            }
+            if (!card.payloadData?.line_context) {
+              callCardReasonSet.add(WATCHDOG_REASONS.LINE_CONTEXT_MISSING);
+            }
+            
+            card.payloadData.reason_codes = Array.from(callCardReasonSet).sort();
+            
+            if (decisionOutcome.gated) gatedCount++;
             // Match NHL WI-0940 pattern: after publishDecisionForCard normalizes reason_codes,
             // detect TOTAL card with withoutOddsMode and status=LEAN, then stamp NBA_NO_ODDS_MODE_LEAN
             if (
