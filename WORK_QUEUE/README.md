@@ -28,14 +28,20 @@ Items below are listed in execution priority order for the work items that remai
 
 ---
 
-### Priority 1 — Dependency chain: data truth and freshness governance
+### Priority 1 — Dependency chain: config audit and data truth & freshness governance
 
-- `WI-0899`: Database truth ownership audit for stateful tables
+**Stage 0** (parallel):
+- `WI-0898`: Env-var drift audit for qualification, downgrade, execution gating *(required by WI-0906)*
+- `WI-0899`: Database truth ownership audit for stateful tables *(required by WI-0900)*
+
+**Stage 1** (depends on Stage 0):
 - `WI-0900`: Timestamp integrity and freshness semantics audit *(depends on `WI-0899`)*
-- `WI-0907`: Recovery-path policy audit and failure-mode classification *(depends on `WI-0900`, `WI-0901`)*
-- `WI-0906`: Calibration-to-staking continuity audit *(depends on `WI-0825`, `WI-0831`, `WI-0819`)*
+- `WI-0906`: Calibration-to-staking continuity audit *(depends on `WI-0898`, `WI-0825`, `WI-0831`, `WI-0819`)*
 
-Execution order for this chain: `WI-0899` → `WI-0900` → `WI-0907`, with `WI-0906` immediately after.
+**Stage 2** (depends on Stage 1):
+- `WI-0907`: Recovery-path policy audit and failure-mode classification *(depends on `WI-0900`, `WI-0901`)*
+
+Execution order: `WI-0898` ∥ `WI-0899` → `WI-0900` ∥ `WI-0906` → `WI-0907`
 
 ---
 
