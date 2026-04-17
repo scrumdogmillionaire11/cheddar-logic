@@ -2871,6 +2871,82 @@ describe('multi-market insertion (IME-01-03)', () => {
     errorSpy.mockRestore();
   });
 
+  test('qualified full_game_total and full_game_ml drivers write executable current-run payload envelopes', async () => {
+    const gameDriverCards = [
+      {
+        market: 'full_game_total',
+        prediction: 'OVER',
+        confidence: 0.79,
+        ev_threshold_passed: true,
+        status: 'FIRE',
+        action: 'FIRE',
+        classification: 'BASE',
+        reasoning: 'Executable total lane',
+        reason_codes: [],
+        missing_inputs: [],
+        projection_source: 'FULL_MODEL',
+        projection: { projected_total: 8.8 },
+        drivers: [{ projected: 8.8, edge: 0.8 }],
+      },
+      {
+        market: 'full_game_ml',
+        prediction: 'HOME',
+        confidence: 0.62,
+        ev_threshold_passed: true,
+        status: 'WATCH',
+        action: 'WATCH',
+        classification: 'LEAN',
+        reasoning: 'Executable moneyline lane',
+        reason_codes: [],
+        missing_inputs: [],
+        projection_source: 'FULL_MODEL',
+        drivers: [{ edge: 0.08, win_prob_home: 0.57 }],
+      },
+    ];
+
+    const { result, dataMocks } = await runImeScenario({ gameDriverCards });
+
+    expect(result.success).toBe(true);
+    const byType = new Map(
+      dataMocks.insertCardPayload.mock.calls.map(([card]) => [card.cardType, card.payloadData]),
+    );
+
+    const totalPayload = byType.get('mlb-full-game');
+    const mlPayload = byType.get('mlb-full-game-ml');
+    expect(totalPayload).toBeDefined();
+    expect(mlPayload).toBeDefined();
+
+    expect(totalPayload.execution_status).toBe('EXECUTABLE');
+    expect(totalPayload?._publish_state?.execution_status).toBe('EXECUTABLE');
+    expect(totalPayload?._publish_state?.publish_ready).toBe(true);
+    expect(['BASE', 'LEAN']).toContain(totalPayload.classification);
+    expect(
+      Number.isFinite(Number(totalPayload.line ?? totalPayload.total_line ?? totalPayload?.market_context?.wager?.called_line)),
+    ).toBe(true);
+    expect(
+      Number.isFinite(
+        Number(
+          totalPayload.price ??
+            totalPayload.juice ??
+            totalPayload?.market_context?.wager?.called_price ??
+            totalPayload?.odds_context?.total_price_over ??
+            totalPayload?.odds_context?.total_price_under,
+        ),
+      ),
+    ).toBe(true);
+
+    expect(mlPayload.execution_status).toBe('EXECUTABLE');
+    expect(mlPayload?._publish_state?.execution_status).toBe('EXECUTABLE');
+    expect(mlPayload?._publish_state?.publish_ready).toBe(true);
+    expect(['BASE', 'LEAN']).toContain(mlPayload.classification);
+    expect(
+      Number.isFinite(Number(mlPayload.ml_home ?? mlPayload.h2h_home ?? mlPayload?.odds_context?.h2h_home)),
+    ).toBe(true);
+    expect(
+      Number.isFinite(Number(mlPayload.ml_away ?? mlPayload.h2h_away ?? mlPayload?.odds_context?.h2h_away)),
+    ).toBe(true);
+  });
+
   test('active MLB odds config does not mark full-game cards as without-odds', async () => {
     const gameDriverCards = [
       {

@@ -173,6 +173,26 @@ const API_GAMES_MAX_CARD_ROWS = Math.max(
   100,
   Number.parseInt(process.env.API_GAMES_MAX_CARD_ROWS || '1500', 10) || 1500,
 );
+const MLB_GAME_LINE_FALLBACK_CARD_TYPES = ['mlb-full-game', 'mlb-full-game-ml'] as const;
+const MLB_GAME_LINE_PRIMARY_CARD_TYPE = 'mlb-f5';
+const RAW_API_GAMES_MLB_FALLBACK_MAX_AGE_MINUTES = Number.parseInt(
+  process.env.API_GAMES_MLB_FALLBACK_MAX_AGE_MINUTES || '90',
+  10,
+);
+const API_GAMES_MLB_FALLBACK_MAX_AGE_MINUTES =
+  Number.isFinite(RAW_API_GAMES_MLB_FALLBACK_MAX_AGE_MINUTES) &&
+  RAW_API_GAMES_MLB_FALLBACK_MAX_AGE_MINUTES > 0
+    ? RAW_API_GAMES_MLB_FALLBACK_MAX_AGE_MINUTES
+    : 90;
+const RAW_API_GAMES_MLB_FALLBACK_ODDS_TOLERANCE_MINUTES = Number.parseInt(
+  process.env.API_GAMES_MLB_FALLBACK_ODDS_TOLERANCE_MINUTES || '10',
+  10,
+);
+const API_GAMES_MLB_FALLBACK_ODDS_TOLERANCE_MINUTES =
+  Number.isFinite(RAW_API_GAMES_MLB_FALLBACK_ODDS_TOLERANCE_MINUTES) &&
+  RAW_API_GAMES_MLB_FALLBACK_ODDS_TOLERANCE_MINUTES > 0
+    ? RAW_API_GAMES_MLB_FALLBACK_ODDS_TOLERANCE_MINUTES
+    : 10;
 const RAW_API_GAMES_HORIZON_HOURS = Number.parseInt(
   process.env.API_GAMES_HORIZON_HOURS || '36',
   10,
@@ -323,6 +343,7 @@ interface CardPayloadRow {
   card_type: string;
   card_title: string;
   payload_data: string;
+  created_at: string;
 }
 
 interface Play {
@@ -757,6 +778,230 @@ export function selectAuthoritativeTruePlay(plays: Play[]): Play | null {
   }, null as Play | null);
 
   return winner ? annotateAuthoritativePlay(winner) : null;
+}
+
+function toRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object'
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function parseCardPayloadData(payloadData: string): Record<string, unknown> | null {
+  try {
+    return JSON.parse(payloadData) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
+function resolveMlbFallbackOfficialStatus(
+  payload: Record<string, unknown>,
+): 'PLAY' | 'LEAN' | 'PASS' | null {
+  const decisionV2 = toRecord(payload.decision_v2);
+  const canonicalEnvelope = toRecord(decisionV2?.canonical_envelope_v2);
+  const envelopeStatus = firstString(canonicalEnvelope?.official_status);
+  if (envelopeStatus === 'PLAY' || envelopeStatus === 'LEAN' || envelopeStatus === 'PASS') {
+    return envelopeStatus;
+  }
+  const official = firstString(decisionV2?.official_status);
+  if (official === 'PLAY' || official === 'LEAN' || official === 'PASS') return official;
+  return null;
+}
+
+function hasMlbFallbackDropReason(payload: Record<string, unknown>): boolean {
+  const executionGate = toRecord(payload.execution_gate);
+  return Boolean(executionGate?.drop_reason);
+}
+
+function hasMlbFallbackActionableSelection(payload: Record<string, unknown>): boolean {
+  const decisionV2 = toRecord(payload.decision_v2);
+  const canonicalEnvelope = toRecord(decisionV2?.canonical_envelope_v2);
+  const selectionObj = toRecord(payload.selection);
+  const side = normalizeSelectionSide(
+    firstString(
+      canonicalEnvelope?.selection_side,
+      decisionV2?.selection_side,
+      selectionObj?.side,
+      payload.prediction,
+    ),
+  );
+  return Boolean(side && side !== 'NONE');
+}
+
+function hasMlbFallbackMarketContext(
+  payload: Record<string, unknown>,
+  cardType: string,
+): boolean {
+  const marketContext = toRecord(payload.market_context);
+  const wager = toRecord(marketContext?.wager);
+  const oddsContext = toRecord(payload.odds_context);
+  if (cardType === 'mlb-full-game') {
+    const line = firstNumber(
+      payload.line,
+      payload.total_line,
+      wager?.called_line,
+      oddsContext?.total,
+    );
+    const price = firstNumber(payload.price, payload.juice, wager?.called_price);
+    return Number.isFinite(line) && Number.isFinite(price);
+  }
+  if (cardType === 'mlb-full-game-ml') {
+    const homePrice = firstNumber(
+      payload.ml_home,
+      payload.h2h_home,
+      oddsContext?.h2h_home,
+      oddsContext?.ml_home,
+    );
+    const awayPrice = firstNumber(
+      payload.ml_away,
+      payload.h2h_away,
+      oddsContext?.h2h_away,
+      oddsContext?.ml_away,
+    );
+    return Number.isFinite(homePrice) && Number.isFinite(awayPrice);
+  }
+  return false;
+}
+
+function getMlbFallbackSnapshotEpoch(
+  row: CardPayloadRow,
+  payload: Record<string, unknown>,
+): number {
+  const snapshotCandidate = firstString(
+    payload.snapshot_at,
+    payload.captured_at,
+    payload.created_at,
+    row.created_at,
+  );
+  if (!snapshotCandidate) return Number.NaN;
+  const parsed = Date.parse(snapshotCandidate);
+  return Number.isFinite(parsed) ? parsed : Number.NaN;
+}
+
+function isEligibleMlbGameLineFallbackRow(params: {
+  row: CardPayloadRow;
+  payload: Record<string, unknown>;
+  latestOddsCapturedAtByCanonicalId: Map<string, string | null>;
+  canonicalGameId: string;
+  nowEpochMs: number;
+}): boolean {
+  const { row, payload, latestOddsCapturedAtByCanonicalId, canonicalGameId, nowEpochMs } =
+    params;
+  if (!MLB_GAME_LINE_FALLBACK_CARD_TYPES.includes(row.card_type as (typeof MLB_GAME_LINE_FALLBACK_CARD_TYPES)[number])) {
+    return false;
+  }
+
+  const basis = firstString(payload.basis)?.toUpperCase();
+  if (basis !== 'ODDS_BACKED') return false;
+
+  const executionStatus = firstString(payload.execution_status)?.toUpperCase();
+  if (executionStatus !== 'EXECUTABLE') return false;
+
+  const officialStatus = resolveMlbFallbackOfficialStatus(payload);
+  if (officialStatus !== 'PLAY' && officialStatus !== 'LEAN') return false;
+
+  if (hasMlbFallbackDropReason(payload)) return false;
+  if (!hasMlbFallbackActionableSelection(payload)) return false;
+  if (!hasMlbFallbackMarketContext(payload, row.card_type)) return false;
+
+  const snapshotEpoch = getMlbFallbackSnapshotEpoch(row, payload);
+  if (!Number.isFinite(snapshotEpoch)) return false;
+  const snapshotAgeMinutes = (nowEpochMs - snapshotEpoch) / 60000;
+  if (
+    !Number.isFinite(snapshotAgeMinutes) ||
+    snapshotAgeMinutes < 0 ||
+    snapshotAgeMinutes > API_GAMES_MLB_FALLBACK_MAX_AGE_MINUTES
+  ) {
+    return false;
+  }
+
+  const latestOddsIso = latestOddsCapturedAtByCanonicalId.get(canonicalGameId) ?? null;
+  if (!latestOddsIso) return false;
+  const latestOddsEpoch = Date.parse(latestOddsIso);
+  if (!Number.isFinite(latestOddsEpoch)) return false;
+  const oddsDeltaMinutes = (latestOddsEpoch - snapshotEpoch) / 60000;
+  if (oddsDeltaMinutes > API_GAMES_MLB_FALLBACK_ODDS_TOLERANCE_MINUTES) return false;
+
+  return true;
+}
+
+export function mergeMlbGameLineFallbackRows(params: {
+  currentRows: CardPayloadRow[];
+  fallbackRows: CardPayloadRow[];
+  externalToCanonicalMap: Map<string, string>;
+  latestOddsCapturedAtByCanonicalId: Map<string, string | null>;
+  nowEpochMs?: number;
+}): CardPayloadRow[] {
+  const {
+    currentRows,
+    fallbackRows,
+    externalToCanonicalMap,
+    latestOddsCapturedAtByCanonicalId,
+    nowEpochMs = Date.now(),
+  } = params;
+
+  if (currentRows.length === 0 || fallbackRows.length === 0) {
+    return currentRows;
+  }
+
+  const currentMlbF5ByCanonicalGameId = new Set<string>();
+  const currentByCanonicalType = new Set<string>();
+
+  for (const row of currentRows) {
+    const canonicalGameId = externalToCanonicalMap.get(row.game_id) ?? row.game_id;
+    const semanticKey = `${canonicalGameId}|${row.card_type}`;
+    currentByCanonicalType.add(semanticKey);
+    if (row.card_type === MLB_GAME_LINE_PRIMARY_CARD_TYPE) {
+      currentMlbF5ByCanonicalGameId.add(canonicalGameId);
+    }
+  }
+
+  const missingSemanticKeys = new Set<string>();
+  for (const canonicalGameId of currentMlbF5ByCanonicalGameId) {
+    for (const cardType of MLB_GAME_LINE_FALLBACK_CARD_TYPES) {
+      const semanticKey = `${canonicalGameId}|${cardType}`;
+      if (!currentByCanonicalType.has(semanticKey)) {
+        missingSemanticKeys.add(semanticKey);
+      }
+    }
+  }
+
+  if (missingSemanticKeys.size === 0) return currentRows;
+
+  const selectedFallbackRows = new Map<string, CardPayloadRow>();
+  for (const row of fallbackRows) {
+    if (
+      !MLB_GAME_LINE_FALLBACK_CARD_TYPES.includes(
+        row.card_type as (typeof MLB_GAME_LINE_FALLBACK_CARD_TYPES)[number],
+      )
+    ) {
+      continue;
+    }
+    const canonicalGameId = externalToCanonicalMap.get(row.game_id) ?? row.game_id;
+    const semanticKey = `${canonicalGameId}|${row.card_type}`;
+    if (!missingSemanticKeys.has(semanticKey)) continue;
+    if (selectedFallbackRows.has(semanticKey)) continue;
+
+    const payload = parseCardPayloadData(row.payload_data);
+    if (!payload) continue;
+
+    if (
+      !isEligibleMlbGameLineFallbackRow({
+        row,
+        payload,
+        latestOddsCapturedAtByCanonicalId,
+        canonicalGameId,
+        nowEpochMs,
+      })
+    ) {
+      continue;
+    }
+
+    selectedFallbackRows.set(semanticKey, row);
+  }
+
+  if (selectedFallbackRows.size === 0) return currentRows;
+  return [...currentRows, ...selectedFallbackRows.values()];
 }
 
 interface IngestFailureRow {
@@ -2109,7 +2354,7 @@ export async function GET(request: NextRequest) {
       const buildCardsSql = (queryableIds: string[], runClause: string) => {
         const queryPlaceholders = queryableIds.map(() => '?').join(', ');
         return `
-        SELECT id, game_id, card_type, card_title, payload_data
+        SELECT id, game_id, card_type, card_title, payload_data, created_at
         FROM card_payloads
         WHERE game_id IN (${queryPlaceholders})
           ${runClause}
@@ -2146,7 +2391,9 @@ export async function GET(request: NextRequest) {
             if (fallbackRows.length > 0) {
               const dedupedBySemanticKey = new Map<string, CardPayloadRow>();
               for (const row of [...cardRows, ...fallbackRows]) {
-                const semanticKey = `${row.game_id}|${row.card_type}|${row.card_title}`;
+                const canonicalGameId =
+                  externalToCanonicalMap.get(row.game_id) ?? row.game_id;
+                const semanticKey = `${canonicalGameId}|${row.card_type}|${row.card_title}`;
                 if (!dedupedBySemanticKey.has(semanticKey)) {
                   dedupedBySemanticKey.set(semanticKey, row);
                 }
@@ -2156,6 +2403,26 @@ export async function GET(request: NextRequest) {
                 dedupedById.set(row.id, row);
               }
               cardRows = Array.from(dedupedById.values());
+            }
+          }
+
+          // MLB full-game fallback merge by canonical (game_id, card_type) so
+          // current-run mlb-f5 rows do not mask publishable full-game rows.
+          if (allQueryableIds.length > 0) {
+            const fallbackStmt = db.prepare(buildCardsSql(allQueryableIds, ''));
+            const fallbackRows = fallbackStmt.all(
+              ...allQueryableIds,
+            ) as CardPayloadRow[];
+            if (fallbackRows.length > 0) {
+              const latestOddsCapturedAtByCanonicalId = new Map<string, string | null>(
+                rows.map((row) => [row.game_id, row.odds_captured_at]),
+              );
+              cardRows = mergeMlbGameLineFallbackRows({
+                currentRows: cardRows,
+                fallbackRows,
+                externalToCanonicalMap,
+                latestOddsCapturedAtByCanonicalId,
+              });
             }
           }
         }

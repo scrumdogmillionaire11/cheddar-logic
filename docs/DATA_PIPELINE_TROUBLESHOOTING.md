@@ -77,6 +77,33 @@ EOF
 
 If the final command outputs anything, suppression code mapping has regressed and should be treated as a deployment blocker.
 
+## MLB Game-Line Coverage Diagnostic (WI-0988)
+
+Use this when `/wedge` is missing MLB `mlb-full-game` or `mlb-full-game-ml` cards.
+
+Verification commands:
+
+```bash
+cd web && node --import tsx/esm src/__tests__/api-games-missing-data-contract.test.js
+npm --prefix web run test:api:games:market
+cd web && node --import tsx/esm src/__tests__/game-card-transform-mlb-game-lines.test.js
+npm --prefix apps/worker run test -- --runInBand src/__tests__/check-pipeline-health.mlb.test.js
+npm --prefix apps/worker run test -- --runInBand src/jobs/__tests__/run_mlb_model.test.js
+```
+
+`check_pipeline_health` now emits `mlb / game_line_coverage` with:
+
+- Per market (`full_game_total`, `full_game_ml`): `games_with_odds`, `current_publishable_count`, `fallback_publishable_count`, `missing_count`
+- Reason buckets: `no_card_row`, `current_blocked`, `current_projection_only`, `current_non_publishable`, `stale_snapshot`, `stale_or_unverifiable_snapshot`
+- MLB reject-reason family rollup (`reject_reason_diagnostics`) so uncategorized blocker regressions are visible
+
+Fallback publication guardrails for `/api/games` MLB full-game rows:
+
+- Allowed only when basis is odds-backed and `execution_status='EXECUTABLE'`
+- `decision_v2.official_status` must be `PLAY` or `LEAN`
+- `execution_gate.drop_reason` must be absent
+- Snapshot freshness bounded (default 90 minutes) and latest odds may be at most 10 minutes newer
+
 ### Missing `MISSING_DATA_NO_PLAYS` Diagnostic
 
 When `/cards` shows games as degraded with `MISSING_DATA_NO_PLAYS`, run this read-only diagnostic from repo root:
