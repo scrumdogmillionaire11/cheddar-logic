@@ -354,6 +354,30 @@ def _derive_fixture_planner_reason(
     return None
 
 
+def _default_weekly_review_card() -> Dict[str, Any]:
+    """Null-safe weekly review card emitted when retrospective data is unavailable."""
+    return {
+        "version": "v1",
+        "summary": "No prior gameweek history available yet.",
+        "highlights": [
+            "Retrospective review will populate after at least one completed gameweek.",
+        ],
+        "metrics": {
+            "previous_gw": None,
+            "points": None,
+            "points_delta": None,
+            "rank": None,
+            "rank_delta": None,
+            "captain_followed": None,
+            "recommendation_followed": None,
+            "process_verdict": None,
+            "drift_flags": [],
+            "history_available": False,
+            "updated_receipts": 0,
+        },
+    }
+
+
 def _calculate_captain_delta(captain_data: Optional[Dict], vice_data: Optional[Dict]) -> Dict[str, Any]:
     """
     Calculate the points delta between captain and vice captain.
@@ -1001,7 +1025,11 @@ def _detect_bench_warning(
     return None
 
 
-def transform_analysis_results(raw_results: Dict[str, Any], overrides: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+def transform_analysis_results(
+    raw_results: Dict[str, Any],
+    overrides: Optional[Dict[str, Any]] = None,
+    weekly_review: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
     """
     Transform the raw FPL Sage analysis output into a clean frontend format.
     
@@ -1186,6 +1214,7 @@ def transform_analysis_results(raw_results: Dict[str, Any], overrides: Optional[
         "fixture_planner": normalized_fixture_planner,
         "fixture_planner_reason": fixture_planner_reason,
         "no_transfer_reason": decision_dict.get("no_transfer_reason"),
+        "weekly_review": weekly_review if isinstance(weekly_review, dict) else _default_weekly_review_card(),
     }
 
     # Captain and vice captain with delta calculation

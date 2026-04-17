@@ -15,6 +15,7 @@ from cheddar_fpl_sage.analysis.fpl_sage_integration import FPLSageIntegration
 
 # Import result transformer
 from backend.services.result_transformer import transform_analysis_results
+from backend.services.weekly_review_service import weekly_review_service
 
 logger = logging.getLogger(__name__)
 
@@ -520,6 +521,25 @@ class EngineService:
 
             # Transform results for frontend
             transformed_results = transform_analysis_results(results, overrides=final_overrides)
+
+            manager_id = str(
+                (
+                    results.get("raw_data", {})
+                    .get("my_team", {})
+                    .get("team_info", {})
+                    .get("team_id")
+                )
+                or job.team_id
+            )
+            try:
+                transformed_results["weekly_review"] = weekly_review_service.build_review(
+                    raw_results=results,
+                    transformed_results=transformed_results,
+                    manager_id=manager_id,
+                )
+            except Exception as review_exc:
+                logger.warning("Weekly review build failed; using null-safe fallback: %s", review_exc)
+                transformed_results["weekly_review"] = weekly_review_service.default_review_card()
 
             self._notify_progress(analysis_id, 100, "finalization")
 

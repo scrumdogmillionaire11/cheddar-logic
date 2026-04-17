@@ -153,11 +153,14 @@ class DecisionReceipt(BaseModel):
         None, description="Manual overrides applied to this decision"
     )
     outcome: Optional[Literal["followed", "ignored", "partial"]] = Field(
-        None, description="Whether the manager followed the recommendation"
+        None,
+        description="Retrospective recommendation adherence status (weekly-review evaluated)",
     )
     process_verdict: Optional[Literal["good_process", "bad_process"]] = Field(
-        None, description="Quality assessment of the decision process"
+        None,
+        description="Retrospective process-quality verdict from weekly-review evaluation",
     )
     drift_flags: List[str] = Field(
-        default_factory=list, description="Detected drift signals for this receipt"
+        default_factory=list,
+        description="Retrospective drift signals for this receipt (weekly-review derived)",
     )
