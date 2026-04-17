@@ -2,10 +2,10 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: Phase 07 Plan 04 completed (retrospective weekly review persistence)
-stopped_at: Completed 07-output-architecture-hardening-04-PLAN.md
-last_updated: "2026-04-17T15:44:19.968Z"
-last_activity: 2026-04-17 - Completed 07-04 weekly review retrospective pipeline
+status: Phase 07 Plan 05 completed (downstream canonical consumer migration)
+stopped_at: Completed 07-output-architecture-hardening-05-PLAN.md
+last_updated: "2026-04-17T15:52:20.893Z"
+last_activity: 2026-04-17 - Completed 07-05 downstream canonical consumer migration
 progress:
   total_phases: 6
   completed_phases: 4
@@ -25,9 +25,9 @@ progress:
 ## Current Position
 
 **Phase:** 7 of 7 - Output Architecture Hardening (PLANNED)
-**Plan:** 07-04 complete; continue with 07-05
-**Status:** Phase 07 Plan 04 completed (retrospective weekly review persistence)
-**Last activity:** 2026-04-17 - Completed 07-04 weekly review retrospective pipeline
+**Plan:** 07-05 complete; continue with 07-06
+**Status:** Phase 07 Plan 05 completed (downstream canonical consumer migration)
+**Last activity:** 2026-04-17 - Completed 07-05 downstream canonical consumer migration
 
 ```
 Progress: [██████░░░░] 59%
@@ -82,6 +82,7 @@ Progress: [██████░░░░] 59%
 | Canonical transfer test policy | Assert transfer alternatives passthrough exactly as provided by canonical card data | 2026-04-17 |
 | Weekly review retrospective persistence | Evaluate prior-GW context and persist receipt outcome/process_verdict/drift_flags only when history exists | 2026-04-17 |
 | Weekly review null-safe output | Always emit weekly_review card with deterministic fallback metrics for first-run/no-history paths | 2026-04-17 |
+| Downstream canonical consumer migration | Contract transformer and dashboard router consume canonical cards first while preserving compatibility fallbacks | 2026-04-17 |
 
 ## Pending Todos
 
@@ -126,8 +127,8 @@ Progress: [██████░░░░] 59%
 
 ## Session Continuity
 
-**Last session:** 2026-04-17T15:44:19.967Z
-**Stopped at:** Completed 07-output-architecture-hardening-04-PLAN.md
+**Last session:** 2026-04-17T15:52:20.892Z
+**Stopped at:** Completed 07-output-architecture-hardening-05-PLAN.md
 **Resume file:** None
 
 ---
@@ -184,7 +185,7 @@ All Phase 4 objectives achieved:
 
 **Primary:** Execute Phase 07 - Output Architecture Hardening
 - Command: `/gsd:execute-phase 07-output-architecture-hardening`
-- Focus: continue with 07-05 downstream canonical-card migration and cleanup
+- Focus: continue with 07-06 final output hardening tasks
 
 **Secondary:**
 - Command: `/gsd:execute-phase 5`
