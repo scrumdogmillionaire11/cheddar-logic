@@ -476,7 +476,12 @@ export async function GET(request: NextRequest) {
     const response = rows.flatMap((card) => {
       const parsed = safeJsonParse(card.payload_data);
       const normalizedPayload = normalizePayloadMeta(parsed.data);
-      if (!parsed.error && card.card_type !== 'nhl-pace-1p' && !isBettingSurfacePayload(normalizedPayload)) {
+      const isProjectionSurfaceCardType = card.card_type === 'nhl-pace-1p' ||
+        card.card_type === 'mlb-f5' ||
+        card.card_type === 'mlb-f5-ml' ||
+        card.card_type === 'mlb-full-game' ||
+        card.card_type === 'mlb-full-game-ml';
+      if (!parsed.error && !isProjectionSurfaceCardType && !isBettingSurfacePayload(normalizedPayload)) {
         return [];
       }
       return [{
