@@ -21,6 +21,27 @@ The mispricing scanner detects when one bookmaker's price or line is materially 
 5. Scanner never writes to the database (pure function).
 6. Scanner never throws on malformed input — all errors are logged and skipped.
 
+## Backtest Price Provenance Policy (WI-0832)
+
+Backtest and audit simulation paths must only use prices available before the event starts.
+
+- Enforcement rule: `snapshot_time <= event_start - PRICE_BUFFER_MINUTES`
+- Default `PRICE_BUFFER_MINUTES`: `60`
+- Any game with no qualifying pre-game snapshot must be excluded from backtest/audit simulation scoring (never substituted with a closing line).
+- If the excluded-game rate is `>= 20%`, the validation gate fails.
+
+Validation command:
+
+```bash
+npm --prefix apps/worker run audit:validate-no-closing-line-sub
+```
+
+Optional report output:
+
+```bash
+npm --prefix apps/worker run audit:validate-no-closing-line-sub -- --out apps/worker/audit-output/manual/closing-line-substitution-report.json
+```
+
 ---
 
 ## MispricingCandidate Output Schema

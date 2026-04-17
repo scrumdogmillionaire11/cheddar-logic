@@ -1716,6 +1716,54 @@ function lookupGoalieStarterFetchedAt(db, teamId) {
   }
 }
 
+function ensureFeatureTimestampsContainer(rawData) {
+  if (!rawData || typeof rawData !== 'object') return null;
+  if (!rawData.feature_timestamps || typeof rawData.feature_timestamps !== 'object') {
+    rawData.feature_timestamps = {};
+  }
+  return rawData.feature_timestamps;
+}
+
+function stampFeatureTimestamp(rawData, field, availableAt) {
+  if (!field || !availableAt) return;
+  const timestamps = ensureFeatureTimestampsContainer(rawData);
+  if (!timestamps) return;
+  if (timestamps[field] == null) {
+    timestamps[field] = availableAt;
+  }
+}
+
+function stampNhlEspnFeatureTimestamps(rawData, availableAt) {
+  if (!availableAt || !rawData || typeof rawData !== 'object') return;
+
+  const homeMetrics = rawData?.espn_metrics?.home?.metrics;
+  const awayMetrics = rawData?.espn_metrics?.away?.metrics;
+
+  const homeGoalsFor = toFiniteNumber(homeMetrics?.avgGoalsFor);
+  const awayGoalsFor = toFiniteNumber(awayMetrics?.avgGoalsFor);
+  const homeGoalsAgainst = toFiniteNumber(homeMetrics?.avgGoalsAgainst);
+  const awayGoalsAgainst = toFiniteNumber(awayMetrics?.avgGoalsAgainst);
+
+  // Phase 1 provenance aliasing: persist explicit high-risk keys when ESPN
+  // rolling metrics are present so feature-time guard can enforce event-time ordering.
+  if (homeGoalsFor !== null) {
+    if (rawData.homeGoalsForL5 == null) rawData.homeGoalsForL5 = homeGoalsFor;
+    stampFeatureTimestamp(rawData, 'homeGoalsForL5', availableAt);
+  }
+  if (awayGoalsFor !== null) {
+    if (rawData.awayGoalsForL5 == null) rawData.awayGoalsForL5 = awayGoalsFor;
+    stampFeatureTimestamp(rawData, 'awayGoalsForL5', availableAt);
+  }
+  if (homeGoalsAgainst !== null) {
+    if (rawData.homeGoalsAgainstL5 == null) rawData.homeGoalsAgainstL5 = homeGoalsAgainst;
+    stampFeatureTimestamp(rawData, 'homeGoalsAgainstL5', availableAt);
+  }
+  if (awayGoalsAgainst !== null) {
+    if (rawData.awayGoalsAgainstL5 == null) rawData.awayGoalsAgainstL5 = awayGoalsAgainst;
+    stampFeatureTimestamp(rawData, 'awayGoalsAgainstL5', availableAt);
+  }
+}
+
 function attachNhlDriverContextToRawData(rawData) {
   const normalized = normalizeRawDataPayload(rawData);
   const context = extractNhlDriverDataQualityContext(normalized);
@@ -3185,18 +3233,30 @@ async function runNHLModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
           {
             const _homeGoalieFetchedAt = lookupGoalieStarterFetchedAt(getDatabase(), oddsSnapshot.home_team);
             const _awayGoalieFetchedAt = lookupGoalieStarterFetchedAt(getDatabase(), oddsSnapshot.away_team);
-            if (_homeGoalieFetchedAt || _awayGoalieFetchedAt) {
+            const _snapshotCapturedAt = oddsSnapshot?.captured_at ?? null;
+            if (_homeGoalieFetchedAt || _awayGoalieFetchedAt || _snapshotCapturedAt) {
               if (typeof oddsSnapshot.raw_data !== 'object' || !oddsSnapshot.raw_data) {
                 oddsSnapshot.raw_data = {};
               }
-              if (!oddsSnapshot.raw_data.feature_timestamps) {
-                oddsSnapshot.raw_data.feature_timestamps = {};
-              }
               if (_homeGoalieFetchedAt) {
-                oddsSnapshot.raw_data.feature_timestamps.homeGoalieCertainty = _homeGoalieFetchedAt;
+                stampFeatureTimestamp(
+                  oddsSnapshot.raw_data,
+                  'homeGoalieCertainty',
+                  _homeGoalieFetchedAt,
+                );
               }
               if (_awayGoalieFetchedAt) {
-                oddsSnapshot.raw_data.feature_timestamps.awayGoalieCertainty = _awayGoalieFetchedAt;
+                stampFeatureTimestamp(
+                  oddsSnapshot.raw_data,
+                  'awayGoalieCertainty',
+                  _awayGoalieFetchedAt,
+                );
+              }
+              if (_snapshotCapturedAt) {
+                stampNhlEspnFeatureTimestamps(
+                  oddsSnapshot.raw_data,
+                  _snapshotCapturedAt,
+                );
               }
             }
           }

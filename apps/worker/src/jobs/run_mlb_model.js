@@ -142,6 +142,49 @@ function toFiniteNumber(value) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function findNestedKeyValue(source, key, maxDepth = 5, seen = new Set()) {
+  if (!source || typeof source !== 'object' || maxDepth < 0 || seen.has(source)) {
+    return null;
+  }
+  seen.add(source);
+
+  if (Object.prototype.hasOwnProperty.call(source, key)) {
+    const value = source[key];
+    if (value !== null && value !== undefined && value !== '') {
+      return value;
+    }
+  }
+
+  for (const value of Object.values(source)) {
+    if (value && typeof value === 'object') {
+      const found = findNestedKeyValue(value, key, maxDepth - 1, seen);
+      if (found !== null && found !== undefined && found !== '') {
+        return found;
+      }
+    }
+  }
+
+  return null;
+}
+
+function stampMlbFeatureTimestamps(rawData, capturedAt) {
+  if (!capturedAt || !rawData || typeof rawData !== 'object') return;
+  if (!rawData.feature_timestamps || typeof rawData.feature_timestamps !== 'object') {
+    rawData.feature_timestamps = {};
+  }
+
+  const highRiskCandidates = ['umpire_factor', 'rolling_14d_wrc_plus_vs_hand'];
+  for (const field of highRiskCandidates) {
+    const existingTimestamp = rawData.feature_timestamps[field];
+    if (existingTimestamp) continue;
+
+    const value = findNestedKeyValue(rawData, field);
+    if (value !== null && value !== undefined && value !== '') {
+      rawData.feature_timestamps[field] = capturedAt;
+    }
+  }
+}
+
 function extractSameBookOddsContext(oddsSnapshot) {
   const rawData =
     oddsSnapshot?.raw_data && typeof oddsSnapshot.raw_data === 'object'
@@ -4383,8 +4426,13 @@ async function runMLBModel({
             {
               const _betPlacedAt = baseOddsSnapshot?.captured_at ?? null;
               if (_betPlacedAt) {
+                const _rawData =
+                  (typeof baseOddsSnapshot?.raw_data === 'object'
+                    ? baseOddsSnapshot.raw_data
+                    : {}) ?? {};
+                stampMlbFeatureTimestamps(_rawData, _betPlacedAt);
                 const _timeliness = assertFeatureTimeliness(
-                  (typeof baseOddsSnapshot?.raw_data === 'object' ? baseOddsSnapshot.raw_data : {}) ?? {},
+                  _rawData,
                   _betPlacedAt,
                 );
                 if (!_timeliness.ok) {

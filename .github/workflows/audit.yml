@@ -36,6 +36,12 @@ jobs:
           npm --prefix packages/data ci
           npm --prefix apps/worker ci
 
+      - name: Validate no closing-line substitution
+        run: |
+          OUTPUT_DIR="$GITHUB_WORKSPACE/apps/worker/audit-output/${RUN_SCOPE}"
+          mkdir -p "$OUTPUT_DIR"
+          npm --prefix apps/worker run audit:validate-no-closing-line-sub -- --out "$OUTPUT_DIR/closing-line-substitution-report.json"
+
       - name: Collect changed audit fixtures
         run: |
           mkdir -p /tmp/audit
@@ -88,11 +94,12 @@ jobs:
             ["audit-summary.json"]="Run audit gate"
             ["scorecard.json"]="Generate scorecard"
             ["audit-scorecard.md"]="Generate scorecard"
+            ["closing-line-substitution-report.json"]="Validate no closing-line substitution"
           )
 
           missing_list=()
 
-          for artifact in audit-report.json audit-summary.json scorecard.json audit-scorecard.md; do
+          for artifact in audit-report.json audit-summary.json scorecard.json audit-scorecard.md closing-line-substitution-report.json; do
             artifact_path="$OUTPUT_DIR/$artifact"
             owner="${ARTIFACT_OWNER[$artifact]}"
             if [ -f "$artifact_path" ]; then
