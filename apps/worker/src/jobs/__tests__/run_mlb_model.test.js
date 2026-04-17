@@ -49,6 +49,7 @@ const {
   buildMlbPipelineState,
   buildMlbBullpenContext,
   resolveMlbBullpenContext,
+  selectPitcherRowForTeam,
   buildPitcherKLineContract,
   buildMlbPitcherKPayloadFields,
   resolvePitcherKPayloadIdentity,
@@ -3984,6 +3985,62 @@ describe('Pitcher stats lookup by mlb_id and full_name (not team-only)', () => {
 
     expect(gameStartingPitcher.mlb_id).toBe(408014);
     expect(gameStartingPitcher.full_name).toBe('Luis Severino');
+  });
+});
+
+describe('selectPitcherRowForTeam', () => {
+  test('returns freshest row when team-compatible match exists', () => {
+    const rows = [
+      {
+        mlb_id: 1,
+        full_name: 'John Smith',
+        team: 'ATL',
+        updated_at: '2026-04-17T09:00:00Z',
+      },
+      {
+        mlb_id: 2,
+        full_name: 'John Smith',
+        team: 'BOS',
+        updated_at: '2026-04-17T10:00:00Z',
+      },
+    ];
+
+    const selected = selectPitcherRowForTeam(rows, 'Boston Red Sox');
+    expect(selected?.mlb_id).toBe(2);
+  });
+
+  test('returns null when same-name rows exist but none match team', () => {
+    const rows = [
+      {
+        mlb_id: 1,
+        full_name: 'John Smith',
+        team: 'ATL',
+        updated_at: '2026-04-17T10:00:00Z',
+      },
+    ];
+
+    const selected = selectPitcherRowForTeam(rows, 'Boston Red Sox');
+    expect(selected).toBeNull();
+  });
+
+  test('falls back to first row when team cannot be resolved', () => {
+    const rows = [
+      {
+        mlb_id: 3,
+        full_name: 'John Smith',
+        team: 'BOS',
+        updated_at: '2026-04-17T10:00:00Z',
+      },
+      {
+        mlb_id: 4,
+        full_name: 'John Smith',
+        team: 'ATL',
+        updated_at: '2026-04-17T09:00:00Z',
+      },
+    ];
+
+    const selected = selectPitcherRowForTeam(rows, null);
+    expect(selected?.mlb_id).toBe(3);
   });
 });
 

@@ -2529,6 +2529,29 @@ function normalizePitcherLookupKey(name) {
     .trim();
 }
 
+function selectPitcherRowForTeam(rows, team) {
+  if (!Array.isArray(rows) || rows.length === 0) return null;
+
+  const teamTokens = new Set(
+    resolveMlbTeamLookupKeys(team)
+      .map((value) => normalizeTokenForMap(value))
+      .filter(Boolean),
+  );
+
+  if (teamTokens.size === 0) {
+    return rows[0] ?? null;
+  }
+
+  for (const row of rows) {
+    const rowTeam = normalizeTokenForMap(row?.team);
+    if (rowTeam && teamTokens.has(rowTeam)) {
+      return row;
+    }
+  }
+
+  return null;
+}
+
 function getPitcherPropBookmakerPriority(bookmaker) {
   const normalized = String(bookmaker || '').toLowerCase();
   return MLB_PROP_BOOKMAKER_PRIORITY[normalized] ?? 99;
@@ -3115,9 +3138,9 @@ function enrichMlbPitcherData(
       // Priority 2: match by full_name if available
       if (existingPitcher?.full_name != null) {
         const byName = forKEngine
-          ? db.prepare('SELECT * FROM mlb_pitcher_stats WHERE full_name = ? COLLATE NOCASE')
-          : db.prepare("SELECT * FROM mlb_pitcher_stats WHERE full_name = ? COLLATE NOCASE AND date(updated_at) = date('now')");
-        const row = byName.get(existingPitcher.full_name);
+          ? db.prepare('SELECT * FROM mlb_pitcher_stats WHERE full_name = ? COLLATE NOCASE ORDER BY updated_at DESC')
+          : db.prepare("SELECT * FROM mlb_pitcher_stats WHERE full_name = ? COLLATE NOCASE AND date(updated_at) = date('now') ORDER BY updated_at DESC");
+        const row = selectPitcherRowForTeam(byName.all(existingPitcher.full_name), team);
         if (row) return row;
       }
 
@@ -4612,6 +4635,7 @@ module.exports = {
   buildNeutralBullpenContext,
   MLB_PIPELINE_REASON_CODES,
   resolveMlbTeamLookupKeys,
+  selectPitcherRowForTeam,
   resolvePitcherKsMode,
   resolveMlbPitcherPropRolloutState,
   resolvePitcherKPayloadIdentity,
