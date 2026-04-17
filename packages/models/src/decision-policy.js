@@ -4,7 +4,12 @@ function toUpperToken(value) {
 }
 
 const WEBHOOK_REASON_LABELS = Object.freeze({
-  EDGE_VERIFICATION_REQUIRED: 'Avoiding false signal from unverified line',
+  EDGE_VERIFICATION_REQUIRED: 'Line not confirmed',
+  LINE_NOT_CONFIRMED: 'Line not confirmed',
+  EDGE_RECHECK_PENDING: 'Edge needs recheck before action',
+  EDGE_NO_LONGER_CONFIRMED: 'Edge no longer clears threshold',
+  MARKET_DATA_STALE: 'Market data stale',
+  PRICE_SYNC_PENDING: 'Book price still syncing',
   EDGE_SANITY_NON_TOTAL: 'Verification required — edge sanity check pending',
   BLOCKED_BET_VERIFICATION_REQUIRED: 'Verification required — bet blocked pending recheck',
   MIXED_BOOK_SOURCE_MISMATCH: 'Verification required — mixed line/price sources',
@@ -142,6 +147,17 @@ function deriveWebhookWatchState(payload) {
 
   if (
     hasCode((code) =>
+      code === 'MARKET_DATA_STALE' ||
+      code === 'EDGE_RECHECK_PENDING' ||
+      code === 'STALE_MARKET_INPUT' ||
+      code === 'WATCHDOG_STALE_SNAPSHOT',
+    )
+  ) {
+    return 'market stale / recheck pending';
+  }
+
+  if (
+    hasCode((code) =>
       code.includes('STALE') ||
       code.includes('MISSING') ||
       code.includes('INCOMPLETE') ||
@@ -157,6 +173,9 @@ function deriveWebhookWatchState(payload) {
 
   if (
     hasCode((code) =>
+      code === 'LINE_NOT_CONFIRMED' ||
+      code === 'EDGE_RECHECK_PENDING' ||
+      code === 'PRICE_SYNC_PENDING' ||
       code.includes('VERIFICATION') ||
       code.includes('LINE_MOVE_ADVERSE') ||
       code.includes('MIXED_BOOK_SOURCE_MISMATCH') ||
@@ -164,6 +183,10 @@ function deriveWebhookWatchState(payload) {
     )
   ) {
     return 'line not verified';
+  }
+
+  if (hasCode((code) => code === 'EDGE_NO_LONGER_CONFIRMED')) {
+    return 'edge moved';
   }
 
   if (
@@ -216,8 +239,14 @@ function deriveWebhookWouldBecomePlay(payload, state = deriveWebhookWatchState(p
     }
     return `Would become PLAY: ${marketRef} if line confirms across books`;
   }
+  if (state === 'market stale / recheck pending') {
+    return `Would become PLAY: ${marketRef} once market refresh confirms edge`; 
+  }
   if (state === 'pending confirmation') {
     return `Would become PLAY: ${marketRef} after line/model recheck`;
+  }
+  if (state === 'edge moved') {
+    return `Would become PLAY: ${marketRef} only if refreshed edge clears threshold again`;
   }
   return `Would become PLAY: ${marketRef} once trigger conditions are met`;
 }
@@ -245,8 +274,16 @@ function deriveWebhookDropToPass(payload, state = deriveWebhookWatchState(payloa
     return 'Drops to PASS: missing/invalid data persists at recheck';
   }
 
+  if (state === 'market stale / recheck pending') {
+    return 'Drops to PASS: refreshed market still fails threshold checks';
+  }
+
   if (state === 'pending confirmation') {
     return 'Drops to PASS: confirmation fails or signal degrades';
+  }
+
+  if (state === 'edge moved') {
+    return 'Drops to PASS: refreshed edge remains below threshold';
   }
 
   return `Drops to PASS: ${marketRef} fails trigger conditions`;

@@ -135,6 +135,11 @@ function describeLeanStrength(card) {
 
 function isBlockedWatchCard(card) {
   const blockingReason = reasonTokens(card).some((token) =>
+    token === 'LINE_NOT_CONFIRMED' ||
+    token === 'EDGE_RECHECK_PENDING' ||
+    token === 'PRICE_SYNC_PENDING' ||
+    token === 'EDGE_NO_LONGER_CONFIRMED' ||
+    token === 'MARKET_DATA_STALE' ||
     token.includes('BLOCK') ||
     token.includes('GATE') ||
     token.includes('VERIFICATION') ||

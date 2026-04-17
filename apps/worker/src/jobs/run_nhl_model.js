@@ -883,8 +883,8 @@ function applyExecutionGateToNhlCard(card, { oddsSnapshot, nowMs = Date.now() } 
     applyDecisionVeto(payload, passReasonCode);
     if (isStaleBlock || isMixedBookBlock) {
       const blockReasonCode = isStaleBlock
-        ? 'BLOCK_STALE_DATA'
-        : 'EDGE_VERIFICATION_REQUIRED';
+        ? 'MARKET_DATA_STALE'
+        : 'PRICE_SYNC_PENDING';
       payload.blocked_reason_code = blockReasonCode;
       payload.gate_reason = blockReasonCode;
       payload.reason_codes = Array.from(
@@ -1460,7 +1460,9 @@ function applyCanonicalNhlTotalsStatus(card, context = {}) {
   const reasonCodes = Array.isArray(payload.reason_codes) ? payload.reason_codes : [];
   const blockedReasonCode = String(payload.blocked_reason_code || '').toUpperCase();
   const hasIntegrityBlock =
-    blockedReasonCode.includes('EDGE_VERIFICATION_REQUIRED') ||
+    blockedReasonCode.includes('LINE_NOT_CONFIRMED') ||
+    blockedReasonCode.includes('PRICE_SYNC_PENDING') ||
+    blockedReasonCode.includes('MARKET_DATA_STALE') ||
     blockedReasonCode.includes('BLOCK_STALE_DATA') ||
     reasonCodes.some((code) => {
       const token = String(code || '').toUpperCase();

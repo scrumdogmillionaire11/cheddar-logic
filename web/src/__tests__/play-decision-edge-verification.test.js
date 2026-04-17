@@ -14,7 +14,7 @@ const source = fs.readFileSync(filePath, 'utf8');
 console.log('🧪 Play decision edge-verification source tests');
 
 assert(
-  source.includes("export const EDGE_VERIFICATION_TAG = 'EDGE_VERIFICATION_REQUIRED';"),
+  source.includes("export const EDGE_VERIFICATION_TAG = 'LINE_NOT_CONFIRMED';"),
   'decision-logic should export EDGE_VERIFICATION_TAG constant',
 );
 

@@ -22,6 +22,7 @@ import {
   hasEdgeVerification,
   hasProxyCap,
 } from '@/lib/game-card/tags';
+import { classifySportDiagnosticBucket } from '@/lib/game-card/pass-classification';
 import { createTimeoutSignal } from '@/lib/network/timeout-signal';
 import {
   buildStaleAssetErrorMessage,
@@ -344,6 +345,9 @@ export function CardsPageProvider({
         bucket.triggered.proxy_blocked += 1;
       }
       if (
+        reasonCodes.has('LINE_NOT_CONFIRMED') ||
+        reasonCodes.has('EDGE_RECHECK_PENDING') ||
+        reasonCodes.has('PRICE_SYNC_PENDING') ||
         reasonCodes.has('EDGE_VERIFICATION_REQUIRED') ||
         reasonCodes.has('PASS_EDGE_VERIFICATION_REQUIRED')
       ) {
@@ -445,8 +449,6 @@ export function CardsPageProvider({
     const result: CardsPageState['sportDiagnostics'] = {};
     for (const card of enrichedCards) {
       if (visibleIds.has(card.id)) continue;
-      const codes = card.play?.reason_codes ?? [];
-      const missingInputs = card.play?.transform_meta?.missing_inputs ?? [];
       const sportKey = (card.sport || 'UNKNOWN').toUpperCase();
       if (!result[sportKey]) {
         result[sportKey] = {
@@ -458,30 +460,8 @@ export function CardsPageProvider({
         };
       }
       const buckets = result[sportKey];
-      if (
-        codes.includes('MISSING_DATA_NO_ODDS') ||
-        missingInputs.includes('odds_timestamp')
-      ) {
-        buckets.noOdds += 1;
-      } else if (
-        codes.includes('MISSING_DATA_TEAM_MAPPING') ||
-        codes.includes('MISSING_DATA_NO_PLAYS') ||
-        codes.includes('PASS_MISSING_MARKET_TYPE')
-      ) {
-        buckets.missingMapping += 1;
-      } else if (
-        codes.includes('MISSING_DATA_DRIVERS') ||
-        codes.includes('PASS_DATA_ERROR')
-      ) {
-        buckets.driverLoadFailed += 1;
-      } else if (
-        codes.includes('PROJECTION_ONLY_EXCLUSION') ||
-        card.play?.pass_reason_code === 'PROJECTION_ONLY'
-      ) {
-        buckets.projectionOnly += 1;
-      } else {
-        buckets.noProjection += 1;
-      }
+      const bucket = classifySportDiagnosticBucket(card);
+      buckets[bucket] += 1;
     }
     return result;
   }, [enrichedCards, filteredCards]);
@@ -496,46 +476,7 @@ export function CardsPageProvider({
       if ((card.sport || 'UNKNOWN').toUpperCase() !== uiState.diagnosticFilter?.sport) {
         return false;
       }
-      const codes = card.play?.reason_codes ?? [];
-      const missingInputs = card.play?.transform_meta?.missing_inputs ?? [];
-      switch (uiState.diagnosticFilter.bucket) {
-        case 'noOdds':
-          return (
-            codes.includes('MISSING_DATA_NO_ODDS') ||
-            missingInputs.includes('odds_timestamp')
-          );
-        case 'missingMapping':
-          return (
-            codes.includes('MISSING_DATA_TEAM_MAPPING') ||
-            codes.includes('MISSING_DATA_NO_PLAYS') ||
-            codes.includes('PASS_MISSING_MARKET_TYPE')
-          );
-        case 'driverLoadFailed':
-          return (
-            codes.includes('MISSING_DATA_DRIVERS') ||
-            codes.includes('PASS_DATA_ERROR')
-          );
-        case 'projectionOnly':
-          return (
-            codes.includes('PROJECTION_ONLY_EXCLUSION') ||
-            card.play?.pass_reason_code === 'PROJECTION_ONLY'
-          );
-        case 'noProjection':
-          return (
-            codes.includes('MISSING_DATA_PROJECTION_INPUTS') ||
-            (!codes.includes('MISSING_DATA_NO_ODDS') &&
-              !missingInputs.includes('odds_timestamp') &&
-              !codes.includes('MISSING_DATA_TEAM_MAPPING') &&
-              !codes.includes('MISSING_DATA_NO_PLAYS') &&
-              !codes.includes('PASS_MISSING_MARKET_TYPE') &&
-              !codes.includes('MISSING_DATA_DRIVERS') &&
-              !codes.includes('PASS_DATA_ERROR') &&
-              !codes.includes('PROJECTION_ONLY_EXCLUSION') &&
-              card.play?.pass_reason_code !== 'PROJECTION_ONLY')
-          );
-        default:
-          return false;
-      }
+      return classifySportDiagnosticBucket(card) === uiState.diagnosticFilter.bucket;
     });
     // In diagnostics mode, attach drop reason metadata for surface visibility
     if (!diagnosticsEnabled) return filtered;

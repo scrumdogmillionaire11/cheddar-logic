@@ -3,6 +3,8 @@
  * Pure utility functions — no DB dependencies.
  */
 
+import { PASS_REASON_ALIAS_MAP } from '../game-card/transform/reason-codes';
+
 // Local type alias matching route.ts Play interface — only the fields these
 // normalizers return. Avoids importing the full Play type from the route file.
 type MarketType =
@@ -210,16 +212,7 @@ export function normalizePassReasonCode(value: unknown): string | null {
   if (!code) return null;
   if (code.startsWith('PASS_')) return code;
 
-  const mapped: Record<string, string> = {
-    MISSING_LINE: 'PASS_MISSING_LINE',
-    MISSING_EDGE: 'PASS_MISSING_EDGE',
-    MISSING_SELECTION: 'PASS_MISSING_SELECTION',
-    MISSING_PRICE: 'PASS_MISSING_PRICE',
-    NO_MARKET_PRICE: 'PASS_NO_MARKET_PRICE',
-    NO_STARTER_SIGNAL: 'PASS_MISSING_DRIVER_INPUTS',
-  };
-
-  return mapped[code] ?? code;
+  return PASS_REASON_ALIAS_MAP[code] ?? code;
 }
 
 export function normalizePlayerNameKey(value: unknown): string | null {

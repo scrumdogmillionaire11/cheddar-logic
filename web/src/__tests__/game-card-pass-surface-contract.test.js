@@ -128,11 +128,11 @@ console.log('🧪 final_market_decision contract tests');
     action: 'PASS',
     classification: 'PASS',
     status: 'PASS',
-    reason_codes: ['EDGE_VERIFICATION_REQUIRED'],
+      reason_codes: ['LINE_NOT_CONFIRMED'],
     decision_v2: {
       official_status: 'PASS',
       sharp_price_status: 'PENDING_VERIFICATION',
-      primary_reason_code: 'EDGE_VERIFICATION_REQUIRED',
+        primary_reason_code: 'LINE_NOT_CONFIRMED',
       play_tier: 'BEST',
       edge_delta_pct: 0.21,
     },
@@ -201,6 +201,28 @@ console.log('🧪 final_market_decision contract tests');
     action: 'PASS',
     classification: 'PASS',
     status: 'PASS',
+    reason_codes: ['MISSING_DATA_PROJECTION_INPUTS', 'PASS_NO_EDGE'],
+    decision_v2: {
+      official_status: 'PASS',
+      sharp_price_status: 'CHEDDAR',
+      primary_reason_code: 'PASS_NO_EDGE',
+      play_tier: null,
+      edge_delta_pct: null,
+    },
+  });
+  const card = transformToGameCard(game);
+  const decision = card.play?.final_market_decision;
+  assert.equal(decision?.surfaced_status, 'PASS');
+  assert.equal(decision?.surfaced_reason, 'Missing projection inputs');
+  assert.equal(decision?.projection_input_status, 'INCOMPLETE');
+  assert.equal(decision?.market_verification_status, 'VERIFIED');
+}
+
+{
+  const game = buildGame({
+    action: 'PASS',
+    classification: 'PASS',
+    status: 'PASS',
     decision_v2: {
       official_status: 'PASS',
       sharp_price_status: 'CHEDDAR',
@@ -251,6 +273,8 @@ console.log('🧪 final_market_decision contract tests');
   const decision = card.play?.final_market_decision;
   assert.equal(decision?.surfaced_status, 'PLAY');
   assert.equal(decision?.verification_state, 'VERIFIED');
+  assert.equal(decision?.market_verification_status, 'VERIFIED');
+  assert.equal(decision?.projection_input_status, 'COMPLETE');
   assert.equal(decision?.certainty_state, 'CONFIRMED');
   assert.equal(decision?.show_model_context, true);
 }

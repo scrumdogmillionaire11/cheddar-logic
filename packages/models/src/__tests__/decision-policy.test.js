@@ -128,16 +128,16 @@ describe('decision-policy helpers', () => {
 
   test('collectReasonCodes normalizes and de-duplicates canonical reason order', () => {
     const payload = {
-      blocked_reason_code: 'EDGE_VERIFICATION_REQUIRED',
+      blocked_reason_code: 'LINE_NOT_CONFIRMED',
       pass_reason_code: 'PASS_EXECUTION_GATE_MIXED_BOOK_SOURCE_MISMATCH',
       reason_codes: ['NO_EDGE_AT_PRICE', 'NO_EDGE_AT_PRICE'],
       decision_v2: {
-        primary_reason_code: 'EDGE_VERIFICATION_REQUIRED',
+        primary_reason_code: 'LINE_NOT_CONFIRMED',
       },
     };
 
     expect(collectReasonCodes(payload)).toEqual([
-      'EDGE_VERIFICATION_REQUIRED',
+      'LINE_NOT_CONFIRMED',
       'MIXED_BOOK_SOURCE_MISMATCH',
       'NO_EDGE_AT_PRICE',
     ]);
@@ -145,7 +145,7 @@ describe('decision-policy helpers', () => {
 
   test('watch-state helpers derive line-verification state and promotion condition', () => {
     const payload = {
-      pass_reason_code: 'EDGE_VERIFICATION_REQUIRED',
+      pass_reason_code: 'LINE_NOT_CONFIRMED',
       selection: { side: 'OVER' },
       line: 8,
       price: 105,
@@ -160,7 +160,7 @@ describe('decision-policy helpers', () => {
       'Drops to PASS: edge < +0.20 or total moves to 8.5',
     );
     expect(describeWebhookReason(payload)).toBe(
-      'Avoiding false signal from unverified line',
+      'Line not confirmed',
     );
   });
 

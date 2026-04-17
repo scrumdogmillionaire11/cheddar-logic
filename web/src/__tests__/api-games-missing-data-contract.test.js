@@ -18,10 +18,15 @@ const gamesRouteHandlerPath = path.resolve(
   '../../src/lib/games/route-handler.ts',
 );
 const cardsPagePath = path.resolve(__dirname, '../../src/components/cards/CardsPageContext.tsx');
+const passClassificationPath = path.resolve(
+  __dirname,
+  '../../src/lib/game-card/pass-classification.ts',
+);
 
 const gamesRouteSource = fs.readFileSync(gamesRoutePath, 'utf8');
 const gamesRouteHandlerSource = fs.readFileSync(gamesRouteHandlerPath, 'utf8');
 const cardsPageSource = fs.readFileSync(cardsPagePath, 'utf8');
+const passClassificationSource = fs.readFileSync(passClassificationPath, 'utf8');
 
 console.log('🧪 API games missing-data contract tests');
 
@@ -64,8 +69,9 @@ assert(
 );
 
 assert(
-  cardsPageSource.includes("codes.includes('MISSING_DATA_TEAM_MAPPING')") &&
-    cardsPageSource.includes("codes.includes('MISSING_DATA_PROJECTION_INPUTS')"),
+  cardsPageSource.includes('classifySportDiagnosticBucket(card)') &&
+    passClassificationSource.includes("codes.includes('MISSING_DATA_TEAM_MAPPING')") &&
+    passClassificationSource.includes("codes.includes('MISSING_DATA_PROJECTION_INPUTS')"),
   'cards diagnostics buckets should recognize mapping and projection-input failures explicitly',
 );
 

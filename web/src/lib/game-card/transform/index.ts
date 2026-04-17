@@ -1453,7 +1453,7 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
     );
     const tags = Array.from(new Set([...(wave1DecisionPlay.tags ?? [])]));
     if (edgeVerificationBlocked) {
-      tags.push('EDGE_VERIFICATION_REQUIRED');
+      tags.push('LINE_NOT_CONFIRMED');
     }
     if (
       effectiveDecisionV2.proxy_capped === true ||

@@ -345,7 +345,7 @@ describe('post_discord_cards helpers', () => {
           webhook_eligible: false,
           market_type: 'MONEYLINE',
           selection: { side: 'AWAY' },
-          pass_reason_code: 'EDGE_VERIFICATION_REQUIRED',
+          pass_reason_code: 'LINE_NOT_CONFIRMED',
         },
       }),
       // EVIDENCE context drivers — FIRE action but must not appear as bet rows
@@ -416,7 +416,7 @@ describe('post_discord_cards helpers', () => {
           selection: { side: 'HOME' },
           price: 100,
           edge: 0.21,
-          pass_reason_code: 'EDGE_VERIFICATION_REQUIRED',
+          pass_reason_code: 'LINE_NOT_CONFIRMED',
           projection_only: false,
           decision_v2: {
             play_tier: 'BEST',
@@ -437,7 +437,7 @@ describe('post_discord_cards helpers', () => {
     expect(message).toContain('Would become PLAY: HOME if market verifies and edge >= +0.20 holds');
     expect(message).toContain('Recheck by: 6:30 PM ET (T-30m)');
     expect(message).toContain('Drops to PASS: edge < +0.20 or adverse market move');
-    expect(message).toContain('Why: Avoiding false signal from unverified line');
+    expect(message).toContain('Why: Line not confirmed');
     expect(message).not.toContain('⚪ PASS');
     expect(message).not.toContain('PASS_NO_EDGE');
   });
@@ -486,7 +486,7 @@ describe('post_discord_cards helpers', () => {
           selection: { side: 'AWAY' },
           price: 146,
           edge: 0.05,
-          pass_reason_code: 'EDGE_VERIFICATION_REQUIRED',
+          pass_reason_code: 'LINE_NOT_CONFIRMED',
           decision_v2: { play_tier: 'BEST' },
           projection_only: false,
         },

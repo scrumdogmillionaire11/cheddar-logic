@@ -380,6 +380,10 @@ For worker-written NHL market-call rows (`nhl-totals-call`, `nhl-spread-call`, `
 - when `USE_ORCHESTRATED_MARKET=true`, worker output must emit at most one NHL market-call row per `game_id`
 - when `USE_ORCHESTRATED_MARKET=false`, legacy multi-card behavior may emit multiple FIRE/WATCH market-call rows, but every emitted row must still carry orchestration metadata for audit and read-surface consistency
 - `blocking_reason_codes` must be deterministic, unique, and reuse existing worker reason vocab when applicable (for example `WATCHDOG_CONSISTENCY_MISSING`, `WATCHDOG_MARKET_UNAVAILABLE`, `MARKET_PRICE_MISSING`, `NO_EDGE_AT_PRICE`, `EXACT_WAGER_MISMATCH`).
+- Verification blocker compatibility:
+  - canonical user-facing verification blockers are `LINE_NOT_CONFIRMED`, `EDGE_RECHECK_PENDING`, `EDGE_NO_LONGER_CONFIRMED`, `MARKET_DATA_STALE`, and `PRICE_SYNC_PENDING`
+  - legacy `EDGE_VERIFICATION_REQUIRED` may be accepted as input alias during migration but should not be emitted as the primary user-facing blocker
+  - normalized `reason_codes` and `blocking_reason_codes` must remain deterministic and de-duplicated
 - `pipeline_state` is additive metadata only. It must not change `decision_v2`, `action`, `status`, `classification`, or other existing consumer-facing fields.
 - Wave-1 worker jobs emit per-game `pipeline_state` in two places:
   - attached to emitted per-game card payloads

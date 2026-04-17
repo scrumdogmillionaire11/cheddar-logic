@@ -1229,9 +1229,17 @@ export default function GameCardItem({
                   </p>
                   {finalMarketDecision?.verification_state && (
                     <p>
-                      Verification:{' '}
+                      Market verification:{' '}
                       <span className="text-cloud/90 font-semibold">
-                        {finalMarketDecision.verification_state}
+                        {finalMarketDecision.market_verification_status ?? finalMarketDecision.verification_state}
+                      </span>
+                    </p>
+                  )}
+                  {finalMarketDecision?.projection_input_status && (
+                    <p>
+                      Projection inputs:{' '}
+                      <span className="text-cloud/90 font-semibold">
+                        {finalMarketDecision.projection_input_status}
                       </span>
                     </p>
                   )}

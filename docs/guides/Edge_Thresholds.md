@@ -25,6 +25,22 @@ These are the three primary betting decision tiers emitted in the `decision_v2.o
 - **When emitted:** All other cases (insufficient edge, blocked by watchdog, stale market, etc.)
 - **Symbol:** ⚪ (white in Discord)
 
+### Verification Blocker Contract (User-Facing)
+
+When a candidate is held or passed due to market verification or integrity checks,
+user-facing outputs must use explicit blocker reasons instead of generic process terms.
+
+Canonical blocker reasons:
+
+- `LINE_NOT_CONFIRMED` → line/price not yet confirmed
+- `EDGE_RECHECK_PENDING` → edge requires refresh before action
+- `EDGE_NO_LONGER_CONFIRMED` → recheck no longer clears threshold
+- `MARKET_DATA_STALE` → market snapshot stale
+- `PRICE_SYNC_PENDING` → line and price not yet synchronized
+
+Legacy `EDGE_VERIFICATION_REQUIRED` may appear only as a backward-compatibility alias
+in ingestion/normalization paths; it should not be the primary user-facing reason.
+
 ---
 
 ## 🎯 Edge & Support Thresholds by Sport/Market
