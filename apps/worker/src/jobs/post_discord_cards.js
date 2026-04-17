@@ -257,8 +257,109 @@ const TEAM_NICKNAMES = {
   'sacramento athletics': 'Athletics',
 };
 
-function abbreviateTeam(name) {
+const MLB_TEAM_DISPLAY_BY_CODE = Object.freeze({
+  ARI: 'ARI Diamondbacks',
+  ATL: 'ATL Braves',
+  BAL: 'BAL Orioles',
+  BOS: 'BOS Red Sox',
+  CHC: 'CHC Cubs',
+  CWS: 'CWS White Sox',
+  CIN: 'CIN Reds',
+  CLE: 'CLE Guardians',
+  COL: 'COL Rockies',
+  DET: 'DET Tigers',
+  HOU: 'HOU Astros',
+  KCR: 'KCR Royals',
+  LAA: 'LAA Angels',
+  LAD: 'LAD Dodgers',
+  MIA: 'MIA Marlins',
+  MIL: 'MIL Brewers',
+  MIN: 'MIN Twins',
+  NYM: 'NYM Mets',
+  NYY: 'NYY Yankees',
+  ATH: 'ATH Athletics',
+  PHI: 'PHI Phillies',
+  PIT: 'PIT Pirates',
+  SDP: 'SDP Padres',
+  SFG: 'SFG Giants',
+  SEA: 'SEA Mariners',
+  STL: 'STL Cardinals',
+  TBR: 'TBR Rays',
+  TEX: 'TEX Rangers',
+  TOR: 'TOR Blue Jays',
+  WSN: 'WSN Nationals',
+});
+
+const MLB_TEAM_VARIANTS = Object.freeze({
+  ARI: ['ari', 'az', 'arizona diamondbacks', 'diamondbacks', 'd-backs', 'dbacks', 'arizona'],
+  ATL: ['atl', 'atlanta braves', 'braves', 'atlanta'],
+  BAL: ['bal', 'baltimore orioles', 'orioles', 'baltimore'],
+  BOS: ['bos', 'boston red sox', 'red sox', 'boston'],
+  CHC: ['chc', 'ch', 'chicago cubs', 'cubs'],
+  CWS: ['cws', 'chw', 'chwsox', 'chicago white sox', 'white sox', 'chi sox', 'chi white sox'],
+  CIN: ['cin', 'cincinnati reds', 'reds', 'cincinnati'],
+  CLE: ['cle', 'cl', 'cr', 'cleveland guardians', 'guardians', 'cleveland'],
+  COL: ['col', 'colorado rockies', 'rockies', 'colorado'],
+  DET: ['det', 'detroit tigers', 'tigers', 'detroit'],
+  HOU: ['hou', 'ho', 'houston astros', 'astros', 'houston'],
+  KCR: ['kcr', 'kc', 'kansas city royals', 'royals', 'kansas city'],
+  LAA: ['laa', 'ana', 'la angels', 'los angeles angels', 'angels'],
+  LAD: ['lad', 'la dodgers', 'los angeles dodgers', 'dodgers'],
+  MIA: ['mia', 'miami marlins', 'marlins', 'miami'],
+  MIL: ['mil', 'ml', 'milwaukee brewers', 'brewers', 'milwaukee'],
+  MIN: ['min', 'mn', 'minnesota twins', 'twins', 'minnesota'],
+  NYM: ['nym', 'new york mets', 'mets'],
+  NYY: ['nyy', 'new york yankees', 'yankees'],
+  ATH: ['ath', 'oakland athletics', 'sacramento athletics', 'athletics', "a's"],
+  PHI: ['phi', 'philadelphia phillies', 'phillies', 'philadelphia'],
+  PIT: ['pit', 'pittsburgh pirates', 'pirates', 'pittsburgh'],
+  SDP: ['sdp', 'sd', 'san diego padres', 'padres', 'san diego'],
+  SFG: ['sfg', 'sf', 'san francisco giants', 'giants', 'san francisco'],
+  SEA: ['sea', 'seattle mariners', 'mariners', 'seattle'],
+  STL: ['stl', 'st louis cardinals', 'st. louis cardinals', 'cardinals', 'st louis'],
+  TBR: ['tbr', 'tb', 'tampa bay rays', 'rays', 'tampa bay'],
+  TEX: ['tex', 'tx', 'texas rangers', 'rangers', 'texas'],
+  TOR: ['tor', 'to', 'toronto blue jays', 'blue jays', 'toronto'],
+  WSN: ['wsn', 'was', 'wsh', 'washington nationals', 'nationals', 'nats'],
+});
+
+const MLB_VARIANT_TO_CODE = Object.freeze(
+  Object.entries(MLB_TEAM_VARIANTS).reduce((acc, [code, variants]) => {
+    acc[code.toLowerCase()] = code;
+    for (const variant of variants) {
+      const token = String(variant || '').toLowerCase().trim();
+      if (token) acc[token] = code;
+    }
+    return acc;
+  }, {}),
+);
+
+function normalizeTeamVariant(name) {
+  return String(name || '')
+    .toLowerCase()
+    .trim()
+    .replace(/\./g, '')
+    .replace(/\s+/g, ' ');
+}
+
+function isMlbSportToken(sport) {
+  return normalizeToken(sport) === 'MLB' || normalizeToken(sport) === 'BASEBALL_MLB';
+}
+
+function abbreviateMlbTeam(name) {
+  const normalized = normalizeTeamVariant(name);
+  const code = MLB_VARIANT_TO_CODE[normalized];
+  if (!code) return null;
+  return MLB_TEAM_DISPLAY_BY_CODE[code] || code;
+}
+
+function abbreviateTeam(name, { sport = '' } = {}) {
   if (!name) return '';
+  if (isMlbSportToken(sport)) {
+    const mlbTeam = abbreviateMlbTeam(name);
+    if (mlbTeam) return mlbTeam;
+  }
+
   const lower = String(name).toLowerCase().trim();
   const abbrev   = TEAM_ABBREVIATIONS[lower];
   const nickname = TEAM_NICKNAMES[lower];
@@ -270,10 +371,10 @@ function abbreviateTeam(name) {
   return lower.split(/\s+/).map((w) => w[0].toUpperCase()).join('').slice(0, 3);
 }
 
-function abbreviateMatchup(matchup) {
+function abbreviateMatchup(matchup, sport = '') {
   const parts = String(matchup || '').split(' @ ');
   if (parts.length !== 2) return matchup;
-  return `${abbreviateTeam(parts[0])} @ ${abbreviateTeam(parts[1])}`;
+  return `${abbreviateTeam(parts[0], { sport })} @ ${abbreviateTeam(parts[1], { sport })}`;
 }
 
 function formatEtTime(value) {
@@ -1030,7 +1131,7 @@ function buildDiscordSnapshot({ now = new Date(), cards = [] } = {}) {
     // Hard send filter — skip games with nothing actionable
     if (official.length === 0 && leans.length === 0 && blockedWatch.length === 0) continue;
 
-    const shortMatchup = abbreviateMatchup(seed.matchup || 'Unknown');
+    const shortMatchup = abbreviateMatchup(seed.matchup || 'Unknown', seed?.sport);
     const startEt      = formatEtTime(seed?.gameTimeUtc);
 
     const headerLines = [
