@@ -2,6 +2,7 @@
 
 import ProjectionCard from '@/components/projection-card';
 import PropGameCard from '@/components/prop-game-card';
+import { countBlockedDiagnostics } from '@/lib/game-card/pass-classification';
 import { useCardsPageActions, useCardsPageState, BUCKET_LABELS } from './CardsPageContext';
 import GameCardItem from './GameCardItem';
 import SportDiagnosticsPanel from './SportDiagnosticsPanel';
@@ -91,14 +92,7 @@ export default function CardsList() {
                 excluded — breakdown by sport:
               </div>
               {Object.entries(sportDiagnostics)
-                .filter(
-                  ([, b]) =>
-                    b.missingMapping +
-                      b.driverLoadFailed +
-                      b.noOdds +
-                      b.noProjection >
-                    0,
-                )
+                .filter(([, b]) => countBlockedDiagnostics(b) > 0)
                 .map(([sport, b]) => (
                   <div key={sport} className="flex gap-2 font-mono">
                     <span className="w-16">{sport}</span>
@@ -107,6 +101,7 @@ export default function CardsList() {
                     {b.driverLoadFailed > 0 && (
                       <span>driver-fail:{b.driverLoadFailed}</span>
                     )}
+                    {b.projectionOnly > 0 && <span>proj-only:{b.projectionOnly}</span>}
                     {b.noProjection > 0 && <span>no-proj:{b.noProjection}</span>}
                   </div>
                 ))}

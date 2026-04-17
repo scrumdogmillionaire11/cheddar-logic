@@ -15,6 +15,10 @@ import type {
   SupportGrade,
   PassReasonCode,
 } from '@/lib/types';
+import type {
+  SportDiagnosticBucket,
+  SportDiagnosticCounts,
+} from '@/lib/game-card/pass-classification';
 
 export type SportCountMap = Record<string, number>;
 
@@ -251,22 +255,11 @@ export type DecisionModel = {
   spreadCompare: SpreadCompare | null;
 };
 
-export type SportBuckets = {
-  missingMapping: number;
-  driverLoadFailed: number;
-  noOdds: number;
-  noProjection: number;
-  projectionOnly: number;
-};
+export type SportBuckets = SportDiagnosticCounts;
 
 export type SportDiagnosticsMap = Record<string, SportBuckets>;
 
-export type DiagnosticBucket =
-  | 'missingMapping'
-  | 'driverLoadFailed'
-  | 'noOdds'
-  | 'noProjection'
-  | 'projectionOnly';
+export type DiagnosticBucket = SportDiagnosticBucket;
 
 export type DiagnosticFilter = {
   sport: string;

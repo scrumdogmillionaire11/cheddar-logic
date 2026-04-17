@@ -1,6 +1,10 @@
 'use client';
 
 import { BUCKET_LABELS } from './CardsPageContext';
+import {
+  countBlockedDiagnostics,
+  DIAGNOSTIC_BUCKET_ORDER,
+} from '@/lib/game-card/pass-classification';
 import type { DiagnosticBucket, SportDiagnosticsMap } from './types';
 
 export default function SportDiagnosticsPanel({
@@ -11,18 +15,11 @@ export default function SportDiagnosticsPanel({
   onBucketClick: (sport: string, bucket: DiagnosticBucket) => void;
 }) {
   const sportsWithBlocked = Object.entries(diagnostics).filter(
-    ([, buckets]) =>
-      buckets.missingMapping +
-        buckets.driverLoadFailed +
-        buckets.noOdds +
-        buckets.noProjection +
-        (buckets.projectionOnly ?? 0) >
-      0,
+    ([, buckets]) => countBlockedDiagnostics(buckets) > 0,
   );
   if (sportsWithBlocked.length === 0) return null;
   const totalBlocked = sportsWithBlocked.reduce(
-    (sum, [, b]) =>
-      sum + b.missingMapping + b.driverLoadFailed + b.noOdds + b.noProjection + (b.projectionOnly ?? 0),
+    (sum, [, b]) => sum + countBlockedDiagnostics(b),
     0,
   );
 
@@ -48,15 +45,7 @@ export default function SportDiagnosticsPanel({
             {sportsWithBlocked.map(([sport, buckets]) => (
               <tr key={sport}>
                 <td className="pr-4 py-0.5 font-mono">{sport}</td>
-                {(
-                  [
-                    'noOdds',
-                    'missingMapping',
-                    'driverLoadFailed',
-                    'projectionOnly',
-                    'noProjection',
-                  ] as const
-                ).map((bucket) => (
+                {DIAGNOSTIC_BUCKET_ORDER.map((bucket) => (
                   <td key={bucket} className="text-center px-2 py-0.5">
                     {buckets[bucket] > 0 ? (
                       <button

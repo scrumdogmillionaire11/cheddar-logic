@@ -12,6 +12,24 @@ export type SportDiagnosticBucket =
   | 'noProjection'
   | 'projectionOnly';
 
+export type SportDiagnosticCounts = Record<SportDiagnosticBucket, number>;
+
+export const DIAGNOSTIC_BUCKET_ORDER: readonly SportDiagnosticBucket[] = [
+  'noOdds',
+  'missingMapping',
+  'driverLoadFailed',
+  'projectionOnly',
+  'noProjection',
+];
+
+export const DIAGNOSTIC_BUCKET_LABELS: Record<SportDiagnosticBucket, string> = {
+  missingMapping: 'Missing mapping',
+  driverLoadFailed: 'Driver load failed',
+  noOdds: 'No odds',
+  noProjection: 'No projection',
+  projectionOnly: 'Projection only',
+};
+
 const DATA_ERROR_PASS_CODES = new Set([
   'PASS_DATA_ERROR',
   'PASS_MISSING_KIND',
@@ -101,4 +119,8 @@ export function classifySportDiagnosticBucket(card: GameCard): SportDiagnosticBu
   }
 
   return 'noProjection';
+}
+
+export function countBlockedDiagnostics(buckets: SportDiagnosticCounts): number {
+  return DIAGNOSTIC_BUCKET_ORDER.reduce((sum, bucket) => sum + buckets[bucket], 0);
 }
