@@ -40,6 +40,7 @@ import {
   getTierBadge,
   impliedProbFromOdds,
   normalizeSelectionSide,
+  resolveOddsDisplayPayload,
   resolvePlayLiveBook,
   resolvePlayLiveLine,
   resolvePlayLiveLineBook,
@@ -487,26 +488,15 @@ export default function GameCardItem({
           ? -originalGame.odds.spreadHome
           : originalGame.odds.spreadHome
         : undefined;
-  const bestSpreadBook =
-    isSpreadLikeMarket
-      ? resolvePlayLiveLineBook(
-          marketType,
-          displaySelectionSide,
-          originalGame.odds,
-        )
-      : null;
-  const bestSpreadPriceBook =
-    isSpreadLikeMarket
-      ? resolvePlayLiveBook(marketType, displaySelectionSide, originalGame.odds)
-      : null;
-  const bestTotalBook =
-    isTotalLikeMarket
-      ? resolvePlayLiveLineBook(marketType, displaySelectionSide, originalGame.odds)
-      : null;
-  const bestTotalPriceBook =
-    isTotalLikeMarket
-      ? resolvePlayLiveBook(marketType, displaySelectionSide, originalGame.odds)
-      : null;
+  const oddsPayload = resolveOddsDisplayPayload(
+    marketType,
+    displaySelectionSide,
+    originalGame.odds,
+  );
+  const bestSpreadBook = isSpreadLikeMarket ? oddsPayload.lineBook : null;
+  const bestSpreadPriceBook = isSpreadLikeMarket ? oddsPayload.priceBook : null;
+  const bestTotalBook = isTotalLikeMarket ? oddsPayload.lineBook : null;
+  const bestTotalPriceBook = isTotalLikeMarket ? oddsPayload.priceBook : null;
   const spreadSoftLineFlag =
     isSpreadLikeMarket &&
     originalGame.odds?.spreadIsMispriced === true &&
@@ -564,6 +554,7 @@ export default function GameCardItem({
     typeof edgeVsConsensusPts === 'number' ||
     typeof edgeVsBestAvailablePts === 'number';
   const isMoneylineMarket = marketType === 'MONEYLINE';
+  const bestMoneylineBook = isMoneylineMarket ? oddsPayload.priceBook : null;
   const hasEdgeMathContext =
     typeof resolvedModelProb === 'number' &&
     typeof resolvedImpliedProb === 'number' &&
@@ -928,16 +919,21 @@ export default function GameCardItem({
                             [{spreadConsensusConfidenceLabel} consensus]
                           </span>
                         )}
-                        {bestSpreadBook && (
+                        {oddsPayload.hasVerifiedBest && bestSpreadBook && (
                           <span className="text-cloud/45 ml-1">
                             {usingConsensusSpreadLine
                               ? `best line ${formatBookName(bestSpreadBook)}`
                               : `(${formatBookName(bestSpreadBook)})`}
                           </span>
                         )}{' '}
-                        {bestSpreadPriceBook && (
+                        {oddsPayload.hasVerifiedBest && bestSpreadPriceBook && (
                           <span className="text-cloud/45 ml-1">
                             [price {formatBookName(bestSpreadPriceBook)}]
+                          </span>
+                        )}
+                        {oddsPayload.hasVerifiedBest && oddsPayload.isSplitSource && bestSpreadBook && bestSpreadPriceBook && (
+                          <span className="text-amber-200/70 ml-1">
+                            [split: line {formatBookName(bestSpreadBook)} | price {formatBookName(bestSpreadPriceBook)}]
                           </span>
                         )}{' '}
                         {hasProjectionComparison ? (
@@ -1004,14 +1000,19 @@ export default function GameCardItem({
                             ? marketLine.toFixed(1)
                             : 'N/A'}
                         </span>{' '}
-                        {bestTotalBook && (
+                        {oddsPayload.hasVerifiedBest && bestTotalBook && (
                           <span className="text-cloud/45 ml-1">
                             [line {formatBookName(bestTotalBook)}]
                           </span>
                         )}{' '}
-                        {bestTotalPriceBook && (
+                        {oddsPayload.hasVerifiedBest && bestTotalPriceBook && (
                           <span className="text-cloud/45 ml-1">
                             [price {formatBookName(bestTotalPriceBook)}]
+                          </span>
+                        )}
+                        {oddsPayload.hasVerifiedBest && oddsPayload.isSplitSource && bestTotalBook && bestTotalPriceBook && (
+                          <span className="text-amber-200/70 ml-1">
+                            [split: line {formatBookName(bestTotalBook)} | price {formatBookName(bestTotalPriceBook)}]
                           </span>
                         )}{' '}
                         {hasProjectionComparison ? (
@@ -1124,6 +1125,11 @@ export default function GameCardItem({
                           ? `${livePrice > 0 ? '+' : ''}${Math.trunc(livePrice)}`
                           : 'N/A'}
                       </span>
+                      {oddsPayload.hasVerifiedBest && bestMoneylineBook && (
+                        <span className="text-cloud/45 ml-1">
+                          ({formatBookName(bestMoneylineBook)})
+                        </span>
+                      )}
                     </p>
                   )}
                   {hasOnePeriodTotalContext && (

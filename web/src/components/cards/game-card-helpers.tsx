@@ -538,3 +538,65 @@ export function formatF5ProjectionBlock(
       : null;
   return { headline, subLabel, homeLabel, awayLabel };
 }
+
+/**
+ * Resolved display payload for odds-backed cards.
+ * Reads pre-aggregated best values from the odds object — no candidate selection
+ * is performed at display time (that is done upstream by the pull-odds job).
+ * `hasVerifiedBest` is the authoritative guard: render no "Best" label or book
+ * attribution unless it is true.
+ */
+export interface OddsDisplayPayload {
+  market: 'MONEYLINE' | 'SPREAD' | 'PUCKLINE' | 'TOTAL' | null;
+  bestPrice: number | null;      // American odds for chosen side
+  priceBook: string | null;      // book supplying bestPrice
+  bestLine: number | null;       // null for MONEYLINE
+  lineBook: string | null;       // null for MONEYLINE; may differ from priceBook
+  isSplitSource: boolean;        // true when lineBook !== priceBook and both non-null
+  hasVerifiedBest: boolean;      // true ONLY when bestPrice !== null AND priceBook !== null
+}
+
+const EMPTY_ODDS_PAYLOAD: OddsDisplayPayload = {
+  market: null,
+  bestPrice: null,
+  priceBook: null,
+  bestLine: null,
+  lineBook: null,
+  isSplitSource: false,
+  hasVerifiedBest: false,
+};
+
+export function resolveOddsDisplayPayload(
+  marketType: string | undefined,
+  selectionSide: string | undefined,
+  odds: GameData['odds'],
+): OddsDisplayPayload {
+  if (!odds) return EMPTY_ODDS_PAYLOAD;
+
+  const normalized = marketType?.toUpperCase();
+  if (
+    normalized !== 'MONEYLINE' &&
+    normalized !== 'SPREAD' &&
+    normalized !== 'PUCKLINE' &&
+    normalized !== 'TOTAL'
+  ) {
+    return EMPTY_ODDS_PAYLOAD;
+  }
+
+  const market = normalized as 'MONEYLINE' | 'SPREAD' | 'PUCKLINE' | 'TOTAL';
+  const bestPriceRaw = resolvePlayLivePrice(marketType, selectionSide, odds);
+  const priceBook = resolvePlayLiveBook(marketType, selectionSide, odds) ?? null;
+  const bestLineRaw =
+    market !== 'MONEYLINE' ? resolvePlayLiveLine(marketType, selectionSide, odds) : undefined;
+  const lineBook =
+    market !== 'MONEYLINE'
+      ? resolvePlayLiveLineBook(marketType, selectionSide, odds) ?? null
+      : null;
+
+  const bestPrice = bestPriceRaw ?? null;
+  const bestLine = bestLineRaw ?? null;
+  const hasVerifiedBest = bestPrice !== null && priceBook !== null;
+  const isSplitSource = lineBook !== null && priceBook !== null && lineBook !== priceBook;
+
+  return { market, bestPrice, priceBook, bestLine, lineBook, isSplitSource, hasVerifiedBest };
+}
