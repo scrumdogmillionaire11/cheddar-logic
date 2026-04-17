@@ -21,6 +21,7 @@ function resetTables() {
     DELETE FROM potd_plays;
     DELETE FROM potd_daily_stats;
     DELETE FROM potd_nominees;
+    DELETE FROM potd_shadow_candidates;
     DELETE FROM card_results;
     DELETE FROM card_payloads;
     DELETE FROM odds_snapshots;
@@ -179,6 +180,16 @@ describe('runPotdEngine', () => {
 
     const plays = readRows('SELECT * FROM potd_plays');
     expect(plays).toHaveLength(0);
+
+    const shadowRows = readRows(
+      `SELECT selection, game_time_utc, candidate_identity_key
+       FROM potd_shadow_candidates
+       ORDER BY id ASC`,
+    );
+    expect(shadowRows).toHaveLength(1);
+    expect(shadowRows[0].selection).toBe('OVER');
+    expect(shadowRows[0].game_time_utc).toBe(lowConfidenceCandidate.commence_time);
+    expect(shadowRows[0].candidate_identity_key).toEqual(expect.any(String));
   });
 
   test('seeds bankroll and writes published TOTAL play plus settlement-compatible potd-call', async () => {
@@ -248,6 +259,139 @@ describe('runPotdEngine', () => {
       line: 5.5,
       locked_price: 115,
     });
+
+    const shadowRows = readRows(
+      `SELECT selection, game_time_utc, candidate_identity_key
+       FROM potd_shadow_candidates`,
+    );
+    expect(shadowRows).toHaveLength(1);
+    expect(shadowRows[0].selection).toBe('OVER');
+    expect(shadowRows[0].game_time_utc).toBe(candidate.commence_time);
+    expect(shadowRows[0].candidate_identity_key).toEqual(expect.any(String));
+  });
+
+  test('no-best-candidate path captures shadow candidates with canonical selection', async () => {
+    const { runPotdEngine } = require('../run_potd_engine');
+    const candidate = buildSelectedCandidate({
+      gameId: 'potd-negative-edge-shadow-001',
+      edgePct: -0.003,
+      totalScore: 0.71,
+      selection: 'AWAY',
+      selectionLabel: 'Toronto Maple Leafs',
+      marketType: 'MONEYLINE',
+      line: null,
+    });
+
+    const result = await runPotdEngine({
+      jobKey: 'potd|no-best-shadow-capture',
+      force: true,
+      fetchOddsFn: async () => ({ games: [{ gameId: candidate.gameId }], errors: [] }),
+      buildCandidatesFn: () => [candidate],
+      scoreCandidateFn: (v) => v,
+      selectTopPlaysFn: () => [],
+      kellySizeFn: () => 1,
+      sendDiscordMessagesFn: async () => 1,
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.noPlay).toBe(true);
+
+    const shadowRows = readRows(
+      `SELECT selection, game_time_utc, candidate_identity_key
+       FROM potd_shadow_candidates`,
+    );
+    expect(shadowRows).toHaveLength(1);
+    expect(shadowRows[0].selection).toBe('AWAY');
+    expect(shadowRows[0].game_time_utc).toBe(candidate.commence_time);
+    expect(shadowRows[0].candidate_identity_key).toEqual(expect.any(String));
+  });
+
+  test('zero-wager path captures shadow candidates', async () => {
+    const { runPotdEngine } = require('../run_potd_engine');
+    const candidate = buildSelectedCandidate({
+      gameId: 'potd-zero-wager-shadow-001',
+      selection: 'UNDER',
+      selectionLabel: 'UNDER 5.5',
+    });
+
+    const result = await runPotdEngine({
+      jobKey: 'potd|zero-wager-shadow-capture',
+      force: true,
+      fetchOddsFn: async () => ({ games: [{ gameId: candidate.gameId }], errors: [] }),
+      buildCandidatesFn: () => [candidate],
+      scoreCandidateFn: (v) => v,
+      selectTopPlaysFn: (values) => (values.length > 0 ? [values[0]] : []),
+      kellySizeFn: () => 0,
+      sendDiscordMessagesFn: async () => 1,
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.reason).toBe('zero_wager');
+
+    const shadowRows = readRows(
+      `SELECT selection, candidate_identity_key
+       FROM potd_shadow_candidates`,
+    );
+    expect(shadowRows).toHaveLength(1);
+    expect(shadowRows[0].selection).toBe('UNDER');
+    expect(shadowRows[0].candidate_identity_key).toEqual(expect.any(String));
+  });
+
+  test('stake-below-minimum path captures shadow candidates', async () => {
+    const { runPotdEngine } = require('../run_potd_engine');
+    const candidate = buildSelectedCandidate({ gameId: 'potd-stake-min-shadow-001' });
+
+    const result = await runPotdEngine({
+      jobKey: 'potd|stake-below-min-shadow-capture',
+      force: true,
+      fetchOddsFn: async () => ({ games: [{ gameId: candidate.gameId }], errors: [] }),
+      buildCandidatesFn: () => [candidate],
+      scoreCandidateFn: (v) => v,
+      selectTopPlaysFn: (values) => (values.length > 0 ? [values[0]] : []),
+      kellySizeFn: () => 0.01,
+      sendDiscordMessagesFn: async () => 1,
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.reason).toBe('stake_below_minimum');
+
+    const shadowRows = readRows(
+      `SELECT selection, candidate_identity_key
+       FROM potd_shadow_candidates`,
+    );
+    expect(shadowRows).toHaveLength(1);
+    expect(shadowRows[0].selection).toBe('OVER');
+    expect(shadowRows[0].candidate_identity_key).toEqual(expect.any(String));
+  });
+
+  test('same-day rerun upserts shadow candidates by identity key', async () => {
+    const { runPotdEngine } = require('../run_potd_engine');
+    const candidate = buildSelectedCandidate({
+      gameId: 'potd-shadow-upsert-001',
+      edgePct: -0.001,
+      totalScore: 0.72,
+    });
+
+    const baseOptions = {
+      force: true,
+      fetchOddsFn: async () => ({ games: [{ gameId: candidate.gameId }], errors: [] }),
+      buildCandidatesFn: () => [candidate],
+      scoreCandidateFn: (v) => v,
+      selectTopPlaysFn: () => [],
+      kellySizeFn: () => 1,
+      sendDiscordMessagesFn: async () => 1,
+    };
+
+    await runPotdEngine({ ...baseOptions, jobKey: 'potd|shadow-upsert-pass-1' });
+    await runPotdEngine({ ...baseOptions, jobKey: 'potd|shadow-upsert-pass-2' });
+
+    const rows = readRows(
+      `SELECT play_date, candidate_identity_key
+       FROM potd_shadow_candidates`,
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0].play_date).toEqual(expect.any(String));
+    expect(rows[0].candidate_identity_key).toEqual(expect.any(String));
   });
 
   test.each([
@@ -781,6 +925,39 @@ describe('potd_nominees persistence', () => {
     expect(nomineeRows.length).toBeGreaterThanOrEqual(1);
     nomineeRows.forEach((r) => expect(r.winner_status).toBe('NO_PICK'));
     expect(nomineeRows[0].sport).toBe('NHL');
+  });
+
+  test('no-pick day with no positive edge still stores diagnostic nominees', async () => {
+    const { runPotdEngine } = require('../run_potd_engine');
+    const candidate = buildSelectedCandidate({
+      sport: 'NHL',
+      gameId: 'potd-negative-edge-001',
+      edgePct: -0.004,
+      totalScore: 0.73,
+    });
+    const kellySizeFn = jest.fn(() => 2.0);
+
+    const result = await runPotdEngine({
+      jobKey: 'potd|nominees-negative-edge-test',
+      force: true,
+      fetchOddsFn: async () => ({ games: [{ gameId: candidate.gameId }], errors: [] }),
+      buildCandidatesFn: () => [candidate],
+      scoreCandidateFn: (v) => v,
+      kellySizeFn,
+      sendDiscordMessagesFn: async () => 1,
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.noPlay).toBe(true);
+    expect(kellySizeFn).not.toHaveBeenCalled();
+
+    expect(readRows('SELECT * FROM potd_plays')).toHaveLength(0);
+
+    const nomineeRows = readRows('SELECT * FROM potd_nominees');
+    expect(nomineeRows).toHaveLength(1);
+    expect(nomineeRows[0].winner_status).toBe('NO_PICK');
+    expect(nomineeRows[0].sport).toBe('NHL');
+    expect(nomineeRows[0].edge_pct).toBeCloseTo(-0.004, 6);
   });
 
   test('no candidates: nominees table remains empty', async () => {

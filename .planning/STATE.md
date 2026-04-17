@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Model Integrity & Betting Execution Hardening
 status: active
-last_updated: "2026-04-15T00:00:00Z"
-last_activity: "2026-04-16 - Completed quick task 160: WI-0951: MLB T-Minus Freshness Override Schedule"
+last_updated: "2026-04-17T00:00:00Z"
+last_activity: "2026-04-17 - Completed quick task 161: WI-0982 MLB full-game WATCH/HOLD auto-close pipeline integration tests"
 ---
 
 # Project State
@@ -172,6 +172,7 @@ Notable: WI-0797 (pipeline health Discord watchdog), WI-0798 (NHL season key fix
 
 | # | Description | Date | Commit | Directory |
 |---|-------------|------|--------|-----------|
+| 161 | WI-0982: MLB full-game WATCH/HOLD auto-close pipeline integration tests | 2026-04-17 | 8c9ecd0b | [161-mlb-full-game-settlement-display-log-eli](./quick/161-mlb-full-game-settlement-display-log-eli/) |
 | 160 | WI-0951: MLB T-Minus Freshness Override Schedule | 2026-04-16 | 8f8356a9 | [160-wi-0951-mlb-t-minus-freshness-override-s](./quick/160-wi-0951-mlb-t-minus-freshness-override-s/) |
 | 159 | WI-0911 NHL Player Blocks Projection Settlement Policy | 2026-04-13 | ed879b5 | [159-wi-0911-nhl-player-blocks-projection-set](./quick/159-wi-0911-nhl-player-blocks-projection-set/) |
 | 158 | WI-0902 Endpoint Behavioral Parity Fixtures for Cards and Games | 2026-04-13 | af624ff | [158-wi-0902-endpoint-behavioral-parity-fixtu](./quick/158-wi-0902-endpoint-behavioral-parity-fixtu/) |

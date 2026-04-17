@@ -41,6 +41,7 @@
     "job:settle-cards": "node src/jobs/settle_pending_cards.js",
     "job:run-potd-engine": "node src/jobs/potd/run_potd_engine.js",
     "job:potd-settlement-mirror": "node src/jobs/potd/settlement-mirror.js",
+    "job:potd-shadow-settlement": "node src/jobs/potd/settle-shadow-candidates.js",
     "job:settlement-report": "node src/jobs/report_settlement_health.js",
     "job:report-telemetry-calibration": "node src/jobs/report_telemetry_calibration.js",
     "job:run-residual-validation": "node src/jobs/run_residual_validation.js",
