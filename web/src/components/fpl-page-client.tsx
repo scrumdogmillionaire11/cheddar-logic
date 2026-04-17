@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import {
   triggerAnalysis,
@@ -65,6 +65,7 @@ export default function FPLPageClient({
     }>
   >([]);
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const hasBootstrappedFromQuery = useRef(false);
 
   const toggleChip = (chip: string) => {
     setAvailableChips((prev) =>
@@ -182,6 +183,29 @@ export default function FPLPageClient({
     url.searchParams.delete('team');
     window.history.pushState({}, '', url);
   };
+
+  useEffect(() => {
+    if (hasBootstrappedFromQuery.current) return;
+
+    const url = new URL(window.location.href);
+    const teamFromQuery = url.searchParams.get('team')?.trim();
+    if (!teamFromQuery) {
+      hasBootstrappedFromQuery.current = true;
+      return;
+    }
+
+    if (!/^\d+$/.test(teamFromQuery)) {
+      setError('Invalid team query param. Use /fpl?team=######');
+      setState('error');
+      hasBootstrappedFromQuery.current = true;
+      return;
+    }
+
+    setTeamId(teamFromQuery);
+    hasBootstrappedFromQuery.current = true;
+    void handleAnalysis(teamFromQuery);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const outerClass = embedded
     ? 'px-6 py-10 text-cloud'

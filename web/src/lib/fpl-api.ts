@@ -9,6 +9,16 @@
 // - NEXT_PUBLIC_FPL_API_URL=http://localhost:8001/api/v1 (or desired backend)
 const directApiOptIn = process.env.NEXT_PUBLIC_FPL_API_DIRECT === 'true';
 const configuredApiUrl = process.env.NEXT_PUBLIC_FPL_API_URL?.trim();
+const strictEnvOptIn = process.env.NEXT_PUBLIC_FPL_STRICT_ENV === 'true';
+
+if (strictEnvOptIn && process.env.NODE_ENV === 'development') {
+  if (!directApiOptIn || !configuredApiUrl) {
+    throw new Error(
+      '[fpl] Strict env mode requires NEXT_PUBLIC_FPL_API_DIRECT=true and NEXT_PUBLIC_FPL_API_URL to be set in development.',
+    );
+  }
+}
+
 const FPL_API_BASE_URL =
   directApiOptIn && configuredApiUrl
     ? configuredApiUrl.replace(/\/+$/, '')
