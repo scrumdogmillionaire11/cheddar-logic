@@ -292,7 +292,6 @@ const renderFixtureWindowTable = (
 
 export default function FPLDashboard({ data, v2FeaturesEnabled = false }: FPLDashboardProps) {
   // Collapsible section state (collapsed by default on mobile)
-  const [strategyNotesOpen, setStrategyNotesOpen] = useState(false);
   const [plannerOpen, setPlannerOpen] = useState(false);
   const [nearThresholdOpen, setNearThresholdOpen] = useState(false);
   const [strategyPathsOpen, setStrategyPathsOpen] = useState(false);
@@ -470,8 +469,13 @@ export default function FPLDashboard({ data, v2FeaturesEnabled = false }: FPLDas
           </div>
         </div>
 
+        {/* Weekly Review (retrospective) */}
+        <div className="order-1 md:order-none">
+          <FPLWeeklyReportCard reportCard={data.weekly_report_card} />
+        </div>
+
         {/* Transfers */}
-        <div className="order-1 rounded-xl border border-white/10 bg-surface/80 p-4 md:order-none md:p-8">
+        <div className="order-2 rounded-xl border border-white/10 bg-surface/80 p-4 md:order-none md:p-8">
           <h2 className="mb-6 text-2xl font-semibold">🔄 Transfers</h2>
           {plans?.primary ? (
             <div className="space-y-4">
@@ -749,37 +753,6 @@ export default function FPLDashboard({ data, v2FeaturesEnabled = false }: FPLDas
           </div>
         )}
 
-        {/* Strategy Notes (collapsible on mobile) */}
-        <div className="order-5 rounded-xl border border-white/10 bg-surface/80 md:order-none">
-          <button
-            className="flex w-full items-center justify-between px-4 py-3 min-h-[44px] md:hidden cursor-pointer"
-            onClick={() => setStrategyNotesOpen((v) => !v)}
-            aria-expanded={strategyNotesOpen}
-          >
-            <h2 className="text-xl font-semibold">Strategy Notes</h2>
-            <span className="text-cloud/60 text-lg">{strategyNotesOpen ? '▾' : '▸'}</span>
-          </button>
-          <div className="hidden md:block px-8 pt-8 pb-2">
-            <h2 className="text-2xl font-semibold">Strategy Notes</h2>
-          </div>
-          <div className={strategyNotesOpen ? 'px-4 pb-4' : 'hidden md:block px-8 pb-8'}>
-            <div className="mt-4 mb-2 text-lg font-semibold">{displayDecision}</div>
-            <div
-              className={`text-sm font-semibold uppercase ${getConfidenceTone(data.confidence)}`}
-            >
-              {data.confidence} confidence
-            </div>
-            {displayReasoning && (
-              <p className="mt-3 text-sm text-cloud/70">{displayReasoning}</p>
-            )}
-            {strategyMode ? (
-              <div className="mt-4 inline-flex rounded-md border border-white/10 bg-surface/50 px-3 py-1 text-xs font-semibold uppercase text-teal">
-                Strategy Mode: {String(strategyMode)}
-              </div>
-            ) : null}
-          </div>
-        </div>
-
         {/* DGW/BGW Planner (collapsible on mobile) */}
         <div className="order-6 rounded-xl border border-white/10 bg-surface/80 md:order-none">
           <button
@@ -996,9 +969,6 @@ export default function FPLDashboard({ data, v2FeaturesEnabled = false }: FPLDas
             )}
           </div>
         </div>
-
-        {/* Weekly Report Card — dev-only behind NEXT_PUBLIC_FPL_V2_FEATURES */}
-        {v2FeaturesEnabled && <FPLWeeklyReportCard reportCard={data.weekly_report_card} />}
 
         {/* Risk Notes (collapsible on mobile) */}
         {(data.risk_scenarios.length > 0 || data.squad_health) && (

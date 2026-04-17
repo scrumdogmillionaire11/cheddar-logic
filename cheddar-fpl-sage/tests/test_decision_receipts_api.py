@@ -19,6 +19,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from fastapi.testclient import TestClient
 
 from backend.main import app
+from backend.services.weekly_review_service import weekly_review_service
 
 client = TestClient(app)
 
@@ -129,3 +130,96 @@ def test_get_receipts_by_manager_returns_list():
     assert isinstance(data, list)
     assert len(data) >= 2
     assert all(r["manager_id"] == mgr for r in data)
+
+
+def test_weekly_review_persists_outcome_verdict_and_drift_flags_read_after_write():
+    mgr = "rc-weekly-review-001"
+    create_resp = _create_receipt(
+        manager_id=mgr,
+        decision_type="captain",
+        payload={"recommended": "Salah"},
+        user_choice={"selected": "Salah"},
+    )
+    assert create_resp.status_code == 201, create_resp.text
+    receipt_id = create_resp.json()["receipt_id"]
+
+    raw_results = {
+        "raw_data": {
+            "current_gameweek": 31,
+            "my_team": {
+                "current_gameweek": 31,
+                "history_current": [
+                    {"event": 30, "event_points": 62, "overall_rank": 1_200_000},
+                    {"event": 31, "event_points": 68, "overall_rank": 1_150_000},
+                ],
+            },
+        }
+    }
+    transformed_results = {"current_gw": 31}
+
+    review = weekly_review_service.build_review(
+        raw_results=raw_results,
+        transformed_results=transformed_results,
+        manager_id=mgr,
+    )
+
+    assert review["metrics"]["history_available"] is True
+    assert review["metrics"]["process_verdict"] == "good_process"
+
+    read_resp = client.get(f"{API}/{receipt_id}")
+    assert read_resp.status_code == 200, read_resp.text
+    persisted = read_resp.json()
+    assert persisted["outcome"] == "followed"
+    assert persisted["process_verdict"] == "good_process"
+    assert persisted["drift_flags"] == []
+
+    # Re-run service path and ensure values are stable (no silent drop/mutation).
+    weekly_review_service.build_review(
+        raw_results=raw_results,
+        transformed_results=transformed_results,
+        manager_id=mgr,
+    )
+    read_resp_again = client.get(f"{API}/{receipt_id}")
+    persisted_again = read_resp_again.json()
+    assert persisted_again["outcome"] == "followed"
+    assert persisted_again["process_verdict"] == "good_process"
+    assert persisted_again["drift_flags"] == []
+
+
+def test_weekly_review_no_history_keeps_receipt_null_safe():
+    mgr = "rc-weekly-review-002"
+    create_resp = _create_receipt(
+        manager_id=mgr,
+        decision_type="transfer",
+        payload={"recommended": "Player A"},
+        user_choice={"selected": "Player B"},
+    )
+    assert create_resp.status_code == 201, create_resp.text
+    receipt_id = create_resp.json()["receipt_id"]
+
+    raw_results = {
+        "raw_data": {
+            "current_gameweek": 31,
+            "my_team": {
+                "current_gameweek": 31,
+                "history_current": [],
+            },
+        }
+    }
+
+    review = weekly_review_service.build_review(
+        raw_results=raw_results,
+        transformed_results={"current_gw": 31},
+        manager_id=mgr,
+    )
+
+    assert review["metrics"]["history_available"] is False
+    assert review["metrics"]["process_verdict"] is None
+    assert review["metrics"]["drift_flags"] == []
+
+    read_resp = client.get(f"{API}/{receipt_id}")
+    assert read_resp.status_code == 200, read_resp.text
+    persisted = read_resp.json()
+    assert persisted["outcome"] is None
+    assert persisted["process_verdict"] is None
+    assert persisted["drift_flags"] == []

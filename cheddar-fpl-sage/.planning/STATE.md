@@ -1,3 +1,19 @@
+---
+gsd_state_version: 1.0
+milestone: v1.0
+milestone_name: milestone
+status: Phase 07 Plan 06 completed (weekly review frontend integration)
+stopped_at: Completed 07-output-architecture-hardening-06-PLAN.md
+last_updated: "2026-04-17T16:00:16.612Z"
+last_activity: 2026-04-17 - Completed 07-06 weekly review frontend integration
+progress:
+  total_phases: 6
+  completed_phases: 4
+  total_plans: 23
+  completed_plans: 17
+  percent: 63
+---
+
 # FPL Sage - Project State
 
 ## Project Reference
@@ -9,12 +25,12 @@
 ## Current Position
 
 **Phase:** 7 of 7 - Output Architecture Hardening (PLANNED)
-**Plan:** Phase 07 plans created and pending execution
-**Status:** Blocker and warning revisions applied to phase plans
-**Last activity:** 2026-04-17 - Added phase 07 contract-hardening execution plans
+**Plan:** 07-06 complete; Phase 07 closeout pending 07-01/07-02 backfill
+**Status:** Phase 07 Plan 06 completed (weekly review frontend integration)
+**Last activity:** 2026-04-17 - Completed 07-06 weekly review frontend integration
 
 ```
-Progress: [█████████ ] 90% (5/6 milestone phases complete; Phase 07 planned)
+Progress: [██████░░░░] 63%
 ```
 
 ## Quick Status
@@ -62,6 +78,12 @@ Progress: [█████████ ] 90% (5/6 milestone phases complete; Pha
 | Usage color coding | Gray (safe), yellow (1 left), red (at limit) | 2026-01-30 |
 | Limit enforcement UX | Block entire flow, show countdown, provide cached results access | 2026-01-30 |
 | Cached results access | Via sessionStorage (analysis_{id}) - no new storage needed | 2026-01-30 |
+| Results page rendering ownership | Consume mapper-owned squad/chip fields only; remove page-level fallback cascades | 2026-04-17 |
+| Canonical transfer test policy | Assert transfer alternatives passthrough exactly as provided by canonical card data | 2026-04-17 |
+| Weekly review retrospective persistence | Evaluate prior-GW context and persist receipt outcome/process_verdict/drift_flags only when history exists | 2026-04-17 |
+| Weekly review null-safe output | Always emit weekly_review card with deterministic fallback metrics for first-run/no-history paths | 2026-04-17 |
+| Downstream canonical consumer migration | Contract transformer and dashboard router consume canonical cards first while preserving compatibility fallbacks | 2026-04-17 |
+| Weekly flow UI separation | Results rendering now enforces retrospective/current/gameweek/horizon section separation with null-safe weekly_review handling | 2026-04-17 |
 
 ## Pending Todos
 
@@ -106,9 +128,9 @@ Progress: [█████████ ] 90% (5/6 milestone phases complete; Pha
 
 ## Session Continuity
 
-**Last session:** 2026-02-07
-**Stopped at:** Completed quick task 004: Fix frontend blockers
-**Resume file:** .planning/quick/004-fix-frontend-blockers/004-SUMMARY.md
+**Last session:** 2026-04-17T16:00:16.610Z
+**Stopped at:** Completed 07-output-architecture-hardening-06-PLAN.md
+**Resume file:** None
 
 ---
 
@@ -164,7 +186,7 @@ All Phase 4 objectives achieved:
 
 **Primary:** Execute Phase 07 - Output Architecture Hardening
 - Command: `/gsd:execute-phase 07-output-architecture-hardening`
-- Focus: canonical payload, ownership cleanup, retrospective weekly review
+- Focus: finish remaining 07-01 and 07-02 plan backfill
 
 **Secondary:**
 - Command: `/gsd:execute-phase 5`
@@ -176,4 +198,4 @@ All Phase 4 objectives achieved:
 
 ---
 
-*State updated: 2026-02-07*
+*State updated: 2026-04-17*

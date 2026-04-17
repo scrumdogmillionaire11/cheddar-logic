@@ -9,6 +9,17 @@ import RiskNote from '@/components/RiskNote';
 import TransferSection from '@/components/TransferSection';
 import CurrentSquad from '@/components/CurrentSquad';
 import DataTransparency from '@/components/DataTransparency';
+import WeeklyReview from '@/components/WeeklyReview';
+
+export const WEEKLY_SECTION_ORDER = [
+  'weekly_review',
+  'current_squad_state',
+  'gameweek_plan',
+  'transfer_recommendation',
+  'captaincy',
+  'chip_strategy',
+  'horizon_watch',
+] as const;
 
 export default function Results() {
   const { id } = useParams<{ id: string }>();
@@ -110,29 +121,6 @@ export default function Results() {
   }
 
   const decision = buildDecisionViewModel(results);
-  const lineupDecision = results.lineup_decision;
-  const lineupStarters = lineupDecision?.starters?.map((player) => ({
-    player_id: player.player_id,
-    name: player.name,
-    team: player.team,
-    position: player.position,
-    expected_pts: player.projected_points,
-    expected_minutes: player.expected_minutes,
-    flags: player.flags,
-    badges: player.badges,
-    start_reason: player.start_reason,
-  })) || decision.startingXI;
-  const lineupBench = lineupDecision?.bench?.map((player) => ({
-    player_id: player.player_id,
-    name: player.name,
-    team: player.team,
-    position: player.position,
-    expected_pts: player.projected_points,
-    expected_minutes: player.expected_minutes,
-    flags: player.flags,
-    bench_order: player.bench_order,
-    bench_reason: player.bench_reason,
-  })) || decision.bench;
 
   return (
     <div className="min-h-screen bg-surface-primary">
@@ -149,6 +137,23 @@ export default function Results() {
       </header>
 
       <main className="max-w-reading mx-auto px-6 py-12 space-y-6">
+        {decision.weeklyReview && <WeeklyReview review={decision.weeklyReview} />}
+
+        {(decision.startingXI.length > 0 || decision.bench.length > 0) && (
+          <CurrentSquad
+            title="Current Squad State"
+            startingXI={decision.startingXI}
+            bench={decision.bench}
+            formation={decision.formation}
+            lineupConfidence={decision.lineupConfidence}
+            formationReason={decision.formationReason}
+            riskProfileEffect={decision.riskProfileEffect}
+            notes={decision.lineupNotes || []}
+            captainPlayerId={decision.captainPlayerId}
+            viceCaptainPlayerId={decision.viceCaptainPlayerId}
+          />
+        )}
+
         <DecisionBrief
           primaryAction={decision.primaryAction}
           confidence={decision.confidence}
@@ -156,6 +161,12 @@ export default function Results() {
           gameweek={decision.gameweek}
           confidenceLabel={decision.confidenceLabel}
           confidenceSummary={decision.confidenceSummary}
+        />
+
+        <TransferSection
+          {...decision.transfer}
+          freeTransfers={decision.freeTransfers}
+          benchWarning={decision.benchWarning}
         />
 
         {decision.captain && decision.viceCaptain && (
@@ -166,38 +177,33 @@ export default function Results() {
           />
         )}
 
-        {(lineupStarters.length > 0 || lineupBench.length > 0) && (
-          <CurrentSquad
-            title="Starting XI"
-            startingXI={lineupStarters}
-            bench={lineupBench}
-            formation={lineupDecision?.formation}
-            lineupConfidence={lineupDecision?.lineup_confidence}
-            formationReason={lineupDecision?.formation_reason}
-            riskProfileEffect={lineupDecision?.risk_profile_effect}
-            notes={lineupDecision?.notes || []}
-            captainPlayerId={lineupDecision?.captain_player_id}
-            viceCaptainPlayerId={lineupDecision?.vice_captain_player_id}
-          />
-        )}
-
-        <TransferSection
-          {...decision.transfer}
-          freeTransfers={decision.freeTransfers}
-          benchWarning={decision.benchWarning}
-        />
-
         <ChipDecision
           chipVerdict={decision.chipVerdict}
           explanation={decision.chipExplanation}
           availableChips={decision.availableChips}
-          opportunityCost={results.chip_recommendation?.opportunity_cost || null}
-          bestGw={results.chip_recommendation?.best_gw}
-          currentWindowName={results.chip_recommendation?.current_window_name}
-          bestFutureWindowName={results.chip_recommendation?.best_future_window_name}
+          opportunityCost={decision.opportunityCost || null}
+          bestGw={decision.bestGw}
+          currentWindowName={decision.currentWindowName}
+          bestFutureWindowName={decision.bestFutureWindowName}
         />
 
         <RiskNote riskStatement={decision.riskStatement} squadHealth={decision.squadHealth} />
+
+        <section className="bg-surface-card border border-surface-elevated p-8">
+          <h2 className="text-section text-sage-muted mb-4 uppercase tracking-wider">Horizon Watch</h2>
+          <p className="text-body text-sage-light leading-relaxed max-w-2xl">
+            {results.horizon_watch.summary}
+          </p>
+          {decision.gwTimeline && decision.gwTimeline.length > 0 && (
+            <ul className="mt-4 space-y-2">
+              {decision.gwTimeline.map((item) => (
+                <li key={item} className="text-body-sm text-sage-muted">
+                  {item}
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
       </main>
 
       <footer className="border-t border-surface-elevated mt-16">

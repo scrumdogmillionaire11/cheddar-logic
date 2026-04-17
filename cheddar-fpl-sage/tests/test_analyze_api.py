@@ -101,6 +101,98 @@ def test_get_analysis_status_completed(client, monkeypatch) -> None:
     assert body["results"] == {"ok": True}
 
 
+def test_get_analysis_status_contract_uses_canonical_cards(client, monkeypatch) -> None:
+    canonical_results = {
+        "current_gw": 31,
+        "gameweek_plan": {
+            "version": "v1",
+            "summary": "Roll transfer and maintain optionality.",
+            "highlights": [],
+            "metrics": {
+                "primary_action": "ROLL",
+                "justification": "No transfer clears threshold this week.",
+                "gameweek": 31,
+            },
+        },
+        "transfer_recommendation": {
+            "version": "v1",
+            "summary": "Primary move improves midfield slot.",
+            "highlights": [],
+            "metrics": {
+                "transfer_plans": {
+                    "primary": {
+                        "out": "Player A",
+                        "in": "Player B",
+                        "hit_cost": 0,
+                        "net_cost": 1.2,
+                        "delta_pts_4gw": 3.4,
+                        "reason": "Fixture swing",
+                        "confidence": "HIGH",
+                    }
+                }
+            },
+        },
+        "captaincy": {
+            "version": "v1",
+            "summary": "Captaincy setup stable.",
+            "highlights": [],
+            "metrics": {
+                "captain": {"name": "Salah", "expected_pts": 8.2},
+                "vice_captain": {"name": "Saka", "expected_pts": 6.8},
+            },
+        },
+        "chip_strategy": {
+            "version": "v1",
+            "summary": "No chip this week.",
+            "highlights": [],
+            "metrics": {
+                "verdict": "NONE",
+                "status": "PASS",
+                "explanation": "Hold for future doubles.",
+                "available_chips": ["bench_boost", "free_hit"],
+                "recommendation": {
+                    "best_gw": 34,
+                    "opportunity_cost": {
+                        "current_value": 3.1,
+                        "best_value": 6.0,
+                        "delta": 2.9,
+                    },
+                },
+            },
+        },
+        "squad_state": {
+            "version": "v1",
+            "summary": "Squad health is stable.",
+            "highlights": [],
+            "metrics": {
+                "squad_health": {"injured": 0, "doubtful": 1, "health_pct": 93},
+                "bench_warning": {"warning_message": "One weak bench slot"},
+            },
+        },
+        "decision_confidence": {
+            "version": "v1",
+            "confidence": "MEDIUM",
+            "score": 74,
+            "rationale": "Baseline confidence.",
+            "signals": ["fixture_swing"],
+        },
+    }
+    monkeypatch.setattr(
+        analyze_router.engine_service,
+        "get_job",
+        lambda _analysis_id: _job(status="complete", progress=100.0, phase="completed", results=canonical_results),
+    )
+
+    response = client.get("/api/v1/analyze/job-canonical-01")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "complete"
+    assert body["gameweek"] == 31
+    assert body["transfer_recommendations"]
+    assert body["captain_recommendation"]["primary"]["player_name"] == "Salah"
+    assert body["chip_strategy"]["bench_boost"]["available"] is True
+
+
 def test_post_interactive_analysis_accepts_overrides(client, monkeypatch) -> None:
     monkeypatch.setattr(analyze_router.engine_service, "create_analysis", lambda *_args, **_kwargs: _job())
 

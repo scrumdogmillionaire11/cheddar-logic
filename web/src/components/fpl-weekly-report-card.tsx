@@ -21,7 +21,19 @@ export default function FPLWeeklyReportCard({
   reportCard,
 }: FPLWeeklyReportCardProps) {
   if (!reportCard) {
-    return null;
+    return (
+      <div className="rounded-xl border border-white/10 bg-surface/80 p-4 md:p-8">
+        <div className="mb-2 flex items-center gap-3">
+          <h2 className="text-2xl font-semibold">Weekly Review</h2>
+          <span className="rounded bg-white/10 px-2 py-1 text-xs font-semibold text-cloud/60">
+            No prior GW
+          </span>
+        </div>
+        <p className="text-sm text-cloud/60">
+          Retrospective data is not available yet. Re-run after at least one completed gameweek to populate process verdict and drift flags.
+        </p>
+      </div>
+    );
   }
 
   const expectedPts = parseNumeric(reportCard.expected_pts);
@@ -36,7 +48,7 @@ export default function FPLWeeklyReportCard({
   return (
     <div className="rounded-xl border border-white/10 bg-surface/80 p-4 md:p-8">
       <div className="mb-2 flex items-center gap-3">
-        <h2 className="text-2xl font-semibold">Weekly Report Card</h2>
+        <h2 className="text-2xl font-semibold">Weekly Review</h2>
         {reportCard.gameweek != null && (
           <span className="rounded bg-white/10 px-2 py-1 text-xs font-semibold text-cloud/60">
             GW{reportCard.gameweek}

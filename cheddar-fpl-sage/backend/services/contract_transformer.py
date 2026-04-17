@@ -49,18 +49,103 @@ def _extract_expected_points(value: Dict[str, Any]) -> Optional[float]:
     return None
 
 
+def _card_payload(results: Dict[str, Any], card_key: str) -> Dict[str, Any]:
+    card = results.get(card_key)
+    if isinstance(card, dict):
+        return card
+    return {}
+
+
+def _card_metrics(results: Dict[str, Any], card_key: str) -> Dict[str, Any]:
+    metrics = _card_payload(results, card_key).get("metrics")
+    return metrics if isinstance(metrics, dict) else {}
+
+
+def _card_summary(results: Dict[str, Any], card_key: str) -> str:
+    summary = _card_payload(results, card_key).get("summary")
+    return str(summary) if summary is not None else ""
+
+
+def _plan_priority(plan: Dict[str, Any], fallback: str = "MEDIUM") -> str:
+    confidence = str(plan.get("confidence") or fallback).upper()
+    if confidence in {"HIGH", "URGENT", "MEDIUM", "LOW"}:
+        return "URGENT" if confidence == "HIGH" else confidence
+    return fallback
+
+
+def _append_transfer_pair(
+    recommendations: List[Dict[str, Any]],
+    plan: Dict[str, Any],
+    plan_id: str,
+) -> None:
+    out_name = plan.get("out")
+    in_name = plan.get("in")
+    if not out_name or not in_name:
+        return
+
+    priority = _plan_priority(plan)
+    gain = plan.get("delta_pts_4gw")
+    confidence = float(plan.get("confidence_score") or _confidence_from_priority(priority))
+
+    recommendations.append(
+        {
+            "id": f"{plan_id}_out",
+            "action": "remove",
+            "player_id": None,
+            "player_name": out_name,
+            "position": None,
+            "reason": plan.get("reason") or "",
+            "priority": priority,
+            "confidence": confidence,
+            "current_price": plan.get("net_cost"),
+            "expected_points_gained": gain,
+        }
+    )
+    recommendations.append(
+        {
+            "id": f"{plan_id}_in",
+            "action": "add",
+            "player_id": None,
+            "player_name": in_name,
+            "position": None,
+            "reason": plan.get("reason") or "",
+            "priority": priority,
+            "confidence": confidence,
+            "price": plan.get("net_cost"),
+            "expected_points": gain,
+            "expected_points_gained": gain,
+        }
+    )
+
+
 def _build_transfer_recommendations(results: Dict[str, Any]) -> List[Dict[str, Any]]:
-    transfer_recs = results.get("transfer_recommendations") or []
+    transfer_metrics = _card_metrics(results, "transfer_recommendation")
+    plans = transfer_metrics.get("transfer_plans")
     recommendations: List[Dict[str, Any]] = []
+
+    if isinstance(plans, dict):
+        primary = plans.get("primary")
+        if isinstance(primary, dict):
+            _append_transfer_pair(recommendations, primary, "transfer_primary")
+
+        secondary = plans.get("secondary")
+        if isinstance(secondary, dict):
+            _append_transfer_pair(recommendations, secondary, "transfer_secondary")
+
+        additional = plans.get("additional") or []
+        if isinstance(additional, list):
+            for index, plan in enumerate(additional, start=1):
+                if isinstance(plan, dict):
+                    _append_transfer_pair(recommendations, plan, f"transfer_additional_{index:02d}")
+
+    if recommendations:
+        return recommendations
+
+    # Compatibility fallback: use pre-transformed transfer list if canonical plans are unavailable.
+    transfer_recs = results.get("transfer_recommendations") or []
     for index, transfer in enumerate(transfer_recs, start=1):
         action_raw = str(transfer.get("action", "")).upper()
-        if action_raw == "OUT":
-            action = "remove"
-        elif action_raw == "IN":
-            action = "add"
-        else:
-            action = str(transfer.get("action", "add")).lower()
-
+        action = "remove" if action_raw == "OUT" else "add" if action_raw == "IN" else str(transfer.get("action", "add")).lower()
         priority = str(transfer.get("priority", "MEDIUM")).upper()
         player_name = transfer.get("player_name") or transfer.get("player_out") or transfer.get("player_in") or "Unknown"
         recommendation: Dict[str, Any] = {
@@ -73,7 +158,6 @@ def _build_transfer_recommendations(results: Dict[str, Any]) -> List[Dict[str, A
             "priority": priority,
             "confidence": float(transfer.get("confidence") or _confidence_from_priority(priority)),
         }
-
         if action == "remove":
             recommendation["current_price"] = transfer.get("price")
             recommendation["expected_points_gained"] = transfer.get("expected_points_gained")
@@ -81,22 +165,29 @@ def _build_transfer_recommendations(results: Dict[str, Any]) -> List[Dict[str, A
             recommendation["price"] = transfer.get("price")
             recommendation["expected_points"] = _extract_expected_points(transfer)
             recommendation["expected_points_gained"] = transfer.get("expected_points_gained")
-
         recommendations.append(recommendation)
     return recommendations
 
 
 def _build_chip_strategy(results: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
-    available_chips = set(results.get("available_chips") or [])
-    chip_rec = results.get("chip_recommendation") or {}
-    recommendation_text = str(chip_rec.get("recommendation", "")).lower()
-    rationale = chip_rec.get("rationale") or ""
-    best_gw = chip_rec.get("best_gw")
-    opportunity_cost = chip_rec.get("opportunity_cost") or {}
+    chip_metrics = _card_metrics(results, "chip_strategy")
+    recommendation_meta = chip_metrics.get("recommendation")
+    if not isinstance(recommendation_meta, dict):
+        recommendation_meta = results.get("chip_recommendation") if isinstance(results.get("chip_recommendation"), dict) else {}
+
+    available_chips = set(chip_metrics.get("available_chips") or results.get("available_chips") or [])
+    verdict = str(chip_metrics.get("verdict") or recommendation_meta.get("chip") or results.get("chip_verdict") or "NONE").upper()
+    rationale = chip_metrics.get("explanation") or _card_summary(results, "chip_strategy") or recommendation_meta.get("narrative") or recommendation_meta.get("rationale") or ""
+    best_gw = recommendation_meta.get("best_gw")
+    opportunity_cost = recommendation_meta.get("opportunity_cost") or {}
+
+    use_bb = verdict == "BB"
+    use_tc = verdict == "TC"
+    use_fh = verdict == "FH"
 
     chips: Dict[str, Dict[str, Any]] = {
         "bench_boost": {
-            "recommended": "bench" in recommendation_text,
+            "recommended": use_bb,
             "rationale": rationale,
             "available": "bench_boost" in available_chips,
             "best_window_gw": best_gw,
@@ -104,15 +195,15 @@ def _build_chip_strategy(results: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
             "best_window_value": opportunity_cost.get("best_value"),
         },
         "triple_captain": {
-            "recommended": "triple" in recommendation_text or "tc" in recommendation_text,
+            "recommended": use_tc,
             "rationale": rationale,
             "available": "triple_captain" in available_chips,
             "best_window_gw": best_gw,
-            "best_player": (results.get("captain") or {}).get("name"),
+            "best_player": (_card_metrics(results, "captaincy").get("captain") or results.get("captain") or {}).get("name"),
             "expected_boost": opportunity_cost.get("delta"),
         },
         "free_hit": {
-            "recommended": "free hit" in recommendation_text or "fh" in recommendation_text,
+            "recommended": use_fh,
             "rationale": rationale,
             "available": "free_hit" in available_chips,
             "best_window_gw": best_gw,
@@ -122,8 +213,9 @@ def _build_chip_strategy(results: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
 
 
 def _build_captain_recommendation(results: Dict[str, Any]) -> Dict[str, Any]:
-    primary = results.get("captain") or {}
-    vice = results.get("vice_captain") or {}
+    captain_metrics = _card_metrics(results, "captaincy")
+    primary = captain_metrics.get("captain") if isinstance(captain_metrics.get("captain"), dict) else (results.get("captain") or {})
+    vice = captain_metrics.get("vice_captain") if isinstance(captain_metrics.get("vice_captain"), dict) else (results.get("vice_captain") or {})
     return {
         "primary": {
             "player_id": primary.get("player_id"),
@@ -152,7 +244,8 @@ def _build_captain_recommendation(results: Dict[str, Any]) -> Dict[str, Any]:
 
 def _build_team_weaknesses(results: Dict[str, Any]) -> List[Dict[str, Any]]:
     weaknesses: List[Dict[str, Any]] = []
-    squad_health = results.get("squad_health") or {}
+    squad_metrics = _card_metrics(results, "squad_state")
+    squad_health = squad_metrics.get("squad_health") if isinstance(squad_metrics.get("squad_health"), dict) else (results.get("squad_health") or {})
     injured = int(squad_health.get("injured", 0) or 0)
     doubtful = int(squad_health.get("doubtful", 0) or 0)
     if injured > 0:
@@ -173,7 +266,7 @@ def _build_team_weaknesses(results: Dict[str, Any]) -> List[Dict[str, Any]]:
                 "severity": "MEDIUM",
             }
         )
-    bench_warning = results.get("bench_warning") or {}
+    bench_warning = squad_metrics.get("bench_warning") if isinstance(squad_metrics.get("bench_warning"), dict) else (results.get("bench_warning") or {})
     if bench_warning:
         weaknesses.append(
             {
@@ -199,10 +292,35 @@ def _build_risk_flags(results: Dict[str, Any]) -> List[Dict[str, Any]]:
                 "mitigation": item.get("mitigation"),
             }
         )
+
+    weekly_review_metrics = _card_metrics(results, "weekly_review")
+    drift_flags = weekly_review_metrics.get("drift_flags")
+    if isinstance(drift_flags, list):
+        for drift in drift_flags:
+            token = str(drift or "").strip()
+            if token:
+                risk_flags.append(
+                    {
+                        "flag": token,
+                        "player_id": None,
+                        "player_name": None,
+                        "description": f"Retrospective drift signal: {token}",
+                        "mitigation": None,
+                    }
+                )
     return risk_flags
 
 
 def _summary_confidence(results: Dict[str, Any]) -> float:
+    confidence_card = results.get("decision_confidence")
+    if isinstance(confidence_card, dict):
+        score = confidence_card.get("score")
+        try:
+            if score is not None:
+                return round(float(score) / 100.0, 4)
+        except (TypeError, ValueError):
+            pass
+
     confidence_text = str(results.get("confidence", "MEDIUM")).lower()
     if "high" in confidence_text:
         return 0.9
@@ -217,6 +335,8 @@ def build_detailed_analysis_contract(job: Any) -> Dict[str, Any]:
     normalized_status = _normalize_status(raw_status)
     response_status = "completed" if raw_status == "completed" else normalized_status
     results = getattr(job, "results", None) or {}
+    gameweek_plan_metrics = _card_metrics(results, "gameweek_plan")
+    squad_metrics = _card_metrics(results, "squad_state")
     transfer_recommendations = _build_transfer_recommendations(results)
     urgent_count = sum(1 for rec in transfer_recommendations if rec.get("priority") == "URGENT")
     expected_improvement = sum(float(rec.get("expected_points_gained") or 0) for rec in transfer_recommendations)
@@ -228,10 +348,10 @@ def build_detailed_analysis_contract(job: Any) -> Dict[str, Any]:
         "status": response_status,
         "created_at": _iso(getattr(job, "created_at", None)),
         "completed_at": _iso(getattr(job, "completed_at", None)),
-        "gameweek": results.get("current_gw"),
+        "gameweek": gameweek_plan_metrics.get("gameweek") or results.get("current_gw"),
         "season": results.get("season", "2025-26"),
         "results": results,
-        "strategy_mode": results.get("strategy_mode"),
+        "strategy_mode": gameweek_plan_metrics.get("strategy_mode") or squad_metrics.get("strategy_mode") or results.get("strategy_mode"),
         "manager_state": results.get("manager_state"),
         "near_threshold_moves": results.get("near_threshold_moves") or [],
         "strategy_paths": results.get("strategy_paths") or {},

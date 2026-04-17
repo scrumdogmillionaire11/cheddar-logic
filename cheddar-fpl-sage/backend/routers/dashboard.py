@@ -16,6 +16,20 @@ router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 ACTIVE_STATUSES = {"queued", "running", "analyzing", "pending"}
 
 
+def _card_payload(results: Dict[str, Any], card_key: str) -> Dict[str, Any]:
+    card = results.get(card_key)
+    if isinstance(card, dict):
+        return card
+    return {}
+
+
+def _card_metrics(results: Dict[str, Any], card_key: str) -> Dict[str, Any]:
+    metrics = _card_payload(results, card_key).get("metrics")
+    if isinstance(metrics, dict):
+        return metrics
+    return {}
+
+
 # Response Models
 class PlayerData(BaseModel):
     name: str
@@ -120,30 +134,30 @@ async def get_dashboard_data(analysis_id: str):
             detail="Analysis completed but no results found"
         )
     
-    # Extract decision data
-    decision = results.get("decision", {})
+    gameweek_plan = _card_metrics(results, "gameweek_plan")
+    captaincy_metrics = _card_metrics(results, "captaincy")
     
     # Build dashboard response
     dashboard_data = {
         "gameweek": {
-            "current": results.get("gameweek"),
+            "current": gameweek_plan.get("gameweek") or results.get("gameweek") or results.get("current_gw"),
             "season": results.get("season", "2025-26"),
             "deadline": None,  # TODO: Add from FPL API if needed
         },
         "my_team": _build_team_data(results),
-        "weaknesses": _extract_weaknesses(decision),
-        "transfer_targets": _extract_transfer_targets(decision),
-        "chip_advice": _extract_chip_advice(decision),
-        "captain_advice": _extract_captain_advice(decision),
+        "weaknesses": _extract_weaknesses(results),
+        "transfer_targets": _extract_transfer_targets(results),
+        "chip_advice": _extract_chip_advice(results),
+        "captain_advice": _extract_captain_advice(results),
         "decision_summary": {
-            "decision": decision.get("primary_decision", "UNKNOWN"),
-            "reasoning": decision.get("reasoning", "No reasoning available"),
-            "status": decision.get("decision_status", "UNKNOWN"),
-            "confidence": str(decision.get("confidence_score", 0.0)),
+            "decision": gameweek_plan.get("primary_action") or results.get("primary_decision", "UNKNOWN"),
+            "reasoning": gameweek_plan.get("justification") or _card_payload(results, "gameweek_plan").get("summary") or results.get("reasoning", "No reasoning available"),
+            "status": str(_card_metrics(results, "chip_strategy").get("status") or results.get("decision_status", "UNKNOWN")),
+            "confidence": str((_card_payload(results, "decision_confidence").get("score") or 0.0)),
         },
         "metadata": {
             "analysis_id": analysis_id,
-            "generated_at": results.get("generated_at"),
+            "generated_at": gameweek_plan.get("generated_at") or results.get("generated_at"),
             "analysis_timestamp": results.get("analysis_timestamp"),
             "run_id": results.get("run_id"),
         }
@@ -153,98 +167,122 @@ async def get_dashboard_data(analysis_id: str):
 
 
 def _build_team_data(results: Dict) -> Optional[Dict[str, Any]]:
-    """Extract team data from analysis results."""
-    # This would need access to the actual team picks
-    # For now, return basic structure
-    # TODO: Load from model_inputs or enhanced_fpl_data
+    """Extract team data from canonical squad_state card with compatibility fallback."""
+    squad_metrics = _card_metrics(results, "squad_state")
+    starting_xi = squad_metrics.get("starting_xi") if isinstance(squad_metrics.get("starting_xi"), list) else (results.get("starting_xi") or [])
+    bench = squad_metrics.get("bench") if isinstance(squad_metrics.get("bench"), list) else (results.get("bench") or [])
+
     return {
-        "starting_11": [],  # Would populate from analysis
-        "bench": [],
+        "starting_11": starting_xi,
+        "bench": bench,
         "value": None,
         "bank": None,
-        "transfers_available": None,
+        "transfers_available": _card_metrics(results, "gameweek_plan").get("free_transfers") or results.get("free_transfers"),
     }
 
 
-def _extract_weaknesses(decision: Dict) -> List[WeaknessData]:
-    """Extract team weaknesses from decision data."""
+def _extract_weaknesses(results: Dict[str, Any]) -> List[WeaknessData]:
+    """Extract team weaknesses from canonical cards with compatibility fallback."""
     weaknesses = []
-    
-    # Check for squad rule violations
-    block_reason = decision.get("block_reason")
-    if block_reason and "violation" in block_reason.lower():
-        weaknesses.append(WeaknessData(
-            type="squad_rule",
-            severity="high",
-            player="Squad",
-            detail=block_reason,
-            action="Immediate transfer required"
-        ))
-    
-    # Extract from transfer recommendations
-    transfers = decision.get("transfer_recommendations", [])
-    for t in transfers:
-        if t.get("priority") == "URGENT":
-            reason = t.get("reason", "")
-            
-            # Determine weakness type
-            weakness_type = "form"
-            if "injury" in reason.lower() or "injured" in reason.lower():
-                weakness_type = "injury"
-            elif "violation" in reason.lower():
-                weakness_type = "squad_rule"
-            elif "suspend" in reason.lower():
-                weakness_type = "suspension"
-            
-            if t.get("action") == "OUT":
-                weaknesses.append(WeaknessData(
-                    type=weakness_type,
-                    severity="high" if t.get("priority") == "URGENT" else "medium",
-                    player=t.get("player_name", "Unknown"),
-                    detail=reason,
-                    action=f"Transfer out (replace with {_get_matching_in_player(transfers, t)})"
-                ))
-    
-    # Check risk scenarios
-    risk_scenarios = decision.get("risk_scenarios", [])
-    for risk in risk_scenarios:
-        if risk.get("risk_level") == "critical":
-            weaknesses.append(WeaknessData(
-                type="risk",
+    squad_metrics = _card_metrics(results, "squad_state")
+    squad_health = squad_metrics.get("squad_health") if isinstance(squad_metrics.get("squad_health"), dict) else {}
+    if int(squad_health.get("injured", 0) or 0) > 0:
+        weaknesses.append(
+            WeaknessData(
+                type="injury",
                 severity="high",
-                player="Team",
-                detail=risk.get("condition", "Unknown risk"),
-                action=risk.get("mitigation_action", "Review team")
-            ))
+                player="Squad",
+                detail=f"{squad_health.get('injured')} injured players currently flagged.",
+                action="Prioritize replacing unavailable starters.",
+            )
+        )
+
+    bench_warning = squad_metrics.get("bench_warning") if isinstance(squad_metrics.get("bench_warning"), dict) else (results.get("bench_warning") or {})
+    if bench_warning:
+        weaknesses.append(
+            WeaknessData(
+                type="bench_depth",
+                severity="medium",
+                player="Bench",
+                detail=bench_warning.get("warning_message", "Bench depth concern."),
+                action=bench_warning.get("suggestion", "Review bench structure."),
+            )
+        )
+
+    weekly_review_metrics = _card_metrics(results, "weekly_review")
+    drift_flags = weekly_review_metrics.get("drift_flags")
+    if isinstance(drift_flags, list):
+        for flag in drift_flags:
+            token = str(flag or "").strip()
+            if token:
+                weaknesses.append(
+                    WeaknessData(
+                        type="retrospective",
+                        severity="medium",
+                        player="Process",
+                        detail=f"Retrospective drift signal: {token}",
+                        action="Review prior gameweek decision execution.",
+                    )
+                )
     
     return weaknesses
 
 
-def _get_matching_in_player(transfers: List, out_transfer: Dict) -> str:
-    """Find the IN transfer that matches this OUT transfer."""
-    for t in transfers:
-        if t.get("action") == "IN" and t.get("priority") == out_transfer.get("priority"):
-            return t.get("player_name", "suggested player")
-    return "suggested player"
-
-
-def _extract_transfer_targets(decision: Dict) -> List[TransferTarget]:
-    """Extract transfer recommendations."""
+def _extract_transfer_targets(results: Dict) -> List[TransferTarget]:
+    """Extract transfer targets from canonical transfer_recommendation card."""
     targets = []
-    
-    transfers = decision.get("transfer_recommendations", [])
-    for t in transfers:
-        if t.get("action") == "IN":
-            targets.append(TransferTarget(
-                name=t.get("player_name", "Unknown"),
-                team=t.get("team", ""),
-                position=t.get("position", ""),
-                cost=t.get("price"),
-                expected_points=t.get("expected_points"),
-                priority=t.get("priority"),
-                reason=t.get("reason"),
-                injury_status=t.get("injury_status", "Unknown")
-            ))
+
+    transfer_metrics = _card_metrics(results, "transfer_recommendation")
+    transfer_plans = transfer_metrics.get("transfer_plans")
+    if isinstance(transfer_plans, dict):
+        for key in ("primary", "secondary"):
+            plan = transfer_plans.get(key)
+            if isinstance(plan, dict) and plan.get("in"):
+                targets.append(
+                    TransferTarget(
+                        name=plan.get("in", "Unknown"),
+                        team="",
+                        position="",
+                        cost=plan.get("net_cost"),
+                        expected_points=plan.get("delta_pts_4gw"),
+                        priority=(plan.get("confidence") or "MEDIUM"),
+                        reason=plan.get("reason"),
+                        injury_status=None,
+                    )
+                )
+
+        additional = transfer_plans.get("additional") or []
+        if isinstance(additional, list):
+            for plan in additional:
+                if isinstance(plan, dict) and plan.get("in"):
+                    targets.append(
+                        TransferTarget(
+                            name=plan.get("in", "Unknown"),
+                            team="",
+                            position="",
+                            cost=plan.get("net_cost"),
+                            expected_points=plan.get("delta_pts_4gw"),
+                            priority=(plan.get("confidence") or "LOW"),
+                            reason=plan.get("reason"),
+                            injury_status=None,
+                        )
+                    )
+
+    if not targets:
+        # Compatibility fallback
+        transfers = results.get("transfer_recommendations", [])
+        for t in transfers:
+            if t.get("action") == "IN":
+                targets.append(TransferTarget(
+                    name=t.get("player_name", "Unknown"),
+                    team=t.get("team", ""),
+                    position=t.get("position", ""),
+                    cost=t.get("price"),
+                    expected_points=t.get("expected_points"),
+                    priority=t.get("priority"),
+                    reason=t.get("reason"),
+                    injury_status=t.get("injury_status", "Unknown")
+                ))
     
     # Sort by priority (URGENT first) and expected points
     priority_order = {"URGENT": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}
@@ -258,50 +296,52 @@ def _extract_transfer_targets(decision: Dict) -> List[TransferTarget]:
     return targets[:5]  # Top 5 targets
 
 
-def _extract_chip_advice(decision: Dict) -> List[ChipAdvice]:
-    """Extract chip timing recommendations."""
+def _extract_chip_advice(results: Dict) -> List[ChipAdvice]:
+    """Extract chip timing recommendations from canonical chip_strategy card."""
     advice = []
-    
-    chip_guidance = decision.get("chip_guidance")
-    if chip_guidance:
-        # Format depends on chip_guidance structure
-        # For now, return basic advice
-        advice.append(ChipAdvice(
-            chip="Wildcard",
-            recommendation="Check analysis for details",
-            reason="See full analysis output",
-            timing=None
-        ))
-    
-    # Check for Free Hit context
-    free_hit_context = decision.get("free_hit_context")
-    if free_hit_context:
-        advice.append(ChipAdvice(
-            chip="Free Hit",
-            recommendation="Available for use",
-            reason="See free_hit_plan in full analysis",
-            timing="This gameweek"
-        ))
+    chip_metrics = _card_metrics(results, "chip_strategy")
+    verdict = str(chip_metrics.get("verdict") or results.get("chip_verdict") or "NONE").upper()
+    recommendation = str(chip_metrics.get("status") or "PASS").upper()
+    reason = chip_metrics.get("explanation") or _card_payload(results, "chip_strategy").get("summary") or results.get("chip_explanation") or "No chip advice provided."
+    timing = None
+    recommendation_meta = chip_metrics.get("recommendation")
+    if isinstance(recommendation_meta, dict):
+        best_gw = recommendation_meta.get("best_gw")
+        if best_gw is not None:
+            timing = f"Target GW {best_gw}"
+
+    advice.append(
+        ChipAdvice(
+            chip=verdict,
+            recommendation=recommendation,
+            reason=reason,
+            timing=timing,
+        )
+    )
     
     return advice
 
 
-def _extract_captain_advice(decision: Dict) -> Optional[Dict[str, Any]]:
-    """Extract captain recommendations."""
-    captaincy = decision.get("captaincy")
+def _extract_captain_advice(results: Dict) -> Optional[Dict[str, Any]]:
+    """Extract captain recommendations from canonical captaincy card."""
+    captaincy = _card_metrics(results, "captaincy")
     if not captaincy:
+        captain = results.get("captain") if isinstance(results.get("captain"), dict) else {}
+        vice = results.get("vice_captain") if isinstance(results.get("vice_captain"), dict) else {}
+    else:
+        captain = captaincy.get("captain") if isinstance(captaincy.get("captain"), dict) else {}
+        vice = captaincy.get("vice_captain") if isinstance(captaincy.get("vice_captain"), dict) else {}
+
+    if not captain and not vice:
         return None
-    
-    captain = captaincy.get("captain", {})
-    vice = captaincy.get("vice_captain", {})
-    
+
     return {
         "captain": {
             "name": captain.get("name"),
             "team": captain.get("team"),
             "position": captain.get("position"),
             "ownership_pct": captain.get("ownership_pct"),
-            "expected_points": captain.get("rationale", "").split("(")[1].split("pts")[0] if "pts" in captain.get("rationale", "") else None,
+            "expected_points": captain.get("expected_pts"),
             "rationale": captain.get("rationale"),
         },
         "vice_captain": {
@@ -311,15 +351,7 @@ def _extract_captain_advice(decision: Dict) -> Optional[Dict[str, Any]]:
             "ownership_pct": vice.get("ownership_pct"),
             "rationale": vice.get("rationale"),
         },
-        "alternatives": [
-            {
-                "name": c.get("name"),
-                "team": c.get("team"),
-                "expected_points": c.get("nextGW_pts"),
-                "ownership_pct": c.get("ownership_pct"),
-            }
-            for c in captaincy.get("candidate_pool", [])[:3]
-        ]
+        "alternatives": [],
     }
 
 
@@ -364,16 +396,16 @@ async def get_simple_dashboard_data(analysis_id: str):
             "message": "Analysis completed but no results available"
         }
     
-    decision = results.get("decision", {})
+    gameweek_plan = _card_metrics(results, "gameweek_plan")
     
     # Ultra-simple format
     return {
         "status": "completed",
-        "gameweek": results.get("gameweek"),
-        "decision": decision.get("primary_decision"),
-        "reasoning": decision.get("reasoning"),
-        "transfers": decision.get("transfer_recommendations", []),
-        "captain": decision.get("captaincy", {}).get("captain", {}),
+        "gameweek": gameweek_plan.get("gameweek") or results.get("gameweek") or results.get("current_gw"),
+        "decision": gameweek_plan.get("primary_action") or results.get("primary_decision"),
+        "reasoning": gameweek_plan.get("justification") or _card_payload(results, "gameweek_plan").get("summary"),
+        "transfers": [t.model_dump() for t in _extract_transfer_targets(results)],
+        "captain": (_card_metrics(results, "captaincy").get("captain") or results.get("captain") or {}),
         "analysis_id": analysis_id,
-        "timestamp": results.get("generated_at"),
+        "timestamp": gameweek_plan.get("generated_at") or results.get("generated_at"),
     }
