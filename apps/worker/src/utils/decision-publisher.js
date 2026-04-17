@@ -968,6 +968,7 @@ module.exports = {
   capturePublishedDecisionState,
   assertNoDecisionMutation,
   syncCanonicalDecisionEnvelope,
+  ensureDecisionConsistencyEnvelope,
   deriveAction,
   deriveVolEnv,
 };

@@ -80,6 +80,7 @@ const {
   applyUiActionFields,
   applyDecisionVeto,
   syncCanonicalDecisionEnvelope,
+  ensureDecisionConsistencyEnvelope,
 } = require('../utils/decision-publisher');
 const { 
   assertNoSilentMarketDrop,
@@ -1488,6 +1489,19 @@ function applyNhlGoalieExecutionStatusGuard(card, paceResult) {
   card.payloadData.execution_status = 'PROJECTION_ONLY';
 }
 
+function shouldEnforceNhlConsistencySnapshotInvariant(payload) {
+  const marketType = String(
+    payload?.market_type || payload?.recommended_bet_type || '',
+  ).toUpperCase();
+  if (marketType !== 'TOTAL') return false;
+
+  const canonicalPublishReady =
+    payload?.decision_v2?.canonical_envelope_v2?.publish_ready;
+  if (canonicalPublishReady === true) return true;
+
+  return payload?.publish_ready === true || payload?._publish_state?.publish_ready === true;
+}
+
 function buildNhlModelSnapshot({ paceResult, payload, sigmaTotal }) {
   const missingFields = [];
   const requiredFields = [
@@ -1516,11 +1530,17 @@ function buildNhlModelSnapshot({ paceResult, payload, sigmaTotal }) {
     event_env: payload?.consistency?.event_env ?? null,
     total_bias: payload?.consistency?.total_bias ?? null,
   };
-  Object.entries(consistency).forEach(([field, value]) => {
-    if (!isNonEmptyString(value)) {
-      missingFields.push(`consistency.${field}`);
-    }
-  });
+  const enforceConsistencyInvariant =
+    shouldEnforceNhlConsistencySnapshotInvariant(payload);
+  // Recovery-bucket boundary: soft-pass/degraded/hidden paths are not required
+  // to carry full totals consistency fields at snapshot time.
+  if (enforceConsistencyInvariant) {
+    Object.entries(consistency).forEach(([field, value]) => {
+      if (!isNonEmptyString(value)) {
+        missingFields.push(`consistency.${field}`);
+      }
+    });
+  }
 
   const snapshot = {
     homeExpected: paceResult?.homeExpected ?? null,
@@ -1589,6 +1609,16 @@ function attachNhlSnapshotAuditFields(card, { paceResult, sigmaTotal } = {}) {
       `pace snapshot source missing for ${card.cardType} (${card.payloadData.game_id || 'unknown-game'})`,
     );
     return;
+  }
+
+  // Defensive, idempotent re-derivation: snapshotting can run on driver cards
+  // that bypass Wave1 finalizeDecisionFields consistency synthesis.
+  if (
+    !isNonEmptyString(card.payloadData?.consistency?.pace_tier) ||
+    !isNonEmptyString(card.payloadData?.consistency?.event_env) ||
+    !isNonEmptyString(card.payloadData?.consistency?.total_bias)
+  ) {
+    ensureDecisionConsistencyEnvelope(card.payloadData);
   }
 
   card.payloadData._model_snapshot = buildNhlModelSnapshot({
