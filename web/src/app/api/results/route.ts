@@ -47,8 +47,8 @@ type DecisionSegmentMeta = {
   canonicalStatus: 'PLAY' | 'LEAN';
 };
 
-// TODO(WI-0968 legacy): remove this fallback chain once historical payloads
-// consistently provide decision_v2.official_status for results rows.
+// Keep this fallback chain until historical payloads consistently provide
+// decision_v2.official_status for results rows.
 function resolveLegacyDecisionTierFallback(
   payload: Record<string, unknown> | null,
 ): DecisionTierStatus {

@@ -682,17 +682,19 @@ export default function GameCardItem({
               ? 'No edge at current price'
               : 'No market-specific edge available');
   const baseDriverLine =
-    primaryReasonCode && !INFORMATIONAL_CODES.has(primaryReasonCode)
-      ? formatReasonCode(primaryReasonCode)
-      : canRenderModelSummary
-        ? (() => {
-            const whyCode = displayPlay.whyCode;
-            if (whyCode && INFORMATIONAL_CODES.has(whyCode)) {
-              return displayPlay.whyText || null;
-            }
-            return displayPlay.whyText || (whyCode ? formatReasonCode(whyCode) : null);
-          })()
-        : 'Analysis unavailable (drivers missing).';
+    visibleDecision === 'PASS'
+      ? null
+      : primaryReasonCode && !INFORMATIONAL_CODES.has(primaryReasonCode)
+        ? formatReasonCode(primaryReasonCode)
+        : canRenderModelSummary
+          ? (() => {
+              const whyCode = displayPlay.whyCode;
+              if (whyCode && INFORMATIONAL_CODES.has(whyCode)) {
+                return displayPlay.whyText || null;
+              }
+              return displayPlay.whyText || (whyCode ? formatReasonCode(whyCode) : null);
+            })()
+          : 'Analysis unavailable (drivers missing).';
   const contextLine2 = baseDriverLine
     ? `Driver: ${baseDriverLine}`
     : activeRiskCodes.length > 0
@@ -713,9 +715,11 @@ export default function GameCardItem({
     Boolean(finalMarketDecision) &&
     Boolean(decisionV2) &&
     (hasEdgeMathContext || hasActionableEdge || Boolean(finalMarketDecision?.fair_price));
-  const hasDriverDetails = decisionV2
-    ? decisionV2.driver_reasons.length > 0
-    : fallbackDecision.topContributors.length > 0;
+  const hasDriverDetails =
+    visibleDecision !== 'PASS' &&
+    (decisionV2
+      ? decisionV2.driver_reasons.length > 0
+      : fallbackDecision.topContributors.length > 0);
   const hasMissingInputDetails =
     (!decisionV2 &&
       (isBroken || isDegraded) &&
@@ -824,7 +828,7 @@ export default function GameCardItem({
           )}
         </div>
 
-        <MarketSignalPills pills={deriveMarketSignals(card)} />
+        {visibleDecision !== 'PASS' && <MarketSignalPills pills={deriveMarketSignals(card)} />}
 
         {isNhlPace1p && typeof projectedTotal1p === 'number' && (
           <div className="rounded-md border border-white/10 bg-white/5 p-3">

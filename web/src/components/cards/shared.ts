@@ -366,9 +366,37 @@ export function isActionableProjectionPlay(
   play: GameData['plays'][number] | null | undefined,
 ): boolean {
   if (!play) return false;
+
+  const toToken = (value: unknown): string | null => {
+    if (typeof value !== 'string') return null;
+    const token = value.trim().toUpperCase();
+    return token.length > 0 ? token : null;
+  };
+
+  const statusSignals = [
+    toToken(
+      (
+        play as {
+          decision_v2?: {
+            official_status?: string | null;
+          };
+        }
+      ).decision_v2?.official_status,
+    ),
+    toToken(play.status),
+    toToken((play as { action?: string | null }).action),
+  ];
+
+  for (const signal of statusSignals) {
+    if (signal === 'PASS' || signal === 'HOLD' || signal === 'WATCH') {
+      return false;
+    }
+    if (signal === 'PLAY' || signal === 'LEAN' || signal === 'FIRE') {
+      break;
+    }
+  }
+
   const kind = (play.kind ?? 'PLAY') === 'PLAY';
-  const status = String(play.status || '').trim().toUpperCase();
-  if (status === 'PASS') return false;
 
   const side = play.selection?.side?.toUpperCase() ?? '';
   const hasSelection = side !== '' && side !== 'NONE';
