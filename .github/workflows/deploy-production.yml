@@ -202,19 +202,45 @@ jobs:
             # Instead we do a hash-gated incremental install for web: wipe only
             # when package-lock.json has changed since last deploy.
             rm -rf packages/*/node_modules apps/*/node_modules
+            retry_npm_install() {
+              label="$1"
+              shift
+              attempts="${NPM_INSTALL_ATTEMPTS:-4}"
+              delay=5
+              last_exit=1
+              for i in $(seq 1 "$attempts"); do
+                if "$@"; then
+                  echo "$label succeeded on attempt $i/$attempts"
+                  return 0
+                fi
+                last_exit=$?
+                echo "$label failed on attempt $i/$attempts (exit=$last_exit)"
+                if [ "$i" -lt "$attempts" ]; then
+                  sleep "$delay"
+                  delay=$((delay * 2))
+                fi
+              done
+              return "$last_exit"
+            }
+            # Tune npm fetch retry behavior for flaky network conditions on the Pi.
+            npm config set fetch-retries 5
+            npm config set fetch-retry-factor 2
+            npm config set fetch-retry-mintimeout 10000
+            npm config set fetch-retry-maxtimeout 120000
+            npm config set fetch-timeout 300000
             # Install dependencies
-            npm --prefix packages/data install --omit=dev
-            npm --prefix packages/models install --omit=dev
-            npm --prefix packages/adapters install --omit=dev
-            npm --prefix packages/odds install --omit=dev
-            npm --prefix apps/worker install --omit=dev
+            retry_npm_install "packages/data install" npm --prefix packages/data install --omit=dev
+            retry_npm_install "packages/models install" npm --prefix packages/models install --omit=dev
+            retry_npm_install "packages/adapters install" npm --prefix packages/adapters install --omit=dev
+            retry_npm_install "packages/odds install" npm --prefix packages/odds install --omit=dev
+            retry_npm_install "apps/worker install" npm --prefix apps/worker install --omit=dev
             # Web: only wipe node_modules when the lockfile changed — prevents
             # better-sqlite3 from re-downloading its ARM prebuild on every deploy.
             WEB_LOCK_HASH=$(md5sum web/package-lock.json | awk '{print $1}')
             WEB_LOCK_STAMP="/opt/cheddar-logic/.web-node-modules-lock-hash"
             if [ -f "$WEB_LOCK_STAMP" ] && [ "$(cat "$WEB_LOCK_STAMP")" = "$WEB_LOCK_HASH" ] && [ -d "web/node_modules" ]; then
               echo "web/package-lock.json unchanged — running incremental install (--prefer-offline)"
-              npm --prefix web install --include=dev --prefer-offline
+              retry_npm_install "web incremental install" npm --prefix web install --include=dev --prefer-offline
             else
               echo "web/package-lock.json changed or node_modules absent — full install (build-from-source=better-sqlite3)"
               rm -rf web/node_modules
@@ -222,7 +248,7 @@ jobs:
               # prebuild-install fetch an ARM binary from GitHub Releases, which
               # hangs indefinitely on the Pi. Compiling takes ~2-5 min on ARM
               # but always completes; the GitHub download silently stalls forever.
-              npm --prefix web install --include=dev --build-from-source=better-sqlite3
+              retry_npm_install "web full install" npm --prefix web install --include=dev --build-from-source=better-sqlite3
               echo "$WEB_LOCK_HASH" > "$WEB_LOCK_STAMP"
             fi
             # Resolve canonical DB path from prod env (supports CHEDDAR_DB_PATH or CHEDDAR_DATA_DIR)
