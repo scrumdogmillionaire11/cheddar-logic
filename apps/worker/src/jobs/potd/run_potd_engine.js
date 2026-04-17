@@ -33,6 +33,38 @@ const { sendDiscordMessages } = require('../post_discord_cards');
 
 function isFiniteNumber(v) { return typeof v === 'number' && Number.isFinite(v); }
 
+function canonicalizeShadowSelection(candidate) {
+  const explicit = String(candidate?.selection || '').toUpperCase();
+  if (explicit === 'HOME' || explicit === 'AWAY' || explicit === 'OVER' || explicit === 'UNDER') {
+    return explicit;
+  }
+
+  const marketType = String(candidate?.marketType || '').toUpperCase();
+  const selectionLabel = String(candidate?.selectionLabel || '').toUpperCase();
+
+  if (marketType === 'TOTAL') {
+    if (selectionLabel.startsWith('OVER')) return 'OVER';
+    if (selectionLabel.startsWith('UNDER')) return 'UNDER';
+  }
+
+  return null;
+}
+
+function normalizeShadowLine(line) {
+  if (!isFiniteNumber(line)) return 'NA';
+  return Number(line).toFixed(3);
+}
+
+function buildShadowCandidateIdentity(candidate, canonicalSelection) {
+  const sport = String(candidate?.sport || '').toUpperCase();
+  const marketType = String(candidate?.marketType || '').toUpperCase();
+  const gameId = String(candidate?.gameId || '').trim();
+  const homeTeam = String(candidate?.home_team || '').trim();
+  const awayTeam = String(candidate?.away_team || '').trim();
+  const gameRef = gameId || `${homeTeam}__${awayTeam}`;
+  return `${sport}|${gameRef}|${marketType}|${canonicalSelection}|${normalizeShadowLine(candidate?.line)}`;
+}
+
 function writeDailyStats(db, {
   playDate,
   potdFired,
@@ -84,15 +116,39 @@ function writeShadowCandidates(db, { playDate, capturedAt, minEdgePct, candidate
       play_date, captured_at, sport, market_type, selection_label,
       home_team, away_team, game_id, price, line,
       edge_pct, total_score, line_value, market_consensus,
-      model_win_prob, implied_prob, projection_source, gap_to_min_edge
+      model_win_prob, implied_prob, projection_source, gap_to_min_edge,
+      selection, game_time_utc, candidate_identity_key
     ) VALUES (
       @play_date, @captured_at, @sport, @market_type, @selection_label,
       @home_team, @away_team, @game_id, @price, @line,
       @edge_pct, @total_score, @line_value, @market_consensus,
-      @model_win_prob, @implied_prob, @projection_source, @gap_to_min_edge
+      @model_win_prob, @implied_prob, @projection_source, @gap_to_min_edge,
+      @selection, @game_time_utc, @candidate_identity_key
     )
+    ON CONFLICT(play_date, candidate_identity_key) DO UPDATE SET
+      captured_at = excluded.captured_at,
+      sport = excluded.sport,
+      market_type = excluded.market_type,
+      selection_label = excluded.selection_label,
+      home_team = excluded.home_team,
+      away_team = excluded.away_team,
+      game_id = excluded.game_id,
+      price = excluded.price,
+      line = excluded.line,
+      edge_pct = excluded.edge_pct,
+      total_score = excluded.total_score,
+      line_value = excluded.line_value,
+      market_consensus = excluded.market_consensus,
+      model_win_prob = excluded.model_win_prob,
+      implied_prob = excluded.implied_prob,
+      projection_source = excluded.projection_source,
+      gap_to_min_edge = excluded.gap_to_min_edge,
+      selection = excluded.selection,
+      game_time_utc = excluded.game_time_utc
   `);
   for (const c of candidates) {
+    const canonicalSelection = canonicalizeShadowSelection(c);
+    if (!canonicalSelection) continue;
     stmt.run({
       play_date: playDate,
       captured_at: capturedAt,
@@ -112,6 +168,9 @@ function writeShadowCandidates(db, { playDate, capturedAt, minEdgePct, candidate
       implied_prob: c.impliedProb ?? null,
       projection_source: c.scoreBreakdown && c.scoreBreakdown.projection_source ? c.scoreBreakdown.projection_source : null,
       gap_to_min_edge: c.edgePct != null ? c.edgePct - minEdgePct : null,
+      selection: canonicalSelection,
+      game_time_utc: c.commence_time ?? null,
+      candidate_identity_key: buildShadowCandidateIdentity(c, canonicalSelection),
     });
   }
 }
@@ -544,6 +603,7 @@ async function runPotdEngine({
         bestLabel === 'LOW';
 
       if (lowConfidenceCandidate) {
+        writeShadowCandidates(db, { playDate, capturedAt: nowIso, minEdgePct: POTD_MIN_EDGE, candidates: allScoredCandidates });
         writeNominees(db, { playDate, capturedAt: nowIso, winnerStatus: 'NO_PICK', nominees: rankedNominees });
         writeDailyStats(db, {
           playDate,
@@ -582,6 +642,7 @@ async function runPotdEngine({
       });
 
       if (!Number.isFinite(rawWager) || rawWager <= 0) {
+        writeShadowCandidates(db, { playDate, capturedAt: nowIso, minEdgePct: POTD_MIN_EDGE, candidates: allScoredCandidates });
         writeNominees(db, { playDate, capturedAt: nowIso, winnerStatus: 'NO_PICK', nominees: rankedNominees });
         writeDailyStats(db, {
           playDate,
@@ -611,6 +672,7 @@ async function runPotdEngine({
       // Minimum-stake gate: if Kelly says bet less than 0.5 % of bankroll the
       // play is not worth featuring — reject rather than post dust.
       if (rawWager / bankrollAtPost < POTD_MIN_STAKE_PCT) {
+        writeShadowCandidates(db, { playDate, capturedAt: nowIso, minEdgePct: POTD_MIN_EDGE, candidates: allScoredCandidates });
         writeNominees(db, { playDate, capturedAt: nowIso, winnerStatus: 'NO_PICK', nominees: rankedNominees });
         writeDailyStats(db, {
           playDate,
@@ -706,6 +768,7 @@ async function runPotdEngine({
       transaction();
 
       writeNominees(db, { playDate, capturedAt: nowIso, winnerStatus: 'FIRED', nominees: rankedNominees });
+      writeShadowCandidates(db, { playDate, capturedAt: nowIso, minEdgePct: POTD_MIN_EDGE, candidates: allScoredCandidates });
 
       writeDailyStats(db, {
         playDate,
