@@ -1,0 +1,255 @@
+name: Deploy Branch to Pi
+
+permissions:
+  contents: read
+
+permissions:
+  contents: read
+  actions: read
+
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: 'Branch to deploy (defaults to triggering branch)'
+        required: false
+        default: ''
+      target_sha:
+        description: 'Expected commit SHA to deploy — deploy is blocked if HEAD has moved'
+        required: true
+      worker_only:
+        description: 'Deploy worker only (skip web build)'
+        required: false
+        default: 'true'
+        type: boolean
+
+env:
+  NODE_VERSION: '24'
+
+jobs:
+  build-artifact:
+    name: Build Immutable Artifact
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.meta.outputs.sha }}
+      branch: ${{ steps.meta.outputs.branch }}
+    steps:
+      # WI-0517: v5 uses Node.js 24 runtime
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.branch != '' && inputs.branch || github.ref }}
+          fetch-depth: 0
+
+      - name: Resolve metadata
+        id: meta
+        run: |
+          SHA=$(git rev-parse HEAD)
+          BRANCH=$(git rev-parse --abbrev-ref HEAD)
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
+          echo "Deploying branch=$BRANCH sha=$SHA"
+
+      - name: Assert SHA matches intent
+        run: |
+          ACTUAL=$(git rev-parse HEAD)
+          INTENDED="${{ inputs.target_sha }}"
+          if [ "$ACTUAL" != "$INTENDED" ]; then
+            echo "ERROR: SHA mismatch — branch has moved since you triggered this deploy."
+            echo "  intended: $INTENDED"
+            echo "  actual:   $ACTUAL"
+            echo "Re-trigger with target_sha=$ACTUAL or push no new commits first."
+            exit 1
+          fi
+          echo "SHA gate passed: $ACTUAL"
+
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: |
+            packages/data/package-lock.json
+            packages/models/package-lock.json
+            packages/adapters/package-lock.json
+            packages/odds/package-lock.json
+            apps/worker/package-lock.json
+
+      - name: Install package dependencies
+        run: |
+          npm --prefix packages/data ci
+          npm --prefix packages/models ci
+          npm --prefix packages/adapters ci
+          npm --prefix packages/odds ci
+
+      - name: Install worker dependencies
+        run: npm --prefix apps/worker ci
+
+      - name: Run worker tests
+        env:
+          CHEDDAR_DB_PATH: /tmp/cheddar-logic/ci-safe.db
+        run: npm --prefix apps/worker test
+
+      - name: Pack worker artifact
+        id: pack
+        run: |
+          SHA=${{ steps.meta.outputs.sha }}
+          ARTIFACT_NAME="worker-${SHA}"
+          tar --exclude='node_modules' \
+              --exclude='.git' \
+              --exclude='.next' \
+              --exclude='*.db' \
+              --exclude='*.db-journal' \
+              --exclude='*.db.lock' \
+              -czf "/tmp/${ARTIFACT_NAME}.tar.gz" \
+              packages/data/src \
+              packages/data/package.json \
+              packages/models/src \
+              packages/models/package.json \
+              packages/adapters/src \
+              packages/adapters/package.json \
+              packages/odds/src \
+              packages/odds/package.json \
+              apps/worker/src \
+              apps/worker/package.json \
+              apps/worker/package-lock.json \
+              scripts/run-migrations.js
+          echo "artifact_name=$ARTIFACT_NAME" >> "$GITHUB_OUTPUT"
+          echo "artifact_path=/tmp/${ARTIFACT_NAME}.tar.gz" >> "$GITHUB_OUTPUT"
+          echo "Packed artifact: ${ARTIFACT_NAME}.tar.gz ($(du -sh /tmp/${ARTIFACT_NAME}.tar.gz | cut -f1))"
+
+      - name: Upload immutable artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.pack.outputs.artifact_name }}
+          path: ${{ steps.pack.outputs.artifact_path }}
+          retention-days: 14
+          if-no-files-found: error
+
+  deploy-worker-pi:
+    name: Deploy Worker to Pi
+    needs: build-artifact
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.branch != '' && inputs.branch || github.ref }}
+
+      - name: Connect to Tailscale
+        uses: tailscale/github-action@v4
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:ci
+
+      - name: SSH deploy worker to Pi
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.PI_HOST }}
+          username: ${{ secrets.PI_USER }}
+          key: ${{ secrets.PI_SSH_KEY }}
+          port: 22
+          command_timeout: 15m
+          envs: DEPLOY_BRANCH,DEPLOY_SHA
+          script: |
+            set -e
+            DEPLOY_BRANCH="${{ needs.build-artifact.outputs.branch }}"
+            DEPLOY_SHA="${{ needs.build-artifact.outputs.sha }}"
+            echo "=== Branch deploy: branch=$DEPLOY_BRANCH sha=$DEPLOY_SHA ==="
+            cd /opt/cheddar-logic
+
+            # Clear stale git locks
+            if [ -f .git/HEAD.lock ] || [ -f .git/index.lock ]; then
+              if pgrep -fa "git" | grep -q "/opt/cheddar-logic"; then
+                echo "ERROR: Active git process detected; refusing to clear lock files."
+                exit 1
+              fi
+              rm -f .git/HEAD.lock .git/index.lock
+              echo "Cleared stale git lock file(s)."
+            fi
+
+            git fetch origin "$DEPLOY_BRANCH"
+            git reset --hard "origin/$DEPLOY_BRANCH"
+            echo "Checked out branch=$DEPLOY_BRANCH at sha=$(git rev-parse HEAD)"
+
+            # ── WI-0980: Config drift check (before touching anything) ───────
+            set -a; . /opt/cheddar-logic/.env.production; set +a
+            DRIFT_MISSING=""
+            for key in CHEDDAR_DB_PATH TZ; do
+              if [ -z "$(eval echo \"\${${key}:-}\")" ]; then
+                DRIFT_MISSING="$DRIFT_MISSING $key"
+              fi
+            done
+            if [ -n "$DRIFT_MISSING" ]; then
+              echo "ERROR [config-drift]: required keys missing from .env.production:$DRIFT_MISSING"
+              echo "Deploy aborted — running worker is untouched."
+              exit 1
+            fi
+            if [ "${NODE_ENV:-}" != "production" ]; then
+              echo "WARNING [config-drift]: NODE_ENV='${NODE_ENV:-<unset>}' — expected 'production'"
+            fi
+            echo "config-drift check passed (CHEDDAR_DB_PATH, TZ present)"
+
+            # Stop worker before any installs or migrations
+            sudo systemctl stop cheddar-worker || true
+            rm -f "${CHEDDAR_DB_PATH}.lock"
+
+            # Install package + worker deps (omit dev)
+            npm --prefix packages/data install --omit=dev
+            npm --prefix packages/models install --omit=dev
+            npm --prefix packages/adapters install --omit=dev
+            npm --prefix packages/odds install --omit=dev
+            npm --prefix apps/worker install --omit=dev
+
+            # ── WI-0979: Migration preflight ──────────────────────────────────
+            echo "Running migration preflight against: $CHEDDAR_DB_PATH"
+            CHEDDAR_DB_PATH="$CHEDDAR_DB_PATH" node scripts/migration-preflight.js \
+              || { echo "ERROR: Migration preflight failed — deploy aborted before any schema changes"; exit 1; }
+
+            # Run migrations
+            echo "Running migrations against: $CHEDDAR_DB_PATH"
+            CHEDDAR_DB_PATH="$CHEDDAR_DB_PATH" NODE_ENV=production timeout 5m node scripts/run-migrations.js \
+              || { echo "ERROR: Migrations failed or timed out"; exit 1; }
+
+            # Restart worker
+            sudo systemctl restart cheddar-worker
+
+            # ── Smoke check 1: process active ────────────────────────────────
+            sleep 3
+            if ! sudo systemctl is-active --quiet cheddar-worker; then
+              echo "ERROR [smoke-1]: cheddar-worker is not active after restart"
+              sudo journalctl -u cheddar-worker -n 40 --no-pager || true
+              exit 1
+            fi
+            echo "smoke-1 passed: cheddar-worker is active"
+
+            # ── Smoke check 2: scheduler reached Database ready ───────────────
+            # Poll up to 15s for the scheduler startup banner in the journal.
+            SMOKE2_OK=0
+            for i in $(seq 1 15); do
+              if sudo journalctl -u cheddar-worker --since "1 minute ago" --no-pager -q \
+                   | grep -q "\[SCHEDULER\] Database ready"; then
+                SMOKE2_OK=1
+                break
+              fi
+              sleep 1
+            done
+            if [ "$SMOKE2_OK" -ne 1 ]; then
+              echo "ERROR [smoke-2]: scheduler did not reach 'Database ready' within 15s"
+              sudo journalctl -u cheddar-worker -n 60 --no-pager || true
+              exit 1
+            fi
+            echo "smoke-2 passed: scheduler reached Database ready"
+
+            # ── Smoke check 3: DB integrity ───────────────────────────────────
+            if ! command -v sqlite3 &>/dev/null; then
+              echo "smoke-3 skipped: sqlite3 not available on this host"
+            else
+              INTEGRITY=$(sqlite3 "$CHEDDAR_DB_PATH" "PRAGMA integrity_check;" 2>&1 | head -1 || true)
+              if [ "$INTEGRITY" != "ok" ]; then
+                echo "ERROR [smoke-3]: DB integrity check failed: $INTEGRITY"
+                exit 1
+              fi
+              echo "smoke-3 passed: DB integrity ok"
+            fi
+
+            echo "=== Branch deploy complete: worker running branch=$DEPLOY_BRANCH sha=$DEPLOY_SHA ==="
