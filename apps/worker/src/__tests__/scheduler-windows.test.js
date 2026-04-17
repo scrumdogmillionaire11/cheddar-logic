@@ -286,6 +286,63 @@ test('NBA and NHL schedule pulls emitted at 04:00 ET', () => {
   expect(jobNames0400).toContain('pull_schedule_nhl');
 });
 
+test('MLB fixed windows always queue run_mlb_model', () => {
+  const scheduler = loadSchedulerModule();
+  const { DateTime } = require('luxon');
+
+  process.env.ENABLE_ODDS_PULL = 'false';
+  process.env.ENABLE_SETTLEMENT = 'false';
+  process.env.ENABLE_NHL_MODEL = 'false';
+  process.env.ENABLE_NBA_MODEL = 'false';
+  process.env.ENABLE_FPL_MODEL = 'false';
+  process.env.ENABLE_NFL_MODEL = 'false';
+  process.env.ENABLE_MLB_MODEL = 'true';
+  process.env.ENABLE_NHL_PLAYER_AVAILABILITY_SYNC = 'false';
+  process.env.ENABLE_DISCORD_CARD_WEBHOOKS = 'false';
+
+  const nowEt = DateTime.fromObject(
+    { year: 2026, month: 4, day: 6, hour: 9, minute: 5, second: 0 },
+    { zone: 'America/New_York' },
+  );
+  const nowUtc = nowEt.toUTC();
+  const dueJobs = scheduler.computeDueJobs({ nowEt, nowUtc, games: [], dryRun: true });
+
+  expect(dueJobs.some((job) => job.jobName === 'run_mlb_model')).toBe(true);
+});
+
+test('MLB T-minus windows queue pre-model odds pull and model run', () => {
+  const scheduler = loadSchedulerModule();
+  const { DateTime } = require('luxon');
+
+  process.env.ENABLE_ODDS_PULL = 'true';
+  process.env.ENABLE_SETTLEMENT = 'false';
+  process.env.ENABLE_NHL_MODEL = 'false';
+  process.env.ENABLE_NBA_MODEL = 'false';
+  process.env.ENABLE_FPL_MODEL = 'false';
+  process.env.ENABLE_NFL_MODEL = 'false';
+  process.env.ENABLE_MLB_MODEL = 'true';
+  process.env.ENABLE_WITHOUT_ODDS_MODE = 'false';
+  process.env.ENABLE_NHL_PLAYER_AVAILABILITY_SYNC = 'false';
+  process.env.ENABLE_DISCORD_CARD_WEBHOOKS = 'false';
+
+  const nowEt = DateTime.fromObject(
+    { year: 2026, month: 4, day: 6, hour: 18, minute: 0, second: 0 },
+    { zone: 'America/New_York' },
+  );
+  const nowUtc = nowEt.toUTC();
+  const gameStartUtc = nowEt.plus({ minutes: 60 }).toUTC().toISO();
+
+  const dueJobs = scheduler.computeDueJobs({
+    nowEt,
+    nowUtc,
+    games: [{ game_id: 'mlb-game-1', sport: 'mlb', game_time_utc: gameStartUtc }],
+    dryRun: true,
+  });
+
+  expect(dueJobs.some((job) => job.jobName === 'pull_odds_hourly')).toBe(true);
+  expect(dueJobs.some((job) => job.jobName === 'run_mlb_model')).toBe(true);
+});
+
 test('pipeline watchdog also queues Dr. Claire persistence every 5 minutes', () => {
   const { DateTime } = require('luxon');
 
@@ -432,6 +489,7 @@ function loadSchedulerModule(dataOverrides = {}) {
     getUpcomingGames: jest.fn(() => []),
     shouldRunJobKey: jest.fn(() => true),
     hasRunningJobRun: jest.fn(() => false),
+    claimTminusPullSlot: jest.fn(() => true),
     hasRunningJobName: jest.fn(() => false),
     wasJobRecentlySuccessful: jest.fn((jobName) => {
       if (jobName === 'pull_odds_hourly') return true;
