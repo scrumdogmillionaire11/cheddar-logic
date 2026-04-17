@@ -27,12 +27,16 @@ function buildFallbackMessage(baseUrl) {
 
 async function validatePotdSourceContract(assert) {
   const fs = await import('node:fs/promises');
+  const path = await import('node:path');
+  // Use cwd-relative paths so this works in both ESM and CJS (no import.meta.url).
+  // Assumes invocation from the monorepo root (e.g. `node web/src/__tests__/...`).
+  const root = process.cwd();
   const routeSource = await fs.readFile(
-    new URL('../app/api/potd/route.ts', import.meta.url),
+    path.join(root, 'web/src/app/api/potd/route.ts'),
     'utf8',
   );
   const serverSource = await fs.readFile(
-    new URL('../lib/potd-server.ts', import.meta.url),
+    path.join(root, 'web/src/lib/potd-server.ts'),
     'utf8',
   );
 

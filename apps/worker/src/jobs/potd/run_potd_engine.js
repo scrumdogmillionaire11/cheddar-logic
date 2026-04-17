@@ -2,6 +2,35 @@
 
 require('dotenv').config();
 
+const { v4: uuidV4 } = require('uuid');
+const { DateTime } = require('luxon');
+const {
+  insertJobRun,
+  markJobRunSuccess,
+  markJobRunFailure,
+  shouldRunJobKey,
+  withDb,
+  getDatabase,
+  getLatestOdds,
+  getLatestNhlModelOutput,
+  insertCardPayload,
+  upsertGame,
+  createJob,
+} = require('@cheddar-logic/data');
+const { fetchOdds } = require('@cheddar-logic/odds');
+const { SPORTS_CONFIG: ODDS_SPORTS_CONFIG } = require('@cheddar-logic/odds/src/config');
+const {
+  buildCandidates,
+  confidenceMultiplier,
+  confidenceThreshold,
+  scoreCandidate,
+  selectBestPlay,
+  selectTopPlays,
+  kellySize,
+} = require('./signal-engine');
+const { formatPotdDiscordMessage } = require('./format-discord');
+const { sendDiscordMessages } = require('../post_discord_cards');
+
 function isFiniteNumber(v) { return typeof v === 'number' && Number.isFinite(v); }
 
 function writeDailyStats(db, {
@@ -125,35 +154,6 @@ function writeNominees(db, { playDate, capturedAt, winnerStatus, nominees }) {
     });
   });
 }
-
-const { v4: uuidV4 } = require('uuid');
-const { DateTime } = require('luxon');
-const {
-  insertJobRun,
-  markJobRunSuccess,
-  markJobRunFailure,
-  shouldRunJobKey,
-  withDb,
-  getDatabase,
-  getLatestOdds,
-  getLatestNhlModelOutput,
-  insertCardPayload,
-  upsertGame,
-  createJob,
-} = require('@cheddar-logic/data');
-const { fetchOdds } = require('@cheddar-logic/odds');
-const { SPORTS_CONFIG: ODDS_SPORTS_CONFIG } = require('@cheddar-logic/odds/src/config');
-const {
-  buildCandidates,
-  confidenceMultiplier,
-  confidenceThreshold,
-  scoreCandidate,
-  selectBestPlay,
-  selectTopPlays,
-  kellySize,
-} = require('./signal-engine');
-const { formatPotdDiscordMessage } = require('./format-discord');
-const { sendDiscordMessages } = require('../post_discord_cards');
 
 const JOB_NAME = 'run_potd_engine';
 const DEFAULT_TIMEZONE = 'America/New_York';
