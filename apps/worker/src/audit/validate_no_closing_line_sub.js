@@ -124,6 +124,7 @@ function buildClosingLineSubstitutionReport(
   );
 
   let gamesWithKnownEventStart = 0;
+  let gamesWithTimestampedSnapshot = 0;
   let gamesWithQualifyingSnapshot = 0;
   let gamesExcluded = 0;
   let snapshotsQualifying = 0;
@@ -139,6 +140,12 @@ function buildClosingLineSubstitutionReport(
     if (!hasKnownEventStart) continue;
 
     gamesWithKnownEventStart += 1;
+    const hasTimestampedSnapshot = game.snapshots_total > (game.statuses.MISSING_SNAPSHOT_TIME || 0);
+    if (!hasTimestampedSnapshot) {
+      continue;
+    }
+
+    gamesWithTimestampedSnapshot += 1;
     if (game.qualifying_snapshot_count > 0) {
       gamesWithQualifyingSnapshot += 1;
     } else {
@@ -147,11 +154,11 @@ function buildClosingLineSubstitutionReport(
   }
 
   const excludedRate =
-    gamesWithKnownEventStart > 0
-      ? Number((gamesExcluded / gamesWithKnownEventStart).toFixed(4))
+    gamesWithTimestampedSnapshot > 0
+      ? Number((gamesExcluded / gamesWithTimestampedSnapshot).toFixed(4))
       : 0;
   const shouldFail =
-    gamesWithKnownEventStart > 0 && excludedRate >= safeMaxExcludedRate;
+    gamesWithTimestampedSnapshot > 0 && excludedRate >= safeMaxExcludedRate;
 
   return {
     policy: {
@@ -163,6 +170,7 @@ function buildClosingLineSubstitutionReport(
       excluded_game_rate: excludedRate,
       games_excluded_no_qualifying_snapshot: gamesExcluded,
       games_with_known_event_start: gamesWithKnownEventStart,
+      games_with_timestamped_snapshot: gamesWithTimestampedSnapshot,
       games_with_qualifying_snapshot: gamesWithQualifyingSnapshot,
       snapshots_disqualified: snapshotsDisqualified,
       snapshots_missing_event_start: snapshotsMissingEventStart,

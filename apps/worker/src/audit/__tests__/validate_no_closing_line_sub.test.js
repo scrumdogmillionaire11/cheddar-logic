@@ -63,9 +63,10 @@ describe('buildClosingLineSubstitutionReport', () => {
     });
 
     expect(report.summary.games_with_known_event_start).toBe(3);
+    expect(report.summary.games_with_timestamped_snapshot).toBe(2);
     expect(report.summary.games_with_qualifying_snapshot).toBe(1);
-    expect(report.summary.games_excluded_no_qualifying_snapshot).toBe(2);
-    expect(report.summary.excluded_game_rate).toBeCloseTo(0.6667, 4);
+    expect(report.summary.games_excluded_no_qualifying_snapshot).toBe(1);
+    expect(report.summary.excluded_game_rate).toBeCloseTo(0.5, 4);
     expect(report.summary.should_fail).toBe(true);
   });
 
@@ -109,6 +110,7 @@ describe('buildClosingLineSubstitutionReport', () => {
     });
 
     expect(report.summary.games_with_known_event_start).toBe(6);
+    expect(report.summary.games_with_timestamped_snapshot).toBe(6);
     expect(report.summary.games_excluded_no_qualifying_snapshot).toBe(4);
     expect(report.summary.excluded_game_rate).toBeCloseTo(0.6667, 4);
     expect(report.summary.should_fail).toBe(true);
@@ -118,5 +120,31 @@ describe('buildClosingLineSubstitutionReport', () => {
       priceBufferMinutes: 60,
     });
     expect(strictReport.summary.should_fail).toBe(false);
+  });
+
+  test('does not fail solely due to missing snapshot timestamps', () => {
+    const rows = [
+      {
+        game_id: 'g1',
+        event_start_utc: '2026-04-16T18:00:00Z',
+        snapshot_time_utc: null,
+      },
+      {
+        game_id: 'g2',
+        event_start_utc: '2026-04-16T19:00:00Z',
+        snapshot_time_utc: null,
+      },
+    ];
+
+    const report = buildClosingLineSubstitutionReport(rows, {
+      maxExcludedRate: 0.2,
+      priceBufferMinutes: 60,
+    });
+
+    expect(report.summary.games_with_known_event_start).toBe(2);
+    expect(report.summary.games_with_timestamped_snapshot).toBe(0);
+    expect(report.summary.games_excluded_no_qualifying_snapshot).toBe(0);
+    expect(report.summary.excluded_game_rate).toBe(0);
+    expect(report.summary.should_fail).toBe(false);
   });
 });
