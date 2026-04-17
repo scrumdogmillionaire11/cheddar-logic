@@ -783,6 +783,39 @@ describe('potd_nominees persistence', () => {
     expect(nomineeRows[0].sport).toBe('NHL');
   });
 
+  test('no-pick day with no positive edge still stores diagnostic nominees', async () => {
+    const { runPotdEngine } = require('../run_potd_engine');
+    const candidate = buildSelectedCandidate({
+      sport: 'NHL',
+      gameId: 'potd-negative-edge-001',
+      edgePct: -0.004,
+      totalScore: 0.73,
+    });
+    const kellySizeFn = jest.fn(() => 2.0);
+
+    const result = await runPotdEngine({
+      jobKey: 'potd|nominees-negative-edge-test',
+      force: true,
+      fetchOddsFn: async () => ({ games: [{ gameId: candidate.gameId }], errors: [] }),
+      buildCandidatesFn: () => [candidate],
+      scoreCandidateFn: (v) => v,
+      kellySizeFn,
+      sendDiscordMessagesFn: async () => 1,
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.noPlay).toBe(true);
+    expect(kellySizeFn).not.toHaveBeenCalled();
+
+    expect(readRows('SELECT * FROM potd_plays')).toHaveLength(0);
+
+    const nomineeRows = readRows('SELECT * FROM potd_nominees');
+    expect(nomineeRows).toHaveLength(1);
+    expect(nomineeRows[0].winner_status).toBe('NO_PICK');
+    expect(nomineeRows[0].sport).toBe('NHL');
+    expect(nomineeRows[0].edge_pct).toBeCloseTo(-0.004, 6);
+  });
+
   test('no candidates: nominees table remains empty', async () => {
     const { runPotdEngine } = require('../run_potd_engine');
 

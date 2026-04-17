@@ -761,15 +761,16 @@ function scoreCandidate(candidate) {
   };
 }
 
-// Returns up to maxNominees sport winners ranked by totalScore → edgePct → stable key.
+// Returns up to maxNominees sport winners ranked by totalScore -> edgePct -> stable key.
 // One candidate per sport (prevents high-volume sports from flooding the list).
-function selectTopPlays(scoredCandidates, { minConfidence = 'HIGH', minEdgePct = 0, maxNominees = 5 } = {}) {
+function selectTopPlays(scoredCandidates, { minConfidence = 'HIGH', minEdgePct = null, maxNominees = 5, requirePositiveEdge = true } = {}) {
   const threshold = confidenceThreshold(minConfidence);
-  // minEdgePct = 0 keeps legacy behaviour (edge just has to be > 0)
-  const edgeFloor = minEdgePct > 0 ? minEdgePct : 0;
+  const hasEdgeFloor = isFiniteNumber(minEdgePct);
   const viable = (Array.isArray(scoredCandidates) ? scoredCandidates : [])
     .filter(Boolean)
-    .filter((c) => isFiniteNumber(c.edgePct) && c.edgePct > 0 && c.edgePct >= edgeFloor)
+    .filter((c) => isFiniteNumber(c.edgePct))
+    .filter((c) => !requirePositiveEdge || c.edgePct > 0)
+    .filter((c) => !hasEdgeFloor || c.edgePct >= minEdgePct)
     .filter((c) => isFiniteNumber(c.totalScore) && c.totalScore >= threshold);
 
   if (viable.length === 0) return [];

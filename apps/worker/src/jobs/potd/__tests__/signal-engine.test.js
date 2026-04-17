@@ -761,6 +761,22 @@ describe('selectTopPlays', () => {
     expect(selectTopPlays([makeCandidate('NHL', 0.8, -0.01)], { minConfidence: 0 })).toEqual([]);
   });
 
+  test('can rank diagnostic nominees without positive edge', () => {
+    const candidates = [
+      makeCandidate('NHL', 0.72, -0.01),
+      makeCandidate('NBA', 0.78, -0.02),
+    ];
+
+    const result = selectTopPlays(candidates, {
+      minConfidence: 0,
+      requirePositiveEdge: false,
+    });
+
+    expect(result).toHaveLength(2);
+    expect(result[0].sport).toBe('NBA');
+    expect(selectBestPlay(candidates, { minConfidence: 0 })).toBeNull();
+  });
+
   test('returns one winner per sport, not raw top N from same sport', () => {
     const candidates = [
       makeCandidate('MLB', 0.80, 0.04),

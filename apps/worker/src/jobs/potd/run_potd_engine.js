@@ -116,8 +116,8 @@ function writeShadowCandidates(db, { playDate, capturedAt, minEdgePct, candidate
   }
 }
 function writeNominees(db, { playDate, capturedAt, winnerStatus, nominees }) {
-  if (!Array.isArray(nominees) || nominees.length === 0) return;
   db.prepare(`DELETE FROM potd_nominees WHERE play_date = ?`).run(playDate);
+  if (!Array.isArray(nominees) || nominees.length === 0) return;
   const stmt = db.prepare(`
     INSERT INTO potd_nominees (
       play_date, nominee_rank, winner_status, sport, game_id,
@@ -403,10 +403,21 @@ async function gatherBestCandidate({
       c.totalScore >= POTD_MIN_TOTAL_SCORE,
   );
 
-  const rankedNominees = selectTopPlaysFn(scoredCandidates, { minConfidence: POTD_MIN_TOTAL_SCORE, minEdgePct: POTD_MIN_EDGE, maxNominees: POTD_MAX_NOMINEES });
+  const fireableNominees = selectTopPlaysFn(scoredCandidates, {
+    minConfidence: POTD_MIN_TOTAL_SCORE,
+    minEdgePct: POTD_MIN_EDGE,
+    maxNominees: POTD_MAX_NOMINEES,
+    requirePositiveEdge: true,
+  });
+  const diagnosticNominees = selectTopPlaysFn(scoredCandidates, {
+    minConfidence: POTD_MIN_TOTAL_SCORE,
+    maxNominees: POTD_MAX_NOMINEES,
+    requirePositiveEdge: false,
+  });
+  const rankedNominees = fireableNominees.length > 0 ? fireableNominees : diagnosticNominees;
 
   return {
-    bestCandidate: rankedNominees[0] || null,
+    bestCandidate: fireableNominees[0] || null,
     rankedNominees,
     allScoredCandidates: scoredCandidates,
     fetchErrors,
