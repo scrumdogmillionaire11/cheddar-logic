@@ -34,7 +34,16 @@ function resolveVerificationState(decisionV2?: DecisionV2 | null, codes?: string
   const allCodes = new Set((codes || []).map((code) => toToken(code)));
   if (toToken(decisionV2?.sharp_price_status) === 'PENDING_VERIFICATION') return 'PENDING';
   if (allCodes.has('EDGE_VERIFICATION_REQUIRED') || allCodes.has('BLOCKED_BET_VERIFICATION_REQUIRED')) return 'PENDING';
-  if (allCodes.has('PASS_DATA_ERROR') || allCodes.has('MISSING_DATA_NO_ODDS')) return 'FAILED';
+  if (
+    allCodes.has('PASS_DATA_ERROR') ||
+    allCodes.has('MISSING_DATA_NO_ODDS') ||
+    allCodes.has('MISSING_DATA_PROJECTION_INPUTS') ||
+    allCodes.has('MISSING_DATA_DRIVERS') ||
+    allCodes.has('MISSING_DATA_TEAM_MAPPING') ||
+    allCodes.has('PASS_MISSING_DRIVER_INPUTS')
+  ) {
+    return 'FAILED';
+  }
   return 'VERIFIED';
 }
 
@@ -77,6 +86,10 @@ const SURFACED_REASON_LABELS: Record<string, string> = {
   PARSE_FAILURE: 'Model data unavailable',
   PASS_DATA_ERROR: 'Data error - no play',
   MISSING_DATA_NO_ODDS: 'Odds unavailable',
+  MISSING_DATA_PROJECTION_INPUTS: 'Missing projection inputs',
+  MISSING_DATA_DRIVERS: 'Driver output unavailable',
+  MISSING_DATA_TEAM_MAPPING: 'Team mapping unresolved',
+  PASS_MISSING_DRIVER_INPUTS: 'Missing driver inputs',
   SUPPORT_BELOW_LEAN_THRESHOLD: 'Insufficient support',
   SUPPORT_BELOW_PLAY_THRESHOLD: 'Insufficient support',
   FIRST_PERIOD_NO_PROJECTION: 'No 1P projection available',

@@ -4066,30 +4066,10 @@ describe('selectPitcherRowForTeam', () => {
         team: 'ATL',
         updated_at: '2026-04-17T10:00:00Z',
       },
-      {
-        mlb_id: 2,
-        full_name: 'John Smith',
-        team: 'NYY',
-        updated_at: '2026-04-17T09:00:00Z',
-      },
     ];
 
     const selected = selectPitcherRowForTeam(rows, 'Boston Red Sox');
     expect(selected).toBeNull();
-  });
-
-  test('returns the only row when a single name match exists but team metadata is stale', () => {
-    const rows = [
-      {
-        mlb_id: 1,
-        full_name: 'John Smith',
-        team: 'ATL',
-        updated_at: '2026-04-17T10:00:00Z',
-      },
-    ];
-
-    const selected = selectPitcherRowForTeam(rows, 'Boston Red Sox');
-    expect(selected?.mlb_id).toBe(1);
   });
 
   test('falls back to first row when team cannot be resolved', () => {

@@ -248,6 +248,10 @@ export function formatReasonCode(code?: string | null) {
     BLOCK_INJURY_RISK: 'Injury risk flag',
     BLOCK_STALE_DATA: 'Data stale',
     MODEL_PROB_MISSING: 'Model incomplete',
+    MISSING_DATA_PROJECTION_INPUTS: 'Missing projection inputs',
+    MISSING_DATA_DRIVERS: 'Driver output unavailable',
+    MISSING_DATA_TEAM_MAPPING: 'Team mapping unresolved',
+    PASS_MISSING_DRIVER_INPUTS: 'Missing driver inputs',
     EXACT_WAGER_MISMATCH: 'Line mismatch',
     HEAVY_FAVORITE_PRICE_CAP: 'High price cap',
   };
