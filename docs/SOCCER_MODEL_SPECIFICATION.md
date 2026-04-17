@@ -1,5 +1,7 @@
 # Cheddar Board: Soccer Model — Target Specification
 
+This document is a design target, not an operator runbook. The current worker package does not ship `run_soccer_model.js`, so the implementation references below are historical or forward-looking.
+
 **Version 1.0  |  March 2026**  
 Cheddar Logic LLC  |  [cheddarlogic.com](http://cheddarlogic.com)
 
@@ -24,7 +26,7 @@ This specification defines what the soccer model needs to become: a three-tier s
 
 ### 1.1 Architecture
 
-The system runs a two-track job (`run_soccer_model.js`) that processes live odds snapshots on Track 1 and generates synthetic projections on Track 2. Cards are routed through the decision pipeline and stored in `card_payloads`. A companion pull job (`pull_soccer_player_props.js`) fetches Tier 1 player props from 5 bookmakers within a 36-hour window.
+The historical soccer design used a two-track job (`run_soccer_model.js`) that processed live odds snapshots on Track 1 and generated synthetic projections on Track 2. Cards were routed through the decision pipeline and stored in `card_payloads`. A companion pull job (`pull_soccer_player_props.js`) fetched Tier 1 player props from 5 bookmakers within a 36-hour window.
 
 ### 1.2 What the current model actually does
 

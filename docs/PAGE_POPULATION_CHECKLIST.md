@@ -34,7 +34,6 @@ DISPLAY                     → Results page queries settled cards
 
 - `pull_schedule_nba.js` — Fetches NBA games from ESPN
 - `pull_schedule_nhl.js` — Fetches NHL games from ESPN
-- `pull_schedule_ncaam.js` — Fetches NCAAM games from ESPN
 - `pull_schedule_nfl.js` — (Not in scheduler yet, needs setup)
 
 **Current Status:**
@@ -43,7 +42,7 @@ DISPLAY                     → Results page queries settled cards
 |-------|----------|---------------|---------|------------|
 | NBA | `pull_schedule_nba.js` | ❓ | Manual / On-demand | Not verified |
 | NHL | `pull_schedule_nhl.js` | ❓ | Manual / On-demand | Not verified |
-| NCAAM | `pull_schedule_ncaam.js` | ❓ | Manual / On-demand | Not verified |
+| NCAAM | Removed in current worker package | ❌ | N/A | Do not advertise manual run |
 | NFL | `pull_schedule_nfl.js` | ⚠️ | Not scheduled | MISSING |
 | MLB | `pull_schedule_mlb.js` | ⚠️ | Not scheduled | MISSING |
 | Soccer | N/A | ❌ | N/A | N/A |
@@ -60,7 +59,6 @@ sqlite3 /path/to/cheddar.db "SELECT sport, COUNT(*) as count FROM games GROUP BY
 # -----|-------
 # NBA   | 800+
 # NHL   | 800+
-# NCAAM | 1000+
 ```
 
 **To Fix:**
@@ -125,13 +123,14 @@ If latest odds are stale (>2 hours old):
 
 - `run_nba_model.js` — NBA predictions
 - `run_nhl_model.js` — NHL predictions
-- `run_ncaam_model.js` — NCAAM predictions
 - `run_fpl_model.js` — FPL predictions
 - `run_nfl_model.js` — NFL predictions (if enabled)
 - `run_mlb_model.js` — MLB predictions
 
 **Trigger:** Daily at 09:00 ET and 12:00 ET  
 **Scheduler Status:** ✅ Active in `main.js` (lines 269-280)
+
+`NCAAM` and `Soccer` model runner files are not present in the current worker package and should not be listed as fallback jobs.
 
 **Verification Steps:**
 

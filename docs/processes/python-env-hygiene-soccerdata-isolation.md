@@ -96,10 +96,9 @@ export SOCCER_XG_PYTHON_BIN="/opt/cheddar/worker-soccer/venv-soccerdata/bin/pyth
 echo "Python binary: $(which python3)"
 echo "Isolated bin: $SOCCER_XG_PYTHON_BIN"
 $SOCCER_XG_PYTHON_BIN --version  # Should show 3.12.10
-
-# Run xG job with isolated Python (no global site-packages mutation)
-ENABLE_SOCCER_XG_MODEL=true npm --prefix apps/worker run job:pull-soccer-xg-stats -- --dry-run
 ```
+
+The worker package does not currently ship `job:pull-soccer-xg-stats`. Keep this document as environment-design guidance only until a soccer xG pull job is reintroduced.
 
 ---
 
@@ -143,10 +142,9 @@ docker build -t cheddar:soccerdata-3.12.10 -f /opt/cheddar/worker-soccer/Dockerf
 
 # 2. Export path to container python
 export SOCCER_XG_PYTHON_BIN="docker run --rm cheddar:soccerdata-3.12.10 python3"
-
-# 3. Job runs with full isolation (no host mutation)
-ENABLE_SOCCER_XG_MODEL=true npm --prefix apps/worker run job:pull-soccer-xg-stats -- --dry-run
 ```
+
+No runnable soccer xG worker command is shipped in the current package, so this fallback only prepares the isolated Python environment.
 
 ---
 
@@ -176,11 +174,8 @@ source ~/.bashrc
 ```
 
 **Runtime**:
-```bash
-# Worker job uses isolated Python (no global mutation)
-cd /Users/ajcolubiale/projects/cheddar-logic
-ENABLE_SOCCER_XG_MODEL=true npm --prefix apps/worker run job:pull-soccer-xg-stats
-```
+
+No active soccer xG worker command is available in the current package. If this workflow is revived, restore the worker job before copying runtime commands into this document.
 
 **Verification** (after install):
 ```bash
@@ -232,7 +227,6 @@ git status --short
 ```bash
 # If rolling back entire xG feature:
 ENABLE_SOCCER_XG_MODEL=false  # In .env file
-npm --prefix apps/worker run job:pull-soccer-xg-stats -- --dry-run  # Should skip gracefully
 
 # Or disable in code:
 git checkout -- apps/worker/src/schedulers/main.js  # Remove xG pull job
@@ -270,12 +264,8 @@ git checkout -- apps/worker/src/schedulers/main.js  # Remove xG pull job
 
 ### ✓ Execution Verification
 
-- [ ] **xG Job Runs with Isolated Python**
-  ```bash
-  ENABLE_SOCCER_XG_MODEL=true npm --prefix apps/worker run job:pull-soccer-xg-stats -- --dry-run
-  # Expected: DRY_RUN mode completes, xG job runs without error
-  # Expected in logs: "✓ Pull soccer xG stats completed" (or "...failed-open" if FBref data unavailable)
-  ```
+- [ ] **xG job surface restored before execution testing**
+  The current worker package does not include `job:pull-soccer-xg-stats`. Restore the worker job first, then add a real execution check here.
 
 - [ ] **No Regression in Non-Soccer Workflows**
   ```bash

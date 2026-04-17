@@ -73,7 +73,7 @@ function buildDriverSummary(descriptor, weightMap) {
 }
 ```
 
-#### Code Location 3: apps/worker/src/jobs/run_ncaam_model.js (Lines 54-81)
+#### Code Location 3: Historical NCAAM runner (removed in current worker package)
 ```javascript
 function computeWinProbHome(projectedMargin, sport) {
   if (!Number.isFinite(projectedMargin)) return null;

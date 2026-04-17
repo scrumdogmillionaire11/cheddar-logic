@@ -161,7 +161,8 @@ Use this after deploys to avoid PASS-only boards:
 3. **Fresh odds**
    - `odds_snapshots` has a recent `captured_at` for each active sport.
 4. **Model jobs enabled**
-   - `ENABLE_NHL_MODEL`, `ENABLE_NBA_MODEL`, `ENABLE_NCAAM_MODEL` are `true` in production.
+   - `ENABLE_NHL_MODEL`, `ENABLE_NBA_MODEL`, and `ENABLE_MLB_MODEL` are set for production as intended.
+   - Do not expect `ENABLE_NCAAM_MODEL` or Soccer-specific runner flags to restore missing worker scripts.
 
 Sample checks on the server:
 

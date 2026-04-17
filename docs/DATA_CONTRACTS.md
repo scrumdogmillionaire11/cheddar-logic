@@ -3,7 +3,7 @@
 This document defines data schemas, table structures, and payload contracts for both product domains.
 
 **Domains:**
-1. **Betting Engine** — NBA/NHL/MLB/Soccer betting models
+1. **Betting Engine** — NBA/NHL/MLB/NFL betting models in the current worker package; soccer material is retained separately as design reference
 2. **FPL-SAGE Engine** — Fantasy Premier League tools
 
 **Naming Clarification:** `FPL` is the sport/domain identifier used in shared tables (`sport='FPL'`). The actual FPL recommendation engine is **FPL Sage**.

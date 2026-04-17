@@ -355,7 +355,7 @@ set -a; source .env; set +a
 export ENABLE_MARKET_THRESHOLDS_V2=true
 
 ENABLE_MARKET_THRESHOLDS_V2=true npm --prefix apps/worker run job:run-nba-model:test
-ENABLE_MARKET_THRESHOLDS_V2=true npm --prefix apps/worker run job:run-ncaam-model:test
+ENABLE_MARKET_THRESHOLDS_V2=true npm --prefix apps/worker run job:run-nhl-model:test
 ```
 
 #### Verification (Phase 2 only)

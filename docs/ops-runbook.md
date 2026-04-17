@@ -154,7 +154,7 @@ sudo systemctl show cheddar-worker -p Environment | grep -q "CHEDDAR_DB_PATH=/op
 
 ### Decision Pipeline v2 Contract Checks (Wave-1)
 
-Wave-1 (`NBA`/`NHL`/`NCAAM`, `MONEYLINE`/`SPREAD`/`TOTAL`/`PUCKLINE`/`TEAM_TOTAL`) is worker-owned.
+Wave-1 (`NBA`/`NHL`/`MLB`, `MONEYLINE`/`SPREAD`/`TOTAL`/`PUCKLINE`/`TEAM_TOTAL`) is worker-owned for the currently shipped model runners.
 Web/API/UI are pure consumers of worker `decision_v2`.
 
 ```bash
@@ -165,7 +165,7 @@ curl -s "http://localhost:3000/api/games?limit=200" | jq '
   | .plays[]
   | select(
       ((.kind // "PLAY") == "PLAY") and
-      ($sport == "NBA" or $sport == "NHL" or $sport == "NCAAM") and
+      ($sport == "NBA" or $sport == "NHL" or $sport == "MLB") and
       (.market_type == "MONEYLINE" or .market_type == "SPREAD" or .market_type == "TOTAL" or .market_type == "PUCKLINE" or .market_type == "TEAM_TOTAL")
     )
   | {

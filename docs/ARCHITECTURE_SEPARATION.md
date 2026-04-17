@@ -176,7 +176,7 @@ The rollback sequence is additive-safe: settlement, display, and API contracts r
 - ✅ Web Results page (`web/src/app/api/results`)
 - ✅ Settlement jobs (`apps/worker/src/jobs/settle_*.js`)
 - ✅ Scheduler (`apps/worker/src/schedulers/main.js`)
-- ✅ All sports models (NBA, NHL, NCAAM, NFL, MLB, Soccer)
+- ✅ Active sports models in the current worker package (NBA, NHL, NFL, MLB, FPL)
 - ✅ FPL as a sport model (writes `card_payloads`, `card_results`)
 
 **NOT Used By:**
@@ -401,7 +401,7 @@ Research prototypes exist under `Claude-research/files/` (edge_engine.py, play_s
 - ✅ **Use case:** Algorithm documentation, prototyping reference, future optimization research
 - ❌ **NOT:** Production runtime, deployment target, architectural requirement
 
-Production uses **Node/JS worker for all sports models** (NBA, NHL, NCAAM, Soccer, FPL, NFL, MLB). This separation maintains:
+Production uses **Node/JS worker for the active sports models** (NBA, NHL, MLB, NFL, FPL). Historical NCAAM and Soccer docs are not executable surfaces in the current package. This separation maintains:
 
 - Proven track record (JavaScript betting pipeline runs successfully)
 - Operational simplicity (single runtime, unified deployment)

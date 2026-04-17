@@ -229,7 +229,7 @@ packages/
 ## Non-Negotiable Boundaries
 
 1. **FPL-SAGE is its own domain:** No odds, no T-minus game windows. Deadline-driven with weekly/bi-weekly cadence.
-2. **Soccer betting models belong to betting domain:** Same contract as NHL/NBA/MLB (odds + T-minus windows).
+2. **Soccer betting models, if reintroduced, belong to the betting domain:** Same contract as NHL/NBA/MLB (odds + T-minus windows).
 3. **Web only renders:** It can filter/search/sort, but it doesn't compute predictions or recommendations.
 4. **Everything persists:** Worker writes outputs to DB; web reads stored payloads.
 5. **Idempotency everywhere:** Deterministic `job_key` prevents double-firing across restarts and failures.

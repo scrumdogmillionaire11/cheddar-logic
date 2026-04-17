@@ -56,7 +56,7 @@ Then re-run the model jobs:
 ```bash
 CHEDDAR_DB_PATH=/tmp/cheddar-logic/cheddar.db npm --prefix apps/worker run job:run-nba-model
 CHEDDAR_DB_PATH=/tmp/cheddar-logic/cheddar.db npm --prefix apps/worker run job:run-nhl-model
-CHEDDAR_DB_PATH=/tmp/cheddar-logic/cheddar.db npm --prefix apps/worker run job:run-ncaam-model
+CHEDDAR_DB_PATH=/tmp/cheddar-logic/cheddar.db npm --prefix apps/worker run job:run-mlb-model
 ```
 
 ### Long-Term Fix (Automated Scheduler)
