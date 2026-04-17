@@ -1,5 +1,7 @@
 'use strict';
 
+const Database = require('better-sqlite3');
+
 /**
  * Tests — Sharp Cheddar K pitcher strikeout decision engine (WI-0595)
  *            + data freshness / fail-closed gates (WI-0596)
@@ -3985,6 +3987,53 @@ describe('Pitcher stats lookup by mlb_id and full_name (not team-only)', () => {
 
     expect(gameStartingPitcher.mlb_id).toBe(408014);
     expect(gameStartingPitcher.full_name).toBe('Luis Severino');
+  });
+});
+
+describe('WI-0997: probable_date gates team-fallback pitcher lookup', () => {
+  let db;
+
+  beforeEach(() => {
+    db = new Database(':memory:');
+    db.exec(`
+      CREATE TABLE mlb_pitcher_stats (
+        id TEXT,
+        mlb_id INTEGER,
+        full_name TEXT,
+        team TEXT,
+        probable_date TEXT,
+        updated_at TEXT
+      )
+    `);
+  });
+
+  afterEach(() => {
+    db.close();
+  });
+
+  test('team fallback returns null when only stale probable_date row exists', () => {
+    db.prepare(
+      "INSERT INTO mlb_pitcher_stats VALUES (?, ?, ?, ?, date('now', '-1 day'), datetime('now', '-1 day'))",
+    ).run('stale-row', 12345, 'Old Pitcher', 'BOS');
+
+    const row = db.prepare(
+      "SELECT * FROM mlb_pitcher_stats WHERE team = ? AND probable_date = date('now') LIMIT 1",
+    ).get('BOS');
+
+    expect(row).toBeUndefined();
+  });
+
+  test('team fallback returns row when probable_date matches today', () => {
+    db.prepare(
+      "INSERT INTO mlb_pitcher_stats VALUES (?, ?, ?, ?, date('now'), datetime('now'))",
+    ).run('today-row', 99999, 'Today Pitcher', 'BOS');
+
+    const row = db.prepare(
+      "SELECT * FROM mlb_pitcher_stats WHERE team = ? AND probable_date = date('now') LIMIT 1",
+    ).get('BOS');
+
+    expect(row).toBeDefined();
+    expect(row.full_name).toBe('Today Pitcher');
   });
 });
 
