@@ -421,7 +421,25 @@ async function refreshStaleOdds({ jobKey = null, dryRun = false } = {}) {
                 h2hConsensusAway: normalized.odds?.h2hConsensusAway,
                 h2hConsensusConfidence:
                   normalized.odds?.h2hConsensusConfidence,
-                rawData: normalized.market,
+                rawData: {
+                  ...(normalized.market && typeof normalized.market === 'object'
+                    ? normalized.market
+                    : {}),
+                  _execution_pairs: {
+                    total_same_book_under_for_over:
+                      normalized.odds?.totalSameBookUnderForOver ?? null,
+                    total_same_book_over_for_under:
+                      normalized.odds?.totalSameBookOverForUnder ?? null,
+                    spread_same_book_away_for_home:
+                      normalized.odds?.spreadSameBookAwayForHome ?? null,
+                    spread_same_book_home_for_away:
+                      normalized.odds?.spreadSameBookHomeForAway ?? null,
+                    h2h_same_book_away_for_home:
+                      normalized.odds?.h2hSameBookAwayForHome ?? null,
+                    h2h_same_book_home_for_away:
+                      normalized.odds?.h2hSameBookHomeForAway ?? null,
+                  },
+                },
                 jobRunId,
               });
               snapshotsInserted++;

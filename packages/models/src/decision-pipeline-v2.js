@@ -1423,12 +1423,26 @@ function buildDecisionV2(payload, context = {}) {
       if (market_type === 'SPREAD' || market_type === 'PUCKLINE') {
         const projectedMargin = asNumber(payload?.projection?.margin_home);
         const spreadLineHome = asNumber(oddsCtx?.spread_home);
+        const spreadPriceHome =
+          direction === 'HOME'
+            ? asNumber(oddsCtx?.spread_price_home)
+            : asNumber(
+                oddsCtx?.spread_same_book_home_for_away ??
+                  oddsCtx?.spread_price_home,
+              );
+        const spreadPriceAway =
+          direction === 'HOME'
+            ? asNumber(
+                oddsCtx?.spread_same_book_away_for_home ??
+                  oddsCtx?.spread_price_away,
+              )
+            : asNumber(oddsCtx?.spread_price_away);
         if (projectedMargin !== null && spreadLineHome !== null) {
           const result = edgeCalculator.computeSpreadEdge({
             projectionMarginHome: projectedMargin,
             spreadLine: spreadLineHome,
-            spreadPriceHome: asNumber(oddsCtx?.spread_price_home),
-            spreadPriceAway: asNumber(oddsCtx?.spread_price_away),
+            spreadPriceHome,
+            spreadPriceAway,
             sigmaMargin: resolvedSigmaMargin,
             isPredictionHome: direction === 'HOME',
             confidenceContext: {
@@ -1458,18 +1472,30 @@ function buildDecisionV2(payload, context = {}) {
           market_type === 'FIRST_PERIOD'
             ? asNumber(payload?.line) ?? 1.5
             : asNumber(oddsCtx?.total);
+        const totalPriceOver =
+          market_type === 'FIRST_PERIOD'
+            ? asNumber(oddsCtx?.total_price_over_1p)
+            : direction === 'OVER'
+              ? asNumber(oddsCtx?.total_price_over)
+              : asNumber(
+                  oddsCtx?.total_same_book_over_for_under ??
+                    oddsCtx?.total_price_over,
+                );
+        const totalPriceUnder =
+          market_type === 'FIRST_PERIOD'
+            ? asNumber(oddsCtx?.total_price_under_1p)
+            : direction === 'OVER'
+              ? asNumber(
+                  oddsCtx?.total_same_book_under_for_over ??
+                    oddsCtx?.total_price_under,
+                )
+              : asNumber(oddsCtx?.total_price_under);
         if (projectedTotal !== null && totalLine !== null) {
           const result = edgeCalculator.computeTotalEdge({
             projectionTotal: projectedTotal,
             totalLine,
-            totalPriceOver:
-              market_type === 'FIRST_PERIOD'
-                ? asNumber(oddsCtx?.total_price_over_1p)
-                : asNumber(oddsCtx?.total_price_over),
-            totalPriceUnder:
-              market_type === 'FIRST_PERIOD'
-                ? asNumber(oddsCtx?.total_price_under_1p)
-                : asNumber(oddsCtx?.total_price_under),
+            totalPriceOver,
+            totalPriceUnder,
             sigmaTotal: resolvedSigmaTotal,
             isPredictionOver: direction === 'OVER',
             confidenceContext: {
@@ -1530,8 +1556,16 @@ function buildDecisionV2(payload, context = {}) {
     if (market_type === 'MONEYLINE' && implied_prob !== null && price !== null) {
       const mlOdds = payload?.odds_context;
       const oppositePrice = direction === 'HOME'
-        ? asNumber(mlOdds?.h2h_away ?? mlOdds?.moneyline_away)
-        : asNumber(mlOdds?.h2h_home ?? mlOdds?.moneyline_home);
+        ? asNumber(
+            mlOdds?.h2h_same_book_away_for_home ??
+              mlOdds?.h2h_away ??
+              mlOdds?.moneyline_away,
+          )
+        : asNumber(
+            mlOdds?.h2h_same_book_home_for_away ??
+              mlOdds?.h2h_home ??
+              mlOdds?.moneyline_home,
+          );
       if (oppositePrice !== null) {
         const noVig = edgeCalculator.noVigImplied(price, oppositePrice);
         if (noVig != null) implied_prob = noVig.home;

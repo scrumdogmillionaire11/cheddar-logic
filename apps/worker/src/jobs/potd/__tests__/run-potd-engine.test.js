@@ -150,6 +150,36 @@ describe('runPotdEngine', () => {
     expect(readRows('SELECT * FROM potd_bankroll')).toHaveLength(1);
   });
 
+  test('blocks LOW-confidence candidate before Kelly sizing and records no-play reason', async () => {
+    const { runPotdEngine } = require('../run_potd_engine');
+    const lowConfidenceCandidate = buildSelectedCandidate({
+      totalScore: 0.42,
+      confidenceLabel: 'LOW',
+      edgePct: 0.03,
+    });
+    const kellySizeFn = jest.fn(() => 2.5);
+
+    const result = await runPotdEngine({
+      jobKey: 'potd|low-confidence-gate',
+      force: true,
+      fetchOddsFn: async () => ({ games: [{ gameId: lowConfidenceCandidate.gameId }], errors: [] }),
+      buildCandidatesFn: () => [lowConfidenceCandidate],
+      scoreCandidateFn: (value) => value,
+      // Force a best candidate return so the runner-level confidence guard is exercised.
+      selectBestPlayFn: (values) => values[0],
+      kellySizeFn,
+      sendDiscordMessagesFn: async () => 1,
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.noPlay).toBe(true);
+    expect(result.reason).toBe('confidence_below_high_gate');
+    expect(kellySizeFn).not.toHaveBeenCalled();
+
+    const plays = readRows('SELECT * FROM potd_plays');
+    expect(plays).toHaveLength(0);
+  });
+
   test('seeds bankroll and writes published TOTAL play plus settlement-compatible potd-call', async () => {
     const { runPotdEngine } = require('../run_potd_engine');
     const candidate = buildSelectedCandidate();

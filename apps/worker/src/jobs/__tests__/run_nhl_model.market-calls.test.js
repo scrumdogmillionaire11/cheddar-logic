@@ -628,6 +628,46 @@ describe('run_nhl_model market call generation', () => {
     expect(mlCard.payloadData.decision_v2?.official_status).toBe('PASS');
   });
 
+  test('execution gate demotes stale blocked NHL market-call cards to PASS and preserves stale reason metadata', () => {
+    const oddsSnapshot = buildBaseOddsSnapshot();
+    const mlCard = {
+      payloadData: {
+        execution_status: 'EXECUTABLE',
+        edge: 0.2,
+        confidence: 0.8,
+        model_status: 'MODEL_OK',
+        status: 'FIRE',
+        action: 'FIRE',
+        classification: 'BASE',
+        pass_reason_code: null,
+        reason_codes: [],
+        decision_v2: {
+          official_status: 'PLAY',
+        },
+      },
+    };
+    const nowMs = new Date(oddsSnapshot.captured_at).getTime() + 121 * 60 * 1000;
+
+    const result = applyExecutionGateToNhlCard(mlCard, {
+      oddsSnapshot,
+      nowMs,
+    });
+
+    expect(result.evaluated).toBe(true);
+    expect(result.blocked).toBe(true);
+    expect(mlCard.payloadData.execution_gate.blocked_by.some((reason) =>
+      String(reason).startsWith('STALE_SNAPSHOT:EXPIRED_HARDMAX:'),
+    )).toBe(true);
+    expect(mlCard.payloadData.action).toBe('PASS');
+    expect(mlCard.payloadData.status).toBe('PASS');
+    expect(mlCard.payloadData.classification).toBe('PASS');
+    expect(mlCard.payloadData.execution_status).toBe('BLOCKED');
+    expect(mlCard.payloadData.pass_reason_code).toBe('PASS_EXECUTION_GATE_STALE_SNAPSHOT');
+    expect(mlCard.payloadData.blocked_reason_code).toBe('BLOCK_STALE_DATA');
+    expect(mlCard.payloadData.reason_codes).toContain('BLOCK_STALE_DATA');
+    expect(mlCard.payloadData.decision_v2?.official_status).toBe('PASS');
+  });
+
   test('execution gate tags projection-only NHL cards with explicit early-exit reason metadata', () => {
     const oddsSnapshot = buildBaseOddsSnapshot();
     const mlCard = {

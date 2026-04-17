@@ -142,6 +142,50 @@ function toFiniteNumber(value) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function extractSameBookOddsContext(oddsSnapshot) {
+  const rawData =
+    oddsSnapshot?.raw_data && typeof oddsSnapshot.raw_data === 'object'
+      ? oddsSnapshot.raw_data
+      : null;
+  const executionPairs =
+    rawData?._execution_pairs && typeof rawData._execution_pairs === 'object'
+      ? rawData._execution_pairs
+      : {};
+
+  return {
+    h2h_same_book_away_for_home:
+      oddsSnapshot?.h2h_same_book_away_for_home ??
+      oddsSnapshot?.h2hSameBookAwayForHome ??
+      executionPairs.h2h_same_book_away_for_home ??
+      null,
+    h2h_same_book_home_for_away:
+      oddsSnapshot?.h2h_same_book_home_for_away ??
+      oddsSnapshot?.h2hSameBookHomeForAway ??
+      executionPairs.h2h_same_book_home_for_away ??
+      null,
+    spread_same_book_away_for_home:
+      oddsSnapshot?.spread_same_book_away_for_home ??
+      oddsSnapshot?.spreadSameBookAwayForHome ??
+      executionPairs.spread_same_book_away_for_home ??
+      null,
+    spread_same_book_home_for_away:
+      oddsSnapshot?.spread_same_book_home_for_away ??
+      oddsSnapshot?.spreadSameBookHomeForAway ??
+      executionPairs.spread_same_book_home_for_away ??
+      null,
+    total_same_book_under_for_over:
+      oddsSnapshot?.total_same_book_under_for_over ??
+      oddsSnapshot?.totalSameBookUnderForOver ??
+      executionPairs.total_same_book_under_for_over ??
+      null,
+    total_same_book_over_for_under:
+      oddsSnapshot?.total_same_book_over_for_under ??
+      oddsSnapshot?.totalSameBookOverForUnder ??
+      executionPairs.total_same_book_over_for_under ??
+      null,
+  };
+}
+
 function pickFirstFinite(...values) {
   for (const value of values) {
     const parsed = toFiniteNumber(value);
@@ -4118,12 +4162,16 @@ async function runMLBModel({
                 : isFullGameTotal
                   ? (() => {
                       const fgCtx = resolveMlbFullGameTotalContext(gameOddsSnapshot);
+                      const sameBookOddsContext = extractSameBookOddsContext(
+                        gameOddsSnapshot,
+                      );
                       return {
                         recommended_bet_type: 'total',
                         odds_context: {
                           total: fgCtx.line ?? null,
                           total_price_over: fgCtx.over_price ?? null,
                           total_price_under: fgCtx.under_price ?? null,
+                          ...sameBookOddsContext,
                           captured_at: gameOddsSnapshot?.captured_at ?? null,
                         },
                         projection: driver.projection ?? null,
@@ -4136,6 +4184,7 @@ async function runMLBModel({
                       odds_context: {
                         h2h_home: gameOddsSnapshot?.h2h_home ?? null,
                         h2h_away: gameOddsSnapshot?.h2h_away ?? null,
+                        ...extractSameBookOddsContext(gameOddsSnapshot),
                         captured_at: gameOddsSnapshot?.captured_at ?? null,
                       },
                       projection: {
