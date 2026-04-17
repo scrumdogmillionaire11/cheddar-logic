@@ -391,6 +391,88 @@ function makeBaseGame(overrides = {}) {
 }
 
 {
+  const gameWithCompetingFullGameMarkets = makeBaseGame({
+    id: 'game-mlb-priority-ml-over-total',
+    gameId: 'game-mlb-priority-ml-over-total',
+    plays: [
+      {
+        source_card_id: 'card-mlb-full-game-total-lean',
+        cardType: 'mlb-full-game',
+        cardTitle: 'Full Game Total UNDER: TEXAS RANGERS @ SEATTLE MARINERS',
+        prediction: 'UNDER',
+        confidence: 0.7,
+        tier: 'WATCH',
+        reasoning: 'Competing total lean',
+        evPassed: true,
+        driverKey: 'mlb-full-game',
+        projectedTotal: 7.2,
+        edge: 0.082,
+        kind: 'PLAY',
+        market_type: 'TOTAL',
+        selection: { side: 'UNDER' },
+        line: 7.0,
+        price: -102,
+        status: 'WATCH',
+        classification: 'LEAN',
+        action: 'HOLD',
+        reason_codes: ['PLAY'],
+        execution_status: 'EXECUTABLE',
+        decision_v2: {
+          official_status: 'LEAN',
+          edge_pct: 0.082,
+          support_score: 6,
+        },
+      },
+      {
+        source_card_id: 'card-mlb-full-game-ml-lean',
+        cardType: 'mlb-full-game-ml',
+        cardTitle: 'Full Game ML AWAY: TEXAS RANGERS @ SEATTLE MARINERS',
+        prediction: 'AWAY',
+        confidence: 0.6,
+        tier: 'WATCH',
+        reasoning: 'Competing moneyline lean',
+        evPassed: true,
+        driverKey: 'mlb-full-game-ml',
+        projectedTotal: null,
+        edge: 0.071,
+        kind: 'PLAY',
+        market_type: 'MONEYLINE',
+        selection: { side: 'AWAY' },
+        price: 123,
+        status: 'WATCH',
+        classification: 'LEAN',
+        action: 'HOLD',
+        reason_codes: ['PLAY'],
+        execution_status: 'EXECUTABLE',
+        decision_v2: {
+          official_status: 'LEAN',
+          edge_pct: 0.071,
+          support_score: 5,
+        },
+      },
+    ],
+  });
+
+  const [card] = transformGames([gameWithCompetingFullGameMarkets]);
+  assert(card, 'MLB game with competing full-game markets should produce a game card');
+  assert.strictEqual(
+    card.play.market_type,
+    'MONEYLINE',
+    'MLB full-game moneyline should be selected over full-game total when both are LEAN/WATCH',
+  );
+  assert.strictEqual(
+    card.play.selection?.side,
+    'AWAY',
+    'selected moneyline play should preserve mlb-full-game-ml selection side',
+  );
+  assert.strictEqual(
+    card.play.price,
+    123,
+    'selected moneyline play should preserve mlb-full-game-ml price',
+  );
+}
+
+{
   const hiddenNonPublishable = makeBaseGame({
     id: 'game-mlb-hidden-nonpublishable-full-game',
     gameId: 'game-mlb-hidden-nonpublishable-full-game',
