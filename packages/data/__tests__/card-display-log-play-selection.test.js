@@ -182,6 +182,7 @@ function ensureCoreTables(db) {
       model_output_ids TEXT,
       metadata TEXT,
       run_id TEXT,
+      first_seen_price INTEGER,
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (game_id) REFERENCES games(game_id)
     );
@@ -341,6 +342,88 @@ describe('card_display_log capture for playable rows', () => {
     expect(String(rows[0].selection).toUpperCase()).toBe('HOME');
     expect(rows[0].line).toBe(-2.5);
     expect(rows[0].odds).toBe(-108);
+  });
+
+  test('uses strict legacy status fallback only when official_status is absent', () => {
+    const db = dbModule.getDatabase();
+    ensureCoreTables(db);
+    const now = new Date().toISOString();
+    const cases = [
+      { suffix: 'play', status: 'PLAY', expected: true },
+      { suffix: 'fire', status: 'FIRE', expected: true },
+      { suffix: 'lean', status: 'LEAN', expected: true },
+      { suffix: 'watch', status: 'WATCH', expected: false },
+      { suffix: 'hold', status: 'HOLD', expected: false },
+      { suffix: 'pass', status: 'PASS', expected: false },
+      { suffix: 'unknown', status: 'MONITOR', expected: false },
+      { suffix: 'missing', status: undefined, expected: false },
+    ];
+
+    for (const testCase of cases) {
+      const gameId = `game-legacy-${testCase.suffix}`;
+      db.prepare(
+        `
+        INSERT INTO games (id, sport, game_id, home_team, away_team, game_time_utc, status)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `,
+      ).run(
+        `g-legacy-${testCase.suffix}`,
+        'mlb',
+        gameId,
+        'Home',
+        'Away',
+        now,
+        'scheduled',
+      );
+
+      const payloadData = buildPlayPayload({
+        gameId,
+        sport: 'MLB',
+        homeTeam: 'Home',
+        awayTeam: 'Away',
+        officialStatus: undefined,
+        marketType: 'TOTAL',
+        selection: 'OVER',
+        line: 8.5,
+        price: -110,
+      });
+      delete payloadData.decision_v2.official_status;
+      if (testCase.status === undefined) {
+        delete payloadData.status;
+        delete payloadData.action;
+      } else {
+        payloadData.status = testCase.status;
+        payloadData.action = testCase.status;
+      }
+
+      dbModule.insertCardPayload({
+        id: `card-legacy-${testCase.suffix}`,
+        gameId,
+        sport: 'mlb',
+        cardType: 'mlb-full-game',
+        cardTitle: `Legacy ${testCase.status || 'missing'}`,
+        createdAt: now,
+        payloadData,
+        runId: `run-legacy-${testCase.suffix}`,
+      });
+    }
+
+    const rows = db
+      .prepare(
+        `
+        SELECT pick_id
+        FROM card_display_log
+        WHERE pick_id LIKE 'card-legacy-%'
+        ORDER BY pick_id
+      `,
+      )
+      .all();
+
+    expect(rows.map((row) => row.pick_id)).toEqual([
+      'card-legacy-fire',
+      'card-legacy-lean',
+      'card-legacy-play',
+    ]);
   });
 
   test('enforces one row per run_id + game_id across mixed markets/sides', () => {

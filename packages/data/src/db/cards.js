@@ -194,6 +194,24 @@ function normalizeOfficialStatus(value) {
   return '';
 }
 
+function hasOwnValue(source, key) {
+  return (
+    source &&
+    typeof source === 'object' &&
+    Object.prototype.hasOwnProperty.call(source, key) &&
+    source[key] !== null &&
+    source[key] !== undefined &&
+    String(source[key]).trim() !== ''
+  );
+}
+
+function normalizeLegacyDisplayStatus(value) {
+  const status = toUpperToken(value);
+  if (status === 'PLAY' || status === 'FIRE') return 'PLAY';
+  if (status === 'LEAN') return 'LEAN';
+  return '';
+}
+
 function isOfficialStatusActionable(value) {
   const status = normalizeOfficialStatus(value);
   return status === 'PLAY' || status === 'LEAN';
@@ -265,7 +283,21 @@ function recordCalibrationPredictionForCard({ db, card, payloadData, lockedMarke
 }
 
 function resolveOfficialPlayStatus(payloadData) {
-  return normalizeOfficialStatus(payloadData?.decision_v2?.official_status);
+  const decisionV2 =
+    payloadData?.decision_v2 && typeof payloadData.decision_v2 === 'object'
+      ? payloadData.decision_v2
+      : null;
+  if (hasOwnValue(decisionV2, 'official_status')) {
+    return normalizeOfficialStatus(decisionV2.official_status);
+  }
+
+  if (hasOwnValue(payloadData, 'status')) {
+    return normalizeLegacyDisplayStatus(payloadData.status);
+  }
+  if (hasOwnValue(payloadData, 'action')) {
+    return normalizeLegacyDisplayStatus(payloadData.action);
+  }
+  return '';
 }
 
 function normalizeMarketTypeForTracking(rawValue) {
