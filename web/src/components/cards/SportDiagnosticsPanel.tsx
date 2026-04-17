@@ -29,7 +29,8 @@ export default function SportDiagnosticsPanel({
   return (
     <details className="mb-4 border-t border-white/10 pt-2">
       <summary className="cursor-pointer text-xs text-cloud/50 hover:text-cloud/70 select-none">
-        Diagnostics — {totalBlocked} game{totalBlocked !== 1 ? 's' : ''} blocked
+        Debug diagnostics workflow — {totalBlocked} game
+        {totalBlocked !== 1 ? 's' : ''} blocked
       </summary>
       <div className="mt-2 overflow-x-auto">
         <table className="w-full text-xs text-cloud/50">

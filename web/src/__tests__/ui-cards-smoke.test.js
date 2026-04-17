@@ -73,6 +73,14 @@ async function validateCardsSourceContract(assert) {
     new URL('../components/cards/CardsPageContext.tsx', import.meta.url),
     'utf8',
   );
+  const cardsListSource = await fs.readFile(
+    new URL('../components/cards/CardsList.tsx', import.meta.url),
+    'utf8',
+  );
+  const filterPanelSource = await fs.readFile(
+    new URL('../components/filter-panel.tsx', import.meta.url),
+    'utf8',
+  );
   assert.ok(
     !source.includes('displayPlay.edge ?? 0'),
     'cards page must not synthesize edge from `displayPlay.edge ?? 0`',
@@ -101,6 +109,18 @@ async function validateCardsSourceContract(assert) {
   assert.ok(
     pageContextSource.includes("modeParam === 'projections'"),
     'cards page should support projections mode via URL param',
+  );
+  assert.ok(
+    pageContextSource.includes("evaluateCardFilter(filterCard, f, 'projections')"),
+    'projections mode should use the canonical card predicate contract',
+  );
+  assert.ok(
+    !cardsListSource.includes('.filter(({ play }) => isActionableProjectionPlay(play))'),
+    'cards list should not re-filter projection items after provider filtering',
+  );
+  assert.ok(
+    filterPanelSource.includes("from '@/lib/game-card/preset-helpers'"),
+    'quick-filter presets should be routed through canonical helper functions',
   );
 }
 

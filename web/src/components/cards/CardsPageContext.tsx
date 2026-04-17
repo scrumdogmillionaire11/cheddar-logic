@@ -11,9 +11,9 @@ import {
 } from 'react';
 import {
   applyFilters,
+  evaluateCardFilter,
   getActiveFilterCount,
   getDefaultFilters,
-  getFilterDebugFlags,
   resetFilters,
 } from '@/lib/game-card/filters';
 import { transformGames, transformPropGames } from '@/lib/game-card/transform';
@@ -37,7 +37,6 @@ import type {
   CardsPageState,
   CardsUiAction,
   CardsUiState,
-  GameFilters,
   GuardrailBreakdownEntry,
 } from './types';
 import {
@@ -64,10 +63,10 @@ import {
   resolveLifecycleModeFromUrlAndStorage,
   resolvePrimaryTotalProjectionPlay,
   summarizeNonJsonBody,
+  createProjectionFilterCard,
   deriveOnePModelCallFromReasons,
   hasProjectedTotal,
   hasActionablePlay,
-  isActionableProjectionPlay,
   filterPropCards,
   isFullGameTotalsCallPlay,
 } from './shared';
@@ -161,16 +160,18 @@ export function CardsPageProvider({
   const effectiveFilters = useMemo(
     () =>
       getLifecycleAwareFilters(
-        uiState.filters as never,
+        uiState.filters,
         uiState.viewMode,
         uiState.lifecycleMode,
-      ) as GameFilters,
+      ),
     [uiState.filters, uiState.viewMode, uiState.lifecycleMode],
   );
 
   const { enrichedCards, filteredCards, propCards, totalCardsInView } = useMemo(() => {
     if (uiState.viewMode === 'props') {
-      const propGameCards = transformPropGames(games as never);
+      const propGameCards = transformPropGames(
+        games as Parameters<typeof transformPropGames>[0],
+      );
       const filteredPropCards = filterPropCards(propGameCards, effectiveFilters);
 
       if (process.env.NODE_ENV !== 'production') {
@@ -206,7 +207,7 @@ export function CardsPageProvider({
       };
     }
 
-    const transformed = transformGames(games as never);
+    const transformed = transformGames(games as Parameters<typeof transformGames>[0]);
     const enriched = enrichCards(transformed);
     const filtered = applyFilters(enriched, effectiveFilters, uiState.viewMode);
 
@@ -235,7 +236,6 @@ export function CardsPageProvider({
     if (uiState.viewMode !== 'projections') return [];
     const f = effectiveFilters;
     if ('propStatGroups' in f) return [];
-    const todayKey = getEtDayKey(new Date());
 
     return games.flatMap((game) => {
       const play1p = game.plays.find(
@@ -243,35 +243,8 @@ export function CardsPageProvider({
       );
       if (!play1p) return [];
 
-      if (
-        f.sports.length > 0 &&
-        !f.sports.includes(game.sport.toUpperCase() as never)
-      ) {
-        return [];
-      }
-
-      const playStatus = play1p.status;
-      if (f.statuses.length > 0 && playStatus && !f.statuses.includes(playStatus)) {
-        return [];
-      }
-
-      // WI-0968: keep projection actionability logic centralized in shared utils.
-      if (!isActionableProjectionPlay(play1p)) {
-        return [];
-      }
-
-      if (f.timeWindow === 'today') {
-        if (getEtDayKey(game.gameTimeUtc) !== todayKey) return [];
-      } else if (f.timeWindow === 'next_2h') {
-        const startMs = new Date(game.gameTimeUtc).getTime();
-        const now = Date.now();
-        if (startMs <= now || startMs > now + 2 * 60 * 60 * 1000) return [];
-      } else if (f.timeWindow === 'custom' && f.customTimeRange) {
-        const startMs = new Date(game.gameTimeUtc).getTime();
-        const rangeStart = new Date(f.customTimeRange.start).getTime();
-        const rangeEnd = new Date(f.customTimeRange.end).getTime();
-        if (startMs < rangeStart || startMs > rangeEnd) return [];
-      }
+      const filterCard = createProjectionFilterCard(game, play1p);
+      if (!evaluateCardFilter(filterCard, f, 'projections').passes) return [];
 
       return [{ game, play: play1p }];
     });
@@ -424,11 +397,10 @@ export function CardsPageProvider({
     const droppedMetaBySport: Record<string, ReturnType<typeof createDroppedMeta>> = {};
 
     for (const card of enrichedCards) {
-      const flags = getFilterDebugFlags(card, effectiveFilters, uiState.viewMode);
-      const passesAll = Object.values(flags).every(Boolean);
-      if (passesAll) continue;
+      const predicate = evaluateCardFilter(card, effectiveFilters, uiState.viewMode);
+      if (predicate.passes) continue;
 
-      const reason = getFirstDropReason(flags);
+      const reason = getFirstDropReason(predicate.flags);
       bumpReason(droppedByReason, reason);
 
       const sportKey = (card.sport || 'UNKNOWN').toUpperCase();

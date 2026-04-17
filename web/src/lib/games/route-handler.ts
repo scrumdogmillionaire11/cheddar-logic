@@ -3557,7 +3557,7 @@ export async function GET(request: NextRequest) {
         };
 
         // PROP plays (nhl-player-shots, mlb-pitcher-k) and designated projection-surface
-        // card types (nhl-pace-1p, mlb-f5, mlb-full-game, mlb-full-game-ml)
+        // card types (nhl-pace-1p, mlb-f5, mlb-f5-ml, mlb-full-game, mlb-full-game-ml)
         // must pass through even when PROJECTION_ONLY.
         // - PROP plays are shown in the Player Props tab with propVerdict='PROJECTION'
         // - these card types are the sole source for Game Props surfaces in degraded windows
@@ -3565,6 +3565,7 @@ export async function GET(request: NextRequest) {
         const isProjectionSurfaceCardType =
           cardRow.card_type === 'nhl-pace-1p' ||
           cardRow.card_type === 'mlb-f5' ||
+          cardRow.card_type === 'mlb-f5-ml' ||
           cardRow.card_type === 'mlb-full-game' ||
           cardRow.card_type === 'mlb-full-game-ml';
         const isPropMarket = play.market_type === 'PROP';

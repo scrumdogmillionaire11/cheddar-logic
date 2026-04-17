@@ -3,7 +3,7 @@
  *
  * Canonical card read surface in the current worker+DB runtime.
  * Returns betting dashboard cards (NBA, NHL, SOCCER, MLB).
- * Includes projection-surface card types: mlb-f5, mlb-full-game, nhl-pace-1p.
+ * Includes projection-surface card types: mlb-f5, mlb-f5-ml, mlb-full-game, nhl-pace-1p.
  * FPL projections are served from cheddar-fpl-sage backend.
  *
  * Historical endpoint families (`/api/models/*`, `/api/betting/projections`,
@@ -393,7 +393,7 @@ export async function GET(request: NextRequest) {
     // Exclude FPL and NCAAM cards
     baseWhere.push("LOWER(cp.sport) != 'fpl'");
     baseWhere.push("LOWER(cp.sport) != 'ncaam'");
-    baseWhere.push(`(LOWER(cp.card_type) IN ('nhl-pace-1p', 'mlb-f5', 'mlb-full-game', 'mlb-full-game-ml') OR ${buildBettingSurfacePayloadPredicate('cp.payload_data')})`);
+    baseWhere.push(`(LOWER(cp.card_type) IN ('nhl-pace-1p', 'mlb-f5', 'mlb-f5-ml', 'mlb-full-game', 'mlb-full-game-ml') OR ${buildBettingSurfacePayloadPredicate('cp.payload_data')})`);
     baseWhere.push(`NOT EXISTS (
       SELECT 1
       FROM card_results cr

@@ -30,12 +30,14 @@ export const DROP_REASONS: DropReason[] = [
   'DROP_TIME_WINDOW',
   'DROP_STALE_ODDS',
   'DROP_MARKET_NOT_ALLOWED',
+  'DROP_CARD_TYPE',
   'DROP_NO_BETTABLE_STATUS',
   'DROP_DRIVER_STRENGTH',
   'DROP_RISK_FILTER',
   'DROP_SEARCH',
   'DROP_NO_PLAY',
   'DROP_PRESET_RULE',
+  'DROP_MIN_EDGE',
   'DROP_UNKNOWN',
 ];
 
@@ -155,6 +157,7 @@ export function getFirstDropReason(
   if (!flags.timeWindow) return 'DROP_TIME_WINDOW';
   if (!flags.oddsFreshness) return 'DROP_STALE_ODDS';
   if (!flags.market) return 'DROP_MARKET_NOT_ALLOWED';
+  if (!flags.cardType) return 'DROP_CARD_TYPE';
   if (!flags.actionability) return 'DROP_NO_BETTABLE_STATUS';
   if (!flags.driverStrength) return 'DROP_DRIVER_STRENGTH';
   if (!flags.riskFlags) return 'DROP_RISK_FILTER';
@@ -239,6 +242,66 @@ export function getEtDayKey(dateInput: Date | string): string {
     month: '2-digit',
     day: '2-digit',
   }).format(date);
+}
+
+function mapProjectionMarketToLegacy(
+  marketType: GameData['plays'][number]['market_type'],
+): GameCard['drivers'][number]['market'] {
+  if (marketType === 'MONEYLINE') return 'ML';
+  if (marketType === 'SPREAD' || marketType === 'PUCKLINE') return 'SPREAD';
+  if (
+    marketType === 'TOTAL' ||
+    marketType === 'TEAM_TOTAL' ||
+    marketType === 'FIRST_PERIOD'
+  ) {
+    return 'TOTAL';
+  }
+  return 'UNKNOWN';
+}
+
+export function createProjectionFilterCard(
+  game: GameData,
+  play: GameData['plays'][number],
+): GameCard {
+  const sport = String(game.sport || '').toUpperCase() as GameCard['sport'];
+  const cardType = play.cardType || 'projection';
+  const startsToday = getEtDayKey(game.gameTimeUtc) === getEtDayKey(new Date());
+  const market = mapProjectionMarketToLegacy(play.market_type);
+  const direction =
+    play.prediction === 'HOME' ||
+    play.prediction === 'AWAY' ||
+    play.prediction === 'OVER' ||
+    play.prediction === 'UNDER'
+      ? play.prediction
+      : 'NEUTRAL';
+
+  return {
+    id: `${game.gameId}:${cardType}:${play.driverKey || direction}`,
+    gameId: game.gameId,
+    sport,
+    homeTeam: game.homeTeam,
+    awayTeam: game.awayTeam,
+    startTime: game.gameTimeUtc,
+    updatedAt: game.odds?.capturedAt || game.createdAt || game.gameTimeUtc,
+    status: game.status,
+    markets: {},
+    play: play as unknown as GameCard['play'],
+    drivers: [
+      {
+        key: play.driverKey || `${cardType}:${direction}`,
+        market,
+        tier: play.tier || 'WATCH',
+        direction,
+        confidence: play.confidence,
+        note: play.reasoning,
+        cardType,
+        cardTitle: play.cardTitle,
+        role: 'PRIMARY',
+      },
+    ],
+    evidence: [],
+    tags: startsToday ? [GAME_TAGS.STARTS_TODAY] : [],
+  };
 }
 
 export function groupCardsByEtDate<T>(

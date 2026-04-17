@@ -361,7 +361,7 @@ export async function GET(
     // Exclude FPL cards - they are served from cheddar-fpl-sage backend
     baseWhere.push("sport != 'FPL'");
     baseWhere.push(
-      `(LOWER(card_type) IN ('nhl-pace-1p', 'mlb-f5', 'mlb-full-game', 'mlb-full-game-ml') OR ${buildBettingSurfacePayloadPredicate('card_payloads.payload_data')})`,
+      `(LOWER(card_type) IN ('nhl-pace-1p', 'mlb-f5', 'mlb-f5-ml', 'mlb-full-game', 'mlb-full-game-ml') OR ${buildBettingSurfacePayloadPredicate('card_payloads.payload_data')})`,
     );
     baseWhere.push(`NOT EXISTS (
       SELECT 1

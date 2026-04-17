@@ -16,7 +16,6 @@ export default function CardsHeader() {
     loading,
     todayEtKey,
     totalCardsInView,
-    viewMode,
     traceStats,
   } = useCardsPageState();
 
@@ -27,52 +26,55 @@ export default function CardsHeader() {
         {totalCardsInView} game{totalCardsInView !== 1 ? 's' : ''} total,
         showing {displayedCardsInView} (updates in background every 60s)
       </p>
-      {!loading && !error && diagnosticsEnabled && viewMode === 'game' && (
-        <p className="text-xs text-cloud/60">
-          Guardrails: edge verification {guardrailStats.triggered.edge_sanity_triggered}{' '}
-          • proxy capped {guardrailStats.triggered.proxy_cap_triggered} • proxy
-          blocked {guardrailStats.triggered.proxy_blocked} • exact wager mismatch{' '}
-          {guardrailStats.triggered.exact_wager_mismatch} • market price missing{' '}
-          {guardrailStats.triggered.market_price_missing}
-        </p>
-      )}
       {!loading && !error && diagnosticsEnabled && (
-        <div className="rounded-lg border border-white/10 bg-surface/30 px-3 py-2 text-xs text-cloud/70 space-y-1">
-          <p>
-            Trace (all): fetched {traceStats.fetchedTotal} (
-            {formatSportCounts(traceStats.fetchedBySport)}) → transformed{' '}
-            {traceStats.transformedTotal} (
-            {formatSportCounts(traceStats.transformedBySport)}) → displayed{' '}
-            {traceStats.displayedTotal} ({formatSportCounts(traceStats.displayedBySport)})
-          </p>
-          <p>
-            Trace (today ET {todayEtKey}): fetched (
-            {formatSportCounts(traceStats.fetchedTodayBySport)}) → transformed (
-            {formatSportCounts(traceStats.transformedTodayBySport)}) → displayed (
-            {formatSportCounts(traceStats.displayedTodayBySport)})
-          </p>
-          <p>
-            Filter drops: status {dropTraceStats.droppedByReason.DROP_NO_BETTABLE_STATUS}{' '}
-            • market {dropTraceStats.droppedByReason.DROP_MARKET_NOT_ALLOWED} •
-            time {dropTraceStats.droppedByReason.DROP_TIME_WINDOW} • data errors{' '}
-            {hiddenDataErrors}
-          </p>
-          <p>
-            Guardrails (triggered): edge {guardrailStats.triggered.edge_sanity_triggered}{' '}
-            • proxy {guardrailStats.triggered.proxy_cap_triggered} • proxy blocked{' '}
-            {guardrailStats.triggered.proxy_blocked} • high-edge blocked{' '}
-            {guardrailStats.triggered.high_edge_non_total_blocked} • driver load fail{' '}
-            {guardrailStats.triggered.driver_load_failures} • exact wager mismatch{' '}
-            {guardrailStats.triggered.exact_wager_mismatch} • market price missing{' '}
-            {guardrailStats.triggered.market_price_missing}
-          </p>
-          <p>
-            Guardrails (outcome): PLAY→LEAN {guardrailStats.outcome.fire_to_watch}{' '}
-            • LEAN→PASS {guardrailStats.outcome.watch_to_pass} • PLAY→PASS{' '}
-            {guardrailStats.outcome.fire_to_pass} • bet removed{' '}
-            {guardrailStats.outcome.bet_removed}
-          </p>
-        </div>
+        <details className="rounded-lg border border-white/10 bg-surface/30 px-3 py-2 text-xs text-cloud/70">
+          <summary className="cursor-pointer select-none text-cloud/60 hover:text-cloud/80">
+            Debug diagnostics workflow — guardrails{' '}
+            {guardrailStats.triggered.edge_sanity_triggered +
+              guardrailStats.triggered.proxy_cap_triggered +
+              guardrailStats.triggered.proxy_blocked +
+              guardrailStats.triggered.exact_wager_mismatch +
+              guardrailStats.triggered.market_price_missing}{' '}
+            triggered, {hiddenDataErrors} data error
+            {hiddenDataErrors !== 1 ? 's' : ''}
+          </summary>
+          <div className="mt-2 space-y-1">
+            <p>
+              Trace (all): fetched {traceStats.fetchedTotal} (
+              {formatSportCounts(traceStats.fetchedBySport)}) → transformed{' '}
+              {traceStats.transformedTotal} (
+              {formatSportCounts(traceStats.transformedBySport)}) → displayed{' '}
+              {traceStats.displayedTotal} ({formatSportCounts(traceStats.displayedBySport)})
+            </p>
+            <p>
+              Trace (today ET {todayEtKey}): fetched (
+              {formatSportCounts(traceStats.fetchedTodayBySport)}) → transformed (
+              {formatSportCounts(traceStats.transformedTodayBySport)}) → displayed (
+              {formatSportCounts(traceStats.displayedTodayBySport)})
+            </p>
+            <p>
+              Filter drops: status {dropTraceStats.droppedByReason.DROP_NO_BETTABLE_STATUS}{' '}
+              • market {dropTraceStats.droppedByReason.DROP_MARKET_NOT_ALLOWED} •
+              time {dropTraceStats.droppedByReason.DROP_TIME_WINDOW} • data errors{' '}
+              {hiddenDataErrors}
+            </p>
+            <p>
+              Guardrails (triggered): edge {guardrailStats.triggered.edge_sanity_triggered}{' '}
+              • proxy {guardrailStats.triggered.proxy_cap_triggered} • proxy blocked{' '}
+              {guardrailStats.triggered.proxy_blocked} • high-edge blocked{' '}
+              {guardrailStats.triggered.high_edge_non_total_blocked} • driver load fail{' '}
+              {guardrailStats.triggered.driver_load_failures} • exact wager mismatch{' '}
+              {guardrailStats.triggered.exact_wager_mismatch} • market price missing{' '}
+              {guardrailStats.triggered.market_price_missing}
+            </p>
+            <p>
+              Guardrails (outcome): PLAY→LEAN {guardrailStats.outcome.fire_to_watch}{' '}
+              • LEAN→PASS {guardrailStats.outcome.watch_to_pass} • PLAY→PASS{' '}
+              {guardrailStats.outcome.fire_to_pass} • bet removed{' '}
+              {guardrailStats.outcome.bet_removed}
+            </p>
+          </div>
+        </details>
       )}
       {!loading && !error && hiddenDataErrors > 0 && (
         <details className="rounded-md border border-amber-600/50 bg-amber-700/20 px-3 py-2 text-xs text-amber-100">
