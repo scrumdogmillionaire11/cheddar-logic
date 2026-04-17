@@ -8,6 +8,7 @@
     "build": "next build --webpack && node scripts/copy-native-bindings.cjs",
     "start": "next start",
     "lint": "eslint",
+    "test:model-outputs-writers": "node --import tsx/esm src/__tests__/model-outputs-writers.contract.test.js",
     "test:api:cards:security": "node --import tsx/esm src/__tests__/api-cards-gameId-security.test.js",
     "test:dedupe": "node src/__tests__/api-dedupe.test.js",
     "test:cards-sport-filter": "node src/__tests__/api-cards-sport-filter.test.js",

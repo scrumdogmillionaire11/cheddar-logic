@@ -1,8 +1,8 @@
 /**
  * GET /api/model-outputs
  *
- * Read surface for the model_outputs table. Written by run_mlb_model.js and
- * run_nfl_model.js via insertModelOutput(). Not written by NHL or NBA model
+ * Read surface for the model_outputs table. Written by run_mlb_model.js,
+ * run_nfl_model.js, and run_fpl_model.js via insertModelOutput(). Not written by NHL or NBA model
  * runners (they write card_payloads directly).
  *
  * Query params:
