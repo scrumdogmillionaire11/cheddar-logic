@@ -86,6 +86,46 @@ function writeShadowCandidates(db, { playDate, capturedAt, minEdgePct, candidate
     });
   }
 }
+function writeNominees(db, { playDate, capturedAt, winnerStatus, nominees }) {
+  if (!Array.isArray(nominees) || nominees.length === 0) return;
+  db.prepare(`DELETE FROM potd_nominees WHERE play_date = ?`).run(playDate);
+  const stmt = db.prepare(`
+    INSERT INTO potd_nominees (
+      play_date, nominee_rank, winner_status, sport, game_id,
+      home_team, away_team, market_type, selection_label, line, price,
+      edge_pct, total_score, confidence_label, model_win_prob,
+      game_time_utc, source_type, created_at
+    ) VALUES (
+      @play_date, @nominee_rank, @winner_status, @sport, @game_id,
+      @home_team, @away_team, @market_type, @selection_label, @line, @price,
+      @edge_pct, @total_score, @confidence_label, @model_win_prob,
+      @game_time_utc, @source_type, @created_at
+    )
+  `);
+  nominees.forEach((c, i) => {
+    stmt.run({
+      play_date: playDate,
+      nominee_rank: i + 1,
+      winner_status: winnerStatus,
+      sport: c.sport ?? null,
+      game_id: c.gameId ?? null,
+      home_team: c.home_team ?? null,
+      away_team: c.away_team ?? null,
+      market_type: c.marketType ?? null,
+      selection_label: c.selectionLabel ?? null,
+      line: c.line ?? null,
+      price: c.price ?? null,
+      edge_pct: c.edgePct ?? null,
+      total_score: c.totalScore ?? null,
+      confidence_label: c.confidenceLabel ?? null,
+      model_win_prob: c.modelWinProb ?? null,
+      game_time_utc: c.commence_time ?? null,
+      source_type: 'SPORT_WINNER',
+      created_at: capturedAt,
+    });
+  });
+}
+
 const { v4: uuidV4 } = require('uuid');
 const { DateTime } = require('luxon');
 const {
@@ -109,6 +149,7 @@ const {
   confidenceThreshold,
   scoreCandidate,
   selectBestPlay,
+  selectTopPlays,
   kellySize,
 } = require('./signal-engine');
 const { formatPotdDiscordMessage } = require('./format-discord');
@@ -133,6 +174,9 @@ const POTD_MIN_STAKE_PCT = Number(process.env.POTD_MIN_STAKE_PCT || 0.005); // 0
 // Minimum totalScore (0–1 confidence/quality blend) required for POTD candidate viability.
 // totalScore = (lineValue * 0.625) + (marketConsensus * 0.375), both [0,1] clamped.
 const POTD_MIN_TOTAL_SCORE = Number(process.env.POTD_MIN_TOTAL_SCORE || 0.30);  // 0.30
+// Maximum number of nominees (sport winners) to store and display per day.
+// With 4 active sports the effective ceiling is 4.
+const POTD_MAX_NOMINEES = Number(process.env.POTD_MAX_NOMINEES || 5);
 const POTD_SPORT_ENV = {
   NHL: 'ENABLE_NHL_MODEL',
   NBA: 'ENABLE_NBA_MODEL',
@@ -319,7 +363,7 @@ async function gatherBestCandidate({
   fetchOddsFn,
   buildCandidatesFn,
   scoreCandidateFn,
-  selectBestPlayFn,
+  selectTopPlaysFn,
 }) {
   const sports = getActivePotdSports();
   const scoredCandidates = [];
@@ -359,8 +403,11 @@ async function gatherBestCandidate({
       c.totalScore >= POTD_MIN_TOTAL_SCORE,
   );
 
+  const rankedNominees = selectTopPlaysFn(scoredCandidates, { minConfidence: POTD_MIN_TOTAL_SCORE, minEdgePct: POTD_MIN_EDGE, maxNominees: POTD_MAX_NOMINEES });
+
   return {
-    bestCandidate: selectBestPlayFn(scoredCandidates, { minConfidence: POTD_MIN_TOTAL_SCORE, minEdgePct: POTD_MIN_EDGE }),
+    bestCandidate: rankedNominees[0] || null,
+    rankedNominees,
     allScoredCandidates: scoredCandidates,
     fetchErrors,
     activeSports: sports,
@@ -377,7 +424,7 @@ async function runPotdEngine({
   fetchOddsFn = fetchOdds,
   buildCandidatesFn = buildCandidates,
   scoreCandidateFn = scoreCandidate,
-  selectBestPlayFn = selectBestPlay,
+  selectTopPlaysFn = selectTopPlays,
   kellySizeFn = kellySize,
   sendDiscordMessagesFn = sendDiscordMessages,
   nowFn = () => DateTime.now().setZone(DEFAULT_TIMEZONE),
@@ -428,11 +475,11 @@ async function runPotdEngine({
         };
       }
 
-      const { bestCandidate, allScoredCandidates, fetchErrors, activeSports, candidatesCount, viableCount } = await gatherBestCandidate({
+      const { bestCandidate, rankedNominees, allScoredCandidates, fetchErrors, activeSports, candidatesCount, viableCount } = await gatherBestCandidate({
         fetchOddsFn,
         buildCandidatesFn,
         scoreCandidateFn,
-        selectBestPlayFn,
+        selectTopPlaysFn,
       });
 
       const bankrollState = ensureInitialBankroll(db, {
@@ -447,6 +494,7 @@ async function runPotdEngine({
           .filter(c => typeof c.edgePct === 'number' && isFinite(c.edgePct) && typeof c.totalScore === 'number' && isFinite(c.totalScore))
           .sort((a, b) => b.edgePct - a.edgePct)[0] || null;
         writeShadowCandidates(db, { playDate, capturedAt: nowIso, minEdgePct: POTD_MIN_EDGE, candidates: allScoredCandidates });
+        writeNominees(db, { playDate, capturedAt: nowIso, winnerStatus: 'NO_PICK', nominees: rankedNominees });
         writeDailyStats(db, {
           playDate,
           potdFired: false,
@@ -485,6 +533,7 @@ async function runPotdEngine({
         bestLabel === 'LOW';
 
       if (lowConfidenceCandidate) {
+        writeNominees(db, { playDate, capturedAt: nowIso, winnerStatus: 'NO_PICK', nominees: rankedNominees });
         writeDailyStats(db, {
           playDate,
           potdFired: false,
@@ -522,6 +571,7 @@ async function runPotdEngine({
       });
 
       if (!Number.isFinite(rawWager) || rawWager <= 0) {
+        writeNominees(db, { playDate, capturedAt: nowIso, winnerStatus: 'NO_PICK', nominees: rankedNominees });
         writeDailyStats(db, {
           playDate,
           potdFired: false,
@@ -550,6 +600,7 @@ async function runPotdEngine({
       // Minimum-stake gate: if Kelly says bet less than 0.5 % of bankroll the
       // play is not worth featuring — reject rather than post dust.
       if (rawWager / bankrollAtPost < POTD_MIN_STAKE_PCT) {
+        writeNominees(db, { playDate, capturedAt: nowIso, winnerStatus: 'NO_PICK', nominees: rankedNominees });
         writeDailyStats(db, {
           playDate,
           potdFired: false,
@@ -643,6 +694,8 @@ async function runPotdEngine({
 
       transaction();
 
+      writeNominees(db, { playDate, capturedAt: nowIso, winnerStatus: 'FIRED', nominees: rankedNominees });
+
       writeDailyStats(db, {
         playDate,
         potdFired: true,
@@ -661,7 +714,7 @@ async function runPotdEngine({
         try {
           await sendDiscordMessagesFn({
             webhookUrl,
-            messages: [formatPotdDiscordMessage(playRow)],
+            messages: [formatPotdDiscordMessage(playRow, rankedNominees.slice(1))],
           });
           discordPosted = true;
           db.prepare(

@@ -20,6 +20,7 @@ function resetTables() {
     DELETE FROM potd_bankroll;
     DELETE FROM potd_plays;
     DELETE FROM potd_daily_stats;
+    DELETE FROM potd_nominees;
     DELETE FROM card_results;
     DELETE FROM card_payloads;
     DELETE FROM odds_snapshots;
@@ -166,7 +167,7 @@ describe('runPotdEngine', () => {
       buildCandidatesFn: () => [lowConfidenceCandidate],
       scoreCandidateFn: (value) => value,
       // Force a best candidate return so the runner-level confidence guard is exercised.
-      selectBestPlayFn: (values) => values[0],
+      selectTopPlaysFn: (values) => (values.length > 0 ? [values[0]] : []),
       kellySizeFn,
       sendDiscordMessagesFn: async () => 1,
     });
@@ -193,7 +194,7 @@ describe('runPotdEngine', () => {
       }),
       buildCandidatesFn: () => [candidate],
       scoreCandidateFn: (value) => value,
-      selectBestPlayFn: (values) => values[0],
+      selectTopPlaysFn: (values) => (values.length > 0 ? [values[0]] : []),
       kellySizeFn: () => 2.5,
       sendDiscordMessagesFn: async () => 1,
     });
@@ -293,7 +294,7 @@ describe('runPotdEngine', () => {
       fetchOddsFn: async () => ({ games: [{ gameId: candidate.gameId }], errors: [] }),
       buildCandidatesFn: () => [candidate],
       scoreCandidateFn: (value) => value,
-      selectBestPlayFn: (values) => values[0],
+      selectTopPlaysFn: (values) => (values.length > 0 ? [values[0]] : []),
       kellySizeFn: () => 1.5,
       sendDiscordMessagesFn: async () => 1,
     });
@@ -321,7 +322,7 @@ describe('runPotdEngine', () => {
       fetchOddsFn: async () => ({ games: [{ gameId: candidate.gameId }], errors: [] }),
       buildCandidatesFn: () => [candidate],
       scoreCandidateFn: (value) => value,
-      selectBestPlayFn: (values) => values[0],
+      selectTopPlaysFn: (values) => (values.length > 0 ? [values[0]] : []),
       kellySizeFn: () => 2,
       sendDiscordMessagesFn: async () => {
         throw new Error('webhook down');
@@ -473,7 +474,7 @@ describe('runPotdEngine', () => {
         ];
       },
       scoreCandidateFn: (candidate) => candidate,
-      selectBestPlayFn: (values) => values[0],
+      selectTopPlaysFn: (values) => (values.length > 0 ? [values[0]] : []),
       kellySizeFn: () => 1.5,
       sendDiscordMessagesFn: async () => 1,
     });
@@ -508,7 +509,7 @@ describe('runPotdEngine', () => {
       fetchOddsFn: async () => ({ games: [{ gameId: candidate.gameId }], errors: [] }),
       buildCandidatesFn: () => [candidate],
       scoreCandidateFn: (value) => value,
-      selectBestPlayFn: (values) => values[0],
+      selectTopPlaysFn: (values) => (values.length > 0 ? [values[0]] : []),
       kellySizeFn: () => 2,
       sendDiscordMessagesFn: async () => 1,
     });
@@ -547,7 +548,7 @@ describe('runPotdEngine', () => {
       fetchOddsFn: async () => ({ games: [{ gameId: candidate.gameId }], errors: [] }),
       buildCandidatesFn: () => [candidate],
       scoreCandidateFn: (v) => v,
-      selectBestPlayFn: (vs) => vs[0],
+      selectTopPlaysFn: (vs) => (vs.length > 0 ? [vs[0]] : []),
       kellySizeFn: () => 2.0,
       sendDiscordMessagesFn: async () => {},
     });
@@ -569,7 +570,7 @@ describe('runPotdEngine', () => {
       fetchOddsFn: async () => ({ games: [], errors: [] }),
       buildCandidatesFn: () => [],
       scoreCandidateFn: (v) => v,
-      selectBestPlayFn: () => null,
+      selectTopPlaysFn: () => [],
       kellySizeFn: () => 0,
       sendDiscordMessagesFn: async () => {},
     });
@@ -590,7 +591,7 @@ describe('runPotdEngine', () => {
       fetchOddsFn: async () => ({ games: [], errors: [] }),
       buildCandidatesFn: () => [],
       scoreCandidateFn: (v) => v,
-      selectBestPlayFn: () => null,
+      selectTopPlaysFn: () => [],
       kellySizeFn: () => 0,
       sendDiscordMessagesFn: async () => {},
     };
@@ -620,7 +621,7 @@ describe('confidence-weighted wager sizing', () => {
       fetchOddsFn: async () => ({ games: [{ gameId: eliteCandidate.gameId }], errors: [] }),
       buildCandidatesFn: () => [eliteCandidate],
       scoreCandidateFn: (v) => v,
-      selectBestPlayFn: (vs) => vs[0],
+      selectTopPlaysFn: (vs) => (vs.length > 0 ? [vs[0]] : []),
       kellySizeFn: () => 2.0,
       sendDiscordMessagesFn: async () => 1,
     });
@@ -636,7 +637,7 @@ describe('confidence-weighted wager sizing', () => {
       fetchOddsFn: async () => ({ games: [{ gameId: highCandidate.gameId }], errors: [] }),
       buildCandidatesFn: () => [highCandidate],
       scoreCandidateFn: (v) => v,
-      selectBestPlayFn: (vs) => vs[0],
+      selectTopPlaysFn: (vs) => (vs.length > 0 ? [vs[0]] : []),
       kellySizeFn: () => 2.0,
       sendDiscordMessagesFn: async () => 1,
     });
@@ -693,5 +694,108 @@ describe('getActivePotdSports', () => {
     const result = getActivePotdSports();
     expect(result).not.toContain('NHL');
     expect(result).toContain('NBA');
+  });
+});
+
+describe('potd_nominees persistence', () => {
+  let dataModule;
+
+  beforeAll(async () => {
+    jest.resetModules();
+    process.env.CHEDDAR_DB_PATH = TEST_DB_PATH;
+    process.env.CHEDDAR_DB_AUTODISCOVER = 'false';
+    process.env.CHEDDAR_DB_ALLOW_MULTI_PROCESS = 'false';
+    process.env.POTD_STARTING_BANKROLL = '10';
+    process.env.POTD_KELLY_FRACTION = '0.25';
+    process.env.POTD_MAX_WAGER_PCT = '0.2';
+    dataModule = require('@cheddar-logic/data');
+    dataModule.closeDatabase();
+  });
+
+  beforeEach(() => {
+    dataModule.closeDatabase();
+    resetTables();
+  });
+
+  test('fired day: winner in potd_plays, all nominees in potd_nominees with winner_status=FIRED', async () => {
+    const { runPotdEngine } = require('../run_potd_engine');
+    const winner = buildSelectedCandidate({ sport: 'NHL', gameId: 'potd-game-001' });
+    const nominee = buildSelectedCandidate({
+      sport: 'NBA',
+      gameId: 'nba-game-001',
+      home_team: 'Lakers',
+      away_team: 'Celtics',
+      totalScore: 0.60,
+      edgePct: 0.022,
+    });
+
+    await runPotdEngine({
+      jobKey: 'potd|nominees-fired-test',
+      force: true,
+      fetchOddsFn: async () => ({ games: [{ gameId: winner.gameId }, { gameId: nominee.gameId }], errors: [] }),
+      buildCandidatesFn: (game) => {
+        if (game.gameId === winner.gameId) return [winner];
+        if (game.gameId === nominee.gameId) return [nominee];
+        return [];
+      },
+      scoreCandidateFn: (v) => v,
+      kellySizeFn: () => 2.0,
+      sendDiscordMessagesFn: async () => 1,
+    });
+
+    const playRows = readRows('SELECT * FROM potd_plays');
+    expect(playRows).toHaveLength(1);
+    expect(playRows[0].sport).toBe('NHL');
+
+    const nomineeRows = readRows('SELECT * FROM potd_nominees ORDER BY nominee_rank ASC');
+    expect(nomineeRows.length).toBeGreaterThanOrEqual(1);
+    nomineeRows.forEach((r) => expect(r.winner_status).toBe('FIRED'));
+    // Rank 1 is the winner (NHL), rank 2 is NBA nominee
+    expect(nomineeRows[0].sport).toBe('NHL');
+    expect(nomineeRows[0].nominee_rank).toBe(1);
+    if (nomineeRows[1]) {
+      expect(nomineeRows[1].sport).toBe('NBA');
+      expect(nomineeRows[1].nominee_rank).toBe(2);
+    }
+  });
+
+  test('no-pick day: zero rows in potd_plays, nominees stored with winner_status=NO_PICK', async () => {
+    const { runPotdEngine } = require('../run_potd_engine');
+    const candidate = buildSelectedCandidate({ sport: 'NHL', gameId: 'potd-nopick-001' });
+
+    await runPotdEngine({
+      jobKey: 'potd|nominees-nopick-test',
+      force: true,
+      fetchOddsFn: async () => ({ games: [{ gameId: candidate.gameId }], errors: [] }),
+      buildCandidatesFn: () => [candidate],
+      scoreCandidateFn: (v) => v,
+      // Kelly returns 0 → stake_below_minimum path → no winner fires
+      kellySizeFn: () => 0,
+      sendDiscordMessagesFn: async () => 1,
+    });
+
+    const playRows = readRows('SELECT * FROM potd_plays');
+    expect(playRows).toHaveLength(0);
+
+    const nomineeRows = readRows('SELECT * FROM potd_nominees');
+    expect(nomineeRows.length).toBeGreaterThanOrEqual(1);
+    nomineeRows.forEach((r) => expect(r.winner_status).toBe('NO_PICK'));
+    expect(nomineeRows[0].sport).toBe('NHL');
+  });
+
+  test('no candidates: nominees table remains empty', async () => {
+    const { runPotdEngine } = require('../run_potd_engine');
+
+    await runPotdEngine({
+      jobKey: 'potd|nominees-empty-test',
+      force: true,
+      fetchOddsFn: async () => ({ games: [], errors: [] }),
+      buildCandidatesFn: () => [],
+      scoreCandidateFn: (v) => v,
+      kellySizeFn: () => 0,
+      sendDiscordMessagesFn: async () => {},
+    });
+
+    expect(readRows('SELECT * FROM potd_nominees')).toHaveLength(0);
   });
 });

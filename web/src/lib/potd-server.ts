@@ -84,6 +84,47 @@ type PotdPlayRow = {
   reasoning: string | null;
 };
 
+type PotdNomineeRow = {
+  id: number;
+  play_date: string;
+  nominee_rank: number;
+  winner_status: string;
+  sport: string;
+  game_id: string | null;
+  home_team: string | null;
+  away_team: string | null;
+  market_type: string | null;
+  selection_label: string | null;
+  line: number | null;
+  price: number | null;
+  edge_pct: number | null;
+  total_score: number | null;
+  confidence_label: string | null;
+  model_win_prob: number | null;
+  game_time_utc: string | null;
+  source_type: string;
+  created_at: string;
+};
+
+export type PotdNominee = {
+  rank: number;
+  winnerStatus: string;
+  sport: string;
+  gameId: string | null;
+  homeTeam: string | null;
+  awayTeam: string | null;
+  marketType: string | null;
+  selectionLabel: string | null;
+  line: number | null;
+  price: number | null;
+  edgePct: number | null;
+  totalScore: number | null;
+  confidenceLabel: string | null;
+  modelWinProb: number | null;
+  gameTimeUtc: string | null;
+  gameTimeEtLabel: string;
+};
+
 type BankrollAggRow = {
   posted_count: number;
   settled_count: number;
@@ -171,7 +212,30 @@ export type PotdResponseData = {
   history: PotdApiPlay[];
   bankroll: PotdBankrollSummary;
   schedule: PotdSchedule | null;
+  nominees: PotdNominee[];
+  winnerStatus: 'FIRED' | 'NO_PICK' | null;
 };
+
+function mapNomineeRow(row: PotdNomineeRow): PotdNominee {
+  return {
+    rank: row.nominee_rank,
+    winnerStatus: row.winner_status,
+    sport: row.sport,
+    gameId: row.game_id,
+    homeTeam: row.home_team,
+    awayTeam: row.away_team,
+    marketType: row.market_type,
+    selectionLabel: row.selection_label,
+    line: row.line,
+    price: row.price,
+    edgePct: row.edge_pct,
+    totalScore: row.total_score,
+    confidenceLabel: row.confidence_label,
+    modelWinProb: row.model_win_prob,
+    gameTimeUtc: row.game_time_utc,
+    gameTimeEtLabel: formatEtDateTime(row.game_time_utc),
+  };
+}
 
 function parseJsonObject(value: string | null): Record<string, unknown> {
   if (!value) return {};
@@ -451,6 +515,31 @@ export async function getPotdResponseData(now = new Date()): Promise<PotdRespons
         ...EXCLUDED_GAME_STATUSES,
       ) as GameRow[];
 
+    // Nominees: on FIRED days exclude rank 1 (already shown as featured play).
+    // On NO_PICK days include all ranks.
+    const nomineesRows = (db
+      .prepare(
+        `SELECT *
+         FROM potd_nominees
+         WHERE play_date = ?
+           AND (winner_status != 'FIRED' OR nominee_rank > 1)
+         ORDER BY nominee_rank ASC
+         LIMIT 5`,
+      )
+      .all(todayDateKey) as PotdNomineeRow[]).map(mapNomineeRow);
+
+    const winnerStatusRow =
+      (db
+        .prepare(
+          `SELECT winner_status FROM potd_nominees WHERE play_date = ? LIMIT 1`,
+        )
+        .get(todayDateKey) as { winner_status: string } | undefined) ?? null;
+
+    const winnerStatus: 'FIRED' | 'NO_PICK' | null =
+      winnerStatusRow?.winner_status === 'FIRED' ? 'FIRED'
+      : winnerStatusRow?.winner_status === 'NO_PICK' ? 'NO_PICK'
+      : null;
+
     const todayPlay = todayRow ? mapPlayRow(todayRow) : null;
     const bankrollSummary = buildBankrollSummary(
       Number(latestLedgerRow?.amount_after || 0),
@@ -464,6 +553,8 @@ export async function getPotdResponseData(now = new Date()): Promise<PotdRespons
       history: historyRows,
       bankroll: bankrollSummary,
       schedule,
+      nominees: nomineesRows,
+      winnerStatus,
     };
   } finally {
     if (db) closeReadOnlyInstance(db);

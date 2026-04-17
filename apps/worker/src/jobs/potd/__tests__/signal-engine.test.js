@@ -7,6 +7,7 @@ const {
   resolveNHLModelSignal,
   scoreCandidate,
   selectBestPlay,
+  selectTopPlays,
 } = require('../signal-engine');
 
 function buildGame(overrides = {}) {
@@ -735,5 +736,101 @@ describe('scoreCandidate - NHL moneyline override', () => {
     expect(scored).not.toBeNull();
     expect(scored.modelWinProb).toBe(0.61);
     expect(scored.edgePct).toBeCloseTo(0.04, 4);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// selectTopPlays
+// ---------------------------------------------------------------------------
+describe('selectTopPlays', () => {
+  function makeCandidate(sport, totalScore, edgePct, overrides = {}) {
+    return {
+      sport,
+      gameId: `${sport}-game-001`,
+      marketType: 'TOTAL',
+      selectionLabel: `${sport} pick`,
+      totalScore,
+      edgePct,
+      ...overrides,
+    };
+  }
+
+  test('returns empty array when no viable candidates', () => {
+    expect(selectTopPlays([], { minConfidence: 0 })).toEqual([]);
+    expect(selectTopPlays(null, { minConfidence: 0 })).toEqual([]);
+    expect(selectTopPlays([makeCandidate('NHL', 0.8, -0.01)], { minConfidence: 0 })).toEqual([]);
+  });
+
+  test('returns one winner per sport, not raw top N from same sport', () => {
+    const candidates = [
+      makeCandidate('MLB', 0.80, 0.04),
+      makeCandidate('MLB', 0.75, 0.05, { gameId: 'MLB-game-002' }),
+      makeCandidate('MLB', 0.70, 0.06, { gameId: 'MLB-game-003' }),
+      makeCandidate('NHL', 0.65, 0.03),
+    ];
+
+    const result = selectTopPlays(candidates, { minConfidence: 0, maxNominees: 5 });
+    expect(result).toHaveLength(2);
+    const sports = result.map((c) => c.sport);
+    expect(sports).toContain('MLB');
+    expect(sports).toContain('NHL');
+    expect(result.find((c) => c.sport === 'MLB').totalScore).toBe(0.80);
+  });
+
+  test('ranks sport winners by totalScore descending then edgePct', () => {
+    const candidates = [
+      makeCandidate('NBA', 0.70, 0.03),
+      makeCandidate('NHL', 0.75, 0.02),
+      makeCandidate('MLB', 0.75, 0.04),
+    ];
+
+    const result = selectTopPlays(candidates, { minConfidence: 0, maxNominees: 5 });
+    expect(result[0].sport).toBe('MLB');   // tied totalScore, higher edgePct wins
+    expect(result[1].sport).toBe('NHL');
+    expect(result[2].sport).toBe('NBA');
+  });
+
+  test('respects maxNominees cap', () => {
+    const candidates = [
+      makeCandidate('NHL', 0.80, 0.04),
+      makeCandidate('NBA', 0.75, 0.03),
+      makeCandidate('MLB', 0.70, 0.05),
+      makeCandidate('NFL', 0.65, 0.02),
+    ];
+
+    expect(selectTopPlays(candidates, { minConfidence: 0, maxNominees: 2 })).toHaveLength(2);
+    expect(selectTopPlays(candidates, { minConfidence: 0, maxNominees: 10 })).toHaveLength(4);
+  });
+
+  test('winner via selectBestPlay equals first result of selectTopPlays', () => {
+    const candidates = [
+      makeCandidate('NHL', 0.80, 0.04),
+      makeCandidate('NBA', 0.75, 0.03),
+    ];
+
+    const best = selectBestPlay(candidates, { minConfidence: 0 });
+    const top = selectTopPlays(candidates, { minConfidence: 0 });
+    expect(best).toEqual(top[0]);
+  });
+
+  test('minConfidence threshold filters nominees', () => {
+    const candidates = [
+      makeCandidate('NHL', 0.60, 0.04),
+      makeCandidate('NBA', 0.40, 0.03),
+    ];
+
+    const result = selectTopPlays(candidates, { minConfidence: 'HIGH' });
+    expect(result).toHaveLength(1);
+    expect(result[0].sport).toBe('NHL');
+  });
+
+  test('stable tiebreaker produces deterministic order when score and edge match', () => {
+    const a = makeCandidate('MLB', 0.72, 0.03, { gameId: 'game-aaa', marketType: 'SPREAD' });
+    const b = makeCandidate('MLB', 0.72, 0.03, { gameId: 'game-zzz', marketType: 'SPREAD' });
+
+    const result1 = selectTopPlays([a, b], { minConfidence: 0 });
+    const result2 = selectTopPlays([b, a], { minConfidence: 0 });
+    expect(result1[0].gameId).toBe('game-aaa');
+    expect(result2[0].gameId).toBe('game-aaa');
   });
 });

@@ -62,11 +62,32 @@ type PotdSchedule = {
   windowEndTimeEtLabel: string;
 };
 
+type PotdNominee = {
+  rank: number;
+  winnerStatus: string;
+  sport: string;
+  gameId: string | null;
+  homeTeam: string | null;
+  awayTeam: string | null;
+  marketType: string | null;
+  selectionLabel: string | null;
+  line: number | null;
+  price: number | null;
+  edgePct: number | null;
+  totalScore: number | null;
+  confidenceLabel: string | null;
+  modelWinProb: number | null;
+  gameTimeUtc: string | null;
+  gameTimeEtLabel: string;
+};
+
 type PotdResponseData = {
   today: PotdApiPlay | null;
   history: PotdApiPlay[];
   bankroll: PotdBankrollSummary;
   schedule: PotdSchedule | null;
+  nominees: PotdNominee[];
+  winnerStatus: 'FIRED' | 'NO_PICK' | null;
 };
 
 type PlayOfTheDayClientProps = {
@@ -297,10 +318,81 @@ function renderEmptyState(schedule: PotdSchedule | null) {
   );
 }
 
+function renderNominees(nominees: PotdNominee[], winnerStatus: 'FIRED' | 'NO_PICK' | null) {
+  if (nominees.length === 0) return null;
+
+  const isNoPick = !winnerStatus || winnerStatus === 'NO_PICK';
+  const heading = isNoPick ? "Today's Closest Looks" : 'Nominees';
+  const subheading = isNoPick
+    ? 'Top monitored candidates — no official POTD posted today'
+    : 'Other top sport leaders considered today';
+
+  return (
+    <section className="rounded-[28px] border border-white/10 bg-surface/80 p-6">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <p className="text-[11px] uppercase tracking-[0.26em] text-cloud/55">
+            {heading}
+          </p>
+          <p className="mt-1 text-sm text-cloud/50">{subheading}</p>
+        </div>
+        <span className="rounded-full border border-white/15 bg-white/5 px-3 py-1 text-xs font-semibold tracking-[0.22em] text-cloud/55">
+          {nominees.length} play{nominees.length !== 1 ? 's' : ''}
+        </span>
+      </div>
+
+      <div className="mt-6 space-y-3">
+        {nominees.map((nominee) => (
+          <article
+            key={`${nominee.sport}-${nominee.gameId ?? nominee.rank}-${nominee.marketType ?? ''}`}
+            className="rounded-2xl border border-white/10 bg-night/35 p-4"
+          >
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="rounded-full border border-white/15 bg-white/5 px-2 py-0.5 text-[10px] font-semibold tracking-[0.2em] text-cloud/60">
+                    {nominee.sport}
+                  </span>
+                  {nominee.confidenceLabel && (
+                    <span className="text-[10px] uppercase tracking-[0.18em] text-cloud/40">
+                      {nominee.confidenceLabel}
+                    </span>
+                  )}
+                </div>
+                <div className="mt-2 text-sm font-semibold text-cloud">
+                  {nominee.selectionLabel ?? '—'}
+                </div>
+                <div className="mt-0.5 text-xs text-cloud/55">
+                  {nominee.awayTeam} @ {nominee.homeTeam}
+                </div>
+              </div>
+              <div className="text-right">
+                <div className="text-lg font-semibold text-cloud">
+                  {nominee.edgePct !== null ? formatPercent(nominee.edgePct) : '—'}
+                </div>
+                <div className="text-[11px] uppercase tracking-[0.18em] text-cloud/40">edge</div>
+              </div>
+            </div>
+            <div className="mt-3 flex flex-wrap gap-4 text-xs text-cloud/50">
+              <span>
+                Score{' '}
+                <span className="font-medium text-cloud/75">
+                  {nominee.totalScore !== null ? nominee.totalScore.toFixed(3) : '—'}
+                </span>
+              </span>
+              <span>{nominee.gameTimeEtLabel}</span>
+            </div>
+          </article>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 export default function PlayOfTheDayClient({
   initialData,
 }: PlayOfTheDayClientProps) {
-  const { today, history, bankroll, schedule } = initialData;
+  const { today, history, bankroll, schedule, nominees, winnerStatus } = initialData;
 
   return (
     <div className="min-h-screen bg-night px-4 py-8 text-cloud sm:px-6 lg:px-8">
@@ -333,6 +425,8 @@ export default function PlayOfTheDayClient({
         </div>
 
         {today ? renderTodayCard(today) : renderEmptyState(schedule)}
+
+        {renderNominees(nominees ?? [], winnerStatus ?? null)}
 
         <section className="grid gap-4 lg:grid-cols-3">
           {bankrollStat('Current Bankroll', formatCurrency(bankroll.current), metricTone(bankroll.netProfit))}

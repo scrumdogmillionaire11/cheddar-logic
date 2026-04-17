@@ -14,7 +14,7 @@ See [docs/decisions/ADR-0005-python-research-reference-only.md](../docs/decision
 
 ## Active Work Items
 
-**Updated**: 2026-04-13
+**Updated**: 2026-04-17
 
 Items below are listed in execution priority order for the work items that remain in `WORK_QUEUE/`.
 
@@ -45,6 +45,15 @@ Execution order for this chain: `WI-0899` → `WI-0900` → `WI-0907`, with `WI-
 - `WI-0904`: Dead-feature liquidation classification and action plan
 - `WI-0766`: Define NFL data-layer spec before enabling/removing NFL model stub
 - `WI-0662`: Standalone Sage frontend internal-only conversion and runbook cleanup
+
+### Priority 2.5 — Web filtering cleanup (TBD sequencing)
+
+- `WI-0983`: Simplify cards filtering ownership and predicate contract
+- `WI-0985`: Canonical quick filter preset helpers *(depends on `WI-0983`)*
+- `WI-0984`: Quick filter shell integration and UI regression hardening *(depends on `WI-0985`)*
+- `WI-0986`: Separate diagnostics workflow from main quick filters *(depends on `WI-0984`)*
+
+Execution order for this slice: `WI-0983` first, then `WI-0985`, then `WI-0984`, then `WI-0986`.
 
 ---
 
@@ -84,7 +93,7 @@ Execution order for this chain: `WI-0899` → `WI-0900` → `WI-0907`, with `WI-
 - `WI-0503`: NHL cross-market orchestration dual-run
 - `WI-0504`: NHL orchestration cutover
 - `WI-0505`: NHL 1P Phase-2 gated fair-probability activation
-- `WI-0506`: NHL results segmentation on `/results`
+- `WI-0506`: NHL results segmentation on /results
 - `WI-0509`: NHL free-data settlement hardening
 - `WI-0520`: AH decision gate + architecture contract
 - `WI-0521`: Deterministic AH grading engine

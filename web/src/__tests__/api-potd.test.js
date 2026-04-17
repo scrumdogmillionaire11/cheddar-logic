@@ -56,8 +56,10 @@ async function validatePotdSourceContract(assert) {
       routeSource.includes('today: data.today') &&
       routeSource.includes('history: data.history') &&
       routeSource.includes('bankroll: data.bankroll') &&
-      routeSource.includes('schedule: data.schedule'),
-    'potd route must expose the today/history/bankroll/schedule contract',
+      routeSource.includes('schedule: data.schedule') &&
+      routeSource.includes('nominees: data.nominees') &&
+      routeSource.includes('winnerStatus: data.winnerStatus'),
+    'potd route must expose the today/history/bankroll/schedule/nominees/winnerStatus contract',
   );
   [
     'runMigrations(',
@@ -74,6 +76,10 @@ async function validatePotdSourceContract(assert) {
     serverSource.includes('reasoning'),
     'potd-server.ts must expose the reasoning field',
   );
+  assert.ok(
+    serverSource.includes('PotdNominee') && serverSource.includes('nominees') && serverSource.includes('winnerStatus'),
+    'potd-server.ts must define PotdNominee and expose nominees/winnerStatus in response',
+  );
 }
 
 async function validateLivePayload(baseUrl, assert) {
@@ -89,7 +95,7 @@ async function validateLivePayload(baseUrl, assert) {
   assert.strictEqual(payload.success, true, 'API returned success=false');
   assert.ok(payload.data, 'API data is missing');
 
-  ['today', 'history', 'bankroll', 'schedule'].forEach((key) => {
+  ['today', 'history', 'bankroll', 'schedule', 'nominees', 'winnerStatus'].forEach((key) => {
     assert.ok(
       Object.prototype.hasOwnProperty.call(payload.data, key),
       `POTD payload missing ${key}`,
@@ -97,6 +103,7 @@ async function validateLivePayload(baseUrl, assert) {
   });
 
   assert.ok(Array.isArray(payload.data.history), 'history must be an array');
+  assert.ok(Array.isArray(payload.data.nominees), 'nominees must be an array');
   assert.ok(payload.data.today === null || typeof payload.data.today === 'object');
 
   if (payload.data.today !== null) {

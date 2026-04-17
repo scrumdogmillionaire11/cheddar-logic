@@ -1,0 +1,22 @@
+CREATE TABLE IF NOT EXISTS potd_nominees (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  play_date TEXT NOT NULL,
+  nominee_rank INTEGER NOT NULL,
+  winner_status TEXT NOT NULL,
+  sport TEXT NOT NULL,
+  game_id TEXT,
+  home_team TEXT,
+  away_team TEXT,
+  market_type TEXT,
+  selection_label TEXT,
+  line REAL,
+  price INTEGER,
+  edge_pct REAL,
+  total_score REAL,
+  confidence_label TEXT,
+  model_win_prob REAL,
+  game_time_utc TEXT,
+  source_type TEXT NOT NULL DEFAULT 'SPORT_WINNER',
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(play_date, nominee_rank)
+);
