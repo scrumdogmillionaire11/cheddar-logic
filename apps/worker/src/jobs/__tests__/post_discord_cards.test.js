@@ -466,6 +466,37 @@ describe('post_discord_cards helpers', () => {
     expect(snapshot.messages[0]).toContain('6.1 | Edge: +0.20 (thin lean)');
   });
 
+  test('buildDiscordSnapshot normalizes MLB two-letter/variant teams in matchup header', () => {
+    const cards = [
+      makeCard({
+        id: 'mlb-two-letter-variant',
+        sport: 'mlb',
+        matchup: 'CR @ Minnesota Twins',
+        gameTimeUtc: '2026-04-17T00:11:00.000Z',
+        cardType: 'mlb-moneyline-call',
+        payloadData: {
+          action: 'PASS',
+          status: 'PASS',
+          kind: 'PLAY',
+          market_type: 'MONEYLINE',
+          selection: { side: 'AWAY' },
+          price: 146,
+          edge: 0.05,
+          pass_reason_code: 'EDGE_VERIFICATION_REQUIRED',
+          decision_v2: { play_tier: 'BEST' },
+          projection_only: false,
+        },
+      }),
+    ];
+
+    const snapshot = buildDiscordSnapshot({ cards, now: new Date('2026-04-17T14:30:00.000Z') });
+
+    expect(snapshot.totalGames).toBe(1);
+    expect(snapshot.messages[0]).toContain('CLE Guardians @ MIN Twins');
+    expect(snapshot.messages[0]).toContain('⚠️ WATCH (Would be PLAY)');
+    expect(snapshot.messages[0]).toContain('Edge: +0.05');
+  });
+
   test('buildDiscordSnapshot keeps 1P OVER/UNDER direction when selection object is empty', () => {
     const cards = [
       makeCard({
