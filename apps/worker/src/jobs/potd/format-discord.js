@@ -48,7 +48,7 @@ function formatMarket(play) {
   return `${play.selection_label} (${formatSigned(play.price)})`;
 }
 
-function formatPotdDiscordMessage(play) {
+function formatPotdDiscordMessage(play, nominees = []) {
   const lines = [
     'Play of the Day',
     `${play.sport}: ${play.away_team} @ ${play.home_team}`,
@@ -58,6 +58,15 @@ function formatPotdDiscordMessage(play) {
     `Wager: ${formatDollars(play.wager_amount)} of ${formatDollars(play.bankroll_at_post)} bankroll`,
     `Game Time: ${formatEtTime(play.game_time_utc)}`,
   ];
+
+  if (Array.isArray(nominees) && nominees.length > 0) {
+    lines.push('', 'Nominees:');
+    nominees.forEach((n, i) => {
+      lines.push(
+        `${i + 1}. ${n.sport}: ${n.selectionLabel || '—'} | Edge ${formatPercent(n.edgePct)} | Score ${(Number(n.totalScore || 0)).toFixed(3)} | ${formatEtTime(n.commence_time)}`,
+      );
+    });
+  }
 
   return lines.join('\n').slice(0, 1800);
 }

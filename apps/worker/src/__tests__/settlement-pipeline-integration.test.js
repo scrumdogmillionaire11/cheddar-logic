@@ -402,6 +402,8 @@ describe('settlement pipeline integration (totals + 1P)', () => {
 
     expect(result.coverage.marketDailyCounts).toEqual({
       NBA_TOTAL: { pending: 3, settled: 3, failed: 0 },
+      MLB_TOTAL: { pending: 0, settled: 0, failed: 0 },
+      MLB_MONEYLINE: { pending: 0, settled: 0, failed: 0 },
       NHL_TOTAL: { pending: 2, settled: 2, failed: 0 },
       NHL_1P_TOTAL: { pending: 3, settled: 2, failed: 1 },
       NHL_MONEYLINE: { pending: 0, settled: 0, failed: 0 },

@@ -440,3 +440,268 @@ describe('checkMlbSeedFreshness', () => {
     expect(pipelineWrites[0][2]).toBe('ok');
   });
 });
+
+describe('checkMlbGameLineCoverage', () => {
+  let upcomingGames;
+  let latestOddsByGame;
+  let cardRowsByMarket;
+  let rejectReasonRows;
+  let pipelineWrites;
+  let latestRunId;
+  let checkMlbGameLineCoverage;
+
+  beforeEach(() => {
+    jest.resetModules();
+    upcomingGames = [];
+    latestOddsByGame = {};
+    cardRowsByMarket = {};
+    rejectReasonRows = [];
+    pipelineWrites = [];
+    latestRunId = 'run-current';
+
+    jest.doMock('@cheddar-logic/odds/src/config', () => ({
+      SPORTS_CONFIG: {
+        NHL: { active: true },
+        NBA: { active: true },
+        MLB: { active: true, markets: ['h2h', 'totals'] },
+        NFL: { active: false },
+      },
+    }));
+
+    const db = {
+      prepare: jest.fn((sql) => {
+        if (sql.includes('INSERT INTO pipeline_health')) {
+          return {
+            run: (...args) => {
+              pipelineWrites.push(args);
+            },
+          };
+        }
+
+        if (
+          sql.includes('FROM games') &&
+          sql.includes("LOWER(sport) = 'mlb'")
+        ) {
+          return {
+            all: () => upcomingGames,
+          };
+        }
+
+        if (
+          sql.includes('FROM odds_snapshots') &&
+          sql.includes('ORDER BY captured_at DESC')
+        ) {
+          return {
+            get: (gameId) => latestOddsByGame[gameId] ?? null,
+          };
+        }
+
+        if (
+          sql.includes('FROM card_payloads') &&
+          sql.includes('WHERE game_id = ?') &&
+          sql.includes('card_type = ?')
+        ) {
+          return {
+            all: (gameId, cardType) => cardRowsByMarket[`${gameId}|${cardType}`] ?? [],
+          };
+        }
+
+        if (
+          sql.includes('FROM card_payloads') &&
+          sql.includes("sport = 'MLB'") &&
+          sql.includes('run_id IS NOT NULL')
+        ) {
+          return {
+            get: () => ({ run_id: latestRunId }),
+          };
+        }
+
+        if (
+          sql.includes('FROM card_payloads') &&
+          sql.includes("card_type IN ('mlb-f5', 'mlb-full-game', 'mlb-full-game-ml')")
+        ) {
+          return {
+            all: () => rejectReasonRows,
+          };
+        }
+
+        throw new Error(`Unhandled SQL in test: ${sql}`);
+      }),
+    };
+
+    jest.doMock('@cheddar-logic/data', () => ({
+      getDatabase: jest.fn(() => db),
+      getDb: jest.fn(() => db),
+      insertJobRun: jest.fn(() => 1),
+      markJobRunSuccess: jest.fn(),
+      markJobRunFailure: jest.fn(),
+      createJob: jest.fn(),
+      wasJobRecentlySuccessful: jest.fn(() => false),
+      recordJobStart: jest.fn(() => 'job-check-health'),
+      recordJobSuccess: jest.fn(),
+      recordJobError: jest.fn(),
+    }));
+
+    ({ checkMlbGameLineCoverage } = require('../jobs/check_pipeline_health'));
+  });
+
+  test('reports missing current full-game coverage and bucketed reasons', () => {
+    upcomingGames = [
+      {
+        game_id: 'mlb-gap-1',
+        game_time_utc: '2026-03-27T22:00:00.000Z',
+        home_team: 'Yankees',
+        away_team: 'Red Sox',
+      },
+      {
+        game_id: 'mlb-gap-2',
+        game_time_utc: '2026-03-27T23:00:00.000Z',
+        home_team: 'Dodgers',
+        away_team: 'Padres',
+      },
+    ];
+
+    latestOddsByGame['mlb-gap-1'] = {
+      captured_at: DateTime.utc().minus({ minutes: 2 }).toISO(),
+      total: 8.5,
+      h2h_home: -120,
+      h2h_away: 110,
+    };
+    latestOddsByGame['mlb-gap-2'] = {
+      captured_at: DateTime.utc().minus({ minutes: 2 }).toISO(),
+      total: 9.0,
+      h2h_home: -132,
+      h2h_away: 118,
+    };
+
+    cardRowsByMarket['mlb-gap-1|mlb-full-game'] = [
+      {
+        id: 'row-blocked',
+        game_id: 'mlb-gap-1',
+        card_type: 'mlb-full-game',
+        run_id: 'run-current',
+        created_at: DateTime.utc().minus({ minutes: 5 }).toISO(),
+        payload_data: JSON.stringify({
+          basis: 'ODDS_BACKED',
+          execution_status: 'BLOCKED',
+          decision_v2: { official_status: 'PASS' },
+          selection: { side: 'OVER' },
+          line: 8.5,
+          price: -110,
+        }),
+      },
+    ];
+
+    cardRowsByMarket['mlb-gap-1|mlb-full-game-ml'] = [
+      {
+        id: 'row-ml-ok',
+        game_id: 'mlb-gap-1',
+        card_type: 'mlb-full-game-ml',
+        run_id: 'run-current',
+        created_at: DateTime.utc().minus({ minutes: 5 }).toISO(),
+        payload_data: JSON.stringify({
+          basis: 'ODDS_BACKED',
+          execution_status: 'EXECUTABLE',
+          decision_v2: {
+            official_status: 'LEAN',
+            canonical_envelope_v2: { official_status: 'LEAN', selection_side: 'AWAY' },
+          },
+          selection: { side: 'AWAY' },
+          ml_home: -120,
+          ml_away: 110,
+          created_at: DateTime.utc().minus({ minutes: 5 }).toISO(),
+        }),
+      },
+    ];
+
+    rejectReasonRows = [
+      {
+        card_type: 'mlb-full-game',
+        decision_reason: 'PASS_NO_EDGE',
+        pass_reason: null,
+        reason_codes_json: '["PASS_NO_EDGE"]',
+        cnt: 1,
+      },
+    ];
+
+    const result = checkMlbGameLineCoverage();
+
+    expect(result.ok).toBe(false);
+    expect(result.markets.full_game_total.games_with_odds).toBe(2);
+    expect(result.markets.full_game_total.current_publishable_count).toBe(0);
+    expect(result.markets.full_game_total.missing_count).toBe(2);
+    expect(result.markets.full_game_ml.current_publishable_count).toBe(1);
+    expect(result.reason_buckets.current_blocked.count).toBeGreaterThanOrEqual(1);
+    expect(result.reason_buckets.no_card_row.count).toBeGreaterThanOrEqual(2);
+    expect(result.reject_reason_diagnostics.uncategorized_count).toBe(0);
+    expect(pipelineWrites[0][1]).toBe('game_line_coverage');
+  });
+
+  test('distinguishes stale vs stale-or-unverifiable snapshot buckets', () => {
+    upcomingGames = [
+      {
+        game_id: 'mlb-gap-3',
+        game_time_utc: '2026-03-27T22:00:00.000Z',
+        home_team: 'Mets',
+        away_team: 'Phillies',
+      },
+    ];
+
+    latestOddsByGame['mlb-gap-3'] = {
+      captured_at: DateTime.utc().toISO(),
+      total: 8.0,
+      h2h_home: -118,
+      h2h_away: 108,
+    };
+
+    cardRowsByMarket['mlb-gap-3|mlb-full-game'] = [
+      {
+        id: 'row-unverifiable',
+        game_id: 'mlb-gap-3',
+        card_type: 'mlb-full-game',
+        run_id: 'run-current',
+        created_at: 'invalid-created-at',
+        payload_data: JSON.stringify({
+          basis: 'ODDS_BACKED',
+          execution_status: 'EXECUTABLE',
+          decision_v2: {
+            official_status: 'PLAY',
+            canonical_envelope_v2: { official_status: 'PLAY', selection_side: 'OVER' },
+          },
+          selection: { side: 'OVER' },
+          line: 8.0,
+          price: -110,
+          snapshot_at: 'not-a-date',
+        }),
+      },
+    ];
+
+    cardRowsByMarket['mlb-gap-3|mlb-full-game-ml'] = [
+      {
+        id: 'row-stale',
+        game_id: 'mlb-gap-3',
+        card_type: 'mlb-full-game-ml',
+        run_id: 'run-current',
+        created_at: DateTime.utc().minus({ minutes: 130 }).toISO(),
+        payload_data: JSON.stringify({
+          basis: 'ODDS_BACKED',
+          execution_status: 'EXECUTABLE',
+          decision_v2: {
+            official_status: 'PLAY',
+            canonical_envelope_v2: { official_status: 'PLAY', selection_side: 'HOME' },
+          },
+          selection: { side: 'HOME' },
+          ml_home: -118,
+          ml_away: 108,
+          snapshot_at: DateTime.utc().minus({ minutes: 130 }).toISO(),
+        }),
+      },
+    ];
+
+    const result = checkMlbGameLineCoverage();
+
+    expect(result.ok).toBe(false);
+    expect(result.reason_buckets.stale_or_unverifiable_snapshot.count).toBeGreaterThanOrEqual(1);
+    expect(result.reason_buckets.stale_snapshot.count).toBeGreaterThanOrEqual(1);
+  });
+});

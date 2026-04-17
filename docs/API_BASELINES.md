@@ -241,7 +241,7 @@ Captured with `ENABLE_MARKET_THRESHOLDS_V2=false`.
 
 ```bash
 ENABLE_MARKET_THRESHOLDS_V2=false npm --prefix apps/worker run job:run-nba-model:test
-ENABLE_MARKET_THRESHOLDS_V2=false npm --prefix apps/worker run job:run-ncaam-model:test
+ENABLE_MARKET_THRESHOLDS_V2=false npm --prefix apps/worker run job:run-nhl-model:test
 ```
 
 1. Confirm decision API behavior is stable and query contracts still match baseline expectations:

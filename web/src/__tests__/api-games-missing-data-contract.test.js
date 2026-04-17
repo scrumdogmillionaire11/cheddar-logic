@@ -6,7 +6,10 @@
 import assert from 'node:assert';
 import fs from 'node:fs';
 import path from 'node:path';
-import { selectAuthoritativeTruePlay } from '../lib/games/route-handler.js';
+import {
+  selectAuthoritativeTruePlay,
+  mergeMlbGameLineFallbackRows,
+} from '../lib/games/route-handler.js';
 const __dirname = new URL('.', import.meta.url).pathname.replace(/\/$/, '');
 
 const gamesRoutePath = path.resolve(__dirname, '../../src/app/api/games/route.ts');
@@ -21,6 +24,27 @@ const gamesRouteHandlerSource = fs.readFileSync(gamesRouteHandlerPath, 'utf8');
 const cardsPageSource = fs.readFileSync(cardsPagePath, 'utf8');
 
 console.log('🧪 API games missing-data contract tests');
+
+function buildMlbFallbackPayload(overrides = {}) {
+  return {
+    basis: 'ODDS_BACKED',
+    execution_status: 'EXECUTABLE',
+    decision_v2: {
+      official_status: 'PLAY',
+      canonical_envelope_v2: {
+        official_status: 'PLAY',
+        selection_side: 'OVER',
+      },
+    },
+    execution_gate: { drop_reason: null },
+    selection: { side: 'OVER' },
+    line: 8.5,
+    price: -110,
+    ml_home: -130,
+    ml_away: 118,
+    ...overrides,
+  };
+}
 
 assert(
   gamesRouteSource.includes("export { GET } from '@/lib/games/route-handler';"),
@@ -74,7 +98,7 @@ assert(
 assert(
   gamesRouteHandlerSource.includes('if (activeRunIds.length > 0)') &&
     gamesRouteHandlerSource.includes('const missingGameIds = allQueryableIds.filter(') &&
-    gamesRouteHandlerSource.includes('buildCardsSql(missingGameIds, \'\')'),
+    gamesRouteHandlerSource.includes('mergeMlbGameLineFallbackRows({'),
   '/api/games should use the same authority selector in active-run and no-active-run coverage paths',
 );
 
@@ -145,6 +169,157 @@ function makePlay(id, officialStatus, edgeDeltaPct, supportScore = 0.5, createdA
   const winner = selectAuthoritativeTruePlay([makePlay('pass-card', 'PASS', 0.15)]);
   assert.strictEqual(winner, null,
     'settlement sweep: PASS-only eligible set must return null, not a phantom true_play');
+}
+
+// 5. Current mlb-f5 + eligible fallback full-game rows merge by canonical game id
+{
+  const currentRows = [
+    {
+      id: 'active-f5',
+      game_id: 'canonical-1',
+      card_type: 'mlb-f5',
+      card_title: 'F5 Total',
+      payload_data: JSON.stringify(buildMlbFallbackPayload({ line: 4.5 })),
+      created_at: '2026-04-17T17:55:00.000Z',
+    },
+  ];
+  const fallbackRows = [
+    {
+      id: 'fallback-total',
+      game_id: 'espn-1',
+      card_type: 'mlb-full-game',
+      card_title: 'Full Game Total',
+      payload_data: JSON.stringify(buildMlbFallbackPayload({ line: 8.5, price: -108 })),
+      created_at: '2026-04-17T17:54:00.000Z',
+    },
+    {
+      id: 'fallback-ml',
+      game_id: 'canonical-1',
+      card_type: 'mlb-full-game-ml',
+      card_title: 'Full Game ML',
+      payload_data: JSON.stringify(
+        buildMlbFallbackPayload({
+          selection: { side: 'HOME' },
+          decision_v2: {
+            official_status: 'LEAN',
+            canonical_envelope_v2: {
+              official_status: 'LEAN',
+              selection_side: 'HOME',
+            },
+          },
+        }),
+      ),
+      created_at: '2026-04-17T17:53:00.000Z',
+    },
+  ];
+
+  const merged = mergeMlbGameLineFallbackRows({
+    currentRows,
+    fallbackRows,
+    externalToCanonicalMap: new Map([['espn-1', 'canonical-1']]),
+    latestOddsCapturedAtByCanonicalId: new Map([
+      ['canonical-1', '2026-04-17T17:56:00.000Z'],
+    ]),
+    nowEpochMs: Date.parse('2026-04-17T18:00:00.000Z'),
+  });
+
+  const mergedTypes = merged.map((row) => row.card_type);
+  assert(mergedTypes.includes('mlb-full-game'));
+  assert(mergedTypes.includes('mlb-full-game-ml'));
+}
+
+// 6. Stale/blocked/nonpublishable fallback rows do not merge
+{
+  const currentRows = [
+    {
+      id: 'active-f5-2',
+      game_id: 'canonical-2',
+      card_type: 'mlb-f5',
+      card_title: 'F5 Total',
+      payload_data: JSON.stringify(buildMlbFallbackPayload({ line: 4.0 })),
+      created_at: '2026-04-17T17:55:00.000Z',
+    },
+  ];
+  const fallbackRows = [
+    {
+      id: 'blocked-total',
+      game_id: 'canonical-2',
+      card_type: 'mlb-full-game',
+      card_title: 'Blocked total',
+      payload_data: JSON.stringify(buildMlbFallbackPayload({ execution_status: 'BLOCKED' })),
+      created_at: '2026-04-17T17:54:00.000Z',
+    },
+    {
+      id: 'stale-ml',
+      game_id: 'canonical-2',
+      card_type: 'mlb-full-game-ml',
+      card_title: 'Stale ML',
+      payload_data: JSON.stringify(buildMlbFallbackPayload({ selection: { side: 'AWAY' } })),
+      created_at: '2026-04-17T15:00:00.000Z',
+    },
+  ];
+
+  const merged = mergeMlbGameLineFallbackRows({
+    currentRows,
+    fallbackRows,
+    externalToCanonicalMap: new Map(),
+    latestOddsCapturedAtByCanonicalId: new Map([
+      ['canonical-2', '2026-04-17T17:57:00.000Z'],
+    ]),
+    nowEpochMs: Date.parse('2026-04-17T18:00:00.000Z'),
+  });
+
+  assert.strictEqual(
+    merged.filter((row) => row.card_type.startsWith('mlb-full-game')).length,
+    0,
+  );
+}
+
+// 7. Canonical/external duplicate rows collapse to one fallback card_type
+{
+  const currentRows = [
+    {
+      id: 'active-f5-3',
+      game_id: 'canonical-3',
+      card_type: 'mlb-f5',
+      card_title: 'F5 Total',
+      payload_data: JSON.stringify(buildMlbFallbackPayload({ line: 4.3 })),
+      created_at: '2026-04-17T17:57:00.000Z',
+    },
+  ];
+  const fallbackRows = [
+    {
+      id: 'fresh-external',
+      game_id: 'espn-3',
+      card_type: 'mlb-full-game',
+      card_title: 'Full Game Total ext',
+      payload_data: JSON.stringify(buildMlbFallbackPayload({ line: 8.0, price: -105 })),
+      created_at: '2026-04-17T17:56:00.000Z',
+    },
+    {
+      id: 'fresh-canonical',
+      game_id: 'canonical-3',
+      card_type: 'mlb-full-game',
+      card_title: 'Full Game Total canonical',
+      payload_data: JSON.stringify(buildMlbFallbackPayload({ line: 8.0, price: -104 })),
+      created_at: '2026-04-17T17:55:00.000Z',
+    },
+  ];
+
+  const merged = mergeMlbGameLineFallbackRows({
+    currentRows,
+    fallbackRows,
+    externalToCanonicalMap: new Map([['espn-3', 'canonical-3']]),
+    latestOddsCapturedAtByCanonicalId: new Map([
+      ['canonical-3', '2026-04-17T17:58:00.000Z'],
+    ]),
+    nowEpochMs: Date.parse('2026-04-17T18:00:00.000Z'),
+  });
+
+  assert.strictEqual(
+    merged.filter((row) => row.card_type === 'mlb-full-game').length,
+    1,
+  );
 }
 
 // ── Drop reason ledger contract ──────────────────────────────────────────────

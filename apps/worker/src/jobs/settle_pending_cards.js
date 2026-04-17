@@ -403,6 +403,17 @@ function toBackfillUpperToken(value) {
   return String(value).trim().toUpperCase();
 }
 
+function hasBackfillOwnValue(source, key) {
+  return (
+    source &&
+    typeof source === 'object' &&
+    Object.prototype.hasOwnProperty.call(source, key) &&
+    source[key] !== null &&
+    source[key] !== undefined &&
+    String(source[key]).trim() !== ''
+  );
+}
+
 function toBackfillFiniteNumberOrNull(value) {
   if (value === null || value === undefined || value === '') return null;
   const parsed = Number(value);
@@ -428,13 +439,23 @@ function normalizeBackfillMarketType(value) {
 }
 
 function resolveBackfillOfficialStatus(payloadData) {
-  const explicit = toBackfillUpperToken(payloadData?.decision_v2?.official_status);
-  if (explicit === 'PLAY' || explicit === 'LEAN' || explicit === 'PASS') {
-    return explicit;
+  const decisionV2 =
+    payloadData?.decision_v2 && typeof payloadData.decision_v2 === 'object'
+      ? payloadData.decision_v2
+      : null;
+  if (hasBackfillOwnValue(decisionV2, 'official_status')) {
+    const explicit = toBackfillUpperToken(decisionV2.official_status);
+    if (explicit === 'PLAY' || explicit === 'LEAN' || explicit === 'PASS') {
+      return explicit;
+    }
+    return '';
   }
-  const fallbackStatus = toBackfillUpperToken(payloadData?.status);
-  if (fallbackStatus === 'FIRE') return 'PLAY';
-  if (fallbackStatus === 'WATCH') return 'LEAN';
+
+  const fallbackStatus = hasBackfillOwnValue(payloadData, 'status')
+    ? toBackfillUpperToken(payloadData.status)
+    : toBackfillUpperToken(payloadData?.action);
+  if (fallbackStatus === 'PLAY' || fallbackStatus === 'FIRE') return 'PLAY';
+  if (fallbackStatus === 'LEAN') return 'LEAN';
   if (fallbackStatus === 'PASS') return 'PASS';
   return '';
 }
@@ -898,6 +919,39 @@ function isProjectionAuditOnlyBlkRow(row) {
   return String(row?.card_type || '').trim().toLowerCase() === 'nhl-player-blk';
 }
 
+function isMlbFullGameTotalOrMoneylineRow(row, payloadData = null) {
+  if (isProjectionOnlyF5Row(row, payloadData)) {
+    return false;
+  }
+
+  const sport = toBackfillUpperToken(
+    row?.sport ??
+      payloadData?.sport ??
+      payloadData?.league ??
+      null,
+  );
+  if (sport !== 'MLB' && sport !== 'BASEBALL_MLB') {
+    return false;
+  }
+
+  const marketType = normalizeBackfillMarketType(
+    row?.market_type ??
+      payloadData?.market_type ??
+      payloadData?.recommended_bet_type ??
+      null,
+  );
+  if (marketType !== 'TOTAL' && marketType !== 'MONEYLINE') {
+    return false;
+  }
+
+  const period = extractSettlementPeriod({
+    row,
+    payloadData,
+    cardResultMetadata: null,
+  });
+  return period !== '1P';
+}
+
 function resolveNonActionableFinalReason(payloadData, row) {
   // F5 market cards are projection-only and must remain pending for settle_mlb_f5.
   if (isProjectionOnlyF5Row(row, payloadData)) {
@@ -937,11 +991,25 @@ function resolveNonActionableFinalReason(payloadData, row) {
     };
   }
 
-  const legacyStatus = toBackfillUpperToken(payloadData?.status);
+  const legacyStatus = hasBackfillOwnValue(payloadData, 'status')
+    ? toBackfillUpperToken(payloadData.status)
+    : toBackfillUpperToken(payloadData?.action);
   if (!officialStatus && legacyStatus === 'PASS') {
     return {
       code: 'NON_ACTIONABLE_FINAL_PASS',
       message: 'Card status=PASS is non-actionable',
+      details: { legacyStatus },
+    };
+  }
+  if (
+    !officialStatus &&
+    (legacyStatus === 'WATCH' || legacyStatus === 'HOLD') &&
+    isMlbFullGameTotalOrMoneylineRow(row, payloadData)
+  ) {
+    return {
+      code: 'NON_ACTIONABLE_FINAL_LEGACY_WATCH_HOLD',
+      message:
+        'Legacy MLB full-game WATCH/HOLD card is non-actionable',
       details: { legacyStatus },
     };
   }
@@ -995,8 +1063,10 @@ function autoCloseNonActionableFinalPendingRows(db, settledAt) {
         cr.id AS result_id,
         cr.card_id,
         cr.game_id,
+        cr.sport,
         cr.card_type,
         cr.market_key,
+        cr.market_type,
         cr.metadata,
         cp.payload_data
       FROM card_results cr
@@ -1594,6 +1664,20 @@ function resolveSettlementMarketBucket({
   const normalizedSport = String(sport || '').toUpperCase();
   const normalizedMarketType = String(marketType || '').toUpperCase();
   const normalizedPeriod = normalizeSettlementPeriod(period);
+  if (
+    (normalizedSport === 'MLB' || normalizedSport === 'BASEBALL_MLB') &&
+    normalizedMarketType === 'MONEYLINE' &&
+    normalizedPeriod !== '1P'
+  ) {
+    return 'MLB_MONEYLINE';
+  }
+  if (
+    (normalizedSport === 'MLB' || normalizedSport === 'BASEBALL_MLB') &&
+    normalizedMarketType === 'TOTAL' &&
+    normalizedPeriod !== '1P'
+  ) {
+    return 'MLB_TOTAL';
+  }
   if (normalizedSport === 'NHL' && normalizedMarketType === 'MONEYLINE') {
     return 'NHL_MONEYLINE';
   }
@@ -2407,6 +2491,8 @@ async function settlePendingCards({
       }).length;
       const marketDailyCounts = {
         NBA_TOTAL: { pending: 0, settled: 0, failed: 0 },
+        MLB_TOTAL: { pending: 0, settled: 0, failed: 0 },
+        MLB_MONEYLINE: { pending: 0, settled: 0, failed: 0 },
         NHL_TOTAL: { pending: 0, settled: 0, failed: 0 },
         NHL_1P_TOTAL: { pending: 0, settled: 0, failed: 0 },
         NHL_MONEYLINE: { pending: 0, settled: 0, failed: 0 },
@@ -2785,7 +2871,7 @@ async function settlePendingCards({
         `[SettleCards] Step 1 complete — pending: ${coverageBefore.totalPending}, eligible: ${eligibleCount}, settled: ${cardsSettled}, errored: ${cardsErrored}, raced: ${cardsRaced}, skipped: ${totalSkipped}, autoClosedNonActionable: ${nonActionableAutoClosed}, autoClosedDuplicates: ${duplicateAutoClosed}`,
       );
       console.log(
-        `[SettleCards] Market daily counts — NBA_TOTAL: ${JSON.stringify(marketDailyCounts.NBA_TOTAL)}, NHL_TOTAL: ${JSON.stringify(marketDailyCounts.NHL_TOTAL)}, NHL_1P_TOTAL: ${JSON.stringify(marketDailyCounts.NHL_1P_TOTAL)}, NHL_MONEYLINE: ${JSON.stringify(marketDailyCounts.NHL_MONEYLINE)}`,
+        `[SettleCards] Market daily counts — NBA_TOTAL: ${JSON.stringify(marketDailyCounts.NBA_TOTAL)}, MLB_TOTAL: ${JSON.stringify(marketDailyCounts.MLB_TOTAL)}, MLB_MONEYLINE: ${JSON.stringify(marketDailyCounts.MLB_MONEYLINE)}, NHL_TOTAL: ${JSON.stringify(marketDailyCounts.NHL_TOTAL)}, NHL_1P_TOTAL: ${JSON.stringify(marketDailyCounts.NHL_1P_TOTAL)}, NHL_MONEYLINE: ${JSON.stringify(marketDailyCounts.NHL_MONEYLINE)}`,
       );
       console.log(
         `[SettleCards] CLV telemetry — resolvedAtSettlement: ${clvResolvedAtSettlement}, leftOpenAfterSettlement: ${clvOpenAfterSettlement}, reconciledOpenRows: ${clvReconciliation.reconciled}, stillOpen: ${clvReconciliation.unresolved}`,
@@ -2978,6 +3064,9 @@ module.exports = {
     resolvePlayerShotsActualValue,
     resolveDecisionBasisForSettlement,
     resolveSettlementMarketBucket,
+    resolveBackfillOfficialStatus,
+    resolveNonActionableFinalReason,
+    isMlbFullGameTotalOrMoneylineRow,
     isProjectionOnlyF5Row,
     isProjectionAuditOnlyBlkRow,
     shouldEnableDisplayBackfill,

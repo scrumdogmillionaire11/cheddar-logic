@@ -1,5 +1,9 @@
 const { deriveLockedMarketContext } = require('@cheddar-logic/data');
 const { __private } = require('../settle_pending_cards');
+const {
+  isExecutableMlbFullGameLean,
+  resolveStrictStatus,
+} = require('../repair_mlb_full_game_display_log');
 
 describe('settle_pending_cards market contract', () => {
   test('same game spread and moneyline lock different market keys and prices, then settle independently', () => {
@@ -239,5 +243,178 @@ describe('settle_pending_cards market contract', () => {
     expect(entry).not.toBeNull();
     // Falls back to lockedPrice when first_seen_price is null
     expect(entry.oddsAtPick).toBe(-110);
+  });
+
+  test('strict legacy fallback treats WATCH/HOLD as non-actionable', () => {
+    expect(
+      __private.resolveBackfillOfficialStatus({
+        decision_v2: { official_status: 'LEAN' },
+        status: 'WATCH',
+      }),
+    ).toBe('LEAN');
+    expect(
+      __private.resolveBackfillOfficialStatus({
+        decision_v2: { official_status: 'MAYBE' },
+        status: 'FIRE',
+      }),
+    ).toBe('');
+    expect(__private.resolveBackfillOfficialStatus({ status: 'FIRE' })).toBe(
+      'PLAY',
+    );
+    expect(__private.resolveBackfillOfficialStatus({ status: 'PLAY' })).toBe(
+      'PLAY',
+    );
+    expect(__private.resolveBackfillOfficialStatus({ status: 'LEAN' })).toBe(
+      'LEAN',
+    );
+    expect(__private.resolveBackfillOfficialStatus({ status: 'PASS' })).toBe(
+      'PASS',
+    );
+    expect(__private.resolveBackfillOfficialStatus({ status: 'WATCH' })).toBe(
+      '',
+    );
+    expect(__private.resolveBackfillOfficialStatus({ status: 'HOLD' })).toBe(
+      '',
+    );
+    expect(__private.resolveBackfillOfficialStatus({ status: 'MONITOR' })).toBe(
+      '',
+    );
+    expect(__private.resolveBackfillOfficialStatus({})).toBe('');
+  });
+
+  test('MLB full-game settlement telemetry buckets include total and moneyline', () => {
+    expect(
+      __private.resolveSettlementMarketBucket({
+        sport: 'MLB',
+        marketType: 'TOTAL',
+        period: 'FULL_GAME',
+      }),
+    ).toBe('MLB_TOTAL');
+    expect(
+      __private.resolveSettlementMarketBucket({
+        sport: 'baseball_mlb',
+        marketType: 'MONEYLINE',
+        period: 'FULL_GAME',
+      }),
+    ).toBe('MLB_MONEYLINE');
+    expect(
+      __private.resolveSettlementMarketBucket({
+        sport: 'MLB',
+        marketType: 'TOTAL',
+        period: '1P',
+      }),
+    ).toBeNull();
+  });
+
+  test('auto-closes final legacy WATCH/HOLD MLB full-game rows as non-actionable', () => {
+    const watchReason = __private.resolveNonActionableFinalReason(
+      {
+        kind: 'PLAY',
+        sport: 'MLB',
+        status: 'WATCH',
+        market_type: 'TOTAL',
+        period: 'FULL_GAME',
+      },
+      {
+        sport: 'MLB',
+        card_type: 'mlb-full-game',
+        market_key: 'game-1:TOTAL:OVER:8.5',
+        market_type: 'TOTAL',
+      },
+    );
+    expect(watchReason).toMatchObject({
+      code: 'NON_ACTIONABLE_FINAL_LEGACY_WATCH_HOLD',
+      details: { legacyStatus: 'WATCH' },
+    });
+
+    const holdReason = __private.resolveNonActionableFinalReason(
+      {
+        kind: 'PLAY',
+        sport: 'MLB',
+        action: 'HOLD',
+        market_type: 'MONEYLINE',
+        period: 'FULL_GAME',
+      },
+      {
+        sport: 'MLB',
+        card_type: 'mlb-full-game-ml',
+        market_key: 'game-1:MONEYLINE:HOME:NA',
+        market_type: 'MONEYLINE',
+      },
+    );
+    expect(holdReason).toMatchObject({
+      code: 'NON_ACTIONABLE_FINAL_LEGACY_WATCH_HOLD',
+      details: { legacyStatus: 'HOLD' },
+    });
+
+    const f5Reason = __private.resolveNonActionableFinalReason(
+      {
+        kind: 'PLAY',
+        sport: 'MLB',
+        status: 'WATCH',
+        market_type: 'TOTAL',
+        period: 'FIRST_5_INNINGS',
+      },
+      {
+        sport: 'MLB',
+        card_type: 'mlb-f5',
+        market_key: 'game-1:F5_TOTAL:OVER:4.5',
+        market_type: 'TOTAL',
+      },
+    );
+    expect(f5Reason).toBeNull();
+  });
+
+  test('repair job eligibility is limited to executable MLB full-game LEAN rows', () => {
+    const totalRow = {
+      sport: 'MLB',
+      card_type: 'mlb-full-game',
+      market_type: 'TOTAL',
+      selection: 'OVER',
+      line: 8.5,
+      locked_price: -110,
+    };
+    expect(
+      isExecutableMlbFullGameLean(totalRow, {
+        status: 'LEAN',
+        execution_status: 'EXECUTABLE',
+      }),
+    ).toBe(true);
+    expect(
+      isExecutableMlbFullGameLean(totalRow, {
+        status: 'WATCH',
+        execution_status: 'EXECUTABLE',
+      }),
+    ).toBe(false);
+    expect(
+      isExecutableMlbFullGameLean(totalRow, {
+        status: 'LEAN',
+        execution_status: 'PROJECTION_ONLY',
+      }),
+    ).toBe(false);
+    expect(
+      isExecutableMlbFullGameLean(totalRow, {
+        status: 'LEAN',
+      }),
+    ).toBe(false);
+    expect(resolveStrictStatus({ status: 'FIRE' })).toBe('PLAY');
+    expect(resolveStrictStatus({ status: 'WATCH' })).toBe('');
+    expect(
+      isExecutableMlbFullGameLean(
+        {
+          sport: 'MLB',
+          card_type: 'mlb-full-game-ml',
+          market_type: 'MONEYLINE',
+          selection: 'HOME',
+          line: null,
+          locked_price: -125,
+        },
+        {
+          decision_v2: { official_status: 'LEAN' },
+          status: 'WATCH',
+          execution_status: 'EXECUTABLE',
+        },
+      ),
+    ).toBe(true);
   });
 });

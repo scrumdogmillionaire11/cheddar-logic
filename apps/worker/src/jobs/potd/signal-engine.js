@@ -761,17 +761,18 @@ function scoreCandidate(candidate) {
   };
 }
 
-function selectBestPlay(scoredCandidates, { minConfidence = 'HIGH', minEdgePct = 0 } = {}) {
+// Returns up to maxNominees sport winners ranked by totalScore → edgePct → stable key.
+// One candidate per sport (prevents high-volume sports from flooding the list).
+function selectTopPlays(scoredCandidates, { minConfidence = 'HIGH', minEdgePct = 0, maxNominees = 5 } = {}) {
   const threshold = confidenceThreshold(minConfidence);
-  // minEdgePct = 0 keeps legacy behaviour (edge just has to be > 0);
-  // callers that want a real qualification floor pass e.g. minEdgePct = 0.02.
+  // minEdgePct = 0 keeps legacy behaviour (edge just has to be > 0)
   const edgeFloor = minEdgePct > 0 ? minEdgePct : 0;
   const viable = (Array.isArray(scoredCandidates) ? scoredCandidates : [])
     .filter(Boolean)
-    .filter((candidate) => isFiniteNumber(candidate.edgePct) && candidate.edgePct > 0 && candidate.edgePct >= edgeFloor)
-    .filter((candidate) => isFiniteNumber(candidate.totalScore) && candidate.totalScore >= threshold);
+    .filter((c) => isFiniteNumber(c.edgePct) && c.edgePct > 0 && c.edgePct >= edgeFloor)
+    .filter((c) => isFiniteNumber(c.totalScore) && c.totalScore >= threshold);
 
-  if (viable.length === 0) return null;
+  if (viable.length === 0) return [];
 
   // Pick the best candidate per sport first, then compare sport winners.
   // This prevents high-volume sports (e.g. 14+ MLB games/day) from dominating
@@ -779,22 +780,33 @@ function selectBestPlay(scoredCandidates, { minConfidence = 'HIGH', minEdgePct =
   const bySport = {};
   for (const candidate of viable) {
     const key = candidate.sport || '__unknown__';
+    const curr = bySport[key];
+    const candStableKey = `${candidate.sport || ''}:${candidate.gameId || ''}:${candidate.marketType || ''}`;
+    const currStableKey = curr ? `${curr.sport || ''}:${curr.gameId || ''}:${curr.marketType || ''}` : '';
     if (
-      !bySport[key] ||
-      candidate.totalScore > bySport[key].totalScore ||
-      (candidate.totalScore === bySport[key].totalScore &&
-        (candidate.edgePct || 0) > (bySport[key].edgePct || 0))
+      !curr ||
+      candidate.totalScore > curr.totalScore ||
+      (candidate.totalScore === curr.totalScore && (candidate.edgePct || 0) > (curr.edgePct || 0)) ||
+      (candidate.totalScore === curr.totalScore && (candidate.edgePct || 0) === (curr.edgePct || 0) && candStableKey < currStableKey)
     ) {
       bySport[key] = candidate;
     }
   }
 
-  const sportWinners = Object.values(bySport).sort((a, b) => {
-    if (b.totalScore !== a.totalScore) return b.totalScore - a.totalScore;
-    return (b.edgePct || 0) - (a.edgePct || 0);
-  });
+  return Object.values(bySport)
+    .sort((a, b) => {
+      if (b.totalScore !== a.totalScore) return b.totalScore - a.totalScore;
+      if ((b.edgePct || 0) !== (a.edgePct || 0)) return (b.edgePct || 0) - (a.edgePct || 0);
+      const keyA = `${a.sport || ''}:${a.gameId || ''}:${a.marketType || ''}`;
+      const keyB = `${b.sport || ''}:${b.gameId || ''}:${b.marketType || ''}`;
+      return keyA < keyB ? -1 : keyA > keyB ? 1 : 0;
+    })
+    .slice(0, maxNominees);
+}
 
-  return sportWinners[0] || null;
+function selectBestPlay(scoredCandidates, options = {}) {
+  const { minConfidence = 'HIGH', minEdgePct = 0 } = options;
+  return selectTopPlays(scoredCandidates, { minConfidence, minEdgePct, maxNominees: 1 })[0] || null;
 }
 
 function kellySize({
@@ -842,4 +854,5 @@ module.exports = {
   resolveNHLModelSignal,
   scoreCandidate,
   selectBestPlay,
+  selectTopPlays,
 };

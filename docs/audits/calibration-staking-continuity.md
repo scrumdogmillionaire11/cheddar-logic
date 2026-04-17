@@ -1,5 +1,31 @@
 # Calibration-to-Staking Continuity Audit (WI-0906)
 
+## Coordination Reference (WI-0898)
+
+**Note**: This continuity audit depends on environment variable configurations audited in **[WI-0898: Env-Var Truth Table](../../../docs/audits/env-var-truth-table.md)**.
+
+### Config Gating Impact on Lineage Paths
+
+The following environment variables from WI-0898 directly gate qualification, downgrade, and execution across all lineage paths:
+
+- **Qualification Gating (prevent pickup from surfacing)**:
+  - `EXECUTION_FRESHNESS_CONTRACT` — EXPIRED tier blocks qualification (WI-0950)
+  - `ENABLE_NBA_MODEL`, `ENABLE_NHL_MODEL`, `ENABLE_MLB_MODEL`, `ENABLE_POTD` — Model enable gates
+  - `ENABLE_WITHOUT_ODDS_MODE` — Relaxes qualification for projection-only paths
+  - `POTD_MIN_EDGE`, `POTD_MIN_STAKE_PCT` — POTD candidate viability thresholds
+
+- **Downgrade Gating (reduce stake/confidence without zeroing)**:
+  - `NHL_1P_SIGMA` — Uncalibrated sigma triggers PLAY→LEAN downgrade per WI-0814
+  - `MIN_MLB_GAMES_FOR_RECAL` — Empirical sigma calibration gate
+  - `POTD_KELLY_FRACTION`, `POTD_MAX_WAGER_PCT` — Kelly sizing adjustments
+
+- **Execution Gating (force stake to zero or prevent execution)**:
+  - `EXECUTION_FRESHNESS_CONTRACT` — EXPIRED tier blocks execution with STALE_SNAPSHOT reason
+  - Model enable gates — Prevent runner execution if false
+  - POTD thresholds — Block execution if viability thresholds not met
+
+All paths in the lineage table below are subject to these configuration gates. See `env-var-truth-table.json` for machine-readable impact matrix.
+
 ## Scope
 
 - `packages/models/src/decision-pipeline-v2.js`
@@ -55,3 +81,38 @@
 
 - Replay one downgraded or otherwise fragile-confidence candidate and confirm `reason=confidence_below_high_gate` or `wager_amount=0` behavior.
 - Inspect one non-actionable model card payload and confirm Kelly fields are null while execution gate metadata explains the block.
+
+## Maintenance Notes (WI-0898 Synchronization)
+
+### Dependencies and Updates
+
+This audit depends on WI-0898's `env-var-truth-table.json` for configuration context:
+
+1. **If a new env var is added that affects qual/downgrade/exec gating:**
+   - Update `env-var-truth-table.md` and `env-var-truth-table.json` first (WI-0898 scope)
+   - Review the "Config Gating Impact on Lineage Paths" section above
+   - If impact crosses lineage paths, add to appropriate row(s) in lineage table with cross-reference
+   - Run validation tests to confirm continuity guards still hold
+
+2. **If a lineage path changes (e.g., new sizing formula, new confidence tier):**
+   - Update the lineage table row with new source locations
+   - Check if any new env vars are introduced (add to WI-0898 truth table if yes)
+   - Update guard list if break classes change
+
+3. **Synchronization check:**
+
+   ```bash
+   # Verify WI-0898 truth table references match code locations in this audit
+   grep -rn "EXECUTION_FRESHNESS_CONTRACT\|ENABLE_NBA_MODEL\|POTD_MIN_EDGE" \
+     docs/audits/env-var-truth-table.json \
+     docs/audits/calibration-staking-continuity.md
+   ```
+
+### Coordination Flag: `needs-sync`
+
+Both WI-0898 and WI-0906 carry the `needs-sync` flag. Changes to either artifact must be reviewed together before staging:
+
+- **WI-0898 changes:** New/modified env vars may require lineage path updates (WI-0906)
+- **WI-0906 changes:** New/modified lineage paths may require config audit updates (WI-0898)
+
+Reviewers should cross-check both artifacts for consistency.

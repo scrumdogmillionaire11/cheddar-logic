@@ -476,6 +476,25 @@ const MLB_REJECT_MARKETS = Object.freeze([
   'full_game_total',
   'full_game_ml',
 ]);
+const MLB_GAME_LINE_MARKETS = Object.freeze([
+  { key: 'full_game_total', cardType: 'mlb-full-game' },
+  { key: 'full_game_ml', cardType: 'mlb-full-game-ml' },
+]);
+const MLB_GAME_LINE_REASON_BUCKETS = Object.freeze([
+  'no_card_row',
+  'current_blocked',
+  'current_projection_only',
+  'current_non_publishable',
+  'stale_snapshot',
+  'stale_or_unverifiable_snapshot',
+]);
+const MLB_GAME_LINE_SAMPLE_LIMIT = 5;
+const MLB_GAME_LINE_FALLBACK_MAX_AGE_MINUTES = Number(
+  process.env.API_GAMES_MLB_FALLBACK_MAX_AGE_MINUTES || 90,
+);
+const MLB_GAME_LINE_ODDS_TOLERANCE_MINUTES = Number(
+  process.env.API_GAMES_MLB_FALLBACK_ODDS_TOLERANCE_MINUTES || 10,
+);
 
 function mapMlbCardTypeToRejectMarket(cardType) {
   if (cardType === 'mlb-f5') return 'f5_total';
@@ -1132,6 +1151,285 @@ function checkMlbF5MarketAvailability({ expectF5Ml = false } = {}) {
   };
 }
 
+function parseMlbCardPayload(payloadData) {
+  if (typeof payloadData !== 'string' || payloadData.length === 0) return null;
+  try {
+    return JSON.parse(payloadData);
+  } catch (_error) {
+    return null;
+  }
+}
+
+function getMlbOfficialStatus(payload) {
+  const d2 = payload && typeof payload.decision_v2 === 'object' ? payload.decision_v2 : null;
+  const canonical = d2 && typeof d2.canonical_envelope_v2 === 'object'
+    ? d2.canonical_envelope_v2
+    : null;
+  const fromCanonical = typeof canonical?.official_status === 'string'
+    ? canonical.official_status.toUpperCase()
+    : null;
+  if (fromCanonical === 'PLAY' || fromCanonical === 'LEAN' || fromCanonical === 'PASS') {
+    return fromCanonical;
+  }
+  const fromD2 = typeof d2?.official_status === 'string' ? d2.official_status.toUpperCase() : null;
+  if (fromD2 === 'PLAY' || fromD2 === 'LEAN' || fromD2 === 'PASS') return fromD2;
+  return null;
+}
+
+function hasMlbSelection(payload) {
+  const d2 = payload && typeof payload.decision_v2 === 'object' ? payload.decision_v2 : null;
+  const canonical = d2 && typeof d2.canonical_envelope_v2 === 'object'
+    ? d2.canonical_envelope_v2
+    : null;
+  const side = String(
+    canonical?.selection_side ||
+      d2?.selection_side ||
+      payload?.selection?.side ||
+      payload?.prediction ||
+      '',
+  ).toUpperCase();
+  return side !== '' && side !== 'NONE' && side !== 'NEUTRAL';
+}
+
+function hasMarketLineContext(payload, marketKey) {
+  const oddsContext = payload && typeof payload.odds_context === 'object' ? payload.odds_context : null;
+  const wager =
+    payload &&
+    typeof payload.market_context === 'object' &&
+    payload.market_context &&
+    typeof payload.market_context.wager === 'object'
+      ? payload.market_context.wager
+      : null;
+
+  if (marketKey === 'full_game_total') {
+    const line = Number(
+      payload?.line ?? payload?.total_line ?? wager?.called_line ?? oddsContext?.total,
+    );
+    const price = Number(payload?.price ?? payload?.juice ?? wager?.called_price);
+    return Number.isFinite(line) && Number.isFinite(price);
+  }
+
+  const mlHome = Number(payload?.ml_home ?? payload?.h2h_home ?? oddsContext?.h2h_home);
+  const mlAway = Number(payload?.ml_away ?? payload?.h2h_away ?? oddsContext?.h2h_away);
+  return Number.isFinite(mlHome) && Number.isFinite(mlAway);
+}
+
+function evaluateMlbGameLinePublishability({ row, payload, marketKey, latestOddsCapturedAt, nowUtc }) {
+  const basis = String(payload?.basis || '').toUpperCase();
+  const executionStatus = String(payload?.execution_status || '').toUpperCase();
+  const officialStatus = getMlbOfficialStatus(payload);
+
+  if (executionStatus === 'BLOCKED') {
+    return { publishable: false, bucket: 'current_blocked' };
+  }
+  if (executionStatus === 'PROJECTION_ONLY') {
+    return { publishable: false, bucket: 'current_projection_only' };
+  }
+  if (executionStatus !== 'EXECUTABLE') {
+    return { publishable: false, bucket: 'current_non_publishable' };
+  }
+  if (basis !== 'ODDS_BACKED') {
+    return { publishable: false, bucket: 'current_non_publishable' };
+  }
+  if (officialStatus !== 'PLAY' && officialStatus !== 'LEAN') {
+    return { publishable: false, bucket: 'current_non_publishable' };
+  }
+  if (payload?.execution_gate?.drop_reason) {
+    return { publishable: false, bucket: 'current_non_publishable' };
+  }
+  if (!hasMlbSelection(payload)) {
+    return { publishable: false, bucket: 'current_non_publishable' };
+  }
+  if (!hasMarketLineContext(payload, marketKey)) {
+    return { publishable: false, bucket: 'current_non_publishable' };
+  }
+
+  const snapshotAtRaw = payload?.snapshot_at || payload?.captured_at || payload?.created_at || row.created_at;
+  const snapshotAt = snapshotAtRaw ? DateTime.fromISO(String(snapshotAtRaw), { zone: 'utc' }) : null;
+  if (!snapshotAt || !snapshotAt.isValid || !latestOddsCapturedAt) {
+    return { publishable: false, bucket: 'stale_or_unverifiable_snapshot' };
+  }
+
+  const snapshotAgeMinutes = nowUtc.diff(snapshotAt, 'minutes').minutes;
+  if (!Number.isFinite(snapshotAgeMinutes) || snapshotAgeMinutes < 0) {
+    return { publishable: false, bucket: 'stale_or_unverifiable_snapshot' };
+  }
+  if (snapshotAgeMinutes > MLB_GAME_LINE_FALLBACK_MAX_AGE_MINUTES) {
+    return { publishable: false, bucket: 'stale_snapshot' };
+  }
+
+  const latestOddsAt = DateTime.fromISO(String(latestOddsCapturedAt), { zone: 'utc' });
+  if (!latestOddsAt.isValid) {
+    return { publishable: false, bucket: 'stale_or_unverifiable_snapshot' };
+  }
+
+  const oddsDeltaMinutes = latestOddsAt.diff(snapshotAt, 'minutes').minutes;
+  if (oddsDeltaMinutes > MLB_GAME_LINE_ODDS_TOLERANCE_MINUTES) {
+    return { publishable: false, bucket: 'stale_snapshot' };
+  }
+
+  return { publishable: true, bucket: null };
+}
+
+function checkMlbGameLineCoverage({ lookaheadHours = MLB_F5_ALERT_WINDOW_HOURS } = {}) {
+  const db = getDatabase();
+  const nowUtc = DateTime.utc();
+  const endUtc = nowUtc.plus({ hours: lookaheadHours });
+  const checkFromUtc = nowUtc.plus({ minutes: 15 });
+
+  const upcomingGames = db
+    .prepare(
+      `SELECT game_id, game_time_utc, home_team, away_team
+       FROM games
+       WHERE LOWER(sport) = 'mlb'
+         AND game_time_utc >= ?
+         AND game_time_utc <= ?`,
+    )
+    .all(checkFromUtc.toISO(), endUtc.toISO());
+
+  const diagnostics = {
+    full_game_total: {
+      games_with_odds: 0,
+      current_publishable_count: 0,
+      fallback_publishable_count: 0,
+      missing_count: 0,
+    },
+    full_game_ml: {
+      games_with_odds: 0,
+      current_publishable_count: 0,
+      fallback_publishable_count: 0,
+      missing_count: 0,
+    },
+  };
+
+  const reasonBuckets = MLB_GAME_LINE_REASON_BUCKETS.reduce((acc, bucket) => {
+    acc[bucket] = { count: 0, sample_game_ids: [] };
+    return acc;
+  }, {});
+
+  const registerReason = (bucket, gameId) => {
+    const target = reasonBuckets[bucket];
+    if (!target) return;
+    target.count += 1;
+    if (
+      target.sample_game_ids.length < MLB_GAME_LINE_SAMPLE_LIMIT &&
+      !target.sample_game_ids.includes(gameId)
+    ) {
+      target.sample_game_ids.push(gameId);
+    }
+  };
+
+  const latestRunId = db
+    .prepare(
+      `SELECT run_id
+       FROM card_payloads
+       WHERE sport = 'MLB'
+         AND run_id IS NOT NULL
+       ORDER BY created_at DESC
+       LIMIT 1`,
+    )
+    .get()?.run_id;
+
+  for (const game of upcomingGames) {
+    const latestOdds = getLatestOddsSnapshot(db, game.game_id);
+    const latestOddsCapturedAt = latestOdds?.captured_at || null;
+    const hasTotalOdds = Number.isFinite(Number(latestOdds?.total));
+    const hasMlOdds =
+      Number.isFinite(Number(latestOdds?.h2h_home)) &&
+      Number.isFinite(Number(latestOdds?.h2h_away));
+
+    for (const market of MLB_GAME_LINE_MARKETS) {
+      const marketOddsAvailable =
+        market.key === 'full_game_total' ? hasTotalOdds : hasMlOdds;
+      if (!marketOddsAvailable) continue;
+
+      diagnostics[market.key].games_with_odds += 1;
+
+      const rows = db
+        .prepare(
+          `SELECT id, game_id, card_type, payload_data, created_at, run_id
+           FROM card_payloads
+           WHERE game_id = ?
+             AND card_type = ?
+           ORDER BY created_at DESC, id DESC
+           LIMIT 25`,
+        )
+        .all(game.game_id, market.cardType);
+
+      if (rows.length === 0) {
+        diagnostics[market.key].missing_count += 1;
+        registerReason('no_card_row', game.game_id);
+        continue;
+      }
+
+      const currentRow = latestRunId
+        ? rows.find((row) => row.run_id && row.run_id === latestRunId) || null
+        : rows[0] || null;
+
+      if (currentRow) {
+        const payload = parseMlbCardPayload(currentRow.payload_data);
+        if (!payload) {
+          diagnostics[market.key].missing_count += 1;
+          registerReason('current_non_publishable', game.game_id);
+          continue;
+        }
+        const currentEval = evaluateMlbGameLinePublishability({
+          row: currentRow,
+          payload,
+          marketKey: market.key,
+          latestOddsCapturedAt,
+          nowUtc,
+        });
+        if (currentEval.publishable) {
+          diagnostics[market.key].current_publishable_count += 1;
+          continue;
+        }
+
+        if (currentEval.bucket) {
+          registerReason(currentEval.bucket, game.game_id);
+        }
+
+        const fallbackCandidate = rows.find((row) => {
+          if (latestRunId && row.run_id && row.run_id === latestRunId) return false;
+          const fallbackPayload = parseMlbCardPayload(row.payload_data);
+          if (!fallbackPayload) return false;
+          return evaluateMlbGameLinePublishability({
+            row,
+            payload: fallbackPayload,
+            marketKey: market.key,
+            latestOddsCapturedAt,
+            nowUtc,
+          }).publishable;
+        });
+
+        if (fallbackCandidate) {
+          diagnostics[market.key].fallback_publishable_count += 1;
+        } else {
+          diagnostics[market.key].missing_count += 1;
+        }
+      }
+    }
+  }
+
+  const rejectReasonDiagnostics = summarizeMlbRejectReasonFamilies(db);
+  const missingTotal =
+    diagnostics.full_game_total.missing_count + diagnostics.full_game_ml.missing_count;
+  const status = missingTotal > 0 ? 'warning' : 'ok';
+  const reason =
+    missingTotal > 0
+      ? `MLB game-line coverage missing=${missingTotal}; uncategorized reject families=${rejectReasonDiagnostics.uncategorized_count}`
+      : `MLB game-line coverage complete; uncategorized reject families=${rejectReasonDiagnostics.uncategorized_count}`;
+
+  writePipelineHealth('mlb', 'game_line_coverage', status, reason);
+  return {
+    ok: missingTotal === 0,
+    reason,
+    markets: diagnostics,
+    reason_buckets: reasonBuckets,
+    reject_reason_diagnostics: rejectReasonDiagnostics,
+  };
+}
+
 /**
  * Check 5: Settlement backlog
  * Find games with status='final' but no game_results entry
@@ -1428,6 +1726,7 @@ async function checkPipelineHealth({ jobKey, dryRun }) {
       odds_freshness: checkOddsFreshness,
       cards_freshness: checkCardsFreshness,
       mlb_f5_market_availability: checkMlbF5MarketAvailability,
+      mlb_game_line_coverage: checkMlbGameLineCoverage,
       mlb_seed_freshness: () => checkMlbSeedFreshness(),
       settlement_backlog: checkSettlementBacklog,
       // Per-sport model freshness (only fires when upcoming games exist for that sport)
@@ -1468,6 +1767,7 @@ async function checkPipelineHealth({ jobKey, dryRun }) {
         odds_freshness: ['odds', 'freshness'],
         cards_freshness: ['cards', 'freshness'],
         mlb_f5_market_availability: ['mlb', 'f5_market_availability'],
+        mlb_game_line_coverage: ['mlb', 'game_line_coverage'],
         mlb_seed_freshness: ['mlb', 'seed_freshness'],
         settlement_backlog: ['settlement', 'backlog'],
         nhl_model_freshness: ['nhl', 'model_freshness'],
@@ -1542,6 +1842,7 @@ module.exports = {
   checkPipelineHealth,
   checkCardsFreshness,
   checkMlbF5MarketAvailability,
+  checkMlbGameLineCoverage,
   summarizeMlbRejectReasonFamilies,
   checkMlbSeedFreshness,
   checkOddsFreshness,

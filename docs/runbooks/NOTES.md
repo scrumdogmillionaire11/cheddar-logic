@@ -270,7 +270,7 @@ We will remove legacy parsing and inference paths across worker, web, and settle
 
 **Steps**
 1. **Audit and lock the canonical contract**  
-   Confirm worker play payloads always include `decision_v2`, `action`, `classification`, `market_type`, and structured projections used by UI. Verify wave1 projections are populated for SPREAD/TOTAL in run_nhl_model.js, run_nba_model.js, run_ncaam_model.js, and the projection functions in projections.js.
+   Confirm worker play payloads always include `decision_v2`, `action`, `classification`, `market_type`, and structured projections used by UI. Verify wave1 projections are populated for SPREAD/TOTAL in run_nhl_model.js, run_nba_model.js, run_mlb_model.js, and the projection functions in projections.js.
 2. **Remove legacy status/classification fallbacks in UI**  
    Delete legacy parsing from decision.ts and canonical-decision.ts so decisions derive only from `decision_v2` and explicit `action`. Update tags.ts and filters.ts to stop using expression choice and driver-tier fallbacks when play/action is missing.
 3. **Remove legacy market inference and projection parsing**  

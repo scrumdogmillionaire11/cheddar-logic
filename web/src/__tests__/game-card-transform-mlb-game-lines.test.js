@@ -322,4 +322,137 @@ function makeBaseGame(overrides = {}) {
   );
 }
 
+{
+  const executableTotalGame = makeBaseGame({
+    id: 'game-mlb-executable-full-game-total',
+    gameId: 'game-mlb-executable-full-game-total',
+    plays: [
+      {
+        source_card_id: 'card-mlb-full-game-over',
+        cardType: 'mlb-full-game',
+        cardTitle: 'Full Game Total OVER: TEXAS RANGERS @ HOUSTON ASTROS',
+        prediction: 'OVER',
+        confidence: 0.69,
+        tier: 'BEST',
+        reasoning: 'Executable full-game total',
+        evPassed: true,
+        driverKey: 'mlb-full-game',
+        projectedTotal: 8.7,
+        edge: 0.061,
+        kind: 'PLAY',
+        market_type: 'TOTAL',
+        selection: { side: 'OVER' },
+        line: 8.0,
+        price: -110,
+        status: 'FIRE',
+        classification: 'BASE',
+        action: 'FIRE',
+        reason_codes: ['PLAY'],
+        execution_status: 'EXECUTABLE',
+      },
+    ],
+  });
+
+  const executableMlGame = makeBaseGame({
+    id: 'game-mlb-executable-full-game-ml',
+    gameId: 'game-mlb-executable-full-game-ml',
+    plays: [
+      {
+        source_card_id: 'card-mlb-full-game-ml-away',
+        cardType: 'mlb-full-game-ml',
+        cardTitle: 'Full Game ML AWAY: TEXAS RANGERS @ HOUSTON ASTROS',
+        prediction: 'AWAY',
+        confidence: 0.57,
+        tier: 'WATCH',
+        reasoning: 'Executable full-game moneyline',
+        evPassed: true,
+        driverKey: 'mlb-full-game-ml',
+        projectedTotal: null,
+        edge: 0.041,
+        kind: 'PLAY',
+        market_type: 'MONEYLINE',
+        selection: { side: 'AWAY' },
+        price: 128,
+        status: 'WATCH',
+        classification: 'LEAN',
+        action: 'HOLD',
+        reason_codes: ['PLAY'],
+        execution_status: 'EXECUTABLE',
+      },
+    ],
+  });
+
+  const transformed = transformGames([executableTotalGame, executableMlGame]);
+  assert.strictEqual(
+    transformed.length,
+    2,
+    'executable MLB full-game total/ML rows should survive transform into visible game-mode cards',
+  );
+}
+
+{
+  const hiddenNonPublishable = makeBaseGame({
+    id: 'game-mlb-hidden-nonpublishable-full-game',
+    gameId: 'game-mlb-hidden-nonpublishable-full-game',
+    plays: [
+      {
+        source_card_id: 'card-projection-only-total',
+        cardType: 'mlb-full-game',
+        cardTitle: 'Projection-only full game total',
+        prediction: 'OVER',
+        confidence: 0.5,
+        tier: null,
+        reasoning: 'Projection only',
+        evPassed: false,
+        driverKey: 'mlb-full-game',
+        projectedTotal: 8.5,
+        edge: null,
+        kind: 'PLAY',
+        market_type: 'TOTAL',
+        selection: { side: 'OVER' },
+        line: 8.5,
+        status: 'PASS',
+        classification: 'PASS',
+        action: 'PASS',
+        reason_codes: ['PROJECTION_ONLY', 'PASS_NO_EDGE'],
+        execution_status: 'PROJECTION_ONLY',
+      },
+      {
+        source_card_id: 'card-blocked-no-edge-ml',
+        cardType: 'mlb-full-game-ml',
+        cardTitle: 'Blocked no-edge full game ML',
+        prediction: 'HOME',
+        confidence: 0.5,
+        tier: null,
+        reasoning: 'No edge',
+        evPassed: false,
+        driverKey: 'mlb-full-game-ml',
+        projectedTotal: null,
+        edge: null,
+        kind: 'PLAY',
+        market_type: 'MONEYLINE',
+        selection: { side: 'HOME' },
+        price: -122,
+        status: 'PASS',
+        classification: 'PASS',
+        action: 'PASS',
+        pass_reason_code: 'PASS_DRIVER_SUPPORT_WEAK',
+        reason_codes: [
+          'PASS_DRIVER_SUPPORT_WEAK',
+          'PASS_NO_EDGE',
+          'DOWNGRADED_EDGE_SANITY_NON_TOTAL',
+        ],
+        execution_status: 'BLOCKED',
+      },
+    ],
+  });
+
+  const transformed = transformGames([hiddenNonPublishable]);
+  assert.strictEqual(
+    transformed.length,
+    0,
+    'blocked/no-edge/projection-only MLB full-game rows should remain hidden from active game-line views',
+  );
+}
+
 console.log('✅ MLB game-line transform regressions passed');

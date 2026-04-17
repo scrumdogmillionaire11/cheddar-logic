@@ -19,6 +19,7 @@ describe('team-metrics core computations', () => {
       freeThrowPctSource: null,
       rank: null,
       record: null,
+      espn_null_reason: 'NO_GAMES',
     });
   });
 
@@ -91,6 +92,7 @@ describe('team-metrics core computations', () => {
       freeThrowPctSource: null,
       rank: null,
       record: null,
+      espn_null_reason: 'NO_SCORED_GAMES',
     });
   });
 

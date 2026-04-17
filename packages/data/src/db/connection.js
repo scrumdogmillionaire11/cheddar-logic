@@ -1,5 +1,7 @@
 const Database = require('better-sqlite3');
+const crypto = require('crypto');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const { execSync } = require('child_process');
 const { resolveDatabasePath } = require('../db-path');
@@ -15,6 +17,8 @@ let oddsContextReferenceRegistry = new WeakMap();
 let readOnlyOpenFailureStreak = 0;
 let lastReadOnlyFailureAtMs = 0;
 const DEFAULT_REFRESH_TOKEN_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+const DB_LOCK_WARNING_SUPPRESSION_MS = 10 * 60 * 1000;
+const DB_LOCK_WARNING_DIR = 'cheddar-logic-db-lock-warnings';
 
 function normalizeConfiguredPath(rawPath) {
   if (!rawPath || typeof rawPath !== 'string') return null;
@@ -196,6 +200,65 @@ function markReadOnlyOpenFailure(filePath, reason, attempts, waitedMs) {
   );
 }
 
+function getDbLockWarningMetadataPath(dbFile) {
+  const hash = crypto.createHash('sha256').update(String(dbFile)).digest('hex');
+  return path.join(os.tmpdir(), DB_LOCK_WARNING_DIR, `${hash}.json`);
+}
+
+function isSameDbLockWarning(metadata, warningKey) {
+  return metadata
+    && metadata.dbFile === warningKey.dbFile
+    && metadata.lockPath === warningKey.lockPath
+    && String(metadata.ownerPid) === warningKey.ownerPid;
+}
+
+function shouldSuppressDbLockWarning(warningKey, nowMs) {
+  let metadata;
+  try {
+    metadata = JSON.parse(fs.readFileSync(getDbLockWarningMetadataPath(warningKey.dbFile), 'utf8'));
+  } catch {
+    return false;
+  }
+
+  const warnedAtMs = Number(metadata.warnedAtMs);
+  return isSameDbLockWarning(metadata, warningKey)
+    && Number.isFinite(warnedAtMs)
+    && nowMs >= warnedAtMs
+    && nowMs - warnedAtMs < DB_LOCK_WARNING_SUPPRESSION_MS;
+}
+
+function recordDbLockWarning(warningKey, nowMs) {
+  try {
+    const metadataPath = getDbLockWarningMetadataPath(warningKey.dbFile);
+    fs.mkdirSync(path.dirname(metadataPath), { recursive: true });
+    fs.writeFileSync(
+      metadataPath,
+      `${JSON.stringify({
+        ...warningKey,
+        warnedAtMs: nowMs,
+        warnedAt: new Date(nowMs).toISOString(),
+      })}\n`,
+      'utf8',
+    );
+  } catch {
+    // Best-effort logging metadata only. Lock safety must not depend on this.
+  }
+}
+
+function warnDbLockContentionOncePerWindow(message, dbFile, lockPath, ownerPid) {
+  const nowMs = Date.now();
+  const warningKey = {
+    dbFile: String(dbFile),
+    lockPath: String(lockPath),
+    ownerPid: String(ownerPid),
+  };
+
+  if (shouldSuppressDbLockWarning(warningKey, nowMs)) return;
+
+  console.warn(message);
+  recordDbLockWarning(warningKey, nowMs);
+}
+
 function acquireDbFileLock(dbFile) {
   if (!dbFile) return;
   if (process.env.CHEDDAR_DB_ALLOW_MULTI_PROCESS === 'true') {
@@ -278,7 +341,7 @@ function acquireDbFileLock(dbFile) {
   if (process.env.NODE_ENV === 'production') {
     throw new Error(message);
   }
-  console.warn(message);
+  warnDbLockContentionOncePerWindow(message, dbFile, lockPath, ownerPid);
 }
 
 function normalizeSportValue(sport, context) {

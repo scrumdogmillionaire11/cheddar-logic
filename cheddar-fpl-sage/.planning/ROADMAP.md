@@ -15,6 +15,7 @@
 | 3 | Frontend Core | React dashboard with analysis flow | Complete (2026-01-30) |
 | 4 | Auth & Limits | Usage limits (2/GW) by Team ID, no payments | Complete (2026-01-30) |
 | 5 | Launch Prep | Production deployment, monitoring, legal | Not Started |
+| 7 | Output Architecture Hardening | Canonical weekly payload + ownership cleanup + retrospective review | Planned |
 
 ---
 
@@ -309,3 +310,39 @@ Plans:
 *Phase 2 planned: 2026-01-28*
 *Phase 4 planned: 2026-01-30*
 *Phase 5 planned: 2026-01-30*
+
+---
+
+## Phase 7: Output Architecture Hardening
+
+**Goal:** Stabilize weekly output architecture with one canonical payload, backend-owned derivation, and explicit retrospective review.
+
+**Requirements:** [OA-01, OA-02, OA-03, OA-04, OA-05, OA-06]
+
+**Plans:** 6 plans in 5 waves
+
+Plans:
+- [ ] 07-01-PLAN.md - Canonical payload contract lock
+- [ ] 07-02-PLAN.md - Canonical transformer producer + alias migration gates
+- [ ] 07-03-PLAN.md - Frontend mapper-only conversion
+- [ ] 07-04-PLAN.md - Backend retrospective outcome pipeline
+- [ ] 07-05-PLAN.md - Downstream contract/dashboard consumer alignment
+- [ ] 07-06-PLAN.md - Weekly review UI integration and ordering
+
+### Requirement Mapping
+- OA-01: Introduce strict WeeklyAnalysisPayload with card objects
+- OA-02: Remove duplicate chip/transfer/squad primary output representations
+- OA-03: Remove frontend business re-derivation and fallback cascades
+- OA-04: Populate DecisionReceipt retrospective outcomes and expose weekly review
+- OA-05: Enforce canonical card consumption in contract/dashboard paths
+- OA-06: Define migration/removal gate for legacy alias fields
+
+### Success Criteria
+- Result transformer emits canonical cards as primary output surface
+- Frontend renders from canonical cards without business inference
+- DecisionReceipt outcome/process_verdict are populated and test-covered
+- Dashboard and contract transformer consume canonical cards only
+
+### Dependencies
+- Existing API and frontend foundations (Phases 2-4)
+

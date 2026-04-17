@@ -38,6 +38,7 @@ function ensureSettlementTables(db) {
       model_output_ids TEXT,
       metadata TEXT,
       run_id TEXT,
+      first_seen_price REAL,
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (game_id) REFERENCES games(game_id)
     );
@@ -142,6 +143,7 @@ describe('card payload/card_results sport normalization', () => {
         model_output_ids TEXT,
         metadata TEXT,
         run_id TEXT,
+        first_seen_price REAL,
         updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (game_id) REFERENCES games(game_id)
       );
@@ -363,6 +365,7 @@ describe('card payload/card_results sport normalization', () => {
         model_output_ids TEXT,
         metadata TEXT,
         run_id TEXT,
+        first_seen_price REAL,
         updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (game_id) REFERENCES games(game_id)
       );

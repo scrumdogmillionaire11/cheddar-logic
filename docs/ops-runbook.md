@@ -49,6 +49,13 @@ ssh babycheeses11@100.71.1.87
 - **Web server** is strictly read-only (SELECT/PRAGMA only, uses `closeDatabaseReadOnly()`)
 - See [docs/decisions/ADR-0002-single-writer-db-contract.md](decisions/ADR-0002-single-writer-db-contract.md) for rationale
 
+**Lock Management:**
+
+- The active writer owns `$CHEDDAR_DB_PATH.lock`, normally `/opt/data/cheddar-prod.db.lock` in production.
+- Production lock contention is actionable. Stop the worker/scheduler, confirm no writer owns the DB, run the maintenance or backfill command, then restart the worker/scheduler.
+- Non-production lock warnings can be informational and are rate-limited for the same DB path, lock path, and owner PID for 10 minutes. This only reduces repeated log noise; it does not bypass lock acquisition or change DB safety behavior.
+- Never set `CHEDDAR_DB_ALLOW_MULTI_PROCESS=true` in production. It bypasses the single-writer guardrail and is not a production lock-conflict fix.
+
 **Validation Commands:**
 
 ```bash
@@ -154,7 +161,7 @@ sudo systemctl show cheddar-worker -p Environment | grep -q "CHEDDAR_DB_PATH=/op
 
 ### Decision Pipeline v2 Contract Checks (Wave-1)
 
-Wave-1 (`NBA`/`NHL`/`NCAAM`, `MONEYLINE`/`SPREAD`/`TOTAL`/`PUCKLINE`/`TEAM_TOTAL`) is worker-owned.
+Wave-1 (`NBA`/`NHL`/`MLB`, `MONEYLINE`/`SPREAD`/`TOTAL`/`PUCKLINE`/`TEAM_TOTAL`) is worker-owned for the currently shipped model runners.
 Web/API/UI are pure consumers of worker `decision_v2`.
 
 ```bash
@@ -165,7 +172,7 @@ curl -s "http://localhost:3000/api/games?limit=200" | jq '
   | .plays[]
   | select(
       ((.kind // "PLAY") == "PLAY") and
-      ($sport == "NBA" or $sport == "NHL" or $sport == "NCAAM") and
+      ($sport == "NBA" or $sport == "NHL" or $sport == "MLB") and
       (.market_type == "MONEYLINE" or .market_type == "SPREAD" or .market_type == "TOTAL" or .market_type == "PUCKLINE" or .market_type == "TEAM_TOTAL")
     )
   | {
