@@ -3124,7 +3124,8 @@ function enrichMlbPitcherData(
     const existingHomePitcher = mlb.home_pitcher ?? null;
     const existingAwayPitcher = mlb.away_pitcher ?? null;
 
-    // Query by specific pitcher ID first, then by name, finally fallback to team
+    // Query by specific pitcher ID first, then by name. Do not fallback to team,
+    // which can silently bind the wrong pitcher when probable assignments shift.
     function getPitcherRow(team, existingPitcher) {
       // Priority 1: match by mlb_id if available
       if (existingPitcher?.mlb_id != null) {
@@ -3144,15 +3145,6 @@ function enrichMlbPitcherData(
         if (row) return row;
       }
 
-      // Priority 3: fallback to team lookup (last resort)
-      const byTeam = forKEngine
-        ? db.prepare('SELECT * FROM mlb_pitcher_stats WHERE team = ? ORDER BY updated_at DESC LIMIT 1')
-        : db.prepare("SELECT * FROM mlb_pitcher_stats WHERE team = ? AND date(updated_at) = date('now') LIMIT 1");
-      
-      for (const key of resolveMlbTeamLookupKeys(team)) {
-        const row = byTeam.get(key);
-        if (row) return row;
-      }
       return null;
     }
 

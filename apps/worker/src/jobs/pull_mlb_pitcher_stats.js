@@ -558,6 +558,7 @@ function ensurePitcherStatsTable(db) {
       hr_per_9       REAL,
       recent_k_per_9  REAL,
       recent_ip       REAL,
+      probable_date TEXT,
       updated_at    TEXT NOT NULL DEFAULT (datetime('now'))
     );
   `);
@@ -589,13 +590,14 @@ function ensurePitcherStatsTable(db) {
     'ALTER TABLE mlb_pitcher_stats ADD COLUMN x_era REAL',
     'ALTER TABLE mlb_pitcher_stats ADD COLUMN bb_pct REAL',
     'ALTER TABLE mlb_pitcher_stats ADD COLUMN hr_per_9 REAL',
+    'ALTER TABLE mlb_pitcher_stats ADD COLUMN probable_date TEXT',
   ];
   for (const sql of migrations) {
     try { db.exec(sql); } catch (_) { /* column already exists */ }
   }
 }
 
-function upsertPitcherRows(db, rows) {
+function upsertPitcherRows(db, rows, date = todayDateString()) {
   ensurePitcherStatsTable(db);
   const upsert = db.prepare(`
     INSERT INTO mlb_pitcher_stats (
@@ -628,9 +630,10 @@ function upsertPitcherRows(db, rows) {
       hr_per_9,
       recent_k_per_9,
       recent_ip,
+      probable_date,
       updated_at
     ) VALUES (
-      ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now')
+      ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now')
     )
     ON CONFLICT(mlb_id) DO UPDATE SET
       full_name               = excluded.full_name,
@@ -660,6 +663,7 @@ function upsertPitcherRows(db, rows) {
       hr_per_9                = excluded.hr_per_9,
       recent_k_per_9          = excluded.recent_k_per_9,
       recent_ip               = excluded.recent_ip,
+        probable_date           = excluded.probable_date,
       updated_at              = datetime('now')
   `);
 
@@ -695,6 +699,7 @@ function upsertPitcherRows(db, rows) {
       row.hr_per_9,
       row.recent_k_per_9,
       row.recent_ip,
+      date,
     );
     upserted += 1;
   }
@@ -768,7 +773,7 @@ async function pullMlbPitcherStats({
 
       const validRows = rows.filter(Boolean);
 
-      const upserted = upsertPitcherRows(db, validRows);
+      const upserted = upsertPitcherRows(db, validRows, date);
 
       // Also store raw per-start game logs for walk-forward backtesting
       let gameLogsCount = 0;

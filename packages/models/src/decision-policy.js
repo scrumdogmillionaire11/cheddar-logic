@@ -3,6 +3,261 @@ function toUpperToken(value) {
   return String(value).trim().toUpperCase();
 }
 
+const WEBHOOK_REASON_LABELS = Object.freeze({
+  EDGE_VERIFICATION_REQUIRED: 'Avoiding false signal from unverified line',
+  EDGE_SANITY_NON_TOTAL: 'Verification required — edge sanity check pending',
+  BLOCKED_BET_VERIFICATION_REQUIRED: 'Verification required — bet blocked pending recheck',
+  MIXED_BOOK_SOURCE_MISMATCH: 'Verification required — mixed line/price sources',
+  MIXED_BOOK_INTEGRITY_GATE: 'Verification required — mixed line/price sources',
+  LINE_MOVE_ADVERSE: 'Line moved against the pick — recheck required',
+  MODEL_PROB_MISSING: 'Model incomplete — no play',
+  MARKET_PRICE_MISSING: 'Price unavailable — no play',
+  MARKET_EDGE_UNAVAILABLE: 'Edge unavailable at current market',
+  NO_PRIMARY_SUPPORT: 'Insufficient model support — no play',
+  PASS_NO_EDGE: 'No edge',
+  NO_EDGE_AT_PRICE: 'Price not good enough yet',
+  PLAY_REQUIRES_FRESH_MARKET: 'Fresh market check required',
+  PLAY_CONTRADICTION_CAPPED: 'Signal contradiction cap active',
+  GOALIE_UNCONFIRMED: 'Goalie not confirmed',
+  GOALIE_CONFLICTING: 'Conflicting goalie reports',
+  INJURY_UNCERTAIN: 'Injury status uncertain',
+  WATCHDOG_STALE_SNAPSHOT: 'Snapshot stale — refresh required',
+  STALE_MARKET_INPUT: 'Market input stale — refresh required',
+  BLOCK_STALE_DATA: 'Data stale — no play',
+});
+
+function canonicalizeReasonCode(value) {
+  const token = toUpperToken(value);
+  if (!token) return '';
+  if (token.startsWith('PASS_EXECUTION_GATE_')) {
+    return token.replace('PASS_EXECUTION_GATE_', '');
+  }
+  return token;
+}
+
+function collectReasonCodes(payload) {
+  if (!payload || typeof payload !== 'object') return [];
+  const decisionV2 =
+    payload.decision_v2 && typeof payload.decision_v2 === 'object'
+      ? payload.decision_v2
+      : {};
+
+  const ordered = [
+    payload.blocked_reason_code,
+    decisionV2.primary_reason_code,
+    ...(Array.isArray(decisionV2.watchdog_reason_codes)
+      ? decisionV2.watchdog_reason_codes
+      : []),
+    ...(Array.isArray(decisionV2.price_reason_codes)
+      ? decisionV2.price_reason_codes
+      : []),
+    payload.pass_reason_code,
+    payload.pass_reason,
+    ...(Array.isArray(payload.reason_codes) ? payload.reason_codes : []),
+    ...(Array.isArray(payload?.nhl_totals_status?.reasonCodes)
+      ? payload.nhl_totals_status.reasonCodes
+      : []),
+    payload?.nhl_1p_decision?.surfaced_reason_code,
+  ];
+
+  const seen = new Set();
+  const normalized = [];
+  for (const value of ordered) {
+    const code = canonicalizeReasonCode(value);
+    if (!code || seen.has(code)) continue;
+    seen.add(code);
+    normalized.push(code);
+  }
+  return normalized;
+}
+
+function formatAmericanPrice(value) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return null;
+  if (num > 0) return `+${Math.round(num)}`;
+  return `${Math.round(num)}`;
+}
+
+function formatEdgeThresholdToken(value) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return null;
+  const sign = num >= 0 ? '+' : '';
+  return `${sign}${num.toFixed(2)}`;
+}
+
+function deriveVerificationEdgeThreshold(payload) {
+  const rawEdge = payload?.edge ?? payload?.edge_pct ?? payload?.edge_over_pp;
+  const edgeAbs = Math.abs(Number(rawEdge));
+  if (!Number.isFinite(edgeAbs)) return null;
+
+  // Floor to 0.05 steps to avoid noisy precision while keeping a deterministic trigger.
+  const floored = Math.floor(edgeAbs * 20) / 20;
+  return Math.max(0.05, floored);
+}
+
+function improvePriceTarget(priceToken) {
+  const value = Number(priceToken);
+  if (!Number.isFinite(value)) return null;
+  if (value > 0) return `+${Math.round(value + 5)}+`;
+  if (value < 0) return `${Math.round(value + 5)} or better`;
+  return null;
+}
+
+function resolveMarketRef(payload) {
+  const side =
+    toUpperToken(payload?.selection?.side) || toUpperToken(payload?.prediction) || '';
+  const line = payload?.line ?? payload?.total ?? payload?.market_line;
+  const lineText = line !== null && line !== undefined ? String(line).trim() : '';
+  return [side, lineText].filter(Boolean).join(' ').trim() || 'current market';
+}
+
+function formatLineToken(value) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return String(value || '').trim();
+  return Number.isInteger(num) ? String(num) : num.toFixed(1);
+}
+
+function deriveAdverseMoveClause(payload) {
+  const side = toUpperToken(payload?.selection?.side) || toUpperToken(payload?.prediction);
+  const marketType = toUpperToken(payload?.market_type || payload?.recommended_bet_type);
+  const rawLine = payload?.line ?? payload?.total ?? payload?.market_line;
+  const line = Number(rawLine);
+
+  const isTotalMarket =
+    marketType === 'TOTAL' ||
+    marketType === 'TEAM_TOTAL' ||
+    marketType === 'FIRST_PERIOD' ||
+    side === 'OVER' ||
+    side === 'UNDER';
+  if (!isTotalMarket || !Number.isFinite(line)) return 'adverse market move';
+
+  if (side === 'OVER') return `total moves to ${formatLineToken(line + 0.5)}`;
+  if (side === 'UNDER') return `total moves to ${formatLineToken(line - 0.5)}`;
+  return `total moves away from ${formatLineToken(line)}`;
+}
+
+function deriveWebhookWatchState(payload) {
+  const reasonCodes = collectReasonCodes(payload);
+  const hasCode = (matcher) => reasonCodes.some((code) => matcher(code));
+
+  if (
+    hasCode((code) =>
+      code.includes('STALE') ||
+      code.includes('MISSING') ||
+      code.includes('INCOMPLETE') ||
+      code === 'WATCHDOG_PARSE_FAILURE',
+    )
+  ) {
+    return 'data incomplete';
+  }
+
+  if (hasCode((code) => code.includes('GOALIE') || code.includes('INJURY'))) {
+    return 'pending confirmation';
+  }
+
+  if (
+    hasCode((code) =>
+      code.includes('VERIFICATION') ||
+      code.includes('LINE_MOVE_ADVERSE') ||
+      code.includes('MIXED_BOOK_SOURCE_MISMATCH') ||
+      code.includes('MIXED_BOOK_INTEGRITY_GATE'),
+    )
+  ) {
+    return 'line not verified';
+  }
+
+  if (
+    hasCode((code) =>
+      code === 'NO_EDGE_AT_PRICE' ||
+      code === 'PLAY_REQUIRES_FRESH_MARKET' ||
+      code === 'PLAY_CONTRADICTION_CAPPED' ||
+      code === 'HEAVY_FAVORITE_PRICE_CAP',
+    )
+  ) {
+    return 'price not good enough';
+  }
+
+  const hasLine = payload?.line !== null && payload?.line !== undefined;
+  const hasPrice = payload?.price !== null && payload?.price !== undefined;
+  if (hasLine && !hasPrice) return 'number not good enough';
+  if (hasLine && hasPrice) return 'price not good enough';
+  return 'not a play yet';
+}
+
+function deriveWebhookWouldBecomePlay(payload, state = deriveWebhookWatchState(payload)) {
+  const marketRef = resolveMarketRef(payload);
+  const side =
+    toUpperToken(payload?.selection?.side) || toUpperToken(payload?.prediction) || 'SIDE';
+  const line = payload?.line ?? payload?.total ?? payload?.market_line;
+  const lineText = line !== null && line !== undefined ? String(line).trim() : '';
+  const price = formatAmericanPrice(payload?.price);
+  const betterPrice = improvePriceTarget(price);
+
+  if (state === 'price not good enough') {
+    if (lineText && betterPrice) return `Would become PLAY: ${side} ${lineText} at ${betterPrice}`;
+    if (betterPrice) return `Would become PLAY: at ${betterPrice}`;
+    return `Would become PLAY: ${marketRef} at a better price`;
+  }
+  if (state === 'number not good enough') {
+    return `Would become PLAY: ${side} at a better number`;
+  }
+  if (state === 'data incomplete') {
+    return `Would become PLAY: ${marketRef} once fresh data confirms edge`;
+  }
+  if (state === 'line not verified') {
+    const edgeThreshold = formatEdgeThresholdToken(deriveVerificationEdgeThreshold(payload));
+    const hasLine = lineText.length > 0;
+    const verificationClause = hasLine ? 'line verifies' : 'market verifies';
+    if (lineText && edgeThreshold) {
+      return `Would become PLAY: ${side} ${lineText} if ${verificationClause} and edge >= ${edgeThreshold} holds`;
+    }
+    if (edgeThreshold) {
+      return `Would become PLAY: ${marketRef} if ${verificationClause} and edge >= ${edgeThreshold} holds`;
+    }
+    return `Would become PLAY: ${marketRef} if line confirms across books`;
+  }
+  if (state === 'pending confirmation') {
+    return `Would become PLAY: ${marketRef} after line/model recheck`;
+  }
+  return `Would become PLAY: ${marketRef} once trigger conditions are met`;
+}
+
+function deriveWebhookDropToPass(payload, state = deriveWebhookWatchState(payload)) {
+  const marketRef = resolveMarketRef(payload);
+  const edgeThreshold = formatEdgeThresholdToken(deriveVerificationEdgeThreshold(payload));
+
+  if (state === 'line not verified') {
+    if (edgeThreshold) {
+      return `Drops to PASS: edge < ${edgeThreshold} or ${deriveAdverseMoveClause(payload)}`;
+    }
+    return 'Drops to PASS: verification fails on recheck';
+  }
+
+  if (state === 'price not good enough') {
+    return 'Drops to PASS: price worsens or edge no longer clears threshold';
+  }
+
+  if (state === 'number not good enough') {
+    return 'Drops to PASS: number worsens before recheck';
+  }
+
+  if (state === 'data incomplete') {
+    return 'Drops to PASS: missing/invalid data persists at recheck';
+  }
+
+  if (state === 'pending confirmation') {
+    return 'Drops to PASS: confirmation fails or signal degrades';
+  }
+
+  return `Drops to PASS: ${marketRef} fails trigger conditions`;
+}
+
+function describeWebhookReason(payload, bucket = 'pass_blocked') {
+  const reasonCode = deriveWebhookReasonCode(payload, bucket);
+  if (!reasonCode) return null;
+  return WEBHOOK_REASON_LABELS[reasonCode] || 'No edge';
+}
+
 function normalizeOfficialStatus(value) {
   const token = toUpperToken(value);
   if (token === 'PLAY' || token === 'LEAN' || token === 'PASS') {
@@ -141,14 +396,8 @@ function deriveWebhookBucket(payload, context = {}) {
 function deriveWebhookReasonCode(payload, bucket) {
   if (bucket !== 'pass_blocked') return null;
 
-  return (
-    payload?.pass_reason_code ||
-    (Array.isArray(payload?.nhl_totals_status?.reasonCodes)
-      ? payload.nhl_totals_status.reasonCodes[0]
-      : null) ||
-    payload?.nhl_1p_decision?.surfaced_reason_code ||
-    'PASS_NO_EDGE'
-  );
+  const reasonCodes = collectReasonCodes(payload);
+  return reasonCodes[0] || 'PASS_NO_EDGE';
 }
 
 function resolveWebhookDisplaySide(payload) {
@@ -170,6 +419,11 @@ function isWebhookLeanEligible(payload, minEdge = 0.15) {
 
 module.exports = {
   deriveWebhookBucket,
+  collectReasonCodes,
+  describeWebhookReason,
+  deriveWebhookWatchState,
+  deriveWebhookWouldBecomePlay,
+  deriveWebhookDropToPass,
   deriveWebhookReasonCode,
   deriveLegacyDecisionEnvelope,
   deriveUiDisplayStatus,

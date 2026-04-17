@@ -4,6 +4,11 @@ const {
   deriveLegacyDecisionEnvelope,
   deriveUiDisplayStatus,
   deriveWebhookBucket,
+  collectReasonCodes,
+  describeWebhookReason,
+  deriveWebhookWatchState,
+  deriveWebhookWouldBecomePlay,
+  deriveWebhookDropToPass,
   deriveWebhookReasonCode,
   isOfficialStatusActionable,
   isWebhookLeanEligible,
@@ -119,6 +124,44 @@ describe('decision-policy helpers', () => {
 
     expect(deriveWebhookReasonCode(payload, 'pass_blocked')).toBe('PASS_POLICY_GATE');
     expect(deriveWebhookReasonCode(payload, 'official')).toBeNull();
+  });
+
+  test('collectReasonCodes normalizes and de-duplicates canonical reason order', () => {
+    const payload = {
+      blocked_reason_code: 'EDGE_VERIFICATION_REQUIRED',
+      pass_reason_code: 'PASS_EXECUTION_GATE_MIXED_BOOK_SOURCE_MISMATCH',
+      reason_codes: ['NO_EDGE_AT_PRICE', 'NO_EDGE_AT_PRICE'],
+      decision_v2: {
+        primary_reason_code: 'EDGE_VERIFICATION_REQUIRED',
+      },
+    };
+
+    expect(collectReasonCodes(payload)).toEqual([
+      'EDGE_VERIFICATION_REQUIRED',
+      'MIXED_BOOK_SOURCE_MISMATCH',
+      'NO_EDGE_AT_PRICE',
+    ]);
+  });
+
+  test('watch-state helpers derive line-verification state and promotion condition', () => {
+    const payload = {
+      pass_reason_code: 'EDGE_VERIFICATION_REQUIRED',
+      selection: { side: 'OVER' },
+      line: 8,
+      price: 105,
+      edge: 0.21,
+    };
+
+    expect(deriveWebhookWatchState(payload)).toBe('line not verified');
+    expect(deriveWebhookWouldBecomePlay(payload)).toBe(
+      'Would become PLAY: OVER 8 if line verifies and edge >= +0.20 holds',
+    );
+    expect(deriveWebhookDropToPass(payload)).toBe(
+      'Drops to PASS: edge < +0.20 or total moves to 8.5',
+    );
+    expect(describeWebhookReason(payload)).toBe(
+      'Avoiding false signal from unverified line',
+    );
   });
 
   test('resolveWebhookDisplaySide prefers nhl_1p projection side then selection then prediction', () => {

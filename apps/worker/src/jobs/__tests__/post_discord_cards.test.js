@@ -313,13 +313,13 @@ describe('post_discord_cards helpers', () => {
     expect(snapshot.sectionCounts).toEqual({ official: 1, lean: 1, passBlocked: 0 });
     expect(message).toContain('🏒 NHL | 7:00 PM ET');
     expect(message).toContain('WSH Capitals @ CBJ Blue Jackets');
-    expect(message).toContain('Snapshot: 10:00 AM ET');
+    expect(message).toContain('As of: 10:00 AM ET');
     expect(message).toContain('🟢 PLAY');
     expect(message).toContain('ML | HOME (-115)');
     expect(message).toContain('Why: Model edge confirmed at current number.');
     expect(message).toContain('🟡 Slight Edge');
     expect(message).toContain('TOTAL | UNDER 6.5 (-108)');
-    expect(message).toContain('5.8 | Edge: +0.70 (strong lean)');
+    expect(message).toContain('5.8 | Edge: +0.70 (strong)');
     expect(message).toContain('Why: Projection still favors the under, but not enough for PLAY.');
     expect(message.indexOf('🟢 PLAY')).toBeLessThan(message.indexOf('🟡 Slight Edge'));
     expect(message).not.toContain('⚪ PASS');
@@ -402,7 +402,7 @@ describe('post_discord_cards helpers', () => {
     expect(snapshot.sectionCounts.lean).toBe(0);
   });
 
-  test('buildDiscordSnapshot surfaces blocked high-signal passes as WATCH with explicit reason', () => {
+  test('buildDiscordSnapshot surfaces blocked high-signal passes as WATCH with explicit trigger', () => {
     const cards = [
       makeCard({
         id: 'blocked-play',
@@ -430,10 +430,14 @@ describe('post_discord_cards helpers', () => {
 
     expect(snapshot.totalGames).toBe(1);
     expect(snapshot.sectionCounts.passBlocked).toBe(1);
-    expect(message).toContain('⚠️ WATCH (Would be PLAY)');
+    expect(message).toContain('⚠️ WATCH — not a play yet');
     expect(message).toContain('ML | HOME (+100)');
-    expect(message).toContain('Edge: +0.21');
-    expect(message).toContain('Why: Would be PLAY, but line unstable — waiting for confirmation');
+    expect(message).toContain('Edge: +0.21 (strong)');
+    expect(message).toContain('State: line not verified');
+    expect(message).toContain('Would become PLAY: HOME if market verifies and edge >= +0.20 holds');
+    expect(message).toContain('Recheck by: 6:30 PM ET (T-30m)');
+    expect(message).toContain('Drops to PASS: edge < +0.20 or adverse market move');
+    expect(message).toContain('Why: Avoiding false signal from unverified line');
     expect(message).not.toContain('⚪ PASS');
     expect(message).not.toContain('PASS_NO_EDGE');
   });
@@ -463,7 +467,7 @@ describe('post_discord_cards helpers', () => {
 
     expect(snapshot.totalGames).toBe(1);
     expect(snapshot.messages[0]).toContain('🟡 Slight Edge (Lean)');
-    expect(snapshot.messages[0]).toContain('6.1 | Edge: +0.20 (thin lean)');
+    expect(snapshot.messages[0]).toContain('6.1 | Edge: +0.20 (strong)');
   });
 
   test('buildDiscordSnapshot normalizes MLB two-letter/variant teams in matchup header', () => {
@@ -493,7 +497,11 @@ describe('post_discord_cards helpers', () => {
 
     expect(snapshot.totalGames).toBe(1);
     expect(snapshot.messages[0]).toContain('CLE Guardians @ MIN Twins');
-    expect(snapshot.messages[0]).toContain('⚠️ WATCH (Would be PLAY)');
+    expect(snapshot.messages[0]).toContain('⚠️ WATCH — not a play yet');
+    expect(snapshot.messages[0]).toContain('State: line not verified');
+    expect(snapshot.messages[0]).toContain('Would become PLAY: AWAY if market verifies and edge >= +0.05 holds');
+    expect(snapshot.messages[0]).toContain('Recheck by: 7:41 PM ET (T-30m)');
+    expect(snapshot.messages[0]).toContain('Drops to PASS: edge < +0.05 or adverse market move');
     expect(snapshot.messages[0]).toContain('Edge: +0.05');
   });
 

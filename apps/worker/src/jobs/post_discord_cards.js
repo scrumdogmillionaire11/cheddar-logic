@@ -13,12 +13,20 @@ const {
   getDatabase,
   createJob,
 } = require('@cheddar-logic/data');
-const { isWebhookLeanEligible } = require('@cheddar-logic/models');
+const {
+  isWebhookLeanEligible,
+  collectReasonCodes,
+  describeWebhookReason,
+  deriveWebhookWatchState,
+  deriveWebhookWouldBecomePlay,
+  deriveWebhookDropToPass,
+} = require('@cheddar-logic/models');
 
 const JOB_NAME = 'post_discord_cards';
 const DEFAULT_CHAR_LIMIT = 1800;
 const DISCORD_HARD_LIMIT = 2000;
 const DEFAULT_MAX_ROWS = 300;
+const WATCH_RECHECK_LEAD_MINUTES = Number(process.env.DISCORD_WATCH_RECHECK_LEAD_MINUTES || 30);
 // Leans with |edge| below this are suppressed — rounding error, not signal
 // Override with env DISCORD_MIN_LEAN_EDGE (e.g. '0.2')
 const MIN_LEAN_EDGE_ABS = Number(process.env.DISCORD_MIN_LEAN_EDGE ?? 0.15);
@@ -90,41 +98,13 @@ function safeScalar(val) {
   return str || null;
 }
 
-// Human-readable reason codes — no internal tokens exposed to Discord
-const REASON_CODE_LABELS = {
-  EDGE_VERIFICATION_REQUIRED: 'Line unstable — waiting for confirmation',
-  MODEL_PROB_MISSING:          'Model incomplete — no play',
-  PASS_NO_EDGE:                'No edge',
-  NO_EDGE_AT_PRICE:            'Price too sharp',
-  PASS_LOW_CONFIDENCE:         'Low confidence',
-  PASS_SHARP_MONEY_OPPOSITE:   'Sharp money against — no play',
-  GATE_GOALIE_UNCONFIRMED:     'Goalie not confirmed',
-  GATE_LINE_MOVEMENT:          'Line moved — re-evaluating',
-  BLOCK_INJURY_RISK:           'Injury risk flag',
-  BLOCK_STALE_DATA:            'Data stale — no play',
-};
-
 function reasonTokens(card) {
   const payload = card?.payloadData || {};
-  return [
-    normalizeToken(payload?.pass_reason_code),
-    normalizeToken(payload?.pass_reason),
-    ...(Array.isArray(payload?.reason_codes) ? payload.reason_codes.map(normalizeToken) : []),
-    normalizeToken(payload?.blocked_reason_code),
-  ].filter(Boolean);
+  return collectReasonCodes(payload).map(normalizeToken).filter(Boolean);
 }
 
 function humanReason(card) {
-  for (const code of reasonTokens(card)) {
-    if (REASON_CODE_LABELS[code]) return REASON_CODE_LABELS[code];
-  }
-  return 'No edge';
-}
-
-function lowercaseLeading(text) {
-  const value = String(text || '').trim();
-  if (!value) return '';
-  return value.charAt(0).toLowerCase() + value.slice(1);
+  return describeWebhookReason(card?.payloadData || {}, 'pass_blocked') || 'No edge';
 }
 
 function extractEdgeValue(card) {
@@ -803,14 +783,35 @@ function summarizeReasoning(card) {
 
 function resolveWhyLine(card, bucket) {
   const why = summarizeReasoning(card);
-  if (bucket === 'blocked_watch') {
-    const reason = humanReason(card);
-    if (reason && reason !== 'No edge') {
-      return `Would be PLAY, but ${lowercaseLeading(reason)}`;
-    }
-  }
   if (why) return why;
   return null;
+}
+
+function watchStateLabel(card) {
+  return deriveWebhookWatchState(card?.payloadData || {});
+}
+
+function watchToPlayLine(card) {
+  const payload = card?.payloadData || {};
+  const state = watchStateLabel(card);
+  return deriveWebhookWouldBecomePlay(payload, state);
+}
+
+function watchDropToPassLine(card) {
+  const payload = card?.payloadData || {};
+  const state = watchStateLabel(card);
+  return deriveWebhookDropToPass(payload, state);
+}
+
+function watchRecheckDeadlineLine(card) {
+  const gameTs = Date.parse(card?.gameTimeUtc || '');
+  if (!Number.isFinite(gameTs)) return null;
+
+  const leadMinutes = Number.isFinite(WATCH_RECHECK_LEAD_MINUTES)
+    ? Math.max(5, Math.round(WATCH_RECHECK_LEAD_MINUTES))
+    : 30;
+  const recheckDate = new Date(gameTs - leadMinutes * 60 * 1000);
+  return `Recheck by: ${formatEtTime(recheckDate.toISOString())} (T-${leadMinutes}m)`;
 }
 
 // Format a numeric edge value as +0.17 / -0.70 (2dp, always signed)
@@ -887,10 +888,14 @@ function renderDecisionLine(card, bucket) {
     return lines.join('\n');
   }
 
-  const market    = normalizeMarketTag(card);
+  const baseMarket = normalizeMarketTag(card);
   const selection = selectionSummary(card);
   const line      = lineSummary(card);
   const price     = priceSummary(card);
+  const market =
+    baseMarket === 'ML' && (selection === 'OVER' || selection === 'UNDER') && line
+      ? 'TOTAL'
+      : baseMarket;
 
   // 1P cards without a resolved OVER/UNDER direction are unactionable — suppress entirely
   if (market === '1P' && selection !== 'OVER' && selection !== 'UNDER') return null;
@@ -912,14 +917,29 @@ function renderDecisionLine(card, bucket) {
   // Second line: projection | edge (line is already embedded in the pick string)
   const edgeRaw2 = extractEdgeValue(card);
   const edgeFormatted2 = edgeRaw2 !== null ? formatEdgeValue(edgeRaw2) : null;
-  const leanStrength = bucket === 'lean' ? describeLeanStrength(card) : null;
+  const edgeBand = Number.isFinite(edgeRaw2)
+    ? Math.abs(edgeRaw2) >= 0.2
+      ? 'strong'
+      : Math.abs(edgeRaw2) >= 0.05
+        ? 'thin'
+        : null
+    : null;
   const metricParts2 = [];
   if (proj) metricParts2.push(proj);
-  if (edgeFormatted2) metricParts2.push(`Edge: ${edgeFormatted2}${leanStrength ? ` (${leanStrength})` : ''}`);
+  if (edgeFormatted2) metricParts2.push(`Edge: ${edgeFormatted2}${edgeBand ? ` (${edgeBand})` : ''}`);
   const metricsLine2 = metricParts2.join(' | ');
 
   const lines = [`${market} | ${priced}`];
   if (metricsLine2) lines.push(metricsLine2);
+  if (bucket === 'blocked_watch') {
+    lines.push(`State: ${watchStateLabel(card)}`);
+    lines.push(watchToPlayLine(card));
+    const recheckByLine = watchRecheckDeadlineLine(card);
+    if (recheckByLine) lines.push(recheckByLine);
+    lines.push(watchDropToPassLine(card));
+    const reason = humanReason(card);
+    if (reason && reason !== 'No edge') lines.push(`Why: ${reason}`);
+  }
   if (why)     lines.push(`Why: ${why}`);
   const w = payload?.price_staleness_warning;
   if (w) lines.push(`⚠️ Hard-locked at ${w.locked_price} — current may be ${w.current_candidate_price} (${w.delta_american} pts drift, T-${w.minutes_to_start}min)`);
@@ -1138,13 +1158,13 @@ function buildDiscordSnapshot({ now = new Date(), cards = [] } = {}) {
       '─────────────────',
       `${sportLabel(seed?.sport)} | ${startEt}`,
       shortMatchup,
-      `Snapshot: ${snapshotEt}`,
+      `As of: ${snapshotEt}`,
     ];
 
     const officialLines = sectionLines('🟢 PLAY', official, 'official');
     if (officialLines.length > 0) headerLines.push('', ...officialLines);
 
-    const blockedLines = sectionLines('⚠️ WATCH (Would be PLAY)', blockedWatch, 'blocked_watch');
+    const blockedLines = sectionLines('⚠️ WATCH — not a play yet', blockedWatch, 'blocked_watch');
     if (blockedLines.length > 0) headerLines.push('', ...blockedLines);
 
     const leanLines = sectionLines(resolveLeanSectionTitle(leans), leans, 'lean');

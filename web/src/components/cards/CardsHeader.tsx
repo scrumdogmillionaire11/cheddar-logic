@@ -1,8 +1,11 @@
 'use client';
 
+import { useMemo } from 'react';
 import { formatSportCounts } from './CardsPageContext';
-import { useCardsPageState } from './CardsPageContext';
+import { useCardsPageState, useCardsPageActions } from './CardsPageContext';
 import { formatDate } from './game-card-helpers';
+import { classifyPassReasonBucket } from './shared';
+import { getPlayDisplayAction } from '@/lib/game-card/decision';
 
 export default function CardsHeader() {
   const {
@@ -10,6 +13,8 @@ export default function CardsHeader() {
     displayedCardsInView,
     dropTraceStats,
     error,
+    filteredCards,
+    filters,
     guardrailStats,
     hiddenDataErrorCards,
     hiddenDataErrors,
@@ -17,7 +22,29 @@ export default function CardsHeader() {
     todayEtKey,
     totalCardsInView,
     traceStats,
+    viewMode,
   } = useCardsPageState();
+  const { onFiltersChange } = useCardsPageActions();
+
+  const isPassActive = viewMode === 'game' && filters.statuses.includes('PASS');
+
+  const handlePassToggle = () => {
+    const newStatuses = isPassActive
+      ? filters.statuses.filter((s) => s !== 'PASS')
+      : ([...filters.statuses, 'PASS'] as typeof filters.statuses);
+    onFiltersChange({ ...filters, statuses: newStatuses });
+  };
+
+  const passBucketCounts = useMemo(() => {
+    if (!isPassActive) return null;
+    const counts = { 'odds-blocked': 0, 'data-error': 0, 'projection-only': 0 };
+    for (const card of filteredCards) {
+      if (getPlayDisplayAction(card.play) !== 'PASS') continue;
+      const bucket = classifyPassReasonBucket(card);
+      if (bucket) counts[bucket] += 1;
+    }
+    return counts;
+  }, [isPassActive, filteredCards]);
 
   return (
     <div className="mb-8 space-y-2">
@@ -26,6 +53,27 @@ export default function CardsHeader() {
         {totalCardsInView} game{totalCardsInView !== 1 ? 's' : ''} total,
         showing {displayedCardsInView} (updates in background every 60s)
       </p>
+      {viewMode === 'game' && !loading && !error && (
+        <div className="flex items-center gap-3 flex-wrap">
+          <button
+            onClick={handlePassToggle}
+            className={`px-3 py-1 text-xs font-semibold rounded border transition-colors ${
+              isPassActive
+                ? 'bg-slate-600/60 text-slate-200 border-slate-500/60'
+                : 'bg-white/5 text-cloud/50 border-white/10 hover:bg-white/10 hover:text-cloud/70'
+            }`}
+          >
+            {isPassActive ? 'Hide PASS' : 'Show PASS'}
+          </button>
+          {isPassActive && passBucketCounts && (
+            <span className="text-xs text-cloud/50 font-mono">
+              Odds-blocked: {passBucketCounts['odds-blocked']} | Data error:{' '}
+              {passBucketCounts['data-error']} | Projection-only:{' '}
+              {passBucketCounts['projection-only']}
+            </span>
+          )}
+        </div>
+      )}
       {!loading && !error && diagnosticsEnabled && (
         <details className="rounded-lg border border-white/10 bg-surface/30 px-3 py-2 text-xs text-cloud/70">
           <summary className="cursor-pointer select-none text-cloud/60 hover:text-cloud/80">
