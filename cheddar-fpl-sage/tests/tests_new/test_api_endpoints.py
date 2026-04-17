@@ -6,12 +6,15 @@ import pytest
 from fastapi.testclient import TestClient
 import sys
 import os
+from datetime import datetime, timezone
+from types import SimpleNamespace
 
 # Add backend to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'backend'))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'src'))
 
 from backend.main import app
+import backend.routers.dashboard as dashboard_router
 
 
 @pytest.fixture
@@ -139,3 +142,118 @@ class TestAnalyzeEndpoint:
             json={}
         )
         assert response.status_code == 422  # Pydantic validation error
+
+
+def _dashboard_job(status: str = "complete", results: dict | None = None):
+    return SimpleNamespace(
+        analysis_id="dash-001",
+        status=status,
+        progress=100.0,
+        phase="completed",
+        results=results or {},
+        error=None,
+        created_at=datetime.now(timezone.utc),
+    )
+
+
+class TestDashboardEndpoint:
+    def test_dashboard_endpoint_uses_canonical_cards(self, client, monkeypatch):
+        canonical_results = {
+            "current_gw": 33,
+            "gameweek_plan": {
+                "version": "v1",
+                "summary": "Take one proactive transfer.",
+                "highlights": [],
+                "metrics": {
+                    "primary_action": "TRANSFER",
+                    "justification": "One route clears threshold.",
+                    "gameweek": 33,
+                    "generated_at": "2026-04-17T12:00:00Z",
+                    "free_transfers": 1,
+                },
+            },
+            "transfer_recommendation": {
+                "version": "v1",
+                "summary": "Upgrade midfield slot.",
+                "highlights": [],
+                "metrics": {
+                    "transfer_plans": {
+                        "primary": {
+                            "out": "Mid A",
+                            "in": "Mid B",
+                            "hit_cost": 0,
+                            "net_cost": 0.8,
+                            "delta_pts_4gw": 3.6,
+                            "reason": "Fixture upgrade",
+                            "confidence": "HIGH",
+                        }
+                    }
+                },
+            },
+            "captaincy": {
+                "version": "v1",
+                "summary": "Captaincy clear this week.",
+                "highlights": [],
+                "metrics": {
+                    "captain": {"name": "Haaland", "team": "MCI", "position": "FWD", "expected_pts": 9.1},
+                    "vice_captain": {"name": "Saka", "team": "ARS", "position": "MID", "expected_pts": 7.1},
+                },
+            },
+            "chip_strategy": {
+                "version": "v1",
+                "summary": "No chip this week.",
+                "highlights": [],
+                "metrics": {
+                    "verdict": "NONE",
+                    "status": "PASS",
+                    "explanation": "Save chips for doubles.",
+                    "recommendation": {"best_gw": 36},
+                },
+            },
+            "squad_state": {
+                "version": "v1",
+                "summary": "Squad healthy.",
+                "highlights": [],
+                "metrics": {
+                    "starting_xi": [{"name": "P1"}],
+                    "bench": [{"name": "B1"}],
+                    "squad_health": {"injured": 0, "doubtful": 0, "health_pct": 100},
+                },
+            },
+            "decision_confidence": {
+                "version": "v1",
+                "confidence": "HIGH",
+                "score": 84,
+                "rationale": "Strong signal set.",
+                "signals": ["form"],
+            },
+            "weekly_review": {
+                "version": "v1",
+                "summary": "Prior week process held.",
+                "highlights": [],
+                "metrics": {"drift_flags": []},
+            },
+        }
+        monkeypatch.setattr(
+            dashboard_router.engine_service,
+            "get_job",
+            lambda _analysis_id: _dashboard_job(status="complete", results=canonical_results),
+        )
+
+        response = client.get("/api/v1/dashboard/dash-001")
+        assert response.status_code == 200
+        body = response.json()
+        assert body["gameweek"]["current"] == 33
+        assert body["decision_summary"]["decision"] == "TRANSFER"
+        assert body["captain_advice"]["captain"]["name"] == "Haaland"
+        assert len(body["transfer_targets"]) >= 1
+
+    def test_dashboard_endpoint_returns_202_when_running(self, client, monkeypatch):
+        monkeypatch.setattr(
+            dashboard_router.engine_service,
+            "get_job",
+            lambda _analysis_id: _dashboard_job(status="running", results={}),
+        )
+
+        response = client.get("/api/v1/dashboard/dash-002")
+        assert response.status_code == 202
