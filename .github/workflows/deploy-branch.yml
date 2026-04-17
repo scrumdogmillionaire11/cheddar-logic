@@ -2,10 +2,7 @@ name: Deploy Branch to Pi
 
 permissions:
   contents: read
-
-permissions:
-  contents: read
-  actions: read
+  actions: write
 
 on:
   workflow_dispatch:
