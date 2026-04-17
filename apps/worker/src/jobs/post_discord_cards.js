@@ -20,6 +20,7 @@ const {
   deriveWebhookWatchState,
   deriveWebhookWouldBecomePlay,
   deriveWebhookDropToPass,
+  describeEdgeMagnitude,
 } = require('@cheddar-logic/models');
 
 const JOB_NAME = 'post_discord_cards';
@@ -917,13 +918,7 @@ function renderDecisionLine(card, bucket) {
   // Second line: projection | edge (line is already embedded in the pick string)
   const edgeRaw2 = extractEdgeValue(card);
   const edgeFormatted2 = edgeRaw2 !== null ? formatEdgeValue(edgeRaw2) : null;
-  const edgeBand = Number.isFinite(edgeRaw2)
-    ? Math.abs(edgeRaw2) >= 0.2
-      ? 'strong'
-      : Math.abs(edgeRaw2) >= 0.05
-        ? 'thin'
-        : null
-    : null;
+  const edgeBand = describeEdgeMagnitude(Math.abs(edgeRaw2));
   const metricParts2 = [];
   if (proj) metricParts2.push(proj);
   if (edgeFormatted2) metricParts2.push(`Edge: ${edgeFormatted2}${edgeBand ? ` (${edgeBand})` : ''}`);
