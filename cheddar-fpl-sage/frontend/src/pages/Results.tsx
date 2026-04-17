@@ -9,6 +9,17 @@ import RiskNote from '@/components/RiskNote';
 import TransferSection from '@/components/TransferSection';
 import CurrentSquad from '@/components/CurrentSquad';
 import DataTransparency from '@/components/DataTransparency';
+import WeeklyReview from '@/components/WeeklyReview';
+
+export const WEEKLY_SECTION_ORDER = [
+  'weekly_review',
+  'current_squad_state',
+  'gameweek_plan',
+  'transfer_recommendation',
+  'captaincy',
+  'chip_strategy',
+  'horizon_watch',
+] as const;
 
 export default function Results() {
   const { id } = useParams<{ id: string }>();
@@ -126,26 +137,11 @@ export default function Results() {
       </header>
 
       <main className="max-w-reading mx-auto px-6 py-12 space-y-6">
-        <DecisionBrief
-          primaryAction={decision.primaryAction}
-          confidence={decision.confidence}
-          justification={decision.justification}
-          gameweek={decision.gameweek}
-          confidenceLabel={decision.confidenceLabel}
-          confidenceSummary={decision.confidenceSummary}
-        />
-
-        {decision.captain && decision.viceCaptain && (
-          <CaptaincySection
-            captain={decision.captain}
-            viceCaptain={decision.viceCaptain}
-            delta={decision.captainDelta}
-          />
-        )}
+        {decision.weeklyReview && <WeeklyReview review={decision.weeklyReview} />}
 
         {(decision.startingXI.length > 0 || decision.bench.length > 0) && (
           <CurrentSquad
-            title="Starting XI"
+            title="Current Squad State"
             startingXI={decision.startingXI}
             bench={decision.bench}
             formation={decision.formation}
@@ -158,11 +154,28 @@ export default function Results() {
           />
         )}
 
+        <DecisionBrief
+          primaryAction={decision.primaryAction}
+          confidence={decision.confidence}
+          justification={decision.justification}
+          gameweek={decision.gameweek}
+          confidenceLabel={decision.confidenceLabel}
+          confidenceSummary={decision.confidenceSummary}
+        />
+
         <TransferSection
           {...decision.transfer}
           freeTransfers={decision.freeTransfers}
           benchWarning={decision.benchWarning}
         />
+
+        {decision.captain && decision.viceCaptain && (
+          <CaptaincySection
+            captain={decision.captain}
+            viceCaptain={decision.viceCaptain}
+            delta={decision.captainDelta}
+          />
+        )}
 
         <ChipDecision
           chipVerdict={decision.chipVerdict}
@@ -175,6 +188,22 @@ export default function Results() {
         />
 
         <RiskNote riskStatement={decision.riskStatement} squadHealth={decision.squadHealth} />
+
+        <section className="bg-surface-card border border-surface-elevated p-8">
+          <h2 className="text-section text-sage-muted mb-4 uppercase tracking-wider">Horizon Watch</h2>
+          <p className="text-body text-sage-light leading-relaxed max-w-2xl">
+            {results.horizon_watch.summary}
+          </p>
+          {decision.gwTimeline && decision.gwTimeline.length > 0 && (
+            <ul className="mt-4 space-y-2">
+              {decision.gwTimeline.map((item) => (
+                <li key={item} className="text-body-sm text-sage-muted">
+                  {item}
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
       </main>
 
       <footer className="border-t border-surface-elevated mt-16">
