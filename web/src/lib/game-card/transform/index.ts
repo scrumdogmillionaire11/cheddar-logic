@@ -205,6 +205,7 @@ interface ApiPlay {
   basis?: 'PROJECTION_ONLY' | 'ODDS_BACKED';
   execution_status?: 'EXECUTABLE' | 'PROJECTION_ONLY' | 'BLOCKED';
   execution_gate?: {
+    should_bet?: boolean;
     drop_reason?: {
       drop_reason_code: string;
       drop_reason_layer: string;
