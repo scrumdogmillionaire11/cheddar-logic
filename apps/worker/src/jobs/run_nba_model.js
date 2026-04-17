@@ -1897,6 +1897,11 @@ async function runNBAModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
             if (availabilityGate.gateFailedError) {
               callCardReasonSet.add(WATCHDOG_REASONS.AVAILABILITY_GATE_DEGRADED);
             }
+
+            // Task 3: Line delta computation failure on call-card line context
+            if (card.payloadData?.line_context?.computationError) {
+              callCardReasonSet.add(WATCHDOG_REASONS.LINE_DELTA_COMPUTATION_FAILED);
+            }
             
             card.payloadData.reason_codes = Array.from(callCardReasonSet).sort();
             
