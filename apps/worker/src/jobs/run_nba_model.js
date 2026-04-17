@@ -613,14 +613,27 @@ function canPriceCard(card) {
   return Boolean(sharpPriceStatus && sharpPriceStatus !== 'UNPRICED');
 }
 
-function resolveSnapshotAgeMs(oddsSnapshot, nowMs = Date.now()) {
+function resolveSnapshotAgeMeta(oddsSnapshot, nowMs = Date.now()) {
   const capturedAt = oddsSnapshot?.captured_at ?? oddsSnapshot?.fetched_at ?? null;
-  if (!capturedAt) return null;
+  if (!capturedAt) {
+    return {
+      snapshotAgeMs: null,
+      reasonCode: WATCHDOG_REASONS.CAPTURED_AT_MISSING,
+    };
+  }
 
   const capturedAtMs = new Date(capturedAt).getTime();
-  if (!Number.isFinite(capturedAtMs)) return null;
+  if (!Number.isFinite(capturedAtMs)) {
+    return {
+      snapshotAgeMs: null,
+      reasonCode: WATCHDOG_REASONS.CAPTURED_AT_MS_INVALID,
+    };
+  }
 
-  return Math.max(0, nowMs - capturedAtMs);
+  return {
+    snapshotAgeMs: Math.max(0, nowMs - capturedAtMs),
+    reasonCode: null,
+  };
 }
 
 function toExecutionGatePassReasonCode(reason) {
@@ -648,7 +661,29 @@ function applyExecutionGateToNbaCard(card, { oddsSnapshot, nowMs = Date.now() } 
     String(payload.classification || '').toUpperCase() === 'PASS' ||
     String(payload.decision_v2?.official_status || '').toUpperCase() === 'PASS';
   const resolvedModelStatus = String(payload.model_status || 'MODEL_OK').toUpperCase();
-  const snapshotAgeMs = resolveSnapshotAgeMs(oddsSnapshot, nowMs);
+  const {
+    snapshotAgeMs,
+    reasonCode: snapshotAgeReasonCode,
+  } = resolveSnapshotAgeMeta(oddsSnapshot, nowMs);
+
+  if (snapshotAgeReasonCode) {
+    payload.reason_codes = Array.from(
+      new Set([
+        ...(Array.isArray(payload.reason_codes) ? payload.reason_codes : []),
+        snapshotAgeReasonCode,
+      ]),
+    ).sort();
+    if (payload.decision_v2 && typeof payload.decision_v2 === 'object') {
+      payload.decision_v2.watchdog_reason_codes = Array.from(
+        new Set([
+          ...(Array.isArray(payload.decision_v2.watchdog_reason_codes)
+            ? payload.decision_v2.watchdog_reason_codes
+            : []),
+          snapshotAgeReasonCode,
+        ]),
+      ).sort();
+    }
+  }
 
   if (executionStatus !== 'EXECUTABLE' || alreadyPass) {
     const earlyExitDropReasonCode = alreadyPass
@@ -1901,6 +1936,9 @@ async function runNBAModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
             // Task 3: Line delta computation failure on call-card line context
             if (card.payloadData?.line_context?.computationError) {
               callCardReasonSet.add(WATCHDOG_REASONS.LINE_DELTA_COMPUTATION_FAILED);
+            }
+            if (!card.payloadData?.line_context) {
+              callCardReasonSet.add(WATCHDOG_REASONS.LINE_CONTEXT_MISSING);
             }
             
             card.payloadData.reason_codes = Array.from(callCardReasonSet).sort();
