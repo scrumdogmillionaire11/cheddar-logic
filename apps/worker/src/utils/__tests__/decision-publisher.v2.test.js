@@ -378,7 +378,7 @@ describe('decision publisher v2 pipeline', () => {
     );
   });
 
-  test('blocks when odds are stale beyond the default threshold with explicit stale-input reason code', () => {
+  test('stale odds are CAUTION not BLOCKED — execution gate owns staleness blocking', () => {
     const payload = buildWave1Payload({
       odds_context: {
         captured_at: minutesAgoIso(60),
@@ -386,15 +386,12 @@ describe('decision publisher v2 pipeline', () => {
     });
     applyUiActionFields(payload);
 
-    expect(payload.decision_v2.watchdog_status).toBe('BLOCKED');
+    // Stale snapshot produces CAUTION, not BLOCKED
+    expect(payload.decision_v2.watchdog_status).toBe('CAUTION');
     expect(payload.decision_v2.watchdog_reason_codes).toContain(
       'WATCHDOG_STALE_SNAPSHOT',
     );
     expect(payload.decision_v2.watchdog_reason_codes).toContain(
-      'STALE_MARKET_INPUT',
-    );
-    expect(payload.decision_v2.official_status).toBe('PASS');
-    expect(payload.decision_v2.primary_reason_code).toBe(
       'STALE_MARKET_INPUT',
     );
   });
