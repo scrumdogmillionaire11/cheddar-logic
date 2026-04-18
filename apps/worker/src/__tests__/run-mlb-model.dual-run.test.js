@@ -951,14 +951,14 @@ describe('runMLBModel dual-run orchestration', () => {
       pass_reason_code: null,
       inputs_status: 'COMPLETE',
       evaluation_status: 'EDGE_COMPUTED',
-      raw_edge_value: 0.055,
+      raw_edge_value: 0.015,
       threshold_required: 0.025,
-      threshold_passed: true,
+      threshold_passed: false,
       blocked_by: null,
       block_reasons: [],
       drivers: [{
         type: 'mlb-full-game-ml',
-        edge: 0.055,
+        edge: 0.015,
         projected_win_prob_home: 0.542,
         win_prob_home: 0.542,
         side: 'HOME',
@@ -974,7 +974,7 @@ describe('runMLBModel dual-run orchestration', () => {
           status: 'FIRE',
           prediction: 'HOME',
           score: 0.72,
-          edge: 0.055,
+          edge: 0.015,
         },
       ],
       rejected: {},
@@ -1006,9 +1006,9 @@ describe('runMLBModel dual-run orchestration', () => {
     expect(payload.pass_reason_code).toBe('PASS_EXECUTION_GATE_NET_EDGE_INSUFFICIENT');
     expect(payload.inputs_status).toBe('COMPLETE');
     expect(payload.evaluation_status).toBe('EDGE_COMPUTED');
-    expect(payload.raw_edge_value).toBe(0.055);
+    expect(payload.raw_edge_value).toBe(0.015);
     expect(payload.threshold_required).toBe(0.025);
-    expect(payload.threshold_passed).toBe(true);
+    expect(payload.threshold_passed).toBe(false);
     expect(payload.block_reasons).toEqual([]);
   });
 

@@ -16,7 +16,7 @@ describe('evaluateExecution', () => {
 
     expect(result.shouldBet).toBe(true);
     expect(result.reason).toBe('ALL_GATES_PASSED');
-    expect(result.netEdge).toBeCloseTo(0.05, 6);
+    expect(result.netEdge).toBeCloseTo(0.1, 6);
     expect(result.blocked_by).toEqual([]);
   });
 
@@ -32,17 +32,19 @@ describe('evaluateExecution', () => {
     expect(result.blocked_by).toContain('MODEL_STATUS_NO_BET');
   });
 
+  // ADR-0017: netEdge = rawEdge. Plays below the minNetEdge floor are still blocked;
+  // the floor is now a pure noise threshold, not a vig-friction deduction.
   test('blocks when net edge is below threshold', () => {
     const result = evaluateExecution({
       modelStatus: 'MODEL_OK',
-      rawEdge: 0.05,
+      rawEdge: 0.01,  // below default minNetEdge of 0.025
       confidence: 0.75,
       snapshotAgeMs: 30_000,
     });
 
     expect(result.shouldBet).toBe(false);
-    expect(result.netEdge).toBeCloseTo(0, 6);
-    expect(result.blocked_by).toContain('NET_EDGE_INSUFFICIENT:0.0000');
+    expect(result.netEdge).toBeCloseTo(0.01, 6);
+    expect(result.blocked_by).toContain('NET_EDGE_INSUFFICIENT:0.0100');
   });
 
   test('blocks stale snapshots', () => {
@@ -267,13 +269,15 @@ describe('evaluateMlbExecution', () => {
     expect(result.gateBlockedBy).toEqual([]);
   });
 
+  // ADR-0017: vigCost/slippageCost are no longer deducted. The override guard
+  // now relies on rawEdge itself being non-negative (netEdge = rawEdge).
   test('mlb full-game ML override does not bypass non-positive net edge', () => {
     const payload = {
       sport: 'MLB',
       card_type: 'mlb-full-game-ml',
       market_type: 'MONEYLINE',
       recommended_bet_type: 'moneyline',
-      edge: 0.08,
+      edge: -0.01,      // negative rawEdge: netEdge = -0.01 ≤ 0 — override must not apply
       confidence: 0.4,
       model_status: 'MODEL_OK',
       reason_codes: [],
@@ -281,15 +285,13 @@ describe('evaluateMlbExecution', () => {
 
     const result = evaluateMlbExecution(payload, {
       modelStatus: 'MODEL_OK',
-      rawEdge: payload.edge,
+      rawEdge: -0.01,
       confidence: payload.confidence,
       snapshotAgeMs: 30_000,
       sport: payload.sport,
       recommendedBetType: payload.recommended_bet_type,
       marketType: payload.market_type,
       cardType: payload.card_type,
-      vigCost: 0.09,
-      slippageCost: 0.005,
     });
 
     expect(result.gateResult.netEdge).toBeLessThanOrEqual(0);

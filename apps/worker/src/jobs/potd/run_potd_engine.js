@@ -13,6 +13,7 @@ const {
   getDatabase,
   getLatestOdds,
   getLatestNhlModelOutput,
+  getLatestNbaModelOutput,
   insertCardPayload,
   upsertGame,
   createJob,
@@ -23,6 +24,8 @@ const {
   buildCandidates,
   confidenceMultiplier,
   confidenceThreshold,
+  resolveEdgeSourceContract,
+  resolveNoiseFloor,
   scoreCandidate,
   selectBestPlay,
   selectTopPlays,
@@ -167,7 +170,7 @@ function writeShadowCandidates(db, { playDate, capturedAt, minEdgePct, candidate
       model_win_prob: c.modelWinProb ?? null,
       implied_prob: c.impliedProb ?? null,
       projection_source: c.scoreBreakdown && c.scoreBreakdown.projection_source ? c.scoreBreakdown.projection_source : null,
-      gap_to_min_edge: c.edgePct != null ? c.edgePct - minEdgePct : null,
+      gap_to_min_edge: c.edgePct != null ? c.edgePct - resolveNoiseFloor(c.sport, c.marketType, minEdgePct) : null,
       selection: canonicalSelection,
       game_time_utc: c.commence_time ?? null,
       candidate_identity_key: buildShadowCandidateIdentity(c, canonicalSelection),
@@ -236,6 +239,61 @@ const POTD_MIN_TOTAL_SCORE = Number(process.env.POTD_MIN_TOTAL_SCORE || 0.30);  
 // Maximum number of nominees (sport winners) to store and display per day.
 // With 4 active sports the effective ceiling is 4.
 const POTD_MAX_NOMINEES = Number(process.env.POTD_MAX_NOMINEES || 5);
+// Set POTD_AUDIT_LOG_ENABLED=false to suppress per-candidate audit lines in production logs.
+const POTD_AUDIT_LOG_ENABLED = process.env.POTD_AUDIT_LOG_ENABLED !== 'false';
+
+/**
+ * Emit a structured audit log entry for a scored candidate.
+ * Captures the noise floor used, whether it passed, score, and rejection reason.
+ * Guarded by POTD_AUDIT_LOG_ENABLED env var.
+ */
+function auditLogCandidate(candidate, noiseFloor) {
+  if (!POTD_AUDIT_LOG_ENABLED) return;
+  const edge = candidate.edgePct;
+  const passesNoise = isFiniteNumber(edge) && edge > noiseFloor;
+  const passesScore = isFiniteNumber(candidate.totalScore) && candidate.totalScore >= POTD_MIN_TOTAL_SCORE;
+  let rejectedReason = null;
+  if (!isFiniteNumber(edge)) {
+    rejectedReason = 'NO_EDGE_COMPUTED';
+  } else if (!passesNoise) {
+    rejectedReason = `BELOW_NOISE_FLOOR:${noiseFloor}`;
+  } else if (!passesScore) {
+    rejectedReason = `BELOW_MIN_SCORE:${POTD_MIN_TOTAL_SCORE}`;
+  }
+  console.log(
+    JSON.stringify({
+      type: 'POTD_AUDIT',
+      sport: candidate.sport ?? null,
+      marketType: candidate.marketType ?? null,
+      selectionLabel: candidate.selectionLabel ?? null,
+      price: candidate.price ?? null,
+      edgePct: isFiniteNumber(edge) ? edge : null,
+      noiseFloor,
+      passesNoise,
+      totalScore: isFiniteNumber(candidate.totalScore) ? candidate.totalScore : null,
+      passesScore,
+      edgeSourceTag: candidate.edgeSourceTag ?? null,
+      edgeSourceMeta: candidate.edgeSourceMeta ?? null,
+      confidenceLabel: candidate.confidenceLabel ?? null,
+      rejectedReason,
+    }),
+  );
+
+  // Contract mismatch check: edgeSourceTag must agree with EDGE_SOURCE_CONTRACT.
+  const contractExpected = resolveEdgeSourceContract(candidate.sport, candidate.marketType);
+  const tagActual = candidate.edgeSourceTag ?? null;
+  if (contractExpected !== 'UNKNOWN' && tagActual !== null && tagActual !== contractExpected) {
+    console.log(JSON.stringify({
+      type: 'POTD_AUDIT_CONTRACT_MISMATCH',
+      sport: candidate.sport ?? null,
+      marketType: candidate.marketType ?? null,
+      edgeSourceTag: tagActual,
+      contractExpected,
+      note: 'edgeSourceTag does not match EDGE_SOURCE_CONTRACT — scoring path bug suspected',
+    }));
+  }
+}
+
 const POTD_SPORT_ENV = {
   NHL: 'ENABLE_NHL_MODEL',
   NBA: 'ENABLE_NBA_MODEL',
@@ -452,6 +510,11 @@ async function gatherBestCandidate({
               ...game,
               nhlSnapshot: getLatestNhlModelOutput(game.gameId) || null,
             }
+          : sport === 'NBA' && game?.gameId
+          ? {
+              ...game,
+              nbaSnapshot: getLatestNbaModelOutput(game.gameId) || null,
+            }
           : game;
       const candidates = buildCandidatesFn(candidateGame);
       for (const candidate of candidates) {
@@ -461,20 +524,60 @@ async function gatherBestCandidate({
     }
   }
 
-  const viableCandidates = scoredCandidates.filter(
-    c =>
-      isFiniteNumber(c.edgePct) &&
-      c.edgePct > POTD_MIN_EDGE &&
-      isFiniteNumber(c.totalScore) &&
-      c.totalScore >= POTD_MIN_TOTAL_SCORE,
-  );
+  // Per-candidate audit log: emit noise-floor evaluation for every scored candidate.
+  for (const c of scoredCandidates) {
+    auditLogCandidate(c, resolveNoiseFloor(c.sport, c.marketType, POTD_MIN_EDGE));
+  }
 
-  const fireableNominees = selectTopPlaysFn(scoredCandidates, {
+  const viableCandidates = scoredCandidates.filter(c => {
+    const noiseFloor = resolveNoiseFloor(c.sport, c.marketType, POTD_MIN_EDGE);
+    return (
+      isFiniteNumber(c.edgePct) &&
+      c.edgePct > noiseFloor &&
+      isFiniteNumber(c.totalScore) &&
+      c.totalScore >= POTD_MIN_TOTAL_SCORE
+    );
+  });
+
+  // Apply per-sport noise floors before ranking; pass minEdgePct: 0 so
+  // selectTopPlaysFn does not re-apply a single global floor on top.
+  const noisePassed = scoredCandidates.filter(c => {
+    const noiseFloor = resolveNoiseFloor(c.sport, c.marketType, POTD_MIN_EDGE);
+    return isFiniteNumber(c.edgePct) && c.edgePct > noiseFloor;
+  });
+  const fireableNominees = selectTopPlaysFn(noisePassed, {
     minConfidence: POTD_MIN_TOTAL_SCORE,
-    minEdgePct: POTD_MIN_EDGE,
+    minEdgePct: 0,
     maxNominees: POTD_MAX_NOMINEES,
     requirePositiveEdge: true,
   });
+
+  // Cross-ranking warning (WI-1032): if the top fireable nominee is CONSENSUS_FALLBACK
+  // and any other nominee is MODEL, the ranking may be mixing incompatible edge scales.
+  if (POTD_AUDIT_LOG_ENABLED && fireableNominees.length > 1) {
+    const topNominee = fireableNominees[0];
+    if (topNominee?.edgeSourceTag === 'CONSENSUS_FALLBACK') {
+      const displacedModel = fireableNominees.slice(1).find(n => n.edgeSourceTag === 'MODEL');
+      if (displacedModel) {
+        console.log(JSON.stringify({
+          type: 'POTD_CROSS_RANKING_WARNING',
+          winner: {
+            sport: topNominee.sport,
+            marketType: topNominee.marketType,
+            edgePct: topNominee.edgePct,
+            totalScore: topNominee.totalScore,
+          },
+          displaced_model_candidate: {
+            sport: displacedModel.sport,
+            marketType: displacedModel.marketType,
+            edgePct: displacedModel.edgePct,
+            totalScore: displacedModel.totalScore,
+          },
+          note: 'CONSENSUS_FALLBACK candidate ranked above MODEL candidate — verify edge scale parity',
+        }));
+      }
+    }
+  }
   // diagnosticNominees are for no-pick diagnostics only — they include
   // sub-threshold and negative-edge candidates and must never select a POTD.
   const diagnosticNominees = selectTopPlaysFn(scoredCandidates, {

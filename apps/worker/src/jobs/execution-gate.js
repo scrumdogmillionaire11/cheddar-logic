@@ -27,6 +27,10 @@ function mapBlockedByToDropReasonCode(blocked_by) {
   return 'UNKNOWN_GATE';
 }
 
+// DEPRECATED (ADR-0017): these constants are no longer deducted from netEdge.
+// Edge is computed against the vig-removed fair market probability in edge-calculator.js,
+// making edge = modelProb − fairProb = the bettor's true net EV. Subtracting vigCost
+// again was a double-deduction. Kept as no-ops for one release cycle.
 const VIG_COST_STANDARD = 0.045;
 const SLIPPAGE_ESTIMATE = 0.005;
 
@@ -172,7 +176,10 @@ function evaluateExecution(params) {
     blocked_by.push('NO_EDGE_COMPUTED');
   }
 
-  const netEdge = hasRawEdge ? rawEdge - vigCost - slippageCost : null;
+  // ADR-0017: netEdge = rawEdge directly. Callers pass devigged edge
+  // (modelProb − noVigFairProb), which already represents net EV after market vig.
+  // vigCost and slippageCost parameters are accepted for backward compat but ignored.
+  const netEdge = hasRawEdge ? rawEdge : null;
 
   if (netEdge !== null && netEdge < minNetEdge) {
     blocked_by.push(`NET_EDGE_INSUFFICIENT:${netEdge.toFixed(4)}`);

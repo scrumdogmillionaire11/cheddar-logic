@@ -80,6 +80,67 @@ function removeVigFromImplied(impliedA, impliedB) {
   };
 }
 
+// Sport+market noise floors. Each value is the minimum gross edge required
+// for a candidate to be distinguishable from model estimation error.
+// All values are independently env-var overridable.
+const NOISE_FLOORS = {
+  MLB: {
+    MONEYLINE: Number(process.env.POTD_NOISE_FLOOR_MLB_ML     || 0.03),
+    SPREAD:    Number(process.env.POTD_NOISE_FLOOR_MLB_SPREAD  || 0.025),
+  },
+  NHL: {
+    MONEYLINE: Number(process.env.POTD_NOISE_FLOOR_NHL_ML     || 0.02),
+    SPREAD:    Number(process.env.POTD_NOISE_FLOOR_NHL_SPREAD  || 0.02),
+  },
+  NBA: {
+    MONEYLINE: Number(process.env.POTD_NOISE_FLOOR_NBA_ML     || 0.025),
+    SPREAD:    Number(process.env.POTD_NOISE_FLOOR_NBA_SPREAD  || 0.02),
+    TOTAL:     Number(process.env.POTD_NOISE_FLOOR_NBA_TOTAL   || 0.02),
+  },
+};
+
+// Canonical per-sport/market edge source contract (WI-1032).
+// MODEL = edge derived from a calibrated predictive model.
+// CONSENSUS_FALLBACK = edge derived from market devigging (best book vs consensus).
+// Update this table when a new model signal is wired in for a market.
+// After WI-1030 ships, update NBA TOTAL to 'MODEL'.
+const EDGE_SOURCE_CONTRACT = Object.freeze({
+  MLB: Object.freeze({ MONEYLINE: 'MODEL', SPREAD: 'CONSENSUS_FALLBACK', TOTAL: 'CONSENSUS_FALLBACK' }),
+  NHL: Object.freeze({ MONEYLINE: 'MODEL', SPREAD: 'CONSENSUS_FALLBACK', TOTAL: 'CONSENSUS_FALLBACK' }),
+  NBA: Object.freeze({ MONEYLINE: 'CONSENSUS_FALLBACK', SPREAD: 'CONSENSUS_FALLBACK', TOTAL: 'MODEL' }),
+  NFL: Object.freeze({ MONEYLINE: 'CONSENSUS_FALLBACK', SPREAD: 'CONSENSUS_FALLBACK', TOTAL: 'CONSENSUS_FALLBACK' }),
+});
+
+/**
+ * Returns 'MODEL', 'CONSENSUS_FALLBACK', or 'UNKNOWN' for the given sport+market.
+ * Strips API-prefix variants (BASEBALL_, ICEHOCKEY_, BASKETBALL_, AMERICANFOOTBALL_).
+ */
+function resolveEdgeSourceContract(sport, marketType) {
+  const sportKey = String(sport || '')
+    .toUpperCase()
+    .replace('BASEBALL_', '')
+    .replace('ICEHOCKEY_', '')
+    .replace('BASKETBALL_', '')
+    .replace('AMERICANFOOTBALL_', '');
+  const marketKey = String(marketType || '').toUpperCase();
+  return EDGE_SOURCE_CONTRACT[sportKey]?.[marketKey] ?? 'UNKNOWN';
+}
+
+/**
+ * Returns the minimum gross edge (noise floor) for a sport+market combination.
+ * Strips API-prefixes (BASEBALL_, ICEHOCKEY_, BASKETBALL_) before lookup.
+ * Falls back to globalFallback (default 0.02) for unknown sport/market pairs.
+ */
+function resolveNoiseFloor(sport, marketType, globalFallback = 0.02) {
+  const sportKey = String(sport || '')
+    .toUpperCase()
+    .replace('BASEBALL_', '')
+    .replace('ICEHOCKEY_', '')
+    .replace('BASKETBALL_', '');
+  const marketKey = String(marketType || '').toUpperCase();
+  return NOISE_FLOORS[sportKey]?.[marketKey] ?? globalFallback;
+}
+
 function confidenceThreshold(minConfidence) {
   if (typeof minConfidence === 'number') return minConfidence;
   const token = String(minConfidence || 'HIGH').trim().toUpperCase();
@@ -148,6 +209,15 @@ function resolveNHLModelSignal(game) {
     homeHasData && awayHasData ? 'NHL_GOALIE_COMPOSITE' : 'NHL_GOALIE_PARTIAL';
 
   return { homeModelWinProb: round(homeModelWinProb, 6), projection_source };
+}
+
+function resolveNBAModelSignal(game) {
+  const snap = game?.nbaSnapshot;
+  if (!snap || !Number.isFinite(snap.totalProjection)) return null;
+  return {
+    totalProjection: snap.totalProjection,
+    projection_source: snap.projection_source ?? 'NBA_TOTALS_MODEL',
+  };
 }
 
 function toSelectionLabel({ selection, homeTeam, awayTeam, line }) {
@@ -529,6 +599,17 @@ function buildCandidates(game) {
         return candidates.map((candidate) => ({ ...candidate, nhlSignal }));
       }
     }
+    // NBA model signal block: inject nbaSnapshot onto TOTAL candidates only
+    if (String(game.sport || '').toUpperCase() === 'NBA' && game.nbaSnapshot) {
+      const nbaSignal = resolveNBAModelSignal(game);
+      if (nbaSignal) {
+        return candidates.map((candidate) =>
+          candidate.marketType === 'TOTAL'
+            ? { ...candidate, nbaSnapshot: game.nbaSnapshot }
+            : candidate
+        );
+      }
+    }
     return candidates;
   }
 
@@ -671,6 +752,12 @@ function scoreCandidate(candidate) {
       modelWinProb: round(mlbSignal.modelWinProb, 6),
       impliedProb,
       edgePct: modelEdge,
+      edgeSourceTag: 'MODEL',
+      edgeSourceMeta: {
+        projection_source: mlbSignal.projection_source ?? null,
+        model_win_prob: round(mlbSignal.modelWinProb, 6),
+        signal_type: 'MLB_PITCHER_MODEL',
+      },
       confidenceLabel: confidenceLabel(totalScore),
       scoreBreakdown: {
         lineValue,
@@ -712,6 +799,12 @@ function scoreCandidate(candidate) {
       modelWinProb,
       impliedProb,
       edgePct: modelEdge,
+      edgeSourceTag: 'MODEL',
+      edgeSourceMeta: {
+        projection_source: nhlSignal.projection_source ?? null,
+        model_win_prob: modelWinProb,
+        signal_type: 'NHL_GOALIE_COMPOSITE',
+      },
       confidenceLabel: confidenceLabel(totalScore),
       scoreBreakdown: {
         lineValue,
@@ -732,6 +825,54 @@ function scoreCandidate(candidate) {
     };
   }
 
+  // NBA totals model override: replace consensus edge with total projection signal (WI-1030)
+  const nbaSignal = candidate.nbaSnapshot ? resolveNBAModelSignal({ nbaSnapshot: candidate.nbaSnapshot }) : null;
+  const useNbaModelSignal =
+    String(candidate.sport || '').toUpperCase() === 'NBA' &&
+    candidate.marketType === 'TOTAL' &&
+    nbaSignal !== null;
+  if (useNbaModelSignal) {
+    const refLine = isFiniteNumber(candidate.consensusLine) ? candidate.consensusLine : candidate.line;
+    const modelOverProb = clamp(0.5 + (nbaSignal.totalProjection - refLine) / 20, 0.05, 0.95);
+    const modelSelectionProb = candidate.selection === 'OVER'
+      ? round(modelOverProb, 6)
+      : round(1 - modelOverProb, 6);
+    const modelEdge = round(modelSelectionProb - impliedProb, 6);
+    const totalScore = round((lineValue * 0.625) + (marketConsensus * 0.375), 6);
+    return {
+      ...candidate,
+      lineValue,
+      marketConsensus,
+      totalScore,
+      modelWinProb: modelSelectionProb,
+      impliedProb,
+      edgePct: modelEdge,
+      edgeSourceTag: 'MODEL',
+      edgeSourceMeta: {
+        projection_source: nbaSignal.projection_source,
+        model_win_prob: modelSelectionProb,
+        signal_type: 'NBA_TOTALS_MODEL',
+      },
+      confidenceLabel: confidenceLabel(totalScore),
+      scoreBreakdown: {
+        lineValue,
+        marketConsensus,
+        model_win_prob: modelSelectionProb,
+        projection_source: nbaSignal.projection_source,
+      },
+      reasoning: buildReasoningString({
+        selectionLabel: candidate.selectionLabel,
+        price: candidate.price,
+        edgePct: modelEdge,
+        modelWinProb: modelSelectionProb,
+        lineValue,
+        marketConsensus,
+        marketType: candidate.marketType,
+        projectionSource: nbaSignal.projection_source,
+      }),
+    };
+  }
+
   const edgePct = round(modelFairProbability - impliedProb, 6);
   const totalScore = round((lineValue * 0.625) + (marketConsensus * 0.375), 6);
 
@@ -743,6 +884,12 @@ function scoreCandidate(candidate) {
     modelWinProb: modelFairProbability,
     impliedProb,
     edgePct,
+    edgeSourceTag: 'CONSENSUS_FALLBACK',
+    edgeSourceMeta: {
+      projection_source: null,
+      model_win_prob: modelFairProbability,
+      signal_type: 'DEVIG_CONSENSUS',
+    },
     confidenceLabel: confidenceLabel(totalScore),
     scoreBreakdown: {
       lineValue,
@@ -849,10 +996,13 @@ module.exports = {
   buildCandidates,
   confidenceMultiplier,
   confidenceThreshold,
+  EDGE_SOURCE_CONTRACT,
   isNhlSport,
   kellySize,
   removeVig,
+  resolveEdgeSourceContract,
   resolveNHLModelSignal,
+  resolveNoiseFloor,
   scoreCandidate,
   selectBestPlay,
   selectTopPlays,

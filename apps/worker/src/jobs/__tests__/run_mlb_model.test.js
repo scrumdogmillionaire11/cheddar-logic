@@ -1546,14 +1546,14 @@ describe('WI-0720 MLB execution envelope', () => {
       model_status: 'MODEL_OK',
       snapshot_age_ms: 120_000,
     });
-    expect(payload.execution_gate.net_edge).toBeCloseTo(0.04, 6);
+    expect(payload.execution_gate.net_edge).toBeCloseTo(0.09, 6);
     expect(payload.status).toBe('FIRE');
   });
 
   test('execution gate demotes blocked executable MLB payloads to PASS', () => {
     const payload = {
       execution_status: 'EXECUTABLE',
-      edge: 0.055,
+      edge: 0.005,
       confidence: 0.72,
       model_status: 'MODEL_OK',
       status: 'FIRE',

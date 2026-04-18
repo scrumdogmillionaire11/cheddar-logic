@@ -850,3 +850,350 @@ describe('selectTopPlays', () => {
     expect(result2[0].gameId).toBe('game-aaa');
   });
 });
+
+// ---------------------------------------------------------------------------
+// WI-1028: resolveNoiseFloor
+// ---------------------------------------------------------------------------
+describe('resolveNoiseFloor', () => {
+  const { resolveNoiseFloor } = require('../signal-engine');
+
+  test('returns sport+market specific floor for known combinations', () => {
+    // MLB
+    expect(resolveNoiseFloor('MLB', 'MONEYLINE')).toBeCloseTo(0.03, 5);
+    expect(resolveNoiseFloor('baseball_mlb', 'MONEYLINE')).toBeCloseTo(0.03, 5);
+    expect(resolveNoiseFloor('BASEBALL_MLB', 'MONEYLINE')).toBeCloseTo(0.03, 5);
+    expect(resolveNoiseFloor('MLB', 'SPREAD')).toBeCloseTo(0.025, 5);
+    // NHL
+    expect(resolveNoiseFloor('NHL', 'MONEYLINE')).toBeCloseTo(0.02, 5);
+    expect(resolveNoiseFloor('icehockey_nhl', 'MONEYLINE')).toBeCloseTo(0.02, 5);
+    expect(resolveNoiseFloor('NHL', 'SPREAD')).toBeCloseTo(0.02, 5);
+    // NBA
+    expect(resolveNoiseFloor('NBA', 'MONEYLINE')).toBeCloseTo(0.025, 5);
+    expect(resolveNoiseFloor('basketball_nba', 'SPREAD')).toBeCloseTo(0.02, 5);
+    expect(resolveNoiseFloor('NBA', 'TOTAL')).toBeCloseTo(0.02, 5);
+  });
+
+  test('falls back to globalFallback for unknown sport', () => {
+    expect(resolveNoiseFloor('NFL', 'MONEYLINE')).toBeCloseTo(0.02, 5);
+    expect(resolveNoiseFloor('SOCCER', 'TOTAL')).toBeCloseTo(0.02, 5);
+    expect(resolveNoiseFloor(null, null)).toBeCloseTo(0.02, 5);
+    expect(resolveNoiseFloor(undefined, undefined)).toBeCloseTo(0.02, 5);
+  });
+
+  test('falls back to globalFallback for known sport but unknown market type', () => {
+    expect(resolveNoiseFloor('MLB', 'TOTAL')).toBeCloseTo(0.02, 5);
+    expect(resolveNoiseFloor('NHL', 'TOTAL')).toBeCloseTo(0.02, 5);
+  });
+
+  test('custom globalFallback is respected', () => {
+    expect(resolveNoiseFloor('NFL', 'SPREAD', 0.035)).toBeCloseTo(0.035, 5);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WI-1029: edgeSourceTag on scored candidates
+// ---------------------------------------------------------------------------
+describe('edgeSourceTag', () => {
+  test('MLB model path stamps edgeSourceTag = MODEL', () => {
+    const candidate = {
+      gameId: 'mlb-tag-001',
+      sport: 'baseball_mlb',
+      home_team: 'Cubs',
+      away_team: 'Cardinals',
+      commence_time: new Date().toISOString(),
+      marketType: 'MONEYLINE',
+      selection: 'HOME',
+      selectionLabel: 'Cubs',
+      line: null,
+      price: -130,
+      consensusLine: null,
+      consensusPrice: -132,
+      counterpartConsensusPrice: 112,
+      comparableLines: [],
+      comparablePrices: [-132, -130, -128],
+      sourceCount: 3,
+      mlbSignal: { modelWinProb: 0.58, edge: 0.06, projection_source: 'FULL_MODEL' },
+    };
+    const scored = scoreCandidate(candidate);
+    expect(scored.edgeSourceTag).toBe('MODEL');
+    expect(scored.edgeSourceMeta).toMatchObject({
+      projection_source: 'FULL_MODEL',
+      model_win_prob: 0.58,
+      signal_type: 'MLB_PITCHER_MODEL',
+    });
+  });
+
+  test('NHL model path stamps edgeSourceTag = MODEL', () => {
+    const candidate = {
+      gameId: 'nhl-tag-001',
+      sport: 'NHL',
+      home_team: 'Bruins',
+      away_team: 'Leafs',
+      commence_time: new Date().toISOString(),
+      marketType: 'MONEYLINE',
+      selection: 'HOME',
+      selectionLabel: 'Bruins',
+      line: null,
+      price: -120,
+      consensusLine: null,
+      consensusPrice: -115,
+      counterpartConsensusPrice: -105,
+      consensusImplied: 0.535,
+      counterpartConsensusImplied: 0.488,
+      comparableLines: [],
+      comparablePrices: [-115, -118, -120],
+      sourceCount: 3,
+      nhlSignal: { homeModelWinProb: 0.56, projection_source: 'NHL_GOALIE_COMPOSITE' },
+    };
+    const scored = scoreCandidate(candidate);
+    expect(scored.edgeSourceTag).toBe('MODEL');
+    expect(scored.edgeSourceMeta).toMatchObject({
+      signal_type: 'NHL_GOALIE_COMPOSITE',
+      projection_source: 'NHL_GOALIE_COMPOSITE',
+    });
+  });
+
+  test('consensus fallback path stamps edgeSourceTag = CONSENSUS_FALLBACK', () => {
+    const candidate = {
+      gameId: 'nba-tag-001',
+      sport: 'NBA',
+      home_team: 'Lakers',
+      away_team: 'Warriors',
+      commence_time: new Date().toISOString(),
+      marketType: 'SPREAD',
+      selection: 'HOME',
+      selectionLabel: 'Lakers -4.5',
+      line: -4.5,
+      price: -108,
+      consensusLine: -5,
+      consensusPrice: -110,
+      counterpartConsensusPrice: -110,
+      consensusImplied: 0.524,
+      counterpartConsensusImplied: 0.524,
+      comparableLines: [-5, -4.5, -5],
+      comparablePrices: [-110, -108, -112],
+      sourceCount: 3,
+    };
+    const scored = scoreCandidate(candidate);
+    expect(scored.edgeSourceTag).toBe('CONSENSUS_FALLBACK');
+    expect(scored.edgeSourceMeta).toMatchObject({
+      signal_type: 'DEVIG_CONSENSUS',
+      projection_source: null,
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WI-1032: resolveEdgeSourceContract
+// ---------------------------------------------------------------------------
+describe('resolveEdgeSourceContract', () => {
+  const { resolveEdgeSourceContract, EDGE_SOURCE_CONTRACT } = require('../signal-engine');
+
+  test('returns MODEL for MLB and NHL moneyline', () => {
+    expect(resolveEdgeSourceContract('MLB', 'MONEYLINE')).toBe('MODEL');
+    expect(resolveEdgeSourceContract('BASEBALL_MLB', 'MONEYLINE')).toBe('MODEL');
+    expect(resolveEdgeSourceContract('NHL', 'MONEYLINE')).toBe('MODEL');
+    expect(resolveEdgeSourceContract('icehockey_nhl', 'MONEYLINE')).toBe('MODEL');
+  });
+
+  test('returns CONSENSUS_FALLBACK for MLB/NHL spread and total', () => {
+    expect(resolveEdgeSourceContract('MLB', 'SPREAD')).toBe('CONSENSUS_FALLBACK');
+    expect(resolveEdgeSourceContract('MLB', 'TOTAL')).toBe('CONSENSUS_FALLBACK');
+    expect(resolveEdgeSourceContract('NHL', 'SPREAD')).toBe('CONSENSUS_FALLBACK');
+    expect(resolveEdgeSourceContract('NHL', 'TOTAL')).toBe('CONSENSUS_FALLBACK');
+  });
+
+  test('returns CONSENSUS_FALLBACK for NBA ML and SPREAD; MODEL for NBA TOTAL (WI-1030)', () => {
+    expect(resolveEdgeSourceContract('NBA', 'MONEYLINE')).toBe('CONSENSUS_FALLBACK');
+    expect(resolveEdgeSourceContract('basketball_nba', 'SPREAD')).toBe('CONSENSUS_FALLBACK');
+    expect(resolveEdgeSourceContract('NBA', 'TOTAL')).toBe('MODEL');
+  });
+
+  test('returns CONSENSUS_FALLBACK for all NFL markets', () => {
+    expect(resolveEdgeSourceContract('NFL', 'MONEYLINE')).toBe('CONSENSUS_FALLBACK');
+    expect(resolveEdgeSourceContract('americanfootball_nfl', 'SPREAD')).toBe('CONSENSUS_FALLBACK');
+    expect(resolveEdgeSourceContract('NFL', 'TOTAL')).toBe('CONSENSUS_FALLBACK');
+  });
+
+  test('returns UNKNOWN for unregistered sport/market combinations', () => {
+    expect(resolveEdgeSourceContract('SOCCER', 'MONEYLINE')).toBe('UNKNOWN');
+    expect(resolveEdgeSourceContract('MLB', 'UNKNOWN_MARKET')).toBe('UNKNOWN');
+    expect(resolveEdgeSourceContract(null, null)).toBe('UNKNOWN');
+    expect(resolveEdgeSourceContract(undefined, undefined)).toBe('UNKNOWN');
+    expect(resolveEdgeSourceContract('', '')).toBe('UNKNOWN');
+  });
+
+  test('EDGE_SOURCE_CONTRACT is a frozen object (immutable)', () => {
+    expect(Object.isFrozen(EDGE_SOURCE_CONTRACT)).toBe(true);
+    expect(Object.isFrozen(EDGE_SOURCE_CONTRACT.MLB)).toBe(true);
+    expect(Object.isFrozen(EDGE_SOURCE_CONTRACT.NHL)).toBe(true);
+    expect(Object.isFrozen(EDGE_SOURCE_CONTRACT.NBA)).toBe(true);
+    expect(Object.isFrozen(EDGE_SOURCE_CONTRACT.NFL)).toBe(true);
+  });
+
+  // WI-1030 shipped: NBA TOTAL is now MODEL-backed.
+  test('WI-1030: NBA TOTAL is MODEL after NBA totals model is wired in', () => {
+    expect(resolveEdgeSourceContract('NBA', 'TOTAL')).toBe('MODEL');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WI-1030: resolveNBAModelSignal and scoreCandidate NBA TOTAL path
+// ---------------------------------------------------------------------------
+describe('resolveNBAModelSignal', () => {
+  const { scoreCandidate } = require('../signal-engine');
+
+  test('returns null when nbaSnapshot is absent', () => {
+    const game = {};
+    // scoreCandidate with NBA TOTAL and no nbaSnapshot falls through to consensus
+    const candidate = {
+      gameId: 'nba-total-no-snap',
+      sport: 'NBA',
+      home_team: 'Lakers',
+      away_team: 'Warriors',
+      commence_time: new Date().toISOString(),
+      marketType: 'TOTAL',
+      selection: 'OVER',
+      selectionLabel: 'Over 224.5',
+      line: 224.5,
+      price: -110,
+      consensusLine: 225,
+      consensusPrice: -110,
+      counterpartConsensusPrice: -110,
+      consensusImplied: 0.524,
+      counterpartConsensusImplied: 0.524,
+      comparableLines: [225, 224.5, 225],
+      comparablePrices: [-110, -110, -112],
+      sourceCount: 3,
+      // No nbaSnapshot
+    };
+    const scored = scoreCandidate(candidate);
+    expect(scored).not.toBeNull();
+    expect(scored.edgeSourceTag).toBe('CONSENSUS_FALLBACK');
+  });
+
+  test('returns null when totalProjection is not finite', () => {
+    const candidate = {
+      gameId: 'nba-total-bad-snap',
+      sport: 'NBA',
+      home_team: 'Lakers',
+      away_team: 'Warriors',
+      commence_time: new Date().toISOString(),
+      marketType: 'TOTAL',
+      selection: 'OVER',
+      selectionLabel: 'Over 224.5',
+      line: 224.5,
+      price: -110,
+      consensusLine: 225,
+      consensusPrice: -110,
+      counterpartConsensusPrice: -110,
+      consensusImplied: 0.524,
+      counterpartConsensusImplied: 0.524,
+      comparableLines: [225, 224.5, 225],
+      comparablePrices: [-110, -110, -112],
+      sourceCount: 3,
+      nbaSnapshot: { totalProjection: null, projection_source: 'NBA_TOTALS_MODEL' },
+    };
+    const scored = scoreCandidate(candidate);
+    expect(scored).not.toBeNull();
+    // Null totalProjection → falls through to consensus fallback
+    expect(scored.edgeSourceTag).toBe('CONSENSUS_FALLBACK');
+  });
+
+  test('uses NBA totals model projection to compute edgePct when snapshot is valid', () => {
+    // consensusLine = 225, totalProjection = 229 → modelOverProb = 0.5 + (229-225)/20 = 0.7
+    // selection = OVER → modelSelectionProb = 0.7
+    // price = -110 → impliedProb ≈ 0.5238
+    // modelEdge ≈ 0.7 - 0.5238 = 0.1762
+    const candidate = {
+      gameId: 'nba-total-model-001',
+      sport: 'NBA',
+      home_team: 'Lakers',
+      away_team: 'Warriors',
+      commence_time: new Date().toISOString(),
+      marketType: 'TOTAL',
+      selection: 'OVER',
+      selectionLabel: 'Over 224.5',
+      line: 224.5,
+      price: -110,
+      consensusLine: 225,
+      consensusPrice: -110,
+      counterpartConsensusPrice: -110,
+      consensusImplied: 0.524,
+      counterpartConsensusImplied: 0.524,
+      comparableLines: [225, 224.5, 225],
+      comparablePrices: [-110, -110, -112],
+      sourceCount: 3,
+      nbaSnapshot: { totalProjection: 229, projection_source: 'NBA_TOTALS_MODEL' },
+    };
+    const scored = scoreCandidate(candidate);
+    expect(scored).not.toBeNull();
+    expect(scored.edgeSourceTag).toBe('MODEL');
+    expect(scored.edgeSourceMeta).toMatchObject({
+      signal_type: 'NBA_TOTALS_MODEL',
+      projection_source: 'NBA_TOTALS_MODEL',
+    });
+    // modelOverProb = clamp(0.5 + (229-225)/20, 0.05, 0.95) = 0.7
+    expect(scored.modelWinProb).toBeCloseTo(0.7, 4);
+    // edgePct = 0.7 - implied(-110) ≈ 0.7 - 0.5238 ≈ 0.176
+    expect(scored.edgePct).toBeGreaterThan(0.15);
+    expect(scored.edgePct).toBeLessThan(0.20);
+  });
+
+  test('UNDER selection uses 1 - modelOverProb', () => {
+    // consensusLine = 225, totalProjection = 221 → modelOverProb = 0.5 + (221-225)/20 = 0.3
+    // selection = UNDER → modelSelectionProb = 0.7
+    const candidate = {
+      gameId: 'nba-total-model-002',
+      sport: 'NBA',
+      home_team: 'Celtics',
+      away_team: 'Heat',
+      commence_time: new Date().toISOString(),
+      marketType: 'TOTAL',
+      selection: 'UNDER',
+      selectionLabel: 'Under 224.5',
+      line: 224.5,
+      price: -110,
+      consensusLine: 225,
+      consensusPrice: -110,
+      counterpartConsensusPrice: -110,
+      consensusImplied: 0.524,
+      counterpartConsensusImplied: 0.524,
+      comparableLines: [225, 224.5, 225],
+      comparablePrices: [-110, -110, -112],
+      sourceCount: 3,
+      nbaSnapshot: { totalProjection: 221, projection_source: 'NBA_TOTALS_MODEL' },
+    };
+    const scored = scoreCandidate(candidate);
+    expect(scored).not.toBeNull();
+    expect(scored.edgeSourceTag).toBe('MODEL');
+    expect(scored.modelWinProb).toBeCloseTo(0.7, 4);
+    expect(scored.edgePct).toBeGreaterThan(0.15);
+  });
+
+  test('NBA ML and SPREAD remain on CONSENSUS_FALLBACK even when nbaSnapshot present', () => {
+    const makeCandidate = (marketType, selection) => ({
+      gameId: 'nba-ml-snap',
+      sport: 'NBA',
+      home_team: 'Lakers',
+      away_team: 'Warriors',
+      commence_time: new Date().toISOString(),
+      marketType,
+      selection,
+      selectionLabel: selection === 'HOME' ? 'Lakers' : selection === 'AWAY' ? 'Warriors' : `${selection} 5`,
+      line: marketType === 'SPREAD' ? -5 : null,
+      price: -110,
+      consensusLine: marketType === 'SPREAD' ? -5 : null,
+      consensusPrice: -110,
+      counterpartConsensusPrice: -110,
+      consensusImplied: 0.524,
+      counterpartConsensusImplied: 0.524,
+      comparableLines: marketType === 'SPREAD' ? [-5, -5] : [],
+      comparablePrices: [-110, -110],
+      sourceCount: 2,
+      nbaSnapshot: { totalProjection: 229, projection_source: 'NBA_TOTALS_MODEL' },
+    });
+    expect(scoreCandidate(makeCandidate('MONEYLINE', 'HOME')).edgeSourceTag).toBe('CONSENSUS_FALLBACK');
+    expect(scoreCandidate(makeCandidate('SPREAD', 'HOME')).edgeSourceTag).toBe('CONSENSUS_FALLBACK');
+  });
+});

@@ -1261,6 +1261,26 @@ function getLatestNhlModelOutput(gameId) {
   };
 }
 
+function getLatestNbaModelOutput(gameId) {
+  const db = getDatabase();
+  const row = db.prepare(`
+    SELECT payload_data FROM card_payloads
+    WHERE game_id = ? AND card_type = 'nba-totals-call'
+    ORDER BY created_at DESC LIMIT 1
+  `).get(gameId);
+  if (!row) return null;
+  const rd = JSON.parse(row.payload_data);
+  const totalProjection =
+    rd.projection_accuracy?.projection_raw ??
+    rd.projection?.total ??
+    null;
+  if (!Number.isFinite(totalProjection)) return null;
+  return {
+    totalProjection,
+    projection_source: 'NBA_TOTALS_MODEL',
+  };
+}
+
 module.exports = {
   deleteCardPayloadsByGameAndType,
   deleteCardPayloadsForGame,
@@ -1280,4 +1300,5 @@ module.exports = {
   setProjectionActualResult,
   getUnsettledProjectionCards,
   getLatestNhlModelOutput,
+  getLatestNbaModelOutput,
 };

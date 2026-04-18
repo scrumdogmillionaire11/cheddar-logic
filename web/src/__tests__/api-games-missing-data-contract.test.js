@@ -7,6 +7,7 @@ import assert from 'node:assert';
 import fs from 'node:fs';
 import path from 'node:path';
 import {
+  dedupeProjectionSurfacePlays,
   selectAuthoritativeTruePlay,
   mergeMlbGameLineFallbackRows,
 } from '../lib/games/route-handler.js';
@@ -163,6 +164,40 @@ function makePlay(id, officialStatus, edgeDeltaPct, supportScore = 0.5, createdA
   };
 }
 
+function makeProjectionSurfacePlay(overrides = {}) {
+  return {
+    source_card_id: 'projection-surface-fixture',
+    cardType: 'nhl-pace-1p',
+    cardTitle: 'NHL 1P Total: LEAN_OVER @ 2.10',
+    prediction: 'OVER',
+    confidence: 0.62,
+    tier: 'WATCH',
+    reasoning: '1P model classification LEAN_OVER from projection 2.10.',
+    evPassed: true,
+    driverKey: 'paceTotals1p',
+    projectedTotal: 2.1,
+    edge: 0.6,
+    kind: 'PLAY',
+    market_type: 'FIRST_PERIOD',
+    selection: { side: 'OVER' },
+    line: 1.5,
+    status: 'WATCH',
+    classification: 'LEAN',
+    action: 'HOLD',
+    reason_codes: ['NHL_1P_OVER_LEAN'],
+    created_at: '2026-04-18T19:20:00.000Z',
+    goalie_home_name: 'Frederik Andersen',
+    goalie_away_name: 'Linus Ullmark',
+    goalie_home_status: 'EXPECTED',
+    goalie_away_status: 'EXPECTED',
+    projection: {
+      total: 2.1,
+      projected_total: 2.1,
+    },
+    ...overrides,
+  };
+}
+
 // 1. Active-run path: PLAY status rank beats higher edge LEAN candidate
 {
   const winner = selectAuthoritativeTruePlay([
@@ -207,7 +242,103 @@ function makePlay(id, officialStatus, edgeDeltaPct, supportScore = 0.5, createdA
     'settlement sweep: PASS-only eligible set must return null, not a phantom true_play');
 }
 
-// 5. Current mlb-f5 + eligible fallback full-game rows merge by canonical game id
+// 5. Projection-surface dedupe keeps confirmed NHL 1P goalie truth over stale expected row
+{
+  const expectedGoalieRow = makeProjectionSurfacePlay({
+    source_card_id: 'nhl-1p-expected',
+    created_at: '2026-04-18T19:21:00.000Z',
+    projectedTotal: 2.07,
+    projection: { total: 2.07, projected_total: 2.07 },
+    reasoning:
+      '1P model classification LEAN_OVER from projection 2.07 (raw 2.07, ref 1.5, goalie medium).',
+    goalie_home_status: 'EXPECTED',
+    goalie_away_status: 'EXPECTED',
+  });
+  const confirmedGoalieRow = makeProjectionSurfacePlay({
+    source_card_id: 'nhl-1p-confirmed',
+    created_at: '2026-04-18T19:20:00.000Z',
+    projectedTotal: 2.1,
+    projection: { total: 2.1, projected_total: 2.1 },
+    reasoning:
+      '1P model classification LEAN_OVER from projection 2.10 (raw 2.10, ref 1.5, goalie high).',
+    goalie_home_status: 'CONFIRMED',
+    goalie_away_status: 'CONFIRMED',
+  });
+
+  const deduped = dedupeProjectionSurfacePlays([
+    expectedGoalieRow,
+    confirmedGoalieRow,
+  ]);
+
+  assert.strictEqual(deduped.length, 1,
+    'projection-surface dedupe should keep one NHL 1P row for the same game/card type/market');
+  assert.strictEqual(deduped[0].source_card_id, 'nhl-1p-confirmed',
+    'confirmed-goalie NHL 1P row must supersede stale expected-goalie row');
+  assert.strictEqual(deduped[0].goalie_home_status, 'CONFIRMED');
+  assert.strictEqual(deduped[0].goalie_away_status, 'CONFIRMED');
+}
+
+// 6. Projection-surface dedupe keeps real MLB F5 projections over fallback floors
+{
+  const syntheticFallback = makeProjectionSurfacePlay({
+    source_card_id: 'mlb-f5-synthetic-fallback',
+    cardType: 'mlb-f5',
+    cardTitle: 'F5 Total: DETROIT TIGERS @ BOSTON RED SOX',
+    prediction: 'OVER',
+    market_type: 'TOTAL',
+    projection_source: 'SYNTHETIC_FALLBACK',
+    reason_codes: ['PASS_SYNTHETIC_FALLBACK'],
+    created_at: '2026-04-18T19:30:00.000Z',
+  });
+  const fullModel = makeProjectionSurfacePlay({
+    source_card_id: 'mlb-f5-full-model',
+    cardType: 'mlb-f5',
+    cardTitle: 'F5 Total: DETROIT TIGERS @ BOSTON RED SOX',
+    prediction: 'UNDER',
+    market_type: 'TOTAL',
+    projection_source: 'FULL_MODEL',
+    reason_codes: ['SYNTHETIC_LINE_ASSUMPTION'],
+    created_at: '2026-04-18T19:20:00.000Z',
+  });
+
+  const deduped = dedupeProjectionSurfacePlays([syntheticFallback, fullModel]);
+
+  assert.strictEqual(deduped.length, 1,
+    'projection-surface dedupe should collapse fallback and full-model F5 totals');
+  assert.strictEqual(deduped[0].source_card_id, 'mlb-f5-full-model',
+    'FULL_MODEL MLB F5 row must supersede a newer SYNTHETIC_FALLBACK floor');
+}
+
+// 7. Projection-surface dedupe collapses stale conflicting non-prop market rows
+{
+  const staleAway = makeProjectionSurfacePlay({
+    source_card_id: 'mlb-f5-ml-stale-away',
+    cardType: 'mlb-f5-ml',
+    cardTitle: 'F5 ML AWAY: DETROIT TIGERS @ BOSTON RED SOX',
+    prediction: 'AWAY',
+    market_type: 'MONEYLINE',
+    selection: { side: 'AWAY' },
+    created_at: '2026-04-18T18:00:00.000Z',
+  });
+  const currentHome = makeProjectionSurfacePlay({
+    source_card_id: 'mlb-f5-ml-current-home',
+    cardType: 'mlb-f5-ml',
+    cardTitle: 'F5 ML HOME: DETROIT TIGERS @ BOSTON RED SOX',
+    prediction: 'HOME',
+    market_type: 'MONEYLINE',
+    selection: { side: 'HOME' },
+    created_at: '2026-04-18T19:00:00.000Z',
+  });
+
+  const deduped = dedupeProjectionSurfacePlays([staleAway, currentHome]);
+
+  assert.strictEqual(deduped.length, 1,
+    'projection-surface dedupe should collapse stale conflicting non-prop market rows');
+  assert.strictEqual(deduped[0].source_card_id, 'mlb-f5-ml-current-home',
+    'latest non-NHL projection-surface row should win after same-market collapse');
+}
+
+// 8. Current mlb-f5 + eligible fallback full-game rows merge by canonical game id
 {
   const currentRows = [
     {
