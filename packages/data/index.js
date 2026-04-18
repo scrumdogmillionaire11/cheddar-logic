@@ -25,6 +25,7 @@ const marketContract = require('./src/market-contract');
 const dbPath = require('./src/db-path');
 const dbTelemetry = require('./src/db-telemetry');
 const projAccuracy = require('./src/db/projection-accuracy');
+const reasonCodes = require('./src/reason-codes');
 
 // Ensure migrations are run on first import (optional but recommended)
 // Uncomment to auto-run migrations:
@@ -234,4 +235,10 @@ module.exports = {
   batchInsertProjectionProxyEvals: projAccuracy.batchInsertProjectionProxyEvals,
   getProjectionProxyEvals:         projAccuracy.getProjectionProxyEvals,
   getProjectionAccuracySummary:    projAccuracy.getProjectionAccuracySummary,
+
+  // canonical reason-code registry (WI-1001)
+  BLOCKER_REASON_CODES:    reasonCodes.BLOCKER_REASON_CODES,
+  REASON_CODE_LABELS:      reasonCodes.REASON_CODE_LABELS,
+  MARKET_UNVERIFIED_CODES: reasonCodes.MARKET_UNVERIFIED_CODES,
+  getReasonCodeLabel:      reasonCodes.getReasonCodeLabel,
 };

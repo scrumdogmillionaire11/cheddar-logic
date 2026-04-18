@@ -1463,7 +1463,6 @@ function applyCanonicalNhlTotalsStatus(card, context = {}) {
     blockedReasonCode.includes('LINE_NOT_CONFIRMED') ||
     blockedReasonCode.includes('PRICE_SYNC_PENDING') ||
     blockedReasonCode.includes('MARKET_DATA_STALE') ||
-    blockedReasonCode.includes('BLOCK_STALE_DATA') ||
     reasonCodes.some((code) => {
       const token = String(code || '').toUpperCase();
       return token.includes('MIXED_BOOK') || token.includes('STALE');

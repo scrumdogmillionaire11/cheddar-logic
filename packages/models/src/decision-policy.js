@@ -27,7 +27,6 @@ const WEBHOOK_REASON_LABELS = Object.freeze({
   INJURY_UNCERTAIN: 'Injury status uncertain',
   WATCHDOG_STALE_SNAPSHOT: 'Snapshot stale — refresh required',
   STALE_MARKET_INPUT: 'Market input stale — refresh required',
-  BLOCK_STALE_DATA: 'Data stale — no play',
 });
 
 function canonicalizeReasonCode(value) {

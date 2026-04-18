@@ -27,7 +27,6 @@ const {
   insertDecisionEvent,
   updateDecisionCandidateTracking,
   upsertDecisionRecord,
-  BLOCKER_REASON_CODES,
 } = require('@cheddar-logic/data');
 
 const PRICING_UNAVAILABLE_CODES = new Set([
@@ -83,12 +82,18 @@ function deriveTerminalReasonFamilyForPayload({
   }
   if (watchdogStatus === 'BLOCKED') return 'WATCHDOG_DATA_QUALITY';
   if (reasonCodes.includes('EXACT_WAGER_MISMATCH')) return 'EXACT_WAGER_FAIL';
+  if (reasonCodes.includes('LINE_NOT_CONFIRMED')) return 'LINE_NOT_CONFIRMED';
   if (
-    reasonCodes.includes('LINE_NOT_CONFIRMED') ||
-    reasonCodes.includes('EDGE_RECHECK_PENDING') ||
+    reasonCodes.includes('MARKET_DATA_STALE') ||
     reasonCodes.includes('PRICE_SYNC_PENDING')
   ) {
-    return 'LINE_NOT_CONFIRMED';
+    return 'MARKET_STALE_RECHECK';
+  }
+  if (
+    reasonCodes.includes('EDGE_RECHECK_PENDING') ||
+    reasonCodes.includes('EDGE_NO_LONGER_CONFIRMED')
+  ) {
+    return 'EDGE_MOVED';
   }
   if (reasonCodes.some((code) => PRICING_UNAVAILABLE_CODES.has(code))) {
     return 'PRICING_UNAVAILABLE';
@@ -975,4 +980,5 @@ module.exports = {
   ensureDecisionConsistencyEnvelope,
   deriveAction,
   deriveVolEnv,
+  deriveTerminalReasonFamilyForPayload,
 };

@@ -166,7 +166,7 @@ This audit:
 | Availability gate DB error (NBA) | run_nba_model.js | `AVAILABILITY_GATE_DEGRADED` | model_health | Fail-open, skip gate, proceed |
 | Within-cadence stale (grace window) | execution-gate | `STALE_SNAPSHOT_VALID_GRACE` | worker_gate | Allow if allowed_flag set, log warning |
 | Decision envelope fallback | decision-pipeline-v2 | `DECISION_FALLBACK_INPUT_MISSING` | decision_canonical | Use fallback values, mark origin |
-| Edge verification required (market props) | decision-pipeline | `EDGE_VERIFICATION_REQUIRED` | decision_canonical | Allow pub, mark for manual review |
+| Edge verification required (market props) | decision-pipeline | `LINE_NOT_CONFIRMED` | decision_canonical | Allow pub, mark for manual review |
 | Pass-through decision v2 path | route-handler | `PASS_THROUGH_OK` | decision_canonical | No block, standard PASS |
 | Projection-only exclusion (no market) | execution-gate | `PROJECTION_ONLY_EXCLUSION` | worker_gate | Block live bet, allow projection view |
 
