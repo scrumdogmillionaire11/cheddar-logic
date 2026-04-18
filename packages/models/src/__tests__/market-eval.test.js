@@ -4,6 +4,7 @@ const {
   evaluateSingleMarket,
   finalizeGameMarketEvaluation,
   assertNoSilentMarketDrop,
+  assertLegalPassNoEdge,
   REASON_CODES,
   VALID_STATUSES,
 } = require('../market-eval');
@@ -319,5 +320,113 @@ describe('Scenario F3: PASS card with PASS_NO_EDGE has evaluation_status=EDGE_CO
     expect(result.threshold_passed).toBe(false);
     expect(result.raw_edge_value).toBe(-0.02);
     expect(result.inputs_status).toBe('COMPLETE');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Scenario G: assertLegalPassNoEdge throws when raw_edge_value > 0
+// ---------------------------------------------------------------------------
+describe('Scenario G: assertLegalPassNoEdge throws when PASS_NO_EDGE with positive edge', () => {
+  test('G: result with PASS_NO_EDGE reason_code and raw_edge_value=0.031 throws ILLEGAL_PASS_NO_EDGE', () => {
+    const result = {
+      candidate_id: 'game-g::full_game_ml',
+      reason_codes: ['PASS_NO_EDGE'],
+      raw_edge_value: 0.031,
+      evaluation_status: 'EDGE_COMPUTED',
+      inputs_status: 'COMPLETE',
+    };
+    expect(() => assertLegalPassNoEdge(result)).toThrow('ILLEGAL_PASS_NO_EDGE');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Scenario G2: assertLegalPassNoEdge throws when evaluation_status=NO_EVALUATION
+// ---------------------------------------------------------------------------
+describe('Scenario G2: assertLegalPassNoEdge throws when PASS_NO_EDGE with NO_EVALUATION', () => {
+  test('G2: result with PASS_NO_EDGE and evaluation_status=NO_EVALUATION throws', () => {
+    const result = {
+      candidate_id: 'game-g2::full_game_ml',
+      reason_codes: ['PASS_NO_EDGE'],
+      raw_edge_value: null,
+      evaluation_status: 'NO_EVALUATION',
+      inputs_status: 'COMPLETE',
+    };
+    expect(() => assertLegalPassNoEdge(result)).toThrow('ILLEGAL_PASS_NO_EDGE');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Scenario G3: assertLegalPassNoEdge does NOT throw for legal no-edge case
+// ---------------------------------------------------------------------------
+describe('Scenario G3: assertLegalPassNoEdge does not throw for legal PASS_NO_EDGE', () => {
+  test('G3: result with PASS_NO_EDGE, raw_edge_value=-0.01, EDGE_COMPUTED, COMPLETE inputs does NOT throw', () => {
+    const result = {
+      candidate_id: 'game-g3::full_game_ml',
+      reason_codes: ['PASS_NO_EDGE'],
+      raw_edge_value: -0.01,
+      evaluation_status: 'EDGE_COMPUTED',
+      inputs_status: 'COMPLETE',
+    };
+    expect(() => assertLegalPassNoEdge(result)).not.toThrow();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Scenario K: SKIP_GAME_MIXED_FAILURES when some candidates have NO_EVALUATION
+// ---------------------------------------------------------------------------
+describe('Scenario K: finalizeGameMarketEvaluation emits SKIP_GAME_MIXED_FAILURES', () => {
+  test('K: two REJECTED_THRESHOLD results where one has evaluation_status=NO_EVALUATION → SKIP_GAME_MIXED_FAILURES', () => {
+    const ctx = { game_id: 'game-k', sport: 'MLB' };
+    // PASS card with PASS_NO_EDGE (EDGE_COMPUTED)
+    const cardA = buildCard({ status: 'PASS', pass_reason_code: 'PASS_NO_EDGE', edge: -0.01 });
+    // PASS card with PASS_CONFIDENCE_GATE (NO_EVALUATION)
+    const cardB = buildCard({ status: 'PASS', pass_reason_code: 'PASS_CONFIDENCE_GATE' });
+
+    const results = [
+      evaluateSingleMarket(cardA, ctx),
+      evaluateSingleMarket(cardB, ctx),
+    ];
+
+    const game = finalizeGameMarketEvaluation({
+      game_id: 'game-k',
+      sport: 'MLB',
+      market_results: results,
+    });
+
+    expect(game.status).toBe('SKIP_GAME_MIXED_FAILURES');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Scenario L: stays SKIP_MARKET_NO_EDGE when all have EDGE_COMPUTED
+// ---------------------------------------------------------------------------
+describe('Scenario L: finalizeGameMarketEvaluation stays SKIP_MARKET_NO_EDGE when all EDGE_COMPUTED', () => {
+  test('L: two REJECTED_THRESHOLD results both with evaluation_status=EDGE_COMPUTED → SKIP_MARKET_NO_EDGE', () => {
+    const ctx = { game_id: 'game-l', sport: 'MLB' };
+    const cardA = buildCard({ status: 'PASS', pass_reason_code: 'PASS_NO_EDGE', edge: -0.01 });
+    const cardB = buildCard({ ev_threshold_passed: false });
+
+    const results = [
+      evaluateSingleMarket(cardA, ctx),
+      evaluateSingleMarket(cardB, ctx),
+    ];
+
+    const game = finalizeGameMarketEvaluation({
+      game_id: 'game-l',
+      sport: 'MLB',
+      market_results: results,
+    });
+
+    expect(game.status).toBe('SKIP_MARKET_NO_EDGE');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// VALID_STATUSES includes SKIP_GAME_MIXED_FAILURES (10th entry)
+// ---------------------------------------------------------------------------
+describe('VALID_STATUSES contract', () => {
+  test('VALID_STATUSES includes SKIP_GAME_MIXED_FAILURES', () => {
+    expect(VALID_STATUSES).toContain('SKIP_GAME_MIXED_FAILURES');
+    expect(VALID_STATUSES.length).toBeGreaterThanOrEqual(10);
   });
 });
