@@ -1,12 +1,14 @@
 import { NextResponse } from 'next/server';
 import type { ProjectionAccuracyResponse } from '@/lib/types/projection-accuracy';
-import {
+import data from '@cheddar-logic/data';
+
+const {
   closeReadOnlyInstance,
   getDatabaseReadOnly,
   getProjectionAccuracyEvalSummary,
   getProjectionAccuracyEvals,
   getProjectionAccuracyMarketHealth,
-} from '@cheddar-logic/data';
+} = data;
 
 const DEFAULT_LOOKBACK_DAYS = 90;
 const MAX_LOOKBACK_DAYS = 365;
