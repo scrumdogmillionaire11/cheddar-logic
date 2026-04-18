@@ -550,6 +550,7 @@ interface Play {
   market_bookmaker?: string | null;
   basis?: 'PROJECTION_ONLY' | 'ODDS_BACKED';
   execution_status?: 'EXECUTABLE' | 'PROJECTION_ONLY' | 'BLOCKED';
+  projection_source?: string | null;
   execution_gate?: {
     drop_reason?: {
       drop_reason_code: string;
@@ -787,6 +788,79 @@ export function selectAuthoritativeTruePlay(plays: Play[]): Play | null {
   }, null as Play | null);
 
   return winner ? annotateAuthoritativePlay(winner) : null;
+}
+
+function resolveNhl1PGoalieTruthRank(play: Play): number {
+  if (play.cardType !== 'nhl-pace-1p') return 0;
+  const homeConfirmed = play.goalie_home_status === 'CONFIRMED' ? 1 : 0;
+  const awayConfirmed = play.goalie_away_status === 'CONFIRMED' ? 1 : 0;
+  return homeConfirmed + awayConfirmed;
+}
+
+function resolveProjectionSourceTruthRank(play: Play): number {
+  const projectionSource = (
+    play.projection_source ??
+    play.prop_decision?.projection_source ??
+    ''
+  )
+    .trim()
+    .toUpperCase();
+
+  if (projectionSource === 'FULL_MODEL') return 3;
+  if (projectionSource === 'DEGRADED_MODEL') return 2;
+  if (projectionSource === 'SYNTHETIC_FALLBACK') return 0;
+  if (play.reason_codes?.includes('PASS_SYNTHETIC_FALLBACK')) return 0;
+  return 1;
+}
+
+function resolveProjectionSurfaceDedupeKey(play: Play): string | null {
+  if (play.market_type === 'PROP') return null;
+  if (!isProjectionSurfaceCardType(play.cardType)) return null;
+  const market =
+    play.canonical_market_key ??
+    play.market_type ??
+    inferMarketFromCardType(play.cardType) ??
+    'UNKNOWN';
+  return `${play.cardType}|${market}`;
+}
+
+function compareProjectionSurfaceTruth(a: Play, b: Play): number {
+  const goalieTruthDelta =
+    resolveNhl1PGoalieTruthRank(a) - resolveNhl1PGoalieTruthRank(b);
+  if (goalieTruthDelta !== 0) return goalieTruthDelta;
+
+  const projectionSourceDelta =
+    resolveProjectionSourceTruthRank(a) - resolveProjectionSourceTruthRank(b);
+  if (projectionSourceDelta !== 0) return projectionSourceDelta;
+
+  const createdAtDelta =
+    resolveTruePlayCreatedAtEpoch(a) - resolveTruePlayCreatedAtEpoch(b);
+  if (createdAtDelta !== 0) return createdAtDelta;
+
+  const aId = String(a.source_card_id ?? '');
+  const bId = String(b.source_card_id ?? '');
+  if (aId === bId) return 0;
+  return aId > bId ? 1 : -1;
+}
+
+export function dedupeProjectionSurfacePlays(plays: Play[]): Play[] {
+  const byKey = new Map<string, Play>();
+  const passthrough: Play[] = [];
+
+  for (const play of plays) {
+    const key = resolveProjectionSurfaceDedupeKey(play);
+    if (!key) {
+      passthrough.push(play);
+      continue;
+    }
+
+    const existing = byKey.get(key);
+    if (!existing || compareProjectionSurfaceTruth(play, existing) > 0) {
+      byKey.set(key, play);
+    }
+  }
+
+  return [...passthrough, ...byKey.values()];
 }
 
 function toRecord(value: unknown): Record<string, unknown> | null {
@@ -3539,7 +3613,7 @@ function mergePropFallbackRows(params: {
           ),
           tags: dedupedTags,
           run_id: normalizedRunId,
-          created_at: normalizedCreatedAt,
+          created_at: normalizedCreatedAt ?? cardRow.created_at,
           player_id: normalizedPlayerId,
           player_name: normalizedPlayerName,
           team_abbr: normalizedTeamAbbr,
@@ -3557,6 +3631,12 @@ function mergePropFallbackRows(params: {
           market_bookmaker: normalizedMarketBookmaker,
           basis: normalizedDecisionBasis,
           execution_status: normalizedExecutionStatus,
+          projection_source:
+            firstString(
+              payload.projection_source,
+              payloadPlay?.projection_source,
+              normalizedPropDecision?.projection_source,
+            ) ?? null,
           execution_gate: normalizedExecutionGate,
           prop_display_state: normalizedPropDisplayState,
           prop_decision: normalizedPropDecision,
@@ -3958,6 +4038,10 @@ function mergePropFallbackRows(params: {
           });
           playsMap.set(gid, dedupedPropPlays);
         }
+      }
+
+      for (const [gid, gamePlays] of playsMap) {
+        playsMap.set(gid, dedupeProjectionSurfacePlays(gamePlays));
       }
 
       for (const [canonicalGameId, plays] of playsMap.entries()) {
