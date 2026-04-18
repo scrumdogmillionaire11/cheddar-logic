@@ -28,7 +28,7 @@ function mockEspnResponse(body, statusCode = 200) {
   });
 }
 
-describe('fetchTeamSchedule NCAAM fallback', () => {
+describe('fetchTeamSchedule regular-season fallback', () => {
   beforeEach(() => {
     jest.clearAllMocks();
   });
@@ -81,6 +81,54 @@ describe('fetchTeamSchedule NCAAM fallback', () => {
     expect(games[0]).toMatchObject({
       pointsFor: 70,
       pointsAgainst: 64,
+      result: 'W',
+    });
+  });
+
+  test('retries with seasontype=2 when default NBA playoff schedule has no completed games', async () => {
+    const playoffFutureOnlySchedule = {
+      events: [
+        {
+          date: '2099-04-18T17:00:00Z',
+          competitions: [
+            {
+              status: { type: { completed: false } },
+              competitors: [],
+            },
+          ],
+        },
+      ],
+    };
+
+    const completedRegularSeasonSchedule = {
+      events: [
+        {
+          date: '2026-04-12T19:00:00Z',
+          competitions: [
+            {
+              status: { type: { completed: true } },
+              competitors: [
+                { homeAway: 'home', team: { id: '5' }, score: '118', winner: true },
+                { homeAway: 'away', team: { id: '28' }, score: '102', winner: false },
+              ],
+            },
+          ],
+        },
+      ],
+    };
+
+    mockEspnResponse(playoffFutureOnlySchedule);
+    mockEspnResponse(completedRegularSeasonSchedule);
+
+    const games = await fetchTeamSchedule('basketball/nba', '5', 5);
+
+    expect(https.get).toHaveBeenCalledTimes(2);
+    const secondUrl = https.get.mock.calls[1][0];
+    expect(secondUrl).toContain('/basketball/nba/teams/5/schedule?seasontype=2');
+    expect(games).toHaveLength(1);
+    expect(games[0]).toMatchObject({
+      pointsFor: 118,
+      pointsAgainst: 102,
       result: 'W',
     });
   });
