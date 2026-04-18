@@ -48,6 +48,7 @@ const VALID_STATUSES = Object.freeze([
   'REJECTED_SELECTOR',
   'REJECTED_DUPLICATE',
   'REJECTED_MARKET_POLICY',
+  'SKIP_GAME_MIXED_FAILURES',
 ]);
 
 // ---------------------------------------------------------------------------
@@ -348,9 +349,32 @@ function evaluateSingleMarket(card, ctx) {
 }
 
 // ---------------------------------------------------------------------------
+// assertLegalPassNoEdge(result) — throws when PASS_NO_EDGE is used illegally
+// ---------------------------------------------------------------------------
+function assertLegalPassNoEdge(result) {
+  const hasNoEdgeCode =
+    Array.isArray(result.reason_codes) && result.reason_codes.includes('PASS_NO_EDGE');
+  if (!hasNoEdgeCode) return;
+
+  const positiveEdge = typeof result.raw_edge_value === 'number' && result.raw_edge_value > 0;
+  const noEvaluation = result.evaluation_status === 'NO_EVALUATION';
+  const missingInputs = result.inputs_status === 'MISSING';
+
+  if (positiveEdge || noEvaluation || missingInputs) {
+    throw new Error(
+      `ILLEGAL_PASS_NO_EDGE: candidate=${result.candidate_id} raw_edge=${result.raw_edge_value} ` +
+      `evaluation_status=${result.evaluation_status} inputs_status=${result.inputs_status}. ` +
+      `PASS_NO_EDGE requires: EDGE_COMPUTED + COMPLETE inputs + non-positive edge.`,
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
 // assertNoSilentMarketDrop(gameEval) — throws on unbalanced partition
 // ---------------------------------------------------------------------------
 function assertNoSilentMarketDrop(gameEval) {
+  // Enforce PASS_NO_EDGE integrity on every result
+  gameEval.market_results.forEach((r) => assertLegalPassNoEdge(r));
   // Terminal-state + shape invariants (checked first so error is actionable)
   for (const r of gameEval.market_results) {
     if (!r.status || !VALID_STATUSES.includes(r.status)) {
@@ -425,6 +449,13 @@ function finalizeGameMarketEvaluation({ game_id, sport, market_results }) {
     status = 'SKIP_MARKET_NO_EDGE';
   }
 
+  // Upgrade SKIP_MARKET_NO_EDGE to SKIP_GAME_MIXED_FAILURES if any rejected
+  // result never ran evaluation (some candidates were never evaluated)
+  if (status === 'SKIP_MARKET_NO_EDGE') {
+    const anyNoEvaluation = rejected.some((r) => r.evaluation_status === 'NO_EVALUATION');
+    if (anyNoEvaluation) status = 'SKIP_GAME_MIXED_FAILURES';
+  }
+
   gameEval.status = status;
   return gameEval;
 }
@@ -453,6 +484,7 @@ module.exports = {
   canonicalizeMoneylineSuppressionReason,
   evaluateSingleMarket,
   finalizeGameMarketEvaluation,
+  assertLegalPassNoEdge,
   assertNoSilentMarketDrop,
   logRejectedMarkets,
 };
