@@ -3874,17 +3874,10 @@ async function runMLBModel({
             roof: mlb.roof ?? null,
           };
 
-          // F5 ML side-projection card. Prefer dedicated F5 ML prices, but fall back
-          // to full-game ML prices as a projection-only context so we do not silence
-          // the model when first-5 lines are absent.
-          const f5MlContext = resolveMlbF5MoneylineContext(gameOddsSnapshot);
-          const hasDedicatedF5Ml = f5MlContext.home !== null && f5MlContext.away !== null;
-          const f5MlHomePrice = hasDedicatedF5Ml
-            ? f5MlContext.home
-            : toFiniteNumber(gameOddsSnapshot?.h2h_home);
-          const f5MlAwayPrice = hasDedicatedF5Ml
-            ? f5MlContext.away
-            : toFiniteNumber(gameOddsSnapshot?.h2h_away);
+          // F5 ML projection uses full-game ML prices as the reference context.
+          // Dedicated F5 ML lines are not fetched — full-game prices anchor the model.
+          const f5MlHomePrice = toFiniteNumber(gameOddsSnapshot?.h2h_home);
+          const f5MlAwayPrice = toFiniteNumber(gameOddsSnapshot?.h2h_away);
           let f5MlDriverCard = null;
           if (f5MlHomePrice !== null && f5MlAwayPrice !== null) {
             const f5MlResult = projectF5ML(
@@ -3925,7 +3918,7 @@ async function runMLBModel({
                 classification: isStrongProjection ? 'BASE' : 'LEAN',
                 reason_codes: uniqueReasonCodes([
                   ...(isStrongProjection ? [] : ['PROJECTION_ONLY_INSIGHT']),
-                  ...(hasDedicatedF5Ml ? [] : ['PROJECTION_PROXY_FULL_GAME_ML']),
+                  'PROJECTION_PROXY_FULL_GAME_ML',
                 ]),
                 reasoning: f5MlResult.reasoning,
                 projection_source: 'FULL_MODEL',
@@ -3941,7 +3934,7 @@ async function runMLBModel({
               }
             }
           } else {
-            console.log('[MLBModel] NO_F5_ML_PRICE_CONTEXT: ' + gameId + ' — F5 ML projection skipped (no dedicated F5 or full-game ML prices)');
+            console.log('[MLBModel] NO_F5_ML_PRICE_CONTEXT: ' + gameId + ' — F5 ML projection skipped (no full-game ML prices)');
           }
 
           // Recover qualified driver cards from evaluateMlbGameMarkets results

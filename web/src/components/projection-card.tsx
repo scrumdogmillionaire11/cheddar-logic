@@ -1,6 +1,7 @@
 'use client';
 
 export interface RawProjectionPlay {
+  cardType?: string;
   projectedTotal: number | null;
   projectedHomeF5Runs?: number | null;
   projectedAwayF5Runs?: number | null;
@@ -63,9 +64,10 @@ export default function ProjectionCard({
   sport = 'NHL',
 }: ProjectionCardProps) {
   const isMlb = sport === 'MLB';
+  const isMlbF5Ml = isMlb && play.cardType === 'mlb-f5-ml';
   // mlb-f5 PROJECTION_ONLY: no market line, MAE-tracked surface only — no direction badge
   const isMlbF5ProjectionOnly =
-    isMlb && play.execution_status === 'PROJECTION_ONLY';
+    isMlb && !isMlbF5Ml && play.execution_status === 'PROJECTION_ONLY';
   const side = play.selection?.side ?? 'NONE';
   const projectedTotal =
     typeof play.projectedTotal === 'number' ? play.projectedTotal : null;
@@ -139,7 +141,7 @@ export default function ProjectionCard({
             {sport}
           </span>
           <span className="text-[10px] font-mono tracking-widest text-cloud/30 uppercase">
-            {isMlbF5ProjectionOnly ? 'F5 Total \u2014 Model Projection' : isMlb ? 'F5 Total' : '1P Projection'}
+            {isMlbF5Ml ? 'F5 Moneyline' : isMlbF5ProjectionOnly ? 'F5 Total \u2014 Model Projection' : isMlb ? 'F5 Total' : '1P Projection'}
           </span>
         </div>
         <span className="text-xs font-mono text-cloud/40">
@@ -153,7 +155,37 @@ export default function ProjectionCard({
       </div>
 
       {/* Hero — mlb-f5 PROJECTION_ONLY: no line, no direction badge */}
-      {isMlbF5ProjectionOnly ? (
+      {isMlbF5Ml ? (
+        <div className="flex items-center gap-5">
+          <div className="text-center min-w-[56px]">
+            <div className="text-3xl font-bold font-mono text-cloud leading-none">
+              {projectedHomeF5Runs !== null && projectedAwayF5Runs !== null
+                ? `${projectedHomeF5Runs.toFixed(1)}-${projectedAwayF5Runs.toFixed(1)}`
+                : '—'}
+            </div>
+            <div className="text-[10px] text-cloud/30 mt-1">proj. F5 runs</div>
+          </div>
+          <div className="flex flex-col gap-0.5 text-xs font-mono text-cloud/55">
+            {projectedHomeF5Runs !== null && <span>{homeTeam}: {projectedHomeF5Runs.toFixed(1)}</span>}
+            {projectedAwayF5Runs !== null && <span>{awayTeam}: {projectedAwayF5Runs.toFixed(1)}</span>}
+          </div>
+          <div className="ml-auto flex flex-col items-end gap-1.5">
+            <span className={`px-3 py-1 text-sm font-bold rounded border ${
+              side === 'HOME' ? 'bg-cyan-700/40 text-cyan-200 border-cyan-600/40'
+              : side === 'AWAY' ? 'bg-orange-700/40 text-orange-200 border-orange-600/40'
+              : 'bg-white/5 text-cloud/40 border-white/10'
+            }`}>
+              {side === 'HOME' ? homeTeam : side === 'AWAY' ? awayTeam : 'PASS'}
+            </span>
+            {confidence !== null && (
+              <span className={`text-xs font-mono ${tierColor}`}>
+                {Math.round(confidence * 100)}%{' '}
+                <span className="opacity-60">{tier}</span>
+              </span>
+            )}
+          </div>
+        </div>
+      ) : isMlbF5ProjectionOnly ? (
         <div className="space-y-2">
           <div className="flex items-center gap-4">
             <div className="text-center min-w-[56px]">

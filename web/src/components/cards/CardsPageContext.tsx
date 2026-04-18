@@ -238,15 +238,19 @@ export function CardsPageProvider({
     if ('propStatGroups' in f) return [];
 
     return games.flatMap((game) => {
-      const play1p = game.plays.find(
-        (p) => p.cardType === 'nhl-pace-1p' || p.cardType === 'mlb-f5',
+      const projectionPlays = game.plays.filter(
+        (p) =>
+          p.cardType === 'nhl-pace-1p' ||
+          p.cardType === 'mlb-f5' ||
+          p.cardType === 'mlb-f5-ml',
       );
-      if (!play1p) return [];
+      if (projectionPlays.length === 0) return [];
 
-      const filterCard = createProjectionFilterCard(game, play1p);
+      const anchorPlay = projectionPlays[0];
+      const filterCard = createProjectionFilterCard(game, anchorPlay);
       if (!evaluateCardFilter(filterCard, f, 'projections').passes) return [];
 
-      return [{ game, play: play1p }];
+      return projectionPlays.map((play) => ({ game, play }));
     });
   }, [effectiveFilters, games, uiState.viewMode]);
 
