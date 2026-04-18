@@ -631,6 +631,25 @@ const MLB_TOTAL_VOL_BUCKETS = Object.freeze({
   HIGH: 'HIGH_VOL',
 });
 
+// Priority-ordered list of PASS_ reason codes. Higher position = higher priority.
+// Used by selectPassReasonCode() to replace unsafe Array.find() fallbacks.
+const PASS_REASON_PRIORITY = [
+  'PASS_DEGRADED_TOTAL_MODEL',
+  'PASS_CONFIDENCE_GATE',
+  'PASS_MODEL_DEGRADED',
+  'PASS_INPUTS_INCOMPLETE',
+  'PASS_SYNTHETIC_FALLBACK',
+  'PASS_NO_DISTRIBUTION',
+  'PASS_NO_EDGE',
+];
+
+function selectPassReasonCode(reasonCodes) {
+  for (const code of PASS_REASON_PRIORITY) {
+    if (reasonCodes.includes(code)) return code;
+  }
+  return reasonCodes.find((c) => c.startsWith('PASS_')) ?? null;
+}
+
 function absOrZero(value) {
   return Number.isFinite(value) ? Math.abs(value) : 0;
 }
@@ -1493,8 +1512,7 @@ function projectFullGameTotalCard(homePitcher, awayPitcher, fullGameLine, contex
     pass_reason_code:
       status !== 'PASS'
         ? null
-        : (reasonCodes.find((code) => code.startsWith('PASS_')) ??
-          'PASS_NO_EDGE'),
+        : selectPassReasonCode(reasonCodes),
     reason_codes: reasonCodes,
     missing_inputs: proj.missing_inputs,
     directional_audit: {
@@ -1655,7 +1673,7 @@ function projectF5TotalCard(homePitcher, awayPitcher, f5Line, context = {}) {
     reason_codes: reasonCodes,
     pass_reason_code: status !== 'PASS'
       ? null
-      : (reasonCodes.find((code) => code.startsWith('PASS_')) ?? 'PASS_NO_EDGE'),
+      : selectPassReasonCode(reasonCodes),
     playability: proj.playability,
     projection: {
       projected_total: roundToTenth(proj.projected_total_mean ?? proj.base),
