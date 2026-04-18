@@ -10,6 +10,7 @@ const {
   chunkDiscordContent,
   sendDiscordMessages,
   postDiscordCards,
+  decisionReason,
 } = require('../post_discord_cards');
 const { classifyNhlTotalsStatus } = require('../../models/nhl-totals-status');
 const { computeWebhookFields } = require('../../utils/decision-publisher');
@@ -1470,5 +1471,32 @@ describe('postDiscordCards integration', () => {
     });
     expect(result.success).toBe(true);
     expect(result.totalCards).toBe(1);
+  });
+});
+
+// ── PRI-DISPLAY-01: decisionReason() default is null, not fabricated PASS_NO_EDGE ─
+
+describe('PRI-DISPLAY-01: decisionReason() display layer integrity', () => {
+  test('Test J: no pass_reason_code, no reason_codes, no blocked_reason_code → returns null (not PASS_NO_EDGE)', () => {
+    // Before fix: returns 'PASS_NO_EDGE' as a fabricated default
+    // After fix: returns null (callers handle null gracefully)
+    expect(decisionReason({ payloadData: {} })).toBeNull();
+  });
+
+  test('Test J (edge): undefined payloadData → returns null', () => {
+    expect(decisionReason({})).toBeNull();
+    expect(decisionReason(null)).toBeNull();
+    expect(decisionReason(undefined)).toBeNull();
+  });
+
+  test('Test J2: pass_reason_code present → returns normalizeToken result', () => {
+    const result = decisionReason({ payloadData: { pass_reason_code: 'PASS_CONFIDENCE_GATE' } });
+    // normalizeToken converts to uppercase — 'PASS_CONFIDENCE_GATE' is already uppercase
+    expect(result).toBe('PASS_CONFIDENCE_GATE');
+  });
+
+  test('Test J2b: reason_codes array → returns first code via normalizeToken', () => {
+    const result = decisionReason({ payloadData: { reason_codes: ['PASS_SYNTHETIC_FALLBACK'] } });
+    expect(result).toBe('PASS_SYNTHETIC_FALLBACK');
   });
 });
