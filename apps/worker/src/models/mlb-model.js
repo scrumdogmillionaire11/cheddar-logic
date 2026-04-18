@@ -2248,7 +2248,9 @@ function computeMLBDriverCards(gameId, oddsSnapshot) {
         classification,
         projection_source: mlResult.projection_source,
         status_cap: mlResult.status_cap,
-        pass_reason_code: !mlResult.ev_threshold_passed ? 'PASS_NO_EDGE' : null,
+        pass_reason_code: !mlResult.ev_threshold_passed
+          ? (mlResult.pass_reason_code ?? 'PASS_NO_EDGE')
+          : null,
         reason_codes: mlResult.reason_codes,
         flags: mlResult.flags,
         driver_support: mlResult.driver_support,

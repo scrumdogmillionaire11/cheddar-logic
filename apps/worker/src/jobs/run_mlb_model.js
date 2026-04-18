@@ -2976,6 +2976,7 @@ function computeSyntheticLineF5Driver(mlb, context, gameId) {
     projection_source: 'FULL_MODEL',
     reason_codes: reasonCodes,
     missing_inputs: [],
+    // INVARIANT: PASS_NO_EDGE is legal here — edge was computed against synthetic line and failed MLB_F5_SYNTHETIC_EDGE_THRESHOLD. Inputs were present.
     ...(status === 'PASS' ? { pass_reason_code: 'PASS_NO_EDGE' } : {}),
     playability: {
       over_playable_at_or_below: syntheticLine,
@@ -3966,7 +3967,7 @@ async function runMLBModel({
                   ev_threshold_passed: false,
                   projection_source: 'SYNTHETIC_FALLBACK',
                   status_cap: 'PASS',
-                  reason_codes: ['PASS_SYNTHETIC_FALLBACK', 'PASS_NO_EDGE'],
+                  reason_codes: ['PASS_SYNTHETIC_FALLBACK'],
                   missing_inputs: ['market_line'],
                   pass_reason_code: 'PASS_SYNTHETIC_FALLBACK',
                   playability: {
