@@ -69,6 +69,39 @@ function chooseStatusForUpsert(existingStatus, incomingStatus) {
   return incoming;
 }
 
+function buildStaleGameIdCandidates(gameId, sport) {
+  const rawId = String(gameId || '').trim();
+  if (!rawId) return [];
+
+  const candidates = new Set([rawId]);
+  const normalizedSport = String(sport || '').toLowerCase();
+  const sportPrefix = normalizedSport ? `game-${normalizedSport}-` : null;
+  const lowerRawId = rawId.toLowerCase();
+
+  if (sportPrefix && lowerRawId.startsWith(sportPrefix)) {
+    candidates.add(rawId.slice(sportPrefix.length));
+  }
+
+  const genericLegacyMatch = rawId.match(/^game-[^-]+-(.+)$/i);
+  if (genericLegacyMatch?.[1]) {
+    candidates.add(genericLegacyMatch[1]);
+  }
+
+  return Array.from(candidates).filter(Boolean);
+}
+
+function buildStaleGameIdSet(gamesForSport) {
+  const staleGameIds = new Set();
+
+  for (const game of gamesForSport || []) {
+    for (const candidate of buildStaleGameIdCandidates(game?.game_id, game?.sport)) {
+      staleGameIds.add(candidate);
+    }
+  }
+
+  return staleGameIds;
+}
+
 /**
  * Get odds interval minutes based on time-to-start
  * (Copied from scheduler helper)
@@ -305,10 +338,9 @@ async function refreshStaleOdds({ jobKey = null, dryRun = false } = {}) {
             `[RefreshStaleOdds]   Fetched ${normalizedGames.length} games`,
           );
 
-          // Insert new odds snapshots for stale games only
-          const staleGameIds = new Set(
-            gamesForSport.map((g) => g.game_id.split('-').pop()),
-          );
+          // Insert new odds snapshots for stale games only. Keep exact ids intact;
+          // only strip explicit legacy game-<sport>- prefixes as a fallback.
+          const staleGameIds = buildStaleGameIdSet(gamesForSport);
 
           for (const normalized of normalizedGames) {
             if (!staleGameIds.has(normalized.gameId)) {
@@ -509,4 +541,10 @@ if (require.main === module) {
     });
 }
 
-module.exports = { refreshStaleOdds };
+module.exports = {
+  refreshStaleOdds,
+  __private: {
+    buildStaleGameIdCandidates,
+    buildStaleGameIdSet,
+  },
+};

@@ -475,9 +475,8 @@ async function gatherBestCandidate({
     maxNominees: POTD_MAX_NOMINEES,
     requirePositiveEdge: true,
   });
-  // diagnosticNominees are for internal diagnostics only — they include sub-threshold
-  // and negative-edge candidates and must NEVER be treated as POTD nominees.
-  // They must not be written to potd_nominees or used to select bestCandidate.
+  // diagnosticNominees are for no-pick diagnostics only — they include
+  // sub-threshold and negative-edge candidates and must never select a POTD.
   const diagnosticNominees = selectTopPlaysFn(scoredCandidates, {
     minConfidence: POTD_MIN_TOTAL_SCORE,
     maxNominees: POTD_MAX_NOMINEES,
@@ -558,7 +557,16 @@ async function runPotdEngine({
         };
       }
 
-      const { bestCandidate, rankedNominees, allScoredCandidates, fetchErrors, activeSports, candidatesCount, viableCount } = await gatherBestCandidate({
+      const {
+        bestCandidate,
+        rankedNominees,
+        diagnosticNominees,
+        allScoredCandidates,
+        fetchErrors,
+        activeSports,
+        candidatesCount,
+        viableCount,
+      } = await gatherBestCandidate({
         fetchOddsFn,
         buildCandidatesFn,
         scoreCandidateFn,
@@ -577,7 +585,12 @@ async function runPotdEngine({
           .filter(c => typeof c.edgePct === 'number' && isFinite(c.edgePct) && typeof c.totalScore === 'number' && isFinite(c.totalScore))
           .sort((a, b) => b.edgePct - a.edgePct)[0] || null;
         writeShadowCandidates(db, { playDate, capturedAt: nowIso, minEdgePct: POTD_MIN_EDGE, candidates: allScoredCandidates });
-        writeNominees(db, { playDate, capturedAt: nowIso, winnerStatus: 'NO_PICK', nominees: rankedNominees });
+        writeNominees(db, {
+          playDate,
+          capturedAt: nowIso,
+          winnerStatus: 'NO_PICK',
+          nominees: diagnosticNominees,
+        });
         writeDailyStats(db, {
           playDate,
           potdFired: false,
