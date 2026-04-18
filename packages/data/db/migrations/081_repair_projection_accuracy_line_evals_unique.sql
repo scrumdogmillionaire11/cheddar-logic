@@ -50,18 +50,16 @@ CREATE TABLE IF NOT EXISTS projection_accuracy_line_evals_new (
 );
 
 INSERT INTO projection_accuracy_line_evals_new (
-  id, eval_id, card_id, line_role, line, eval_line, projection_value,
+  id, eval_id, card_id, line_role, eval_line, projection_value,
   direction, weak_direction_flag, edge_vs_line,
   confidence_score, confidence_band, market_trust,
-  expected_over_prob, expected_direction_prob,
   actual_value, grade_status, graded_result, hit_flag, graded_at,
   created_at, updated_at
 )
 SELECT
-  id, eval_id, card_id, line_role, line, eval_line, projection_value,
+  id, eval_id, card_id, line_role, eval_line, projection_value,
   direction, weak_direction_flag, edge_vs_line,
   confidence_score, confidence_band, market_trust,
-  expected_over_prob, expected_direction_prob,
   actual_value, grade_status, graded_result, hit_flag, graded_at,
   created_at, updated_at
 FROM projection_accuracy_line_evals;
