@@ -80,6 +80,40 @@ function removeVigFromImplied(impliedA, impliedB) {
   };
 }
 
+// Sport+market noise floors. Each value is the minimum gross edge required
+// for a candidate to be distinguishable from model estimation error.
+// All values are independently env-var overridable.
+const NOISE_FLOORS = {
+  MLB: {
+    MONEYLINE: Number(process.env.POTD_NOISE_FLOOR_MLB_ML     || 0.03),
+    SPREAD:    Number(process.env.POTD_NOISE_FLOOR_MLB_SPREAD  || 0.025),
+  },
+  NHL: {
+    MONEYLINE: Number(process.env.POTD_NOISE_FLOOR_NHL_ML     || 0.02),
+    SPREAD:    Number(process.env.POTD_NOISE_FLOOR_NHL_SPREAD  || 0.02),
+  },
+  NBA: {
+    MONEYLINE: Number(process.env.POTD_NOISE_FLOOR_NBA_ML     || 0.025),
+    SPREAD:    Number(process.env.POTD_NOISE_FLOOR_NBA_SPREAD  || 0.02),
+    TOTAL:     Number(process.env.POTD_NOISE_FLOOR_NBA_TOTAL   || 0.02),
+  },
+};
+
+/**
+ * Returns the minimum gross edge (noise floor) for a sport+market combination.
+ * Strips API-prefixes (BASEBALL_, ICEHOCKEY_, BASKETBALL_) before lookup.
+ * Falls back to globalFallback (default 0.02) for unknown sport/market pairs.
+ */
+function resolveNoiseFloor(sport, marketType, globalFallback = 0.02) {
+  const sportKey = String(sport || '')
+    .toUpperCase()
+    .replace('BASEBALL_', '')
+    .replace('ICEHOCKEY_', '')
+    .replace('BASKETBALL_', '');
+  const marketKey = String(marketType || '').toUpperCase();
+  return NOISE_FLOORS[sportKey]?.[marketKey] ?? globalFallback;
+}
+
 function confidenceThreshold(minConfidence) {
   if (typeof minConfidence === 'number') return minConfidence;
   const token = String(minConfidence || 'HIGH').trim().toUpperCase();
@@ -671,6 +705,12 @@ function scoreCandidate(candidate) {
       modelWinProb: round(mlbSignal.modelWinProb, 6),
       impliedProb,
       edgePct: modelEdge,
+      edgeSourceTag: 'MODEL',
+      edgeSourceMeta: {
+        projection_source: mlbSignal.projection_source ?? null,
+        model_win_prob: round(mlbSignal.modelWinProb, 6),
+        signal_type: 'MLB_PITCHER_MODEL',
+      },
       confidenceLabel: confidenceLabel(totalScore),
       scoreBreakdown: {
         lineValue,
@@ -712,6 +752,12 @@ function scoreCandidate(candidate) {
       modelWinProb,
       impliedProb,
       edgePct: modelEdge,
+      edgeSourceTag: 'MODEL',
+      edgeSourceMeta: {
+        projection_source: nhlSignal.projection_source ?? null,
+        model_win_prob: modelWinProb,
+        signal_type: 'NHL_GOALIE_COMPOSITE',
+      },
       confidenceLabel: confidenceLabel(totalScore),
       scoreBreakdown: {
         lineValue,
@@ -743,6 +789,12 @@ function scoreCandidate(candidate) {
     modelWinProb: modelFairProbability,
     impliedProb,
     edgePct,
+    edgeSourceTag: 'CONSENSUS_FALLBACK',
+    edgeSourceMeta: {
+      projection_source: null,
+      model_win_prob: modelFairProbability,
+      signal_type: 'DEVIG_CONSENSUS',
+    },
     confidenceLabel: confidenceLabel(totalScore),
     scoreBreakdown: {
       lineValue,
@@ -853,6 +905,7 @@ module.exports = {
   kellySize,
   removeVig,
   resolveNHLModelSignal,
+  resolveNoiseFloor,
   scoreCandidate,
   selectBestPlay,
   selectTopPlays,

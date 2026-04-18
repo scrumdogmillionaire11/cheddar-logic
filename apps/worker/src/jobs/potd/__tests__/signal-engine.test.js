@@ -850,3 +850,135 @@ describe('selectTopPlays', () => {
     expect(result2[0].gameId).toBe('game-aaa');
   });
 });
+
+// ---------------------------------------------------------------------------
+// WI-1028: resolveNoiseFloor
+// ---------------------------------------------------------------------------
+describe('resolveNoiseFloor', () => {
+  const { resolveNoiseFloor } = require('../signal-engine');
+
+  test('returns sport+market specific floor for known combinations', () => {
+    // MLB
+    expect(resolveNoiseFloor('MLB', 'MONEYLINE')).toBeCloseTo(0.03, 5);
+    expect(resolveNoiseFloor('baseball_mlb', 'MONEYLINE')).toBeCloseTo(0.03, 5);
+    expect(resolveNoiseFloor('BASEBALL_MLB', 'MONEYLINE')).toBeCloseTo(0.03, 5);
+    expect(resolveNoiseFloor('MLB', 'SPREAD')).toBeCloseTo(0.025, 5);
+    // NHL
+    expect(resolveNoiseFloor('NHL', 'MONEYLINE')).toBeCloseTo(0.02, 5);
+    expect(resolveNoiseFloor('icehockey_nhl', 'MONEYLINE')).toBeCloseTo(0.02, 5);
+    expect(resolveNoiseFloor('NHL', 'SPREAD')).toBeCloseTo(0.02, 5);
+    // NBA
+    expect(resolveNoiseFloor('NBA', 'MONEYLINE')).toBeCloseTo(0.025, 5);
+    expect(resolveNoiseFloor('basketball_nba', 'SPREAD')).toBeCloseTo(0.02, 5);
+    expect(resolveNoiseFloor('NBA', 'TOTAL')).toBeCloseTo(0.02, 5);
+  });
+
+  test('falls back to globalFallback for unknown sport', () => {
+    expect(resolveNoiseFloor('NFL', 'MONEYLINE')).toBeCloseTo(0.02, 5);
+    expect(resolveNoiseFloor('SOCCER', 'TOTAL')).toBeCloseTo(0.02, 5);
+    expect(resolveNoiseFloor(null, null)).toBeCloseTo(0.02, 5);
+    expect(resolveNoiseFloor(undefined, undefined)).toBeCloseTo(0.02, 5);
+  });
+
+  test('falls back to globalFallback for known sport but unknown market type', () => {
+    expect(resolveNoiseFloor('MLB', 'TOTAL')).toBeCloseTo(0.02, 5);
+    expect(resolveNoiseFloor('NHL', 'TOTAL')).toBeCloseTo(0.02, 5);
+  });
+
+  test('custom globalFallback is respected', () => {
+    expect(resolveNoiseFloor('NFL', 'SPREAD', 0.035)).toBeCloseTo(0.035, 5);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WI-1029: edgeSourceTag on scored candidates
+// ---------------------------------------------------------------------------
+describe('edgeSourceTag', () => {
+  test('MLB model path stamps edgeSourceTag = MODEL', () => {
+    const candidate = {
+      gameId: 'mlb-tag-001',
+      sport: 'baseball_mlb',
+      home_team: 'Cubs',
+      away_team: 'Cardinals',
+      commence_time: new Date().toISOString(),
+      marketType: 'MONEYLINE',
+      selection: 'HOME',
+      selectionLabel: 'Cubs',
+      line: null,
+      price: -130,
+      consensusLine: null,
+      consensusPrice: -132,
+      counterpartConsensusPrice: 112,
+      comparableLines: [],
+      comparablePrices: [-132, -130, -128],
+      sourceCount: 3,
+      mlbSignal: { modelWinProb: 0.58, edge: 0.06, projection_source: 'FULL_MODEL' },
+    };
+    const scored = scoreCandidate(candidate);
+    expect(scored.edgeSourceTag).toBe('MODEL');
+    expect(scored.edgeSourceMeta).toMatchObject({
+      projection_source: 'FULL_MODEL',
+      model_win_prob: 0.58,
+      signal_type: 'MLB_PITCHER_MODEL',
+    });
+  });
+
+  test('NHL model path stamps edgeSourceTag = MODEL', () => {
+    const candidate = {
+      gameId: 'nhl-tag-001',
+      sport: 'NHL',
+      home_team: 'Bruins',
+      away_team: 'Leafs',
+      commence_time: new Date().toISOString(),
+      marketType: 'MONEYLINE',
+      selection: 'HOME',
+      selectionLabel: 'Bruins',
+      line: null,
+      price: -120,
+      consensusLine: null,
+      consensusPrice: -115,
+      counterpartConsensusPrice: -105,
+      consensusImplied: 0.535,
+      counterpartConsensusImplied: 0.488,
+      comparableLines: [],
+      comparablePrices: [-115, -118, -120],
+      sourceCount: 3,
+      nhlSignal: { homeModelWinProb: 0.56, projection_source: 'NHL_GOALIE_COMPOSITE' },
+    };
+    const scored = scoreCandidate(candidate);
+    expect(scored.edgeSourceTag).toBe('MODEL');
+    expect(scored.edgeSourceMeta).toMatchObject({
+      signal_type: 'NHL_GOALIE_COMPOSITE',
+      projection_source: 'NHL_GOALIE_COMPOSITE',
+    });
+  });
+
+  test('consensus fallback path stamps edgeSourceTag = CONSENSUS_FALLBACK', () => {
+    const candidate = {
+      gameId: 'nba-tag-001',
+      sport: 'NBA',
+      home_team: 'Lakers',
+      away_team: 'Warriors',
+      commence_time: new Date().toISOString(),
+      marketType: 'SPREAD',
+      selection: 'HOME',
+      selectionLabel: 'Lakers -4.5',
+      line: -4.5,
+      price: -108,
+      consensusLine: -5,
+      consensusPrice: -110,
+      counterpartConsensusPrice: -110,
+      consensusImplied: 0.524,
+      counterpartConsensusImplied: 0.524,
+      comparableLines: [-5, -4.5, -5],
+      comparablePrices: [-110, -108, -112],
+      sourceCount: 3,
+    };
+    const scored = scoreCandidate(candidate);
+    expect(scored.edgeSourceTag).toBe('CONSENSUS_FALLBACK');
+    expect(scored.edgeSourceMeta).toMatchObject({
+      signal_type: 'DEVIG_CONSENSUS',
+      projection_source: null,
+    });
+  });
+});
