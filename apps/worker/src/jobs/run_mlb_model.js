@@ -3182,6 +3182,7 @@ function enrichMlbPitcherData(
 ) {
   const homeTeam = oddsSnapshot?.home_team ?? '';
   const awayTeam = oddsSnapshot?.away_team ?? '';
+  const todayIso = new Date().toISOString().slice(0, 10);
 
   try {
     const db = getDatabase();

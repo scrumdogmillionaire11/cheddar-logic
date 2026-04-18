@@ -112,8 +112,17 @@ assert(
 assert(
   gamesRouteHandlerSource.includes('if (activeRunIds.length > 0)') &&
     gamesRouteHandlerSource.includes('const missingGameIds = allQueryableIds.filter(') &&
+    gamesRouteHandlerSource.includes('mergePropFallbackRows({') &&
     gamesRouteHandlerSource.includes('mergeMlbGameLineFallbackRows({'),
   '/api/games should use the same authority selector in active-run and no-active-run coverage paths',
+);
+
+assert(
+  gamesRouteHandlerSource.includes("'nhl-player-shots'") &&
+    gamesRouteHandlerSource.includes("'nhl-player-shots-1p'") &&
+    gamesRouteHandlerSource.includes("'nhl-player-blk'") &&
+    gamesRouteHandlerSource.includes("'mlb-pitcher-k'"),
+  '/api/games prop fallback merge should explicitly preserve model-backed NHL/MLB player prop families during partial run coverage',
 );
 
 assert(

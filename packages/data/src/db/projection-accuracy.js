@@ -3,19 +3,40 @@
 /**
  * projection-accuracy.js — WI-0864
  *
- * Data access layer for projection_proxy_evals table.
- * Stores per-game × per-proxy-line graded rows for MLB F5 and NHL 1P projections.
+ * Data access layer for projection-only accuracy.
  *
  * All functions accept `db` as first argument (better-sqlite3 / DatabaseProxy instance).
  */
 
 const TRACKED_PROJECTION_ACCURACY_CARD_TYPES = Object.freeze({
+  'mlb-f5': Object.freeze({
+    marketFamily: 'MLB_F5_TOTAL',
+    actualKeys: ['runs_f5'],
+    defaultPeriod: 'F5',
+    projectionKeys: [
+      'projection_accuracy.projection_raw',
+      'projection.projected_total',
+      'projected_total',
+      'decision.model_projection',
+      'drivers.0.projected',
+    ],
+    propType: 'f5_total',
+    identity: 'game',
+  }),
   'nhl-player-shots': Object.freeze({
-    marketFamily: 'NHL_PLAYER_SHOTS_FULL_GAME',
+    marketFamily: 'NHL_PLAYER_SHOTS',
     actualKeys: ['shots'],
     defaultPeriod: 'FULL_GAME',
-    projectionKeys: ['decision.projection', 'decision.model_projection', 'projectedTotal', 'mu', 'drivers.sog_mu'],
+    projectionKeys: [
+      'projection_accuracy.projection_raw',
+      'decision.projection',
+      'decision.model_projection',
+      'projectedTotal',
+      'mu',
+      'drivers.sog_mu',
+    ],
     propType: 'shots_on_goal',
+    identity: 'player',
   }),
   'nhl-player-shots-1p': Object.freeze({
     marketFamily: 'NHL_PLAYER_SHOTS_1P',
@@ -25,17 +46,25 @@ const TRACKED_PROJECTION_ACCURACY_CARD_TYPES = Object.freeze({
     propType: 'shots_on_goal',
   }),
   'nhl-player-blk': Object.freeze({
-    marketFamily: 'NHL_PLAYER_BLOCKS_FULL_GAME',
+    marketFamily: 'NHL_PLAYER_BLOCKS',
     actualKeys: ['blocks'],
     defaultPeriod: 'FULL_GAME',
-    projectionKeys: ['decision.projection', 'projectedTotal', 'mu', 'drivers.blk_mu'],
+    projectionKeys: [
+      'projection_accuracy.projection_raw',
+      'decision.projection',
+      'projectedTotal',
+      'mu',
+      'drivers.blk_mu',
+    ],
     propType: 'blocked_shots',
+    identity: 'player',
   }),
   'mlb-pitcher-k': Object.freeze({
-    marketFamily: 'MLB_PITCHER_STRIKEOUTS',
+    marketFamily: 'MLB_PITCHER_K',
     actualKeys: ['pitcher_ks'],
     defaultPeriod: 'FULL_GAME',
     projectionKeys: [
+      'projection_accuracy.projection_raw',
       'projection.k_mean',
       'projection.projected',
       'pitcher_k_result.projection.k_mean',
@@ -44,10 +73,35 @@ const TRACKED_PROJECTION_ACCURACY_CARD_TYPES = Object.freeze({
       'drivers.0.projection',
     ],
     propType: 'strikeouts',
+    identity: 'player',
   }),
 });
 
-const WEAK_DIRECTION_EDGE_THRESHOLD = 0.25;
+const COMMON_LINES_BY_MARKET_FAMILY = Object.freeze({
+  MLB_F5_TOTAL: Object.freeze([3.5, 4.5, 5.5]),
+  MLB_PITCHER_K: Object.freeze([4.5, 5.5, 6.5, 7.5]),
+  NHL_PLAYER_SHOTS: Object.freeze([1.5, 2.5, 3.5, 4.5]),
+  NHL_PLAYER_SHOTS_1P: Object.freeze([0.5, 1.5, 2.5]),
+  NHL_PLAYER_BLOCKS: Object.freeze([0.5, 1.5, 2.5, 3.5]),
+});
+
+const MARKET_CONFIDENCE_DEFAULTS = Object.freeze({
+  MLB_F5_TOTAL: Object.freeze({ marketEdgeScale: 0.75, marketVarianceCap: 3.0 }),
+  MLB_PITCHER_K: Object.freeze({ marketEdgeScale: 1.0, marketVarianceCap: 3.5 }),
+  NHL_PLAYER_SHOTS: Object.freeze({ marketEdgeScale: 0.75, marketVarianceCap: 2.5 }),
+  NHL_PLAYER_SHOTS_1P: Object.freeze({ marketEdgeScale: 0.5, marketVarianceCap: 1.5 }),
+  NHL_PLAYER_BLOCKS: Object.freeze({ marketEdgeScale: 0.5, marketVarianceCap: 2.0 }),
+});
+
+const WEAK_DIRECTION_EDGE_THRESHOLD = 0.15;
+const SYNTHETIC_RULE_NEAREST_HALF = 'nearest_half';
+const MIN_MARKET_TRUST_SAMPLE = 25;
+const PROJECTION_ACCURACY_MARKET_FAMILIES = Object.freeze([
+  'MLB_F5_TOTAL',
+  'MLB_PITCHER_K',
+  'NHL_PLAYER_SHOTS',
+  'NHL_PLAYER_BLOCKS',
+]);
 
 function normalizeCardType(value) {
   return String(value || '').trim().toLowerCase();
@@ -66,7 +120,7 @@ function toFiniteNumberOrNull(value) {
 function roundToNearestHalf(value) {
   const parsed = toFiniteNumberOrNull(value);
   if (parsed === null) return null;
-  return Math.round(parsed * 2) / 2;
+  return Math.round(parsed - 0.5) + 0.5;
 }
 
 function roundMetric(value, digits = 6) {
@@ -87,10 +141,11 @@ function normalizeDirection(value) {
 function directionFromProjectionLine(projectionValue, line) {
   const projection = toFiniteNumberOrNull(projectionValue);
   const parsedLine = toFiniteNumberOrNull(line);
-  if (projection === null || parsedLine === null) return 'PASS';
+  if (projection === null || parsedLine === null) return 'NO_EDGE';
+  if (Math.abs(projection - parsedLine) < WEAK_DIRECTION_EDGE_THRESHOLD) return 'NO_EDGE';
   if (projection > parsedLine) return 'OVER';
   if (projection < parsedLine) return 'UNDER';
-  return 'PASS';
+  return 'NO_EDGE';
 }
 
 function getPathValue(obj, path) {
@@ -132,10 +187,95 @@ function normalizeConfidenceScore(value) {
 function confidenceBand(score) {
   const parsed = toFiniteNumberOrNull(score);
   if (parsed === null) return 'UNKNOWN';
-  if (parsed >= 0.7) return 'HIGH';
-  if (parsed >= 0.55) return 'MEDIUM';
-  if (parsed >= 0.4) return 'LOW';
-  return 'FRAGILE';
+  const pct = parsed <= 1 ? parsed * 100 : parsed;
+  if (pct >= 63) return 'STRONG';
+  if (pct >= 58) return 'TRUST';
+  if (pct >= 52) return 'WATCH';
+  return 'LOW';
+}
+
+function clamp(value, min, max) {
+  return Math.max(min, Math.min(max, value));
+}
+
+function variance(values) {
+  const finite = values.map(toFiniteNumberOrNull).filter((value) => value !== null);
+  if (finite.length < 2) return null;
+  const avg = finite.reduce((sum, value) => sum + value, 0) / finite.length;
+  return finite.reduce((sum, value) => sum + ((value - avg) ** 2), 0) / finite.length;
+}
+
+function poissonCdf(k, lambda) {
+  const parsedLambda = toFiniteNumberOrNull(lambda);
+  if (parsedLambda === null || parsedLambda < 0) return null;
+  const boundary = Math.floor(k);
+  if (boundary < 0) return 0;
+  let term = Math.exp(-parsedLambda);
+  let sum = term;
+  for (let i = 1; i <= boundary; i += 1) {
+    term *= parsedLambda / i;
+    sum += term;
+  }
+  return clamp(sum, 0, 1);
+}
+
+function expectedOverProbability(projectionRaw, line) {
+  const lambda = toFiniteNumberOrNull(projectionRaw);
+  const parsedLine = toFiniteNumberOrNull(line);
+  if (lambda === null || parsedLine === null) return null;
+  const floorLine = Math.floor(parsedLine);
+  const cdf = poissonCdf(floorLine, lambda);
+  return cdf === null ? null : roundMetric(1 - cdf, 6);
+}
+
+function expectedDirectionProbability(projectionRaw, line, direction) {
+  const overProb = expectedOverProbability(projectionRaw, line);
+  if (overProb === null) return null;
+  const side = normalizeDirection(direction);
+  if (side === 'OVER') return overProb;
+  if (side === 'UNDER') return roundMetric(1 - overProb, 6);
+  return null;
+}
+
+function calibrationBucketForProjection(projectionRaw) {
+  const value = toFiniteNumberOrNull(projectionRaw);
+  if (value === null) return 'UNKNOWN';
+  const min = Math.floor(value);
+  return `${min}.0-${min}.9`;
+}
+
+function getMarketDefaults(marketFamily) {
+  return MARKET_CONFIDENCE_DEFAULTS[marketFamily] || {
+    marketEdgeScale: 1,
+    marketVarianceCap: 3,
+  };
+}
+
+function deriveProjectionConfidence({
+  edgeDistance = null,
+  historicalBucketHitRate = 0.5,
+  varianceOfMarket = null,
+  marketFamily = null,
+} = {}) {
+  const defaults = getMarketDefaults(marketFamily);
+  const edge = Math.max(0, toFiniteNumberOrNull(edgeDistance) ?? 0);
+  const bucketHitRate = toFiniteNumberOrNull(historicalBucketHitRate) ?? 0.5;
+  const marketVariance =
+    toFiniteNumberOrNull(varianceOfMarket) ??
+    (defaults.marketVarianceCap * 0.5);
+
+  const edgeScore = clamp(edge / defaults.marketEdgeScale, 0, 1);
+  const bucketScore = clamp((bucketHitRate - 0.50) / 0.15, -1, 1);
+  const variancePenalty = clamp(marketVariance / defaults.marketVarianceCap, 0, 1);
+
+  return Math.round(100 * clamp(
+    0.50 +
+      (0.30 * edgeScore) +
+      (0.20 * bucketScore) -
+      (0.20 * variancePenalty),
+    0,
+    1,
+  ));
 }
 
 function collectFlags(payload) {
@@ -189,26 +329,6 @@ function resolveProjectionMarketTrust(payload = {}) {
   return { marketTrust: 'UNVERIFIED', flags, lineSource: lineSource || null, basis: basis || null };
 }
 
-function deriveProjectionConfidence({ payload = {}, projectionValue, line, marketTrust }) {
-  const explicit = normalizeConfidenceScore(payload?.confidence ?? payload?.decision?.confidence);
-  const edge = Math.abs((toFiniteNumberOrNull(projectionValue) ?? 0) - (toFiniteNumberOrNull(line) ?? 0));
-  const edgeComponent =
-    edge >= 1.5 ? 0.9 :
-      edge >= 1.0 ? 0.78 :
-        edge >= 0.5 ? 0.65 :
-          edge >= WEAK_DIRECTION_EDGE_THRESHOLD ? 0.52 :
-            0.42;
-  const base = explicit === null ? edgeComponent : ((explicit * 0.7) + (edgeComponent * 0.3));
-  const trustMultiplier =
-    marketTrust === 'ODDS_BACKED' ? 1 :
-      marketTrust === 'PROJECTION_ONLY' ? 0.88 :
-        marketTrust === 'SYNTHETIC_FALLBACK' ? 0.82 :
-          0.75;
-  const capped = edge < WEAK_DIRECTION_EDGE_THRESHOLD
-    ? Math.min(base * trustMultiplier, 0.49)
-    : base * trustMultiplier;
-  return roundMetric(Math.max(0, Math.min(1, capped)), 3);
-}
 
 /**
  * Insert a single proxy eval row.
@@ -517,7 +637,7 @@ function gradeLine({ actualValue, line, direction }) {
   if (actual === null || evalLine === null) {
     return { gradedResult: 'PENDING', hitFlag: null };
   }
-  if (!side) {
+  if (!side || direction === 'NO_EDGE') {
     return { gradedResult: 'NO_BET', hitFlag: 0 };
   }
   if (actual === evalLine) {
@@ -525,6 +645,332 @@ function gradeLine({ actualValue, line, direction }) {
   }
   const won = side === 'OVER' ? actual > evalLine : actual < evalLine;
   return { gradedResult: won ? 'WIN' : 'LOSS', hitFlag: won ? 1 : 0 };
+}
+
+function arrayFromJson(value) {
+  if (Array.isArray(value)) return value.map(String);
+  if (!value) return [];
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed.map(String) : [];
+  } catch {
+    return [];
+  }
+}
+
+function mergeFailureFlags(existing, additions = []) {
+  return [...new Set([
+    ...arrayFromJson(existing),
+    ...additions.map(String),
+  ].map((flag) => String(flag).trim()).filter(Boolean))].sort();
+}
+
+function getHistoricalBucketHitRate(db, marketFamily, calibrationBucket) {
+  try {
+    const row = db.prepare(`
+      SELECT
+        SUM(CASE WHEN graded_result = 'WIN' THEN 1 ELSE 0 END) AS wins,
+        SUM(CASE WHEN graded_result = 'LOSS' THEN 1 ELSE 0 END) AS losses
+      FROM projection_accuracy_evals
+      WHERE market_family = ?
+        AND calibration_bucket = ?
+        AND grade_status = 'GRADED'
+        AND COALESCE(weak_direction_flag, 0) = 0
+    `).get(marketFamily, calibrationBucket);
+    const wins = Number(row?.wins || 0);
+    const losses = Number(row?.losses || 0);
+    return wins + losses >= 10 ? wins / (wins + losses) : 0.5;
+  } catch {
+    return 0.5;
+  }
+}
+
+function getMarketActualVariance(db, marketFamily) {
+  try {
+    const rows = db.prepare(`
+      SELECT actual_value
+      FROM projection_accuracy_evals
+      WHERE market_family = ?
+        AND grade_status = 'GRADED'
+        AND actual_value IS NOT NULL
+      ORDER BY id DESC
+      LIMIT 200
+    `).all(marketFamily);
+    const calculated = variance(rows.map((row) => row.actual_value));
+    if (calculated !== null) return calculated;
+  } catch {
+    // fall through to default below
+  }
+  return getMarketDefaults(marketFamily).marketVarianceCap * 0.5;
+}
+
+function computeMarketTrustStatus({ wins = 0, losses = 0, calibrationGap = 0, weakShare = 0, monotonicLift = true } = {}) {
+  const sampleSize = wins + losses;
+  if (sampleSize < MIN_MARKET_TRUST_SAMPLE) return 'INSUFFICIENT_DATA';
+  const winRate = sampleSize > 0 ? wins / sampleSize : null;
+  if (winRate === null) return 'INSUFFICIENT_DATA';
+  if (winRate < 0.50 || !monotonicLift || weakShare > 0.40) return 'NOISE';
+  if (winRate >= 0.57 && calibrationGap <= 0.05 && monotonicLift) return 'SHARP';
+  if (winRate >= 0.53 && calibrationGap <= 0.08) return 'TRUSTED';
+  return 'WATCH';
+}
+
+function hasMonotonicConfidenceLift(rows = []) {
+  const bandOrder = ['LOW', 'WATCH', 'TRUST', 'STRONG'];
+  let previousRate = null;
+  let observedBands = 0;
+
+  for (const band of bandOrder) {
+    const row = rows.find((candidate) => candidate.band === band);
+    const wins = Number(row?.wins || 0);
+    const losses = Number(row?.losses || 0);
+    if (wins + losses === 0) continue;
+
+    const rate = wins / (wins + losses);
+    observedBands += 1;
+    if (previousRate !== null && rate < previousRate) return false;
+    previousRate = rate;
+  }
+
+  return true;
+}
+
+function computeMarketTrustStatusForFamily(db, marketFamily) {
+  try {
+    const overall = db.prepare(`
+      SELECT
+        SUM(CASE WHEN l.graded_result = 'WIN' AND COALESCE(l.weak_direction_flag, 0) = 0 THEN 1 ELSE 0 END) AS wins,
+        SUM(CASE WHEN l.graded_result = 'LOSS' AND COALESCE(l.weak_direction_flag, 0) = 0 THEN 1 ELSE 0 END) AS losses,
+        COUNT(l.id) AS total_line_evals,
+        SUM(CASE WHEN l.weak_direction_flag = 1 THEN 1 ELSE 0 END) AS weak_direction_count,
+        AVG(
+          CASE
+            WHEN e.actual_value IS NOT NULL
+             AND e.synthetic_line IS NOT NULL
+             AND e.expected_over_prob IS NOT NULL
+            THEN ABS(e.expected_over_prob - CASE WHEN e.actual_value > e.synthetic_line THEN 1.0 ELSE 0.0 END)
+          END
+        ) AS calibration_gap
+      FROM projection_accuracy_line_evals l
+      JOIN projection_accuracy_evals e ON e.card_id = l.card_id
+      WHERE e.market_family = ?
+        AND l.line_role = 'SYNTHETIC'
+        AND l.grade_status = 'GRADED'
+    `).get(marketFamily);
+
+    const byBand = db.prepare(`
+      SELECT
+        l.confidence_band AS band,
+        SUM(CASE WHEN l.graded_result = 'WIN' AND COALESCE(l.weak_direction_flag, 0) = 0 THEN 1 ELSE 0 END) AS wins,
+        SUM(CASE WHEN l.graded_result = 'LOSS' AND COALESCE(l.weak_direction_flag, 0) = 0 THEN 1 ELSE 0 END) AS losses
+      FROM projection_accuracy_line_evals l
+      JOIN projection_accuracy_evals e ON e.card_id = l.card_id
+      WHERE e.market_family = ?
+        AND l.line_role = 'SYNTHETIC'
+        AND l.grade_status = 'GRADED'
+      GROUP BY l.confidence_band
+    `).all(marketFamily);
+
+    const totalLineEvals = Number(overall?.total_line_evals || 0);
+    const weakShare = totalLineEvals > 0
+      ? Number(overall?.weak_direction_count || 0) / totalLineEvals
+      : 0;
+    return computeMarketTrustStatus({
+      wins: Number(overall?.wins || 0),
+      losses: Number(overall?.losses || 0),
+      calibrationGap: Number(overall?.calibration_gap || 0),
+      weakShare,
+      monotonicLift: hasMonotonicConfidenceLift(byBand),
+    });
+  } catch {
+    return 'INSUFFICIENT_DATA';
+  }
+}
+
+function computeProjectionAccuracyMarketHealth(db, {
+  marketFamily,
+  lineRole = 'SYNTHETIC',
+  generatedAt = new Date().toISOString(),
+} = {}) {
+  if (!db || !marketFamily) return null;
+
+  const overall = db.prepare(`
+    SELECT
+      SUM(CASE WHEN l.graded_result = 'WIN' AND COALESCE(l.weak_direction_flag, 0) = 0 THEN 1 ELSE 0 END) AS wins,
+      SUM(CASE WHEN l.graded_result = 'LOSS' AND COALESCE(l.weak_direction_flag, 0) = 0 THEN 1 ELSE 0 END) AS losses,
+      SUM(CASE WHEN l.graded_result = 'PUSH' THEN 1 ELSE 0 END) AS pushes,
+      SUM(CASE WHEN l.graded_result = 'NO_BET' THEN 1 ELSE 0 END) AS no_bets,
+      COUNT(l.id) AS total_line_evals,
+      SUM(CASE WHEN l.weak_direction_flag = 1 THEN 1 ELSE 0 END) AS weak_direction_count,
+      AVG(e.absolute_error) AS mae,
+      AVG(e.signed_error) AS bias,
+      AVG(e.projection_confidence) AS avg_confidence,
+      AVG(
+        CASE
+          WHEN e.actual_value IS NOT NULL
+           AND e.synthetic_line IS NOT NULL
+           AND e.expected_over_prob IS NOT NULL
+          THEN ABS(e.expected_over_prob - CASE WHEN e.actual_value > e.synthetic_line THEN 1.0 ELSE 0.0 END)
+        END
+      ) AS calibration_gap
+    FROM projection_accuracy_line_evals l
+    JOIN projection_accuracy_evals e ON e.card_id = l.card_id
+    WHERE e.market_family = ?
+      AND l.line_role = ?
+      AND l.grade_status = 'GRADED'
+  `).get(marketFamily, lineRole);
+
+  const confidenceRows = db.prepare(`
+    SELECT
+      l.confidence_band AS band,
+      SUM(CASE WHEN l.graded_result = 'WIN' AND COALESCE(l.weak_direction_flag, 0) = 0 THEN 1 ELSE 0 END) AS wins,
+      SUM(CASE WHEN l.graded_result = 'LOSS' AND COALESCE(l.weak_direction_flag, 0) = 0 THEN 1 ELSE 0 END) AS losses,
+      AVG(e.absolute_error) AS mae,
+      AVG(e.signed_error) AS bias
+    FROM projection_accuracy_line_evals l
+    JOIN projection_accuracy_evals e ON e.card_id = l.card_id
+    WHERE e.market_family = ?
+      AND l.line_role = ?
+      AND l.grade_status = 'GRADED'
+    GROUP BY l.confidence_band
+  `).all(marketFamily, lineRole);
+
+  const wins = Number(overall?.wins || 0);
+  const losses = Number(overall?.losses || 0);
+  const sampleSize = wins + losses;
+  const totalLineEvals = Number(overall?.total_line_evals || 0);
+  const weakDirectionShare = totalLineEvals > 0
+    ? Number(overall?.weak_direction_count || 0) / totalLineEvals
+    : 0;
+  const calibrationGap = Number(overall?.calibration_gap || 0);
+  const confidenceLift = {};
+  for (const row of confidenceRows) {
+    const bandWins = Number(row.wins || 0);
+    const bandLosses = Number(row.losses || 0);
+    confidenceLift[row.band || 'UNKNOWN'] = {
+      wins: bandWins,
+      losses: bandLosses,
+      sample_size: bandWins + bandLosses,
+      win_rate: bandWins + bandLosses > 0 ? bandWins / (bandWins + bandLosses) : null,
+      mae: row.mae ?? null,
+      bias: row.bias ?? null,
+    };
+  }
+
+  const confidenceBandsImprove = hasMonotonicConfidenceLift(confidenceRows);
+  const marketTrustStatus = computeMarketTrustStatus({
+    wins,
+    losses,
+    calibrationGap,
+    weakShare: weakDirectionShare,
+    monotonicLift: confidenceBandsImprove,
+  });
+
+  return {
+    market_family: marketFamily,
+    line_role: lineRole,
+    generated_at: generatedAt,
+    sample_size: sampleSize,
+    wins,
+    losses,
+    pushes: Number(overall?.pushes || 0),
+    no_bets: Number(overall?.no_bets || 0),
+    win_rate: sampleSize > 0 ? wins / sampleSize : null,
+    mae: overall?.mae ?? null,
+    bias: overall?.bias ?? null,
+    calibration_gap: overall?.calibration_gap ?? null,
+    avg_confidence: overall?.avg_confidence ?? null,
+    weak_direction_share: weakDirectionShare,
+    confidence_lift: confidenceLift,
+    confidence_bands_improve: confidenceBandsImprove,
+    market_trust_status: marketTrustStatus,
+  };
+}
+
+function materializeProjectionAccuracyMarketHealth(db, {
+  marketFamilies = PROJECTION_ACCURACY_MARKET_FAMILIES,
+  lineRole = 'SYNTHETIC',
+  generatedAt = new Date().toISOString(),
+} = {}) {
+  if (!db) return [];
+  const rows = [];
+
+  const write = () => {
+    for (const marketFamily of marketFamilies) {
+      const row = computeProjectionAccuracyMarketHealth(db, {
+        marketFamily,
+        lineRole,
+        generatedAt,
+      });
+      if (!row) continue;
+      rows.push(row);
+
+      db.prepare(`
+        INSERT INTO projection_accuracy_market_health (
+          market_family, line_role, generated_at, sample_size,
+          wins, losses, pushes, no_bets, win_rate, mae, bias,
+          calibration_gap, avg_confidence, weak_direction_share,
+          confidence_lift_json, market_trust_status, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(market_family) DO UPDATE SET
+          line_role = excluded.line_role,
+          generated_at = excluded.generated_at,
+          sample_size = excluded.sample_size,
+          wins = excluded.wins,
+          losses = excluded.losses,
+          pushes = excluded.pushes,
+          no_bets = excluded.no_bets,
+          win_rate = excluded.win_rate,
+          mae = excluded.mae,
+          bias = excluded.bias,
+          calibration_gap = excluded.calibration_gap,
+          avg_confidence = excluded.avg_confidence,
+          weak_direction_share = excluded.weak_direction_share,
+          confidence_lift_json = excluded.confidence_lift_json,
+          market_trust_status = excluded.market_trust_status,
+          updated_at = CURRENT_TIMESTAMP
+      `).run(
+        row.market_family,
+        row.line_role,
+        row.generated_at,
+        row.sample_size,
+        row.wins,
+        row.losses,
+        row.pushes,
+        row.no_bets,
+        row.win_rate,
+        row.mae,
+        row.bias,
+        row.calibration_gap,
+        row.avg_confidence,
+        row.weak_direction_share,
+        JSON.stringify(row.confidence_lift),
+        row.market_trust_status,
+      );
+
+      db.prepare(`
+        UPDATE projection_accuracy_evals
+        SET market_trust_status = ?,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE market_family = ?
+      `).run(row.market_trust_status, row.market_family);
+    }
+  };
+
+  if (typeof db.transaction === 'function') {
+    db.transaction(write)();
+  } else {
+    db.exec('BEGIN');
+    try {
+      write();
+      db.exec('COMMIT');
+    } catch (error) {
+      try { db.exec('ROLLBACK'); } catch {}
+      throw error;
+    }
+  }
+
+  return rows;
 }
 
 function buildProjectionAccuracyLineRows(capture) {
@@ -536,15 +982,18 @@ function buildProjectionAccuracyLineRows(capture) {
     const direction = directionFromProjectionLine(capture.projectionValue, evalLine);
     const edge = roundMetric(capture.projectionValue - evalLine, 6);
     const weakDirectionFlag = Math.abs(edge ?? 0) < WEAK_DIRECTION_EDGE_THRESHOLD ? 1 : 0;
+    const expectedOverProb = expectedOverProbability(capture.projectionValue, evalLine);
+    const expectedDirProb = expectedDirectionProbability(capture.projectionValue, evalLine, direction);
     const confidenceScore = deriveProjectionConfidence({
-      payload: capture.payloadData,
-      projectionValue: capture.projectionValue,
-      line: evalLine,
-      marketTrust: capture.marketTrust,
+      edgeDistance: Math.abs(edge ?? 0),
+      historicalBucketHitRate: capture.historicalBucketHitRate ?? 0.5,
+      varianceOfMarket: capture.varianceOfMarket ?? null,
+      marketFamily: capture.marketFamily,
     });
     rows.push({
       card_id: capture.cardId,
       line_role: lineRole,
+      line: evalLine,
       eval_line: evalLine,
       projection_value: capture.projectionValue,
       direction,
@@ -553,10 +1002,12 @@ function buildProjectionAccuracyLineRows(capture) {
       confidence_score: confidenceScore,
       confidence_band: confidenceBand(confidenceScore),
       market_trust: capture.marketTrust,
+      expected_over_prob: expectedOverProb,
+      expected_direction_prob: expectedDirProb,
     });
   };
 
-  addLine('NEAREST_HALF', capture.nearestHalfLine);
+  addLine('SYNTHETIC', capture.nearestHalfLine);
   if (
     capture.selectedLine !== null &&
     capture.nearestHalfLine !== null &&
@@ -564,8 +1015,15 @@ function buildProjectionAccuracyLineRows(capture) {
   ) {
     addLine('SELECTED_MARKET', capture.selectedLine);
   }
+  for (const line of COMMON_LINES_BY_MARKET_FAMILY[capture.marketFamily] || []) {
+    addLine(`COMMON_${line}`, line);
+  }
 
-  return rows;
+  const byLine = new Map();
+  for (const row of rows) {
+    if (!byLine.has(row.eval_line)) byLine.set(row.eval_line, row);
+  }
+  return Array.from(byLine.values());
 }
 
 function deriveProjectionAccuracyCapture(card = {}) {
@@ -584,22 +1042,34 @@ function deriveProjectionAccuracyCapture(card = {}) {
   const nearestHalfLine = roundToNearestHalf(projectionValue);
   if (nearestHalfLine === null) return null;
 
-  const primaryLine = selectedLine ?? nearestHalfLine;
   const { marketTrust, flags, lineSource, basis } = resolveProjectionMarketTrust(payloadData);
-  const selectedDirection = resolveSelectedDirection(payloadData, projectionValue, primaryLine);
-  const primaryEdge = roundMetric(projectionValue - primaryLine, 6);
-  const weakDirectionFlag = Math.abs(primaryEdge ?? 0) < WEAK_DIRECTION_EDGE_THRESHOLD ? 1 : 0;
+  const syntheticDirection = directionFromProjectionLine(projectionValue, nearestHalfLine);
+  const selectedDirection = resolveSelectedDirection(payloadData, projectionValue, nearestHalfLine);
+  const primaryEdge = roundMetric(projectionValue - nearestHalfLine, 6);
+  const weakDirectionFlag =
+    syntheticDirection === 'NO_EDGE' ||
+    Math.abs(primaryEdge ?? 0) < WEAK_DIRECTION_EDGE_THRESHOLD
+      ? 1
+      : 0;
+  const failureFlags = weakDirectionFlag ? ['DIRECTION_TOO_WEAK'] : [];
   const confidenceScore = deriveProjectionConfidence({
-    payload: payloadData,
-    projectionValue,
-    line: primaryLine,
-    marketTrust,
+    edgeDistance: Math.abs(primaryEdge ?? 0),
+    historicalBucketHitRate: 0.5,
+    varianceOfMarket: null,
+    marketFamily: config.marketFamily,
   });
   const period = pickFirstString(payloadData, [
     'period',
     'play.period',
     'market.period',
   ]) ?? config.defaultPeriod;
+  const playerId = pickFirstString(payloadData, ['player_id', 'play.player_id', 'play.selection.player_id']);
+  const playerName = pickFirstString(payloadData, ['player_name', 'play.player_name', 'play.selection.player_name']);
+  const playerOrGameId = config.identity === 'player'
+    ? (playerId || playerName || null)
+    : (card.gameId ?? card.game_id ?? payloadData.game_id ?? null);
+  const expectedOverProb = expectedOverProbability(projectionValue, nearestHalfLine);
+  const expectedDirProb = expectedDirectionProbability(projectionValue, nearestHalfLine, syntheticDirection);
 
   return {
     cardId: card.id ?? card.card_id,
@@ -607,21 +1077,34 @@ function deriveProjectionAccuracyCapture(card = {}) {
     sport: card.sport ?? payloadData.sport ?? null,
     cardType,
     marketFamily: config.marketFamily,
-    playerId: pickFirstString(payloadData, ['player_id', 'play.player_id', 'play.selection.player_id']),
-    playerName: pickFirstString(payloadData, ['player_name', 'play.player_name', 'play.selection.player_name']),
+    marketType: config.marketFamily,
+    playerId,
+    playerName,
+    playerOrGameId,
     teamAbbr: pickFirstString(payloadData, ['team_abbr', 'team_abbrev', 'play.selection.team']),
     period,
     projectionValue: roundMetric(projectionValue, 6),
+    projectionRaw: roundMetric(projectionValue, 6),
     selectedLine,
     nearestHalfLine,
+    syntheticLine: nearestHalfLine,
+    syntheticRule: SYNTHETIC_RULE_NEAREST_HALF,
+    syntheticDirection,
     selectedDirection,
+    directionStrength: weakDirectionFlag ? 'WEAK' : 'STRONG',
     weakDirectionFlag,
     confidenceScore,
+    projectionConfidence: confidenceScore,
     confidenceBand: confidenceBand(confidenceScore),
     marketTrust,
+    marketTrustStatus: 'INSUFFICIENT_DATA',
     marketTrustFlags: flags,
+    failureFlags,
     lineSource,
     basis,
+    expectedOverProb,
+    expectedDirectionProb: expectedDirProb,
+    calibrationBucket: calibrationBucketForProjection(projectionValue),
     capturedAt: card.createdAt ?? card.created_at ?? payloadData.generated_at ?? new Date().toISOString(),
     generatedAt: payloadData.generated_at ?? null,
     payloadData,
@@ -640,66 +1123,61 @@ function captureProjectionAccuracyEval(db, capture) {
 
   const write = () => {
     db.prepare(`
-      INSERT INTO projection_accuracy_evals (
-        card_id, game_id, sport, card_type, market_family,
-        player_id, player_name, team_abbr, period,
-        projection_value, selected_line, nearest_half_line, selected_direction,
-        weak_direction_flag, confidence_score, confidence_band,
-        market_trust, market_trust_flags, line_source, basis,
-        captured_at, generated_at, metadata, updated_at
+      INSERT OR IGNORE INTO projection_accuracy_evals (
+        card_id, game_id, sport, card_type, market_family, market_type,
+        player_id, player_name, player_or_game_id, team_abbr, period,
+        projection_raw, projection_value, synthetic_line, synthetic_rule,
+        synthetic_direction, direction_strength, selected_line,
+        nearest_half_line, selected_direction, weak_direction_flag,
+        projection_confidence, confidence_score, confidence_band,
+        market_trust, market_trust_status, market_trust_flags, failure_flags,
+        line_source, basis, expected_over_prob, expected_direction_prob,
+        calibration_bucket, captured_at, generated_at, metadata, updated_at
       ) VALUES (
+        ?, ?, ?, ?, ?, ?,
         ?, ?, ?, ?, ?,
         ?, ?, ?, ?,
-        ?, ?, ?, ?,
+        ?, ?, ?,
+        ?, ?, ?,
         ?, ?, ?,
         ?, ?, ?, ?,
-        ?, ?, ?, CURRENT_TIMESTAMP
+        ?, ?, ?, ?,
+        ?, ?, ?, ?, CURRENT_TIMESTAMP
       )
-      ON CONFLICT(card_id) DO UPDATE SET
-        game_id = excluded.game_id,
-        sport = excluded.sport,
-        card_type = excluded.card_type,
-        market_family = excluded.market_family,
-        player_id = excluded.player_id,
-        player_name = excluded.player_name,
-        team_abbr = excluded.team_abbr,
-        period = excluded.period,
-        projection_value = excluded.projection_value,
-        selected_line = excluded.selected_line,
-        nearest_half_line = excluded.nearest_half_line,
-        selected_direction = excluded.selected_direction,
-        weak_direction_flag = excluded.weak_direction_flag,
-        confidence_score = excluded.confidence_score,
-        confidence_band = excluded.confidence_band,
-        market_trust = excluded.market_trust,
-        market_trust_flags = excluded.market_trust_flags,
-        line_source = excluded.line_source,
-        basis = excluded.basis,
-        captured_at = excluded.captured_at,
-        generated_at = excluded.generated_at,
-        metadata = excluded.metadata,
-        updated_at = CURRENT_TIMESTAMP
     `).run(
       capture.cardId,
       capture.gameId,
       capture.sport ? String(capture.sport).toLowerCase() : null,
       capture.cardType,
       capture.marketFamily,
+      capture.marketType,
       capture.playerId,
       capture.playerName,
+      capture.playerOrGameId,
       capture.teamAbbr,
       capture.period,
+      capture.projectionRaw,
       capture.projectionValue,
+      capture.syntheticLine,
+      capture.syntheticRule,
+      capture.syntheticDirection,
+      capture.directionStrength,
       capture.selectedLine,
       capture.nearestHalfLine,
       capture.selectedDirection,
       capture.weakDirectionFlag,
+      capture.projectionConfidence,
       capture.confidenceScore,
       capture.confidenceBand,
       capture.marketTrust,
+      capture.marketTrustStatus,
       JSON.stringify(capture.marketTrustFlags ?? []),
+      JSON.stringify(capture.failureFlags ?? []),
       capture.lineSource,
       capture.basis,
+      capture.expectedOverProb,
+      capture.expectedDirectionProb,
+      capture.calibrationBucket,
       capture.capturedAt,
       capture.generatedAt,
       JSON.stringify(capture.metadata ?? {}),
@@ -711,26 +1189,17 @@ function captureProjectionAccuracyEval(db, capture) {
 
     for (const row of lineRows) {
       db.prepare(`
-        INSERT INTO projection_accuracy_line_evals (
-          eval_id, card_id, line_role, eval_line, projection_value,
+        INSERT OR IGNORE INTO projection_accuracy_line_evals (
+          eval_id, card_id, line_role, line, eval_line, projection_value,
           direction, weak_direction_flag, edge_vs_line,
-          confidence_score, confidence_band, market_trust, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-        ON CONFLICT(card_id, line_role) DO UPDATE SET
-          eval_id = excluded.eval_id,
-          eval_line = excluded.eval_line,
-          projection_value = excluded.projection_value,
-          direction = excluded.direction,
-          weak_direction_flag = excluded.weak_direction_flag,
-          edge_vs_line = excluded.edge_vs_line,
-          confidence_score = excluded.confidence_score,
-          confidence_band = excluded.confidence_band,
-          market_trust = excluded.market_trust,
-          updated_at = CURRENT_TIMESTAMP
+          confidence_score, confidence_band, market_trust,
+          expected_over_prob, expected_direction_prob, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
       `).run(
         parent?.id ?? null,
         row.card_id,
         row.line_role,
+        row.line,
         row.eval_line,
         row.projection_value,
         row.direction,
@@ -739,6 +1208,8 @@ function captureProjectionAccuracyEval(db, capture) {
         row.confidence_score,
         row.confidence_band,
         row.market_trust,
+        row.expected_over_prob,
+        row.expected_direction_prob,
       );
     }
   };
@@ -773,38 +1244,116 @@ function gradeProjectionAccuracyEval(db, { cardId, actualResult, gradedAt = new 
   if (!parent) return false;
 
   const actualValue = resolveActualValue(parent.card_type, actualResult);
-  if (actualValue === null) return false;
+  if (actualValue === null) {
+    const flags = [...new Set([...arrayFromJson(parent.failure_flags), 'MISSING_ACTUAL'])];
+    db.prepare(`
+      UPDATE projection_accuracy_evals
+      SET failure_flags = ?,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE card_id = ?
+    `).run(JSON.stringify(flags), cardId);
+    return false;
+  }
 
-  const primaryLine = parent.selected_line !== null && parent.selected_line !== undefined
-    ? parent.selected_line
-    : parent.nearest_half_line;
+  const syntheticLine = parent.synthetic_line ?? parent.nearest_half_line;
+  const syntheticDirection = parent.synthetic_direction ?? parent.selected_direction;
+  const projectionRaw = parent.projection_raw ?? parent.projection_value;
+  const failureFlags = new Set(arrayFromJson(parent.failure_flags));
+  if (Number.isFinite(Number(parent.nearest_half_line)) && roundToNearestHalf(projectionRaw) !== syntheticLine) {
+    failureFlags.add('SYNTHETIC_LINE_OVERWRITTEN');
+  }
+  try {
+    const payloadRow = db.prepare('SELECT payload_data FROM card_payloads WHERE id = ? LIMIT 1').get(cardId);
+    if (payloadRow?.payload_data) {
+      const payload = parseJsonObject(payloadRow.payload_data);
+      const config = TRACKED_PROJECTION_ACCURACY_CARD_TYPES[normalizeCardType(parent.card_type)];
+      const currentProjection = config ? pickFirstFinite(payload, config.projectionKeys) : null;
+      if (
+        currentProjection !== null &&
+        Math.abs(currentProjection - projectionRaw) > 1e-9
+      ) {
+        failureFlags.add('PROJECTION_MODIFIED_BEFORE_GRADING');
+      }
+    }
+  } catch {
+    // Mutation audit is best-effort; grading should still complete.
+  }
+
   const parentGrade = gradeLine({
     actualValue,
-    line: primaryLine,
-    direction: parent.selected_direction,
+    line: syntheticLine,
+    direction: parent.weak_direction_flag ? 'NO_EDGE' : syntheticDirection,
   });
   const absoluteError = roundMetric(Math.abs(actualValue - parent.projection_value), 6);
+  const signedError = roundMetric(parent.projection_value - actualValue, 6);
+  const historicalBucketHitRate = getHistoricalBucketHitRate(
+    db,
+    parent.market_family,
+    parent.calibration_bucket ?? calibrationBucketForProjection(parent.projection_value),
+  );
+  const varianceOfMarket = getMarketActualVariance(db, parent.market_family);
+  const edgeDistance = Math.abs((parent.projection_value ?? 0) - (syntheticLine ?? 0));
+  const confidence = deriveProjectionConfidence({
+    edgeDistance,
+    historicalBucketHitRate,
+    varianceOfMarket,
+    marketFamily: parent.market_family,
+  });
+  const expectedOverProb = expectedOverProbability(parent.projection_value, syntheticLine);
+  const expectedDirProb = expectedDirectionProbability(parent.projection_value, syntheticLine, syntheticDirection);
 
   const write = () => {
     db.prepare(`
       UPDATE projection_accuracy_evals
-      SET actual_value = ?,
+      SET actual = ?,
+          actual_value = ?,
           grade_status = 'GRADED',
           graded_result = ?,
           graded_at = ?,
+          abs_error = ?,
+          signed_error = ?,
           absolute_error = ?,
+          projection_confidence = ?,
+          confidence_score = ?,
+          confidence_band = ?,
+          expected_over_prob = ?,
+          expected_direction_prob = ?,
+          failure_flags = ?,
           updated_at = CURRENT_TIMESTAMP
       WHERE card_id = ?
-    `).run(actualValue, parentGrade.gradedResult, gradedAt, absoluteError, cardId);
+    `).run(
+      actualValue,
+      actualValue,
+      parentGrade.gradedResult,
+      gradedAt,
+      absoluteError,
+      signedError,
+      absoluteError,
+      confidence,
+      confidence,
+      confidenceBand(confidence),
+      expectedOverProb,
+      expectedDirProb,
+      JSON.stringify(Array.from(failureFlags).sort()),
+      cardId,
+    );
 
     const lineRows = db
-      .prepare('SELECT id, eval_line, direction FROM projection_accuracy_line_evals WHERE card_id = ?')
+      .prepare('SELECT id, eval_line, direction, edge_vs_line, weak_direction_flag FROM projection_accuracy_line_evals WHERE card_id = ?')
       .all(cardId);
     for (const row of lineRows) {
+      const lineExpectedOver = expectedOverProbability(parent.projection_value, row.eval_line);
+      const lineExpectedDir = expectedDirectionProbability(parent.projection_value, row.eval_line, row.direction);
+      const lineConfidence = deriveProjectionConfidence({
+        edgeDistance: Math.abs(row.edge_vs_line ?? 0),
+        historicalBucketHitRate,
+        varianceOfMarket,
+        marketFamily: parent.market_family,
+      });
       const lineGrade = gradeLine({
         actualValue,
         line: row.eval_line,
-        direction: row.direction,
+        direction: row.weak_direction_flag ? 'NO_EDGE' : row.direction,
       });
       db.prepare(`
         UPDATE projection_accuracy_line_evals
@@ -812,11 +1361,33 @@ function gradeProjectionAccuracyEval(db, { cardId, actualResult, gradedAt = new 
             grade_status = 'GRADED',
             graded_result = ?,
             hit_flag = ?,
+            confidence_score = ?,
+            confidence_band = ?,
+            expected_over_prob = ?,
+            expected_direction_prob = ?,
             graded_at = ?,
             updated_at = CURRENT_TIMESTAMP
         WHERE id = ?
-      `).run(actualValue, lineGrade.gradedResult, lineGrade.hitFlag, gradedAt, row.id);
+      `).run(
+        actualValue,
+        lineGrade.gradedResult,
+        lineGrade.hitFlag,
+        lineConfidence,
+        confidenceBand(lineConfidence),
+        lineExpectedOver,
+        lineExpectedDir,
+        gradedAt,
+        row.id,
+      );
     }
+
+    const marketTrustStatus = computeMarketTrustStatusForFamily(db, parent.market_family);
+    db.prepare(`
+      UPDATE projection_accuracy_evals
+      SET market_trust_status = ?,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE market_family = ?
+    `).run(marketTrustStatus, parent.market_family);
   };
 
   if (typeof db.transaction === 'function') {
@@ -833,6 +1404,201 @@ function gradeProjectionAccuracyEval(db, { cardId, actualResult, gradedAt = new 
   }
 
   return true;
+}
+
+function actualResultFromEvalRow(row) {
+  const config = TRACKED_PROJECTION_ACCURACY_CARD_TYPES[normalizeCardType(row?.card_type)];
+  const actualValue = toFiniteNumberOrNull(row?.actual_value ?? row?.actual);
+  if (!config || actualValue === null) return null;
+  return { [config.actualKeys[0]]: actualValue };
+}
+
+function backfillProjectionAccuracyEvals(db, {
+  limit = 1000,
+  now = new Date().toISOString(),
+} = {}) {
+  if (!db) return { processed: 0, updated: 0, lineRowsInserted: 0, graded: 0, unableToReconstruct: 0 };
+  const maxRows = Math.max(1, Math.min(Number(limit) || 1000, 10000));
+  const rows = db.prepare(`
+    SELECT *
+    FROM projection_accuracy_evals
+    WHERE projection_raw IS NULL
+       OR synthetic_line IS NULL
+       OR synthetic_direction IS NULL
+       OR direction_strength IS NULL
+       OR projection_confidence IS NULL
+       OR failure_flags IS NULL
+       OR expected_over_prob IS NULL
+       OR expected_direction_prob IS NULL
+       OR calibration_bucket IS NULL
+       OR market_type IS NULL
+       OR player_or_game_id IS NULL
+    ORDER BY id ASC
+    LIMIT ?
+  `).all(maxRows);
+
+  let updated = 0;
+  let lineRowsInserted = 0;
+  let graded = 0;
+  let unableToReconstruct = 0;
+
+  const write = () => {
+    for (const row of rows) {
+      const projectionRaw = toFiniteNumberOrNull(row.projection_raw) ?? toFiniteNumberOrNull(row.projection_value);
+      const syntheticLine =
+        toFiniteNumberOrNull(row.synthetic_line) ??
+        toFiniteNumberOrNull(row.nearest_half_line) ??
+        roundToNearestHalf(projectionRaw);
+      const failureAdditions = [];
+      if (projectionRaw === null || syntheticLine === null) {
+        failureAdditions.push('BACKFILL_UNABLE_TO_RECONSTRUCT');
+        unableToReconstruct += 1;
+      }
+
+      const syntheticDirection = projectionRaw === null || syntheticLine === null
+        ? 'NO_EDGE'
+        : directionFromProjectionLine(projectionRaw, syntheticLine);
+      const edgeDistance = projectionRaw === null || syntheticLine === null
+        ? 0
+        : Math.abs(projectionRaw - syntheticLine);
+      const weakDirectionFlag = syntheticDirection === 'NO_EDGE' || edgeDistance < WEAK_DIRECTION_EDGE_THRESHOLD ? 1 : 0;
+      if (weakDirectionFlag) failureAdditions.push('DIRECTION_TOO_WEAK');
+      const actualValue = toFiniteNumberOrNull(row.actual_value ?? row.actual);
+      const confidence = deriveProjectionConfidence({
+        edgeDistance,
+        historicalBucketHitRate: 0.5,
+        varianceOfMarket: null,
+        marketFamily: row.market_family,
+      });
+      const expectedOverProb = expectedOverProbability(projectionRaw, syntheticLine);
+      const expectedDirProb = expectedDirectionProbability(projectionRaw, syntheticLine, syntheticDirection);
+      const absError = actualValue === null || projectionRaw === null
+        ? null
+        : roundMetric(Math.abs(projectionRaw - actualValue), 6);
+      const signedError = actualValue === null || projectionRaw === null
+        ? null
+        : roundMetric(projectionRaw - actualValue, 6);
+      const playerOrGameId = row.player_or_game_id || row.player_id || row.player_name || row.game_id || null;
+
+      db.prepare(`
+        UPDATE projection_accuracy_evals
+        SET market_type = COALESCE(market_type, ?),
+            player_or_game_id = COALESCE(player_or_game_id, ?),
+            projection_raw = COALESCE(projection_raw, ?),
+            synthetic_line = COALESCE(synthetic_line, ?),
+            synthetic_rule = COALESCE(synthetic_rule, ?),
+            synthetic_direction = COALESCE(synthetic_direction, ?),
+            direction_strength = COALESCE(direction_strength, ?),
+            weak_direction_flag = ?,
+            projection_confidence = COALESCE(projection_confidence, ?),
+            confidence_score = COALESCE(confidence_score, ?),
+            confidence_band = CASE
+              WHEN confidence_band IS NULL OR confidence_band = 'UNKNOWN' THEN ?
+              ELSE confidence_band
+            END,
+            failure_flags = ?,
+            actual = COALESCE(actual, ?),
+            abs_error = COALESCE(abs_error, ?),
+            signed_error = COALESCE(signed_error, ?),
+            absolute_error = COALESCE(absolute_error, ?),
+            expected_over_prob = COALESCE(expected_over_prob, ?),
+            expected_direction_prob = COALESCE(expected_direction_prob, ?),
+            calibration_bucket = COALESCE(calibration_bucket, ?),
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `).run(
+        row.market_family,
+        playerOrGameId,
+        projectionRaw,
+        syntheticLine,
+        SYNTHETIC_RULE_NEAREST_HALF,
+        syntheticDirection,
+        weakDirectionFlag ? 'WEAK' : 'STRONG',
+        weakDirectionFlag,
+        confidence,
+        confidence,
+        confidenceBand(confidence),
+        JSON.stringify(mergeFailureFlags(row.failure_flags, failureAdditions)),
+        actualValue,
+        absError,
+        signedError,
+        absError,
+        expectedOverProb,
+        expectedDirProb,
+        calibrationBucketForProjection(projectionRaw),
+        row.id,
+      );
+      updated += 1;
+
+      if (projectionRaw !== null && syntheticLine !== null) {
+        const capture = {
+          cardId: row.card_id,
+          projectionValue: projectionRaw,
+          nearestHalfLine: syntheticLine,
+          selectedLine: toFiniteNumberOrNull(row.selected_line),
+          marketFamily: row.market_family,
+          marketTrust: row.market_trust || 'UNVERIFIED',
+          historicalBucketHitRate: 0.5,
+          varianceOfMarket: null,
+        };
+        const parent = { id: row.id };
+        for (const lineRow of buildProjectionAccuracyLineRows(capture)) {
+          const info = db.prepare(`
+            INSERT OR IGNORE INTO projection_accuracy_line_evals (
+              eval_id, card_id, line_role, line, eval_line, projection_value,
+              direction, weak_direction_flag, edge_vs_line,
+              confidence_score, confidence_band, market_trust,
+              expected_over_prob, expected_direction_prob, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+          `).run(
+            parent.id,
+            lineRow.card_id,
+            lineRow.line_role,
+            lineRow.line,
+            lineRow.eval_line,
+            lineRow.projection_value,
+            lineRow.direction,
+            lineRow.weak_direction_flag,
+            lineRow.edge_vs_line,
+            lineRow.confidence_score,
+            lineRow.confidence_band,
+            lineRow.market_trust,
+            lineRow.expected_over_prob,
+            lineRow.expected_direction_prob,
+          );
+          lineRowsInserted += Number(info?.changes || 0);
+        }
+      }
+    }
+  };
+
+  if (typeof db.transaction === 'function') {
+    db.transaction(write)();
+  } else {
+    db.exec('BEGIN');
+    try {
+      write();
+      db.exec('COMMIT');
+    } catch (error) {
+      try { db.exec('ROLLBACK'); } catch {}
+      throw error;
+    }
+  }
+
+  for (const row of rows) {
+    const actualResult = actualResultFromEvalRow(row);
+    if (actualResult && gradeProjectionAccuracyEval(db, { cardId: row.card_id, actualResult, gradedAt: now })) {
+      graded += 1;
+    }
+  }
+
+  return {
+    processed: rows.length,
+    updated,
+    lineRowsInserted,
+    graded,
+    unableToReconstruct,
+  };
 }
 
 function buildWhereClause(opts = {}, tableAlias = 'e') {
@@ -905,6 +1671,30 @@ function getProjectionAccuracyLineEvals(db, opts = {}) {
     .all(...lineParams, limit);
 }
 
+function getProjectionAccuracyMarketHealth(db, opts = {}) {
+  const clauses = [];
+  const params = [];
+  if (opts.marketFamily) {
+    clauses.push('market_family = ?');
+    params.push(opts.marketFamily);
+  }
+  const where = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
+  try {
+    const rows = db.prepare(`
+      SELECT *
+      FROM projection_accuracy_market_health
+      ${where}
+      ORDER BY market_family ASC
+    `).all(...params);
+    return rows.map((row) => ({
+      ...row,
+      confidence_lift: parseJsonObject(row.confidence_lift_json) || {},
+    }));
+  } catch {
+    return [];
+  }
+}
+
 function rowsByKey(rows, keyName) {
   const output = {};
   for (const row of rows) {
@@ -927,7 +1717,7 @@ function getProjectionAccuracyEvalSummary(db, opts = {}) {
   const { where, params } = buildWhereClause(opts, 'e');
   const clauses = where ? [where.replace(/^WHERE /, '')] : [];
   const lineParams = [...params];
-  const lineRole = opts.lineRole || 'NEAREST_HALF';
+  const lineRole = opts.lineRole || 'SYNTHETIC';
   if (lineRole !== 'ALL') {
     clauses.push('l.line_role = ?');
     lineParams.push(lineRole);
@@ -939,12 +1729,22 @@ function getProjectionAccuracyEvalSummary(db, opts = {}) {
       COUNT(DISTINCT e.card_id) AS total_cards,
       COUNT(l.id) AS total_line_evals,
       SUM(CASE WHEN l.grade_status = 'GRADED' THEN 1 ELSE 0 END) AS graded_line_evals,
-      SUM(CASE WHEN l.graded_result = 'WIN' THEN 1 ELSE 0 END) AS wins,
-      SUM(CASE WHEN l.graded_result = 'LOSS' THEN 1 ELSE 0 END) AS losses,
+      SUM(CASE WHEN l.graded_result = 'WIN' AND COALESCE(l.weak_direction_flag, 0) = 0 THEN 1 ELSE 0 END) AS wins,
+      SUM(CASE WHEN l.graded_result = 'LOSS' AND COALESCE(l.weak_direction_flag, 0) = 0 THEN 1 ELSE 0 END) AS losses,
       SUM(CASE WHEN l.graded_result = 'PUSH' THEN 1 ELSE 0 END) AS pushes,
       SUM(CASE WHEN l.graded_result = 'NO_BET' THEN 1 ELSE 0 END) AS no_bets,
       SUM(CASE WHEN l.weak_direction_flag = 1 THEN 1 ELSE 0 END) AS weak_direction_count,
-      AVG(e.absolute_error) AS avg_absolute_error
+      AVG(e.absolute_error) AS avg_absolute_error,
+      AVG(e.signed_error) AS avg_signed_error,
+      AVG(e.projection_confidence) AS avg_projection_confidence,
+      AVG(
+        CASE
+          WHEN e.actual_value IS NOT NULL
+           AND e.synthetic_line IS NOT NULL
+           AND e.expected_over_prob IS NOT NULL
+          THEN ABS(e.expected_over_prob - CASE WHEN e.actual_value > e.synthetic_line THEN 1.0 ELSE 0.0 END)
+        END
+      ) AS calibration_gap
     FROM projection_accuracy_line_evals l
     JOIN projection_accuracy_evals e ON e.card_id = l.card_id
     ${finalWhere}
@@ -954,8 +1754,8 @@ function getProjectionAccuracyEvalSummary(db, opts = {}) {
     SELECT
       ${column} AS bucket,
       COUNT(l.id) AS line_evals,
-      SUM(CASE WHEN l.graded_result = 'WIN' THEN 1 ELSE 0 END) AS wins,
-      SUM(CASE WHEN l.graded_result = 'LOSS' THEN 1 ELSE 0 END) AS losses,
+      SUM(CASE WHEN l.graded_result = 'WIN' AND COALESCE(l.weak_direction_flag, 0) = 0 THEN 1 ELSE 0 END) AS wins,
+      SUM(CASE WHEN l.graded_result = 'LOSS' AND COALESCE(l.weak_direction_flag, 0) = 0 THEN 1 ELSE 0 END) AS losses,
       SUM(CASE WHEN l.graded_result = 'PUSH' THEN 1 ELSE 0 END) AS pushes,
       SUM(CASE WHEN l.graded_result = 'NO_BET' THEN 1 ELSE 0 END) AS no_bets,
       AVG(e.absolute_error) AS avg_absolute_error
@@ -972,19 +1772,39 @@ function getProjectionAccuracyEvalSummary(db, opts = {}) {
 
   const wins = Number(overall?.wins || 0);
   const losses = Number(overall?.losses || 0);
+  const totalLineEvals = Number(overall?.total_line_evals || 0);
+  const weakDirectionCount = Number(overall?.weak_direction_count || 0);
+  const weakShare = totalLineEvals > 0 ? weakDirectionCount / totalLineEvals : 0;
+  const calibrationGap = Number(overall?.calibration_gap || 0);
+  const marketTrustStatus = computeMarketTrustStatus({
+    wins,
+    losses,
+    calibrationGap,
+    weakShare,
+    monotonicLift: hasMonotonicConfidenceLift(byConfidenceBandRows.map((row) => ({
+      band: row.bucket,
+      wins: row.wins,
+      losses: row.losses,
+    }))),
+  });
 
   return {
     line_role: lineRole,
     total_cards: Number(overall?.total_cards || 0),
-    total_line_evals: Number(overall?.total_line_evals || 0),
+    total_line_evals: totalLineEvals,
     graded_line_evals: Number(overall?.graded_line_evals || 0),
     wins,
     losses,
     pushes: Number(overall?.pushes || 0),
     no_bets: Number(overall?.no_bets || 0),
     hit_rate: wins + losses > 0 ? wins / (wins + losses) : null,
-    weak_direction_count: Number(overall?.weak_direction_count || 0),
+    weak_direction_count: weakDirectionCount,
+    weak_direction_share: weakShare,
     avg_absolute_error: overall?.avg_absolute_error ?? null,
+    avg_signed_error: overall?.avg_signed_error ?? null,
+    avg_projection_confidence: overall?.avg_projection_confidence ?? null,
+    calibration_gap: calibrationGap,
+    market_trust_status: marketTrustStatus,
     by_card_type: rowsByKey(byCardTypeRows, 'bucket'),
     by_market_trust: rowsByKey(byMarketTrustRows, 'bucket'),
     by_confidence_band: rowsByKey(byConfidenceBandRows, 'bucket'),
@@ -993,9 +1813,19 @@ function getProjectionAccuracyEvalSummary(db, opts = {}) {
 
 module.exports = {
   TRACKED_PROJECTION_ACCURACY_CARD_TYPES,
+  COMMON_LINES_BY_MARKET_FAMILY,
+  MARKET_CONFIDENCE_DEFAULTS,
+  PROJECTION_ACCURACY_MARKET_FAMILIES,
   WEAK_DIRECTION_EDGE_THRESHOLD,
   isProjectionAccuracyCardType,
   roundToNearestHalf,
+  expectedOverProbability,
+  expectedDirectionProbability,
+  calibrationBucketForProjection,
+  computeMarketTrustStatus,
+  computeProjectionAccuracyMarketHealth,
+  materializeProjectionAccuracyMarketHealth,
+  backfillProjectionAccuracyEvals,
   deriveProjectionAccuracyCapture,
   deriveProjectionConfidence,
   resolveProjectionMarketTrust,
@@ -1004,6 +1834,7 @@ module.exports = {
   gradeProjectionAccuracyEval,
   getProjectionAccuracyEvals,
   getProjectionAccuracyLineEvals,
+  getProjectionAccuracyMarketHealth,
   getProjectionAccuracyEvalSummary,
   insertProjectionProxyEval,
   batchInsertProjectionProxyEvals,
