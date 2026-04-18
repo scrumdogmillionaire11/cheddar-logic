@@ -1319,3 +1319,105 @@ Note: `CHEDDAR_DB_PATH` is resolved by `packages/data/src/db-path.js`. Check tha
 ### Gap Reference
 
 See `docs/DATA_CONTRACTS.md` — **Record Lineage Map** section for the full gap classification table (GAP-01 through GAP-09) with fix recommendations for each missing lineage field.
+
+---
+
+## POTD Shadow Settlement
+
+The POTD shadow settlement pipeline grades POTD candidates as if they were real bets, without affecting the live Betting Record. Results are written to `potd_shadow_results` and are used to evaluate POTD quality over time.
+
+**Job:** `job:potd-shadow-settlement` → `settle_potd_shadow_candidates`
+
+**Schedule:** Runs automatically in the worker scheduler each cycle (same cadence as `settle_pending_cards`).
+
+**Config:**
+
+```bash
+# In /opt/cheddar-logic/.env.production (optional — defaults to 1.0)
+POTD_SHADOW_VIRTUAL_STAKE_UNITS=1.0
+```
+
+### Manual run (bypasses idempotency)
+
+```bash
+cd /opt/cheddar-logic
+set -a; source .env.production; set +a
+npm --prefix apps/worker run job:potd-shadow-settlement
+```
+
+### Verify shadow results
+
+```bash
+set -a; source /opt/cheddar-logic/.env.production; set +a
+
+# Recent shadow settlement counts by status
+sqlite3 "$CHEDDAR_DB_PATH" "
+SELECT status, COUNT(*) AS cnt
+FROM potd_shadow_results
+GROUP BY status
+ORDER BY status;
+"
+
+# Last 10 shadow settled rows
+sqlite3 "$CHEDDAR_DB_PATH" "
+SELECT play_date, sport, market_type, selection_label, result, pnl_units, settled_at
+FROM potd_shadow_results
+WHERE status = 'settled'
+ORDER BY settled_at DESC
+LIMIT 10;
+"
+
+# Check recent job_runs for settle_potd_shadow_candidates
+sqlite3 "$CHEDDAR_DB_PATH" "
+SELECT job_name, started_at, status, metadata
+FROM job_runs
+WHERE job_name = 'settle_potd_shadow_candidates'
+ORDER BY started_at DESC
+LIMIT 5;
+"
+```
+
+### Troubleshooting
+
+- **`potd_shadow_results` is empty:** Confirm `potd_shadow_candidates` rows exist and `run_potd_engine` is running successfully.
+- **Shadow P&L is NULL on wins:** `price` field was not set on the candidate row when captured. This is non-blocking; W/L grading still proceeds.
+- **Job never runs:** Check `job_runs` table — if `status='running'` with a stale `started_at`, the lock row is stuck. Restart the worker to clear it.
+- **Do NOT backfill shadow candidates manually** by inserting into `potd_shadow_candidates` — the POTD engine is the only writer.
+
+---
+
+## Secrets Rotation
+
+### `ADMIN_API_SECRET` Rotation
+
+`ADMIN_API_SECRET` gates the `/api/admin/audit` and `/api/admin/odds-ingest` routes on the web server. If this secret is unset, all requests to those routes return 403 (fail-closed).
+
+**When to rotate:** On any credential leak, as part of a quarterly rotation cadence, or after personnel changes.
+
+**Procedure (Pi):**
+
+```bash
+# 1. Generate a new strong secret
+NEW_SECRET=$(openssl rand -base64 32)
+echo "New secret: $NEW_SECRET"   # copy this to your password manager
+
+# 2. Update the production env file
+sudo nano /opt/cheddar-logic/.env.production
+# Replace: ADMIN_API_SECRET=<old-value>
+# With:    ADMIN_API_SECRET=<new-value>
+
+# 3. Rebuild the web app so the new env is baked into the Next.js server bundle
+cd /opt/cheddar-logic
+env $(cat /opt/cheddar-logic/.env.production | grep -v '^#' | xargs) npm --prefix web run build
+sudo chown -R cheddar-worker:cheddar-worker /opt/cheddar-logic/web/.next
+
+# 4. Restart the web service
+sudo systemctl restart cheddar-web
+
+# 5. Verify the old secret no longer works and the new one does
+OLD_SECRET="<old-value>"
+curl -sf -H "x-admin-secret: $OLD_SECRET" http://localhost:3000/api/admin/audit && echo "❌ OLD SECRET STILL WORKS" || echo "✅ Old secret rejected"
+curl -sf -H "x-admin-secret: $NEW_SECRET" http://localhost:3000/api/admin/audit | head -20
+```
+
+**Guard:** If `ADMIN_API_SECRET` is empty or missing, the admin routes return `403` unconditionally — do not leave it unset in production.

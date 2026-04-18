@@ -12,34 +12,10 @@ describe('stale odds threshold configuration', () => {
     delete process.env.WATCHDOG_STALE_THRESHOLD_MINUTES;
   });
 
-  function resolveThreshold() {
-    return Math.max(
-      15,
-      parseInt(process.env.WATCHDOG_STALE_THRESHOLD_MINUTES ?? '30', 10) || 30,
-    );
-  }
-
-  test('defaults to 30 when env var is unset', () => {
-    delete process.env.WATCHDOG_STALE_THRESHOLD_MINUTES;
-    expect(resolveThreshold()).toBe(30);
-  });
-
-  test('enforces a floor of 15 minutes', () => {
-    process.env.WATCHDOG_STALE_THRESHOLD_MINUTES = '5';
-    expect(resolveThreshold()).toBe(15);
-  });
-
-  test('accepts an operator override', () => {
-    process.env.WATCHDOG_STALE_THRESHOLD_MINUTES = '150';
-    expect(resolveThreshold()).toBe(150);
-  });
-
-  test('falls back to 30 for non-numeric values', () => {
-    process.env.WATCHDOG_STALE_THRESHOLD_MINUTES = 'bad_value';
-    expect(resolveThreshold()).toBe(30);
-  });
-
-  test('default 30-minute threshold blocks a 60-minute-old snapshot in buildDecisionV2', () => {
+  test('stale snapshot sets watchdog_status CAUTION but does NOT block in buildDecisionV2', () => {
+    // Staleness blocking was removed from computeWatchdog. The execution gate
+    // (execution-gate-freshness-contract.js) owns all staleness decisions with
+    // sport-specific contracts (NBA/NHL: 120-min hardMax + allowStaleIfNoNewOdds=true).
     const result = buildDecisionV2({
       kind: 'PLAY',
       sport: 'NBA',
@@ -76,10 +52,12 @@ describe('stale odds threshold configuration', () => {
       },
     });
 
-    expect(result.watchdog_status).toBe('BLOCKED');
+    // Stale snapshot is noted as CAUTION, not BLOCKED — execution gate handles blocking
+    expect(result.watchdog_status).toBe('CAUTION');
     expect(result.watchdog_reason_codes).toContain('STALE_MARKET_INPUT');
     expect(result.watchdog_reason_codes).toContain('WATCHDOG_STALE_SNAPSHOT');
-    expect(result.official_status).toBe('PASS');
+    // watchdog_status is CAUTION, not BLOCKED — staleness does not block here
+    expect(result.watchdog_status).not.toBe('BLOCKED');
   });
 
   test('goalie uncertainty reason code produces LEAN instead of PASS', () => {

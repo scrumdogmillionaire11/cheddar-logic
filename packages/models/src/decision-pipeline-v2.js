@@ -1284,12 +1284,13 @@ function computeWatchdog(payload, context = {}) {
     }
   }
 
-  const STALE_BLOCK_THRESHOLD_MINUTES = Math.max(
-    15,
-    parseInt(process.env.WATCHDOG_STALE_THRESHOLD_MINUTES ?? '30', 10) || 30,
-  );
+  // Staleness is no longer a blocking reason in the watchdog. The execution
+  // gate (execution-gate.js + execution-gate-freshness-contract.js) owns all
+  // staleness decisions with sport-specific contracts (NBA/NHL: 120-min
+  // hardMax + allowStaleIfNoNewOdds=true). The watchdog only blocks on data
+  // quality issues: missing fields, parse errors, market unavailable.
   let watchdogStatus = 'OK';
-  if (staleMinutes !== null && staleMinutes > STALE_BLOCK_THRESHOLD_MINUTES) {
+  if (staleMinutes !== null && staleMinutes >= 5) {
     watchdogReasonCodes.push(WATCHDOG_REASONS.STALE_MARKET_INPUT);
     watchdogReasonCodes.push(WATCHDOG_REASONS.STALE_SNAPSHOT);
   }
@@ -1299,18 +1300,13 @@ function computeWatchdog(payload, context = {}) {
       code === WATCHDOG_REASONS.CONSISTENCY_MISSING ||
       code === WATCHDOG_REASONS.PARSE_FAILURE ||
       code === WATCHDOG_REASONS.MARKET_UNAVAILABLE ||
-      HOLD_EQUIVALENT_WATCHDOG_REASONS.has(code) ||
-      code === WATCHDOG_REASONS.STALE_MARKET_INPUT ||
-      (code === WATCHDOG_REASONS.STALE_SNAPSHOT &&
-        staleMinutes !== null &&
-        staleMinutes > STALE_BLOCK_THRESHOLD_MINUTES),
+      HOLD_EQUIVALENT_WATCHDOG_REASONS.has(code),
   );
 
   if (hasBlockingReason) {
     watchdogStatus = 'BLOCKED';
-  } else if (staleMinutes !== null && staleMinutes >= 5 && staleMinutes <= STALE_BLOCK_THRESHOLD_MINUTES) {
+  } else if (staleMinutes !== null && staleMinutes >= 5) {
     watchdogStatus = 'CAUTION';
-    watchdogReasonCodes.push(WATCHDOG_REASONS.STALE_SNAPSHOT);
   }
 
   const uniqueWatchdogReasonCodes = Array.from(new Set(watchdogReasonCodes));

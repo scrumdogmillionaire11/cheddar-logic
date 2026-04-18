@@ -576,6 +576,16 @@ describe('migration 081 — projection_accuracy_line_evals unique constraint rep
     `);
     db.exec(legacyLineSql);
 
+    // Apply 081_projection_accuracy_confidence_engine.sql schema changes so the DB
+    // matches the "already applied" state we're about to record in the migrations table.
+    // Without this, captureProjectionAccuracyEval fails because columns like market_type
+    // don't exist even though the migration is marked applied.
+    const confidenceEngineSql = fs.readFileSync(
+      path.join(__dirname, '../db/migrations/081_projection_accuracy_confidence_engine.sql'),
+      'utf8',
+    );
+    db.exec(confidenceEngineSql);
+
     // Seed a row using the legacy conflict target so it is present pre-migration
     db.prepare(`
       INSERT INTO projection_accuracy_evals
@@ -656,7 +666,10 @@ describe('migration 081 — projection_accuracy_line_evals unique constraint rep
 
     expect(() => captureProjectionAccuracyEval(liveDb, capture)).not.toThrow();
     const lines = getProjectionAccuracyLineEvals(liveDb, { cardId: 'card-legacy-1' });
-    expect(lines).toHaveLength(1);
-    expect(lines[0].line_role).toBe('NEAREST_HALF');
+    // captureProjectionAccuracyEval inserts a SYNTHETIC line_role row; the pre-existing
+    // NEAREST_HALF legacy row is preserved. Both should be present.
+    expect(lines).toHaveLength(2);
+    const lineRoles = lines.map(l => l.line_role).sort();
+    expect(lineRoles).toEqual(['NEAREST_HALF', 'SYNTHETIC']);
   });
 });

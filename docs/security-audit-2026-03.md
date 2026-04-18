@@ -112,6 +112,6 @@ The following security mechanisms are implemented and functional:
 | High | Add auth gate and rate limit | `/api/props/shots` (FINDING-005) |
 | Medium | Add auth gate | `/api/team-metrics` (FINDING-004) |
 | Medium | Add NODE_ENV guard | `/api/auth/token` (FINDING-006) |
-| Low | Add ops runbook entry | Document `ADMIN_API_SECRET` rotation procedure |
+| Low | ~~Add ops runbook entry~~ ✅ Done | Document `ADMIN_API_SECRET` rotation procedure → see `docs/ops-runbook.md` — **Secrets Rotation** section |
 
 All `requireEntitlementForRequest` calls should use `RESOURCE.CHEDDAR_BOARD` for user-facing data routes. The infrastructure is fully built — each fix is a 5-line addition at the route handler entry point.
