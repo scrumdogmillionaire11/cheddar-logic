@@ -1,53 +1,66 @@
 import { NextResponse } from 'next/server';
 import type { ProjectionAccuracyResponse } from '@/lib/types/projection-accuracy';
-import { getDatabaseReadOnly, closeReadOnlyInstance, getProjectionAccuracySummary } from '@cheddar-logic/data';
-// Use static top-level imports (not await import). All 3 are re-exported from packages/data/index.js (WI-0864).
-
-const VALID_FAMILIES = ['MLB_F5_TOTAL', 'NHL_1P_TOTAL'] as const;
+import {
+  closeReadOnlyInstance,
+  getDatabaseReadOnly,
+  getProjectionAccuracyEvalSummary,
+  getProjectionAccuracyEvals,
+} from '@cheddar-logic/data';
 
 const DEFAULT_LOOKBACK_DAYS = 90;
 const MAX_LOOKBACK_DAYS = 365;
+const VALID_MARKETS = new Set([
+  'MLB_F5_TOTAL',
+  'MLB_PITCHER_K',
+  'NHL_PLAYER_SHOTS',
+  'NHL_PLAYER_BLOCKS',
+]);
+
+function parseLookbackDays(value: string | null): number {
+  if (!value) return DEFAULT_LOOKBACK_DAYS;
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed) || parsed < 1 || parsed > MAX_LOOKBACK_DAYS) {
+    return Number.NaN;
+  }
+  return parsed;
+}
 
 export async function GET(request: Request): Promise<NextResponse> {
   const { searchParams } = new URL(request.url);
+  const marketFamily = searchParams.get('market_family');
+  const days = parseLookbackDays(searchParams.get('days'));
 
-  const familyParam = searchParams.get('family');
-  const daysParam = searchParams.get('days');
-
-  // Validate family
-  if (familyParam && !(VALID_FAMILIES as readonly string[]).includes(familyParam)) {
-    return NextResponse.json({ error: 'Invalid family' }, { status: 400 });
+  if (Number.isNaN(days)) {
+    return NextResponse.json({ error: 'Invalid days parameter (1-365)' }, { status: 400 });
+  }
+  if (marketFamily && !VALID_MARKETS.has(marketFamily)) {
+    return NextResponse.json({ error: 'Invalid market_family' }, { status: 400 });
   }
 
-  // Validate days
-  const lookbackDays = daysParam ? parseInt(daysParam, 10) : DEFAULT_LOOKBACK_DAYS;
-  if (!Number.isFinite(lookbackDays) || lookbackDays < 1 || lookbackDays > MAX_LOOKBACK_DAYS) {
-    return NextResponse.json({ error: 'Invalid days parameter (1–365)' }, { status: 400 });
-  }
+  const capturedAtGte = new Date(Date.now() - days * 24 * 60 * 60 * 1000)
+    .toISOString();
 
-  const gameDateGte = new Date(Date.now() - lookbackDays * 24 * 60 * 60 * 1000)
-    .toISOString()
-    .split('T')[0];
-
-  const familiesToQuery: string[] = familyParam
-    ? [familyParam]
-    : [...VALID_FAMILIES];
-
-  // Static imports at top of file (matching all other web API routes).
-  // getDatabaseReadOnly() opens a read-only connection using CHEDDAR_DB_PATH (no args).
-  // Always closeReadOnlyInstance(db) in finally to avoid handle leaks — matches projection-settled/route.ts.
   let db: ReturnType<typeof getDatabaseReadOnly> | null = null;
   try {
     db = getDatabaseReadOnly();
-
-    const families = familiesToQuery.map((cardFamily: string) =>
-      getProjectionAccuracySummary(db!, { cardFamily, gameDateGte })
-    );
+    const filters = {
+      capturedAtGte,
+      ...(marketFamily ? { marketFamily } : {}),
+    };
+    const summary = getProjectionAccuracyEvalSummary(db, {
+      ...filters,
+      lineRole: 'SYNTHETIC',
+    });
+    const rows = getProjectionAccuracyEvals(db, {
+      ...filters,
+      limit: 200,
+    });
 
     const payload: ProjectionAccuracyResponse = {
       generatedAt: new Date().toISOString(),
-      lookbackDays,
-      families,
+      lookbackDays: days,
+      summary,
+      rows,
     };
 
     return NextResponse.json(payload);
@@ -56,8 +69,6 @@ export async function GET(request: Request): Promise<NextResponse> {
     console.error('[API] projection-accuracy error:', message);
     return NextResponse.json({ error: message }, { status: 500 });
   } finally {
-    if (db) {
-      closeReadOnlyInstance(db);
-    }
+    if (db) closeReadOnlyInstance(db);
   }
 }

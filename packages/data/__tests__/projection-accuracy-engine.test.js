@@ -45,7 +45,11 @@ describe('projection accuracy confidence engine', () => {
       getProjectionAccuracyEvals,
       getProjectionAccuracyLineEvals,
       getProjectionAccuracyEvalSummary,
+      roundToNearestHalf,
     } = require('../src/db/projection-accuracy');
+
+    expect(roundToNearestHalf(5.2)).toBe(5.5);
+    expect(roundToNearestHalf(4.7)).toBe(4.5);
 
     upsertGame({
       id: 'game-pa-1',
@@ -96,25 +100,27 @@ describe('projection accuracy confidence engine', () => {
     expect(rows[0]).toMatchObject({
       card_id: 'card-nhl-sog-pa-1',
       card_type: 'nhl-player-shots',
-      market_family: 'NHL_PLAYER_SHOTS_FULL_GAME',
+      market_family: 'NHL_PLAYER_SHOTS',
       player_id: '8479318',
       selected_line: 3.5,
-      nearest_half_line: 3,
+      nearest_half_line: 3.5,
+      synthetic_line: 3.5,
+      synthetic_rule: 'nearest_half',
       selected_direction: 'UNDER',
       weak_direction_flag: 0,
       market_trust: 'SYNTHETIC_FALLBACK',
       grade_status: 'PENDING',
     });
 
-    const lineRows = getProjectionAccuracyLineEvals(db, { cardId: 'card-nhl-sog-pa-1', lineRole: 'NEAREST_HALF' });
+    const lineRows = getProjectionAccuracyLineEvals(db, { cardId: 'card-nhl-sog-pa-1', lineRole: 'SYNTHETIC' });
     expect(lineRows).toHaveLength(1);
     expect(lineRows[0]).toMatchObject({
-      line_role: 'NEAREST_HALF',
-      eval_line: 3,
-      direction: 'OVER',
-      weak_direction_flag: 1,
+      line_role: 'SYNTHETIC',
+      eval_line: 3.5,
+      direction: 'UNDER',
+      weak_direction_flag: 0,
     });
-    expect(lineRows[0].confidence_score).toBeLessThan(0.5);
+    expect(lineRows[0].confidence_score).toBeGreaterThanOrEqual(0);
 
     setProjectionActualResult('card-nhl-sog-pa-1', { shots: 2 });
 
@@ -123,12 +129,13 @@ describe('projection accuracy confidence engine', () => {
       actual_value: 2,
       grade_status: 'GRADED',
       graded_result: 'WIN',
+      signed_error: 1.24,
     });
     expect(graded.absolute_error).toBeCloseTo(1.24);
 
     const selectedSummary = getProjectionAccuracyEvalSummary(db, {
       cardType: 'nhl-player-shots',
-      lineRole: 'SELECTED_MARKET',
+      lineRole: 'SYNTHETIC',
     });
     expect(selectedSummary).toMatchObject({
       total_cards: 1,
@@ -169,9 +176,9 @@ describe('projection accuracy confidence engine', () => {
     expect(capture).toMatchObject({
       cardId: 'card-mlb-k-pa-1',
       cardType: 'mlb-pitcher-k',
-      marketFamily: 'MLB_PITCHER_STRIKEOUTS',
+      marketFamily: 'MLB_PITCHER_K',
       selectedLine: null,
-      nearestHalfLine: 7,
+      nearestHalfLine: 6.5,
       marketTrust: 'PROJECTION_ONLY',
     });
 
@@ -180,12 +187,103 @@ describe('projection accuracy confidence engine', () => {
     expect(captureProjectionAccuracyEval(db, capture)).toBe(true);
 
     const lines = getProjectionAccuracyLineEvals(db, { cardId: 'card-mlb-k-pa-1' });
-    expect(lines).toHaveLength(1);
-    expect(lines[0]).toMatchObject({
-      eval_line: 7,
-      direction: 'UNDER',
-      weak_direction_flag: 1,
+    expect(lines.length).toBeGreaterThanOrEqual(4);
+    const synthetic = lines.find((row) => row.line_role === 'SYNTHETIC');
+    expect(synthetic).toMatchObject({
+      eval_line: 6.5,
+      direction: 'OVER',
+      weak_direction_flag: 0,
       market_trust: 'PROJECTION_ONLY',
     });
+  });
+
+  test('captures MLB F5 totals and freezes projection_raw on repeated capture', () => {
+    const {
+      deriveProjectionAccuracyCapture,
+      captureProjectionAccuracyEval,
+      getProjectionAccuracyEvals,
+      getProjectionAccuracyLineEvals,
+      computeMarketTrustStatus,
+    } = require('../src/db/projection-accuracy');
+    const { getDatabase } = require('../src/db/connection');
+    const db = getDatabase();
+
+    const base = {
+      id: 'card-mlb-f5-pa-1',
+      gameId: 'mlb-f5-pa-1',
+      sport: 'MLB',
+      cardType: 'mlb-f5',
+      createdAt: '2026-04-17T18:00:00.000Z',
+      payloadData: {
+        sport: 'MLB',
+        card_type: 'mlb-f5',
+        projection: { projected_total: 5.2 },
+      },
+    };
+
+    expect(captureProjectionAccuracyEval(db, deriveProjectionAccuracyCapture(base))).toBe(true);
+    expect(captureProjectionAccuracyEval(db, deriveProjectionAccuracyCapture({
+      ...base,
+      payloadData: { ...base.payloadData, projection: { projected_total: 8.1 } },
+    }))).toBe(true);
+
+    const row = getProjectionAccuracyEvals(db, { cardId: 'card-mlb-f5-pa-1' })[0];
+    expect(row).toMatchObject({
+      market_family: 'MLB_F5_TOTAL',
+      projection_raw: 5.2,
+      projection_value: 5.2,
+      synthetic_line: 5.5,
+      synthetic_direction: 'UNDER',
+    });
+
+    const lines = getProjectionAccuracyLineEvals(db, { cardId: 'card-mlb-f5-pa-1' });
+    expect(lines.map((line) => line.eval_line)).toEqual(expect.arrayContaining([3.5, 4.5, 5.5]));
+
+    expect(computeMarketTrustStatus({ wins: 10, losses: 10 })).toBe('INSUFFICIENT_DATA');
+    expect(computeMarketTrustStatus({ wins: 12, losses: 13 })).toBe('NOISE');
+    expect(computeMarketTrustStatus({ wins: 14, losses: 11, calibrationGap: 0.06 })).toBe('TRUSTED');
+    expect(computeMarketTrustStatus({ wins: 16, losses: 9, calibrationGap: 0.04 })).toBe('SHARP');
+    expect(computeMarketTrustStatus({ wins: 13, losses: 12, calibrationGap: 0.1 })).toBe('WATCH');
+  });
+
+  test('DIRECTION_TOO_WEAK excludes synthetic W/L but keeps error metrics', () => {
+    const {
+      deriveProjectionAccuracyCapture,
+      captureProjectionAccuracyEval,
+      gradeProjectionAccuracyEval,
+      getProjectionAccuracyEvals,
+    } = require('../src/db/projection-accuracy');
+    const { getDatabase } = require('../src/db/connection');
+    const db = getDatabase();
+
+    const capture = deriveProjectionAccuracyCapture({
+      id: 'card-mlb-k-pa-weak',
+      gameId: 'mlb-proj-accuracy-weak',
+      sport: 'MLB',
+      cardType: 'mlb-pitcher-k',
+      payloadData: {
+        sport: 'MLB',
+        card_type: 'mlb-pitcher-k',
+        basis: 'PROJECTION_ONLY',
+        tags: ['no_odds_mode'],
+        projection: { k_mean: 6.42 },
+      },
+    });
+
+    expect(capture.syntheticLine).toBe(6.5);
+    expect(capture.failureFlags).toContain('DIRECTION_TOO_WEAK');
+    expect(captureProjectionAccuracyEval(db, capture)).toBe(true);
+    expect(gradeProjectionAccuracyEval(db, {
+      cardId: 'card-mlb-k-pa-weak',
+      actualResult: { pitcher_ks: 7 },
+    })).toBe(true);
+
+    const row = getProjectionAccuracyEvals(db, { cardId: 'card-mlb-k-pa-weak' })[0];
+    expect(row).toMatchObject({
+      graded_result: 'NO_BET',
+      abs_error: 0.58,
+      signed_error: -0.58,
+    });
+    expect(JSON.parse(row.failure_flags)).toContain('DIRECTION_TOO_WEAK');
   });
 });

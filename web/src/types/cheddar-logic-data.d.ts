@@ -48,4 +48,8 @@ declare module '@cheddar-logic/data' {
     gameDateLte?: string;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   }): any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  export function getProjectionAccuracyEvalSummary(db: any, opts?: any): any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  export function getProjectionAccuracyEvals(db: any, opts?: any): any[];
 }

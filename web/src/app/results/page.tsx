@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { StickyBackButton } from '@/components/sticky-back-button';
 import { ProjectionResultsTable } from '@/components/results/ProjectionResultsTable';
 import type { ProjectionProxyRow } from '@/app/api/results/projection-settled/route';
+import type { ProjectionAccuracyResponse } from '@/lib/types/projection-accuracy';
 
 type ResultsSummary = {
   totalCards: number;
@@ -187,6 +188,22 @@ function formatMarketSelectionLabel(row: LedgerRow) {
   return row.marketSelectionLabel || '--';
 }
 
+function marketHealthLabel(status: string | null | undefined) {
+  if (status === 'NOISE') return 'direction not trusted';
+  if (status === 'WATCH') return 'confidence bands need more separation';
+  if (status === 'TRUSTED') return 'directional signal usable';
+  if (status === 'SHARP') return 'directional signal is leading';
+  return 'awaiting 25 graded directional rows';
+}
+
+function marketHealthClass(status: string | null | undefined) {
+  if (status === 'NOISE') return 'text-rose-200';
+  if (status === 'WATCH') return 'text-amber-200';
+  if (status === 'TRUSTED') return 'text-emerald-200';
+  if (status === 'SHARP') return 'text-cyan-200';
+  return 'text-cloud/60';
+}
+
 function isFirstPeriodRow(row: LedgerRow) {
   return row.marketPeriodToken === '1P';
 }
@@ -250,6 +267,8 @@ export default function ResultsPage() {
   const [error, setError] = useState<string | null>(null);
   const [withoutOddsMode, setWithoutOddsMode] = useState(false);
   const [projectionSettledRows, setProjectionSettledRows] = useState<ProjectionProxyRow[]>([]);
+  const [projectionAccuracy, setProjectionAccuracy] =
+    useState<ProjectionAccuracyResponse | null>(null);
   const [projectionActualsReady, setProjectionActualsReady] = useState(false);
   const [projectionSettledLoading, setProjectionSettledLoading] = useState(true);
   const [expandedProjectionFamilies, setExpandedProjectionFamilies] = useState<Set<string>>(new Set());
@@ -355,6 +374,24 @@ export default function ResultsPage() {
       }
     }
     void loadProjectionSettled();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadProjectionAccuracy() {
+      try {
+        const res = await fetch('/api/results/projection-accuracy');
+        if (!res.ok) return;
+        const payload = (await res.json()) as ProjectionAccuracyResponse;
+        if (!cancelled) setProjectionAccuracy(payload);
+      } catch {
+        // research-only surface; the main results ledger should still render
+      }
+    }
+    void loadProjectionAccuracy();
     return () => {
       cancelled = true;
     };
@@ -833,13 +870,76 @@ export default function ResultsPage() {
           </section>
         )}
 
-        {projectionSummariesWithActuals.length > 0 && (
+        {(projectionSummariesWithActuals.length > 0 || projectionAccuracy) && (
           <section className="mt-12 rounded-2xl border border-white/10 bg-surface/80 p-8">
             <h2 className="text-2xl font-semibold">Projection Models (Research Only)</h2>
             <p className="mt-2 text-sm text-cloud/70">
               Model Projection — No Line Applied. Projection-only markets tracked
               separately — no P&amp;L, just model accuracy versus actuals. Click a model row to see performance by projection value range.
             </p>
+            {projectionAccuracy && (
+              <div className="mt-6 rounded-xl border border-white/10 bg-night/40 p-4">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-[0.2em] text-cloud/50">
+                      Projection Confidence Engine
+                    </p>
+                    <p className="mt-1 text-sm text-cloud/70">
+                      Synthetic-line W/L excludes weak directions under 0.15 while MAE and bias still audit every settled projection.
+                    </p>
+                  </div>
+                  <p className={`text-sm font-semibold ${marketHealthClass(projectionAccuracy.summary.market_trust_status)}`}>
+                    {projectionAccuracy.summary.market_trust_status} — {marketHealthLabel(projectionAccuracy.summary.market_trust_status)}
+                  </p>
+                </div>
+                <div className="mt-4 grid gap-3 md:grid-cols-5">
+                  <div>
+                    <p className="text-xs text-cloud/50">Directional Record</p>
+                    <p className="mt-1 font-mono text-cloud">
+                      {projectionAccuracy.summary.wins}-{projectionAccuracy.summary.losses}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-cloud/50">Win Rate</p>
+                    <p className="mt-1 font-mono text-cloud">
+                      {formatPercent(projectionAccuracy.summary.hit_rate)}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-cloud/50">MAE</p>
+                    <p className="mt-1 font-mono text-cloud">
+                      {projectionAccuracy.summary.avg_absolute_error !== null
+                        ? formatDecimal(projectionAccuracy.summary.avg_absolute_error, 2, { signed: false })
+                        : 'N/A'}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-cloud/50">Bias</p>
+                    <p className="mt-1 font-mono text-cloud">
+                      {projectionAccuracy.summary.avg_signed_error !== null
+                        ? formatDecimal(projectionAccuracy.summary.avg_signed_error, 2)
+                        : 'N/A'}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-cloud/50">Weak Directions</p>
+                    <p className="mt-1 font-mono text-cloud">
+                      {projectionAccuracy.summary.weak_direction_count}
+                    </p>
+                  </div>
+                </div>
+                {Object.keys(projectionAccuracy.summary.by_confidence_band).length > 0 && (
+                  <div className="mt-4 flex flex-wrap gap-2 text-xs text-cloud/60">
+                    {Object.entries(projectionAccuracy.summary.by_confidence_band).map(([band, row]) => (
+                      <span key={band} className="rounded-full border border-white/10 px-3 py-1">
+                        {band}: {row.wins}-{row.losses}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+            {projectionSummariesWithActuals.length > 0 && (
             <div className="mt-6 overflow-hidden rounded-xl border border-white/10">
               <div className="grid grid-cols-8 gap-4 bg-night/70 px-4 py-3 text-xs font-semibold uppercase tracking-[0.2em] text-cloud/60">
                 <span>Model</span>
@@ -961,6 +1061,7 @@ export default function ResultsPage() {
                 })}
               </div>
             </div>
+            )}
           </section>
         )}
 
