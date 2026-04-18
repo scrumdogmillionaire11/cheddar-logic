@@ -231,6 +231,14 @@ module.exports = {
   LOCAL_TABLES: dbDualInit.LOCAL_TABLES,
 
   // projection-accuracy (proxy eval data layer — WI-0864)
+  captureProjectionAccuracyForCard: projAccuracy.captureProjectionAccuracyForCard,
+  captureProjectionAccuracyEval:    projAccuracy.captureProjectionAccuracyEval,
+  gradeProjectionAccuracyEval:      projAccuracy.gradeProjectionAccuracyEval,
+  getProjectionAccuracyEvals:       projAccuracy.getProjectionAccuracyEvals,
+  getProjectionAccuracyLineEvals:   projAccuracy.getProjectionAccuracyLineEvals,
+  getProjectionAccuracyEvalSummary: projAccuracy.getProjectionAccuracyEvalSummary,
+  deriveProjectionAccuracyCapture:  projAccuracy.deriveProjectionAccuracyCapture,
+  roundToNearestHalf:               projAccuracy.roundToNearestHalf,
   insertProjectionProxyEval:       projAccuracy.insertProjectionProxyEval,
   batchInsertProjectionProxyEvals: projAccuracy.batchInsertProjectionProxyEvals,
   getProjectionProxyEvals:         projAccuracy.getProjectionProxyEvals,

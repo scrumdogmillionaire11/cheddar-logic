@@ -15,6 +15,10 @@ const {
 } = require('./connection');
 const { deleteModelOutputsByGame } = require('./models');
 const { insertCardResult } = require('./results');
+const {
+  captureProjectionAccuracyForCard,
+  gradeProjectionAccuracyEval,
+} = require('./projection-accuracy');
 
 function ensureCardPayloadRunIdColumn(db) {
   const columns = db.prepare(`PRAGMA table_info(card_payloads)`).all();
@@ -43,6 +47,14 @@ function setProjectionActualResult(cardId, actualResult) {
   db.prepare(`
     UPDATE card_payloads SET actual_result = ? WHERE id = ?
   `).run(JSON.stringify(actualResult), cardId);
+
+  try {
+    gradeProjectionAccuracyEval(db, { cardId, actualResult });
+  } catch (error) {
+    console.warn(
+      `[DB] projection_accuracy grade skipped for ${cardId}: ${error.message}`,
+    );
+  }
 }
 
 function getUnsettledProjectionCards() {
@@ -815,6 +827,19 @@ function insertCardPayload(card) {
       card.gameId,
       card.cardType,
     );
+  }
+
+  if (insertInfo.changes > 0) {
+    try {
+      captureProjectionAccuracyForCard(db, {
+        ...card,
+        payloadData,
+      });
+    } catch (error) {
+      console.warn(
+        `[DB] projection_accuracy capture skipped for ${card.id}: ${error.message}`,
+      );
+    }
   }
 
   const recommendedBetType = lockedMarket

@@ -12,6 +12,7 @@ const scheduler = require('./scheduler');
 const authStore = require('./auth-store');
 const pipelineHealth = require('./pipeline-health');
 const mlbStats = require('./mlb-stats');
+const projectionAccuracy = require('./projection-accuracy');
 
 module.exports = {
   getDatabase: connection.getDatabase,
@@ -99,6 +100,14 @@ module.exports = {
   setProjectionActualResult: cards.setProjectionActualResult,
   getUnsettledProjectionCards: cards.getUnsettledProjectionCards,
   getLatestNhlModelOutput: cards.getLatestNhlModelOutput,
+  captureProjectionAccuracyForCard: projectionAccuracy.captureProjectionAccuracyForCard,
+  captureProjectionAccuracyEval: projectionAccuracy.captureProjectionAccuracyEval,
+  gradeProjectionAccuracyEval: projectionAccuracy.gradeProjectionAccuracyEval,
+  getProjectionAccuracyEvals: projectionAccuracy.getProjectionAccuracyEvals,
+  getProjectionAccuracyLineEvals: projectionAccuracy.getProjectionAccuracyLineEvals,
+  getProjectionAccuracyEvalSummary: projectionAccuracy.getProjectionAccuracyEvalSummary,
+  deriveProjectionAccuracyCapture: projectionAccuracy.deriveProjectionAccuracyCapture,
+  roundToNearestHalf: projectionAccuracy.roundToNearestHalf,
   getUpcomingGames: games.getUpcomingGames,
   upsertGame: games.upsertGame,
   upsertGameIdMap: games.upsertGameIdMap,
