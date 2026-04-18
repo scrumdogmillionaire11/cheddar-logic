@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Model Integrity & Betting Execution Hardening
 status: active
-last_updated: "2026-04-17T00:00:00Z"
-last_activity: "2026-04-17 - Completed quick task 161: WI-0982 MLB full-game WATCH/HOLD auto-close pipeline integration tests"
+last_updated: "2026-04-18T00:00:00Z"
+last_activity: "2026-04-18 - Completed pass-reason-integrity-01: MarketEvalResult contract extension with 6 provenance fields, assertLegalPassNoEdge enforcer, SKIP_GAME_MIXED_FAILURES"
 ---
 
 # Project State
