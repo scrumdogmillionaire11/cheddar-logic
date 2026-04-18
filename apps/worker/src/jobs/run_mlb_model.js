@@ -3934,7 +3934,7 @@ async function runMLBModel({
               }
             }
           } else {
-            console.log('[MLBModel] NO_F5_ML_PRICE_CONTEXT: ' + gameId + ' — F5 ML projection skipped (no dedicated F5 or full-game ML prices)');
+            console.log('[MLBModel] NO_F5_ML_PRICE_CONTEXT: ' + gameId + ' — F5 ML projection skipped (no full-game ML prices)');
           }
 
           // Recover qualified driver cards from evaluateMlbGameMarkets results
