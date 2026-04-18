@@ -69,8 +69,12 @@ function deriveTerminalReasonFamilyForPayload({
   }
   if (watchdogStatus === 'BLOCKED') return 'WATCHDOG_DATA_QUALITY';
   if (reasonCodes.includes('EXACT_WAGER_MISMATCH')) return 'EXACT_WAGER_FAIL';
-  if (reasonCodes.includes('EDGE_VERIFICATION_REQUIRED')) {
-    return 'EDGE_VERIFICATION_REQUIRED';
+  if (
+    reasonCodes.includes('LINE_NOT_CONFIRMED') ||
+    reasonCodes.includes('EDGE_RECHECK_PENDING') ||
+    reasonCodes.includes('PRICE_SYNC_PENDING')
+  ) {
+    return 'LINE_NOT_CONFIRMED';
   }
   if (
     reasonCodes.some((code) =>

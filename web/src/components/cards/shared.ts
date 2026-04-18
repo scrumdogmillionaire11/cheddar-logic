@@ -2,6 +2,7 @@
 
 import { getFilterDebugFlags } from '@/lib/game-card/filters';
 import { getPlayDisplayAction } from '@/lib/game-card/decision';
+import { classifyPassHeaderBucket } from '@/lib/game-card/pass-classification';
 import type { GameFilters, ViewMode } from '@/lib/game-card/filters';
 import { GAME_TAGS } from '@/lib/types';
 import { isNflSeason } from '@/lib/game-card/season-gates';
@@ -48,17 +49,6 @@ export const CLIENT_DEFAULT_BACKOFF_MS = 30_000;
 export const LIFECYCLE_SESSION_KEY = 'cheddar_cards_lifecycle_mode';
 export const CHUNK_ERROR_LOG_CODE = 'CARDS_CHUNK_LOAD_FAILED';
 export const FETCH_ERROR_LOG_CODE = 'CARDS_FETCH_FAILED';
-
-export const BUCKET_LABELS: Record<
-  'missingMapping' | 'driverLoadFailed' | 'noOdds' | 'noProjection' | 'projectionOnly',
-  string
-> = {
-  missingMapping: 'Missing mapping',
-  driverLoadFailed: 'Driver load failed',
-  noOdds: 'No odds',
-  noProjection: 'No projection',
-  projectionOnly: 'Projection only',
-};
 
 function normalizeMissingInputs(values: unknown): string[] {
   if (!Array.isArray(values)) return [];
@@ -686,68 +676,14 @@ export function createGuardrailBreakdownEntry(): GuardrailBreakdownEntry {
   };
 }
 
-const DATA_ERROR_PASS_CODES = new Set([
-  'PASS_DATA_ERROR',
-  'PASS_MISSING_KIND',
-  'PASS_MISSING_SELECTION',
-  'PASS_MISSING_MARKET_TYPE',
-  'PASS_MISSING_LINE',
-  'PASS_NO_MARKET_PRICE',
-  'PASS_TOTAL_INSUFFICIENT_DATA',
-  'PASS_MISSING_DRIVER_INPUTS',
-  'PASS_NO_ACTIONABLE_PLAY',
-]);
-
 /**
  * Classify a PASS card into one of three display buckets for the PASS toggle header.
- * Access paths:
- *   card.play?.execution_status
- *   card.play?.reason_codes  (flat array on play)
- *   card.play?.decision_v2?.price_reason_codes  (nested under decision_v2)
- *   card.play?.transform_meta?.quality
  * Returns null when the card has no classifiable reason.
  */
 export function classifyPassReasonBucket(
   card: GameCard,
 ): 'odds-blocked' | 'data-error' | 'projection-only' | null {
-  const play = card.play;
-  if (!play) return null;
-
-  const reasonCodes: string[] = play.reason_codes ?? [];
-  const priceReasonCodes: string[] =
-    (play.decision_v2 as { price_reason_codes?: string[] } | undefined)
-      ?.price_reason_codes ?? [];
-
-  // projection-only (check first — highest specificity)
-  if (
-    play.execution_status === 'PROJECTION_ONLY' ||
-    reasonCodes.includes('PROJECTION_ONLY_EXCLUSION')
-  ) {
-    return 'projection-only';
-  }
-
-  // odds-blocked via execution gate or price reason codes
-  if (
-    play.execution_status === 'BLOCKED' ||
-    priceReasonCodes.includes('PROXY_EDGE_BLOCKED') ||
-    priceReasonCodes.includes('PROXY_EDGE_CAPPED') ||
-    reasonCodes.some((code) => code.startsWith('PASS_EXECUTION_GATE_'))
-  ) {
-    return 'odds-blocked';
-  }
-
-  // data-error
-  if (
-    play.transform_meta?.quality === 'BROKEN' ||
-    reasonCodes.some((code) => DATA_ERROR_PASS_CODES.has(code))
-  ) {
-    return 'data-error';
-  }
-
-  // default: any PASS card with reason codes but none of the above → odds-blocked
-  if (reasonCodes.length > 0) return 'odds-blocked';
-
-  return null;
+  return classifyPassHeaderBucket(card);
 }
 
 export type {

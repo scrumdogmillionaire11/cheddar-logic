@@ -3,22 +3,22 @@
  * Extracted from game-card/transform.ts (WI-0622)
  */
 
+export const PASS_REASON_ALIAS_MAP: Record<string, string> = {
+  MISSING_LINE: 'PASS_MISSING_LINE',
+  MISSING_EDGE: 'PASS_MISSING_EDGE',
+  MISSING_SELECTION: 'PASS_MISSING_SELECTION',
+  MISSING_PRICE: 'PASS_MISSING_PRICE',
+  NO_MARKET_PRICE: 'PASS_NO_MARKET_PRICE',
+  NO_STARTER_SIGNAL: 'PASS_MISSING_DRIVER_INPUTS',
+};
+
 export function normalizePassReasonCode(reason?: string | null): string | null {
   if (typeof reason !== 'string') return null;
   const code = reason.trim().toUpperCase();
   if (!code) return null;
   if (code.startsWith('PASS_')) return code;
 
-  const mapped: Record<string, string> = {
-    MISSING_LINE: 'PASS_MISSING_LINE',
-    MISSING_EDGE: 'PASS_MISSING_EDGE',
-    MISSING_SELECTION: 'PASS_MISSING_SELECTION',
-    MISSING_PRICE: 'PASS_MISSING_PRICE',
-    NO_MARKET_PRICE: 'PASS_NO_MARKET_PRICE',
-    NO_STARTER_SIGNAL: 'PASS_MISSING_DRIVER_INPUTS',
-  };
-
-  return mapped[code] ?? code;
+  return PASS_REASON_ALIAS_MAP[code] ?? code;
 }
 
 export const NO_ACTIONABLE_IGNORE_REASON_CODES = new Set([

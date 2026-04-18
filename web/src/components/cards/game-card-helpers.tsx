@@ -7,6 +7,7 @@ import type {
   DriverTier,
   Market,
 } from '@/lib/types';
+import { getReasonCodeLabel } from '@/lib/game-card/reason-labels';
 import type { GameData } from './types';
 
 export const INFORMATIONAL_CODES = new Set([
@@ -235,23 +236,8 @@ export function formatMarketLabel(market: Market | 'NONE') {
 
 export function formatReasonCode(code?: string | null) {
   if (!code) return 'UNKNOWN';
-  const LABELS: Record<string, string> = {
-    EDGE_VERIFICATION_REQUIRED: 'Line unstable — waiting for confirmation',
-    EDGE_CLEAR: 'Edge clear',
-    EDGE_FOUND_SIDE: 'Edge found',
-    NO_EDGE_AT_PRICE: 'Price too sharp',
-    PASS_NO_EDGE: 'No edge',
-    PASS_LOW_CONFIDENCE: 'Low confidence',
-    PASS_SHARP_MONEY_OPPOSITE: 'Sharp money against',
-    GATE_GOALIE_UNCONFIRMED: 'Goalie not confirmed',
-    GATE_LINE_MOVEMENT: 'Line moved — re-evaluating',
-    BLOCK_INJURY_RISK: 'Injury risk flag',
-    BLOCK_STALE_DATA: 'Data stale',
-    MODEL_PROB_MISSING: 'Model incomplete',
-    EXACT_WAGER_MISMATCH: 'Line mismatch',
-    HEAVY_FAVORITE_PRICE_CAP: 'High price cap',
-  };
-  return LABELS[code] ?? code.replace(/_/g, ' ').toLowerCase();
+  const label = getReasonCodeLabel(code);
+  return label ?? code.replace(/_/g, ' ').toLowerCase();
 }
 
 export function formatSharpPriceStatus(status?: string | null) {

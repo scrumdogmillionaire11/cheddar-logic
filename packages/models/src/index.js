@@ -33,3 +33,10 @@ const { buildDecisionBasisMeta, DECISION_BASIS, MARKET_LINE_SOURCE } = require('
 module.exports.buildDecisionBasisMeta = buildDecisionBasisMeta;
 module.exports.DECISION_BASIS = DECISION_BASIS;
 module.exports.MARKET_LINE_SOURCE = MARKET_LINE_SOURCE;
+
+// Edge threshold configuration (display and projection tiers)
+const edgeThresholdsConfig = require('./edge-thresholds-config');
+module.exports.describeEdgeMagnitude = edgeThresholdsConfig.describeEdgeMagnitude;
+module.exports.classifyNhlSogTier = edgeThresholdsConfig.classifyNhlSogTier;
+module.exports.EDGE_MAGNITUDE_TIERS = edgeThresholdsConfig.EDGE_MAGNITUDE_TIERS;
+module.exports.normalizeEdgeForBand = edgeThresholdsConfig.normalizeEdgeForBand;

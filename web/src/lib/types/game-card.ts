@@ -252,8 +252,10 @@ export interface FinalMarketDecision {
   model_strength: 'BEST' | 'GOOD' | 'WATCH' | null;
   model_edge_pct: number | null;
   fair_price: string | null;
-  verification_state: 'VERIFIED' | 'PENDING' | 'FAILED';
+  verification_state: 'VERIFIED' | 'PENDING';
   certainty_state: 'CONFIRMED' | 'PARTIAL' | 'UNCONFIRMED';
+  market_verification_status: 'VERIFIED' | 'UNVERIFIED';
+  projection_input_status: 'COMPLETE' | 'INCOMPLETE' | 'STALE_FALLBACK';
   market_stable: boolean;
   line_verified: boolean;
   show_model_context: boolean;

@@ -2532,10 +2532,6 @@ function normalizePitcherLookupKey(name) {
 function selectPitcherRowForTeam(rows, team) {
   if (!Array.isArray(rows) || rows.length === 0) return null;
 
-  if (rows.length === 1) {
-    return rows[0] ?? null;
-  }
-
   const teamTokens = new Set(
     resolveMlbTeamLookupKeys(team)
       .map((value) => normalizeTokenForMap(value))
@@ -3128,9 +3124,8 @@ function enrichMlbPitcherData(
     const existingHomePitcher = mlb.home_pitcher ?? null;
     const existingAwayPitcher = mlb.away_pitcher ?? null;
 
-    // Query by specific pitcher ID first, then by name. As a last resort,
-    // allow a probable-date-scoped team fallback so game cards can still bind
-    // today's listed starter without reopening the unsafe "latest team row" path.
+    // Query by specific pitcher ID first, then by name. Do not fallback to team,
+    // which can silently bind the wrong pitcher when probable assignments shift.
     function getPitcherRow(team, existingPitcher) {
       // Priority 1: match by mlb_id if available
       if (existingPitcher?.mlb_id != null) {
@@ -3147,15 +3142,6 @@ function enrichMlbPitcherData(
           ? db.prepare('SELECT * FROM mlb_pitcher_stats WHERE full_name = ? COLLATE NOCASE ORDER BY updated_at DESC')
           : db.prepare("SELECT * FROM mlb_pitcher_stats WHERE full_name = ? COLLATE NOCASE AND date(updated_at) = date('now') ORDER BY updated_at DESC");
         const row = selectPitcherRowForTeam(byName.all(existingPitcher.full_name), team);
-        if (row) return row;
-      }
-
-      const byTeam = forKEngine
-        ? db.prepare("SELECT * FROM mlb_pitcher_stats WHERE team = ? AND probable_date = date('now') ORDER BY updated_at DESC LIMIT 1")
-        : db.prepare("SELECT * FROM mlb_pitcher_stats WHERE team = ? AND probable_date = date('now') AND date(updated_at) = date('now') ORDER BY updated_at DESC LIMIT 1");
-
-      for (const key of resolveMlbTeamLookupKeys(team)) {
-        const row = byTeam.get(key);
         if (row) return row;
       }
 

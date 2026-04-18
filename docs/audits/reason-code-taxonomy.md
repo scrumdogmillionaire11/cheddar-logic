@@ -20,6 +20,25 @@ WI-0901 standardizes how suppression, downgrade, and hidden-output paths expose 
 
 ## Canonical Expectations
 
+### Verification blocker migration
+
+`EDGE_VERIFICATION_REQUIRED` is a **sunset** legacy code. It must not be emitted by any current pipeline or model.
+Old DB records may contain it; the read layer renders it as `'Line not confirmed'` for backward compat.
+New canonical reasons for verification/integrity holds are:
+
+- `LINE_NOT_CONFIRMED`
+- `EDGE_RECHECK_PENDING`
+- `EDGE_NO_LONGER_CONFIRMED`
+- `MARKET_DATA_STALE`
+- `PRICE_SYNC_PENDING`
+
+Normalization rule:
+
+- ingestion may preserve legacy values for backward compatibility,
+- newly emitted `primary_reason_code` / `price_reason_codes` should use explicit
+  canonical reasons above,
+- `reason_codes` remains deterministic and unique after normalization.
+
 ### Executable candidate blocked by worker
 
 - `execution_gate.drop_reason.drop_reason_code` must be present

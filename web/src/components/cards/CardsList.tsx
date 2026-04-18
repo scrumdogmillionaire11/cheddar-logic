@@ -2,7 +2,11 @@
 
 import ProjectionCard from '@/components/projection-card';
 import PropGameCard from '@/components/prop-game-card';
-import { useCardsPageActions, useCardsPageState, BUCKET_LABELS } from './CardsPageContext';
+import {
+  countBlockedDiagnostics,
+  DIAGNOSTIC_BUCKET_LABELS,
+} from '@/lib/game-card/pass-classification';
+import { useCardsPageActions, useCardsPageState } from './CardsPageContext';
 import GameCardItem from './GameCardItem';
 import SportDiagnosticsPanel from './SportDiagnosticsPanel';
 
@@ -61,7 +65,7 @@ export default function CardsList() {
             Debug diagnostics filter: {diagnosticCards.length} blocked{' '}
             {diagnosticFilter.sport} games
             {' — '}
-            {BUCKET_LABELS[diagnosticFilter.bucket]}
+            {DIAGNOSTIC_BUCKET_LABELS[diagnosticFilter.bucket]}
           </span>
           <button
             onClick={() => onDiagnosticFilterChange(null)}
@@ -91,14 +95,7 @@ export default function CardsList() {
                 excluded — breakdown by sport:
               </div>
               {Object.entries(sportDiagnostics)
-                .filter(
-                  ([, b]) =>
-                    b.missingMapping +
-                      b.driverLoadFailed +
-                      b.noOdds +
-                      b.noProjection >
-                    0,
-                )
+                .filter(([, b]) => countBlockedDiagnostics(b) > 0)
                 .map(([sport, b]) => (
                   <div key={sport} className="flex gap-2 font-mono">
                     <span className="w-16">{sport}</span>
@@ -107,6 +104,7 @@ export default function CardsList() {
                     {b.driverLoadFailed > 0 && (
                       <span>driver-fail:{b.driverLoadFailed}</span>
                     )}
+                    {b.projectionOnly > 0 && <span>proj-only:{b.projectionOnly}</span>}
                     {b.noProjection > 0 && <span>no-proj:{b.noProjection}</span>}
                   </div>
                 ))}
@@ -186,7 +184,7 @@ export default function CardsList() {
         diagnosticCards.length > 0 && (
           <div className="mt-6 space-y-2">
             <div className="text-xs text-cloud/40 border-t border-white/10 pt-3 mb-2">
-              Blocked games — {BUCKET_LABELS[diagnosticFilter.bucket]}
+              Blocked games — {DIAGNOSTIC_BUCKET_LABELS[diagnosticFilter.bucket]}
             </div>
             {diagnosticCards.map((card) => {
               const codes = card.play?.reason_codes ?? [];

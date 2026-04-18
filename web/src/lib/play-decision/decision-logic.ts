@@ -22,10 +22,15 @@ import { THRESHOLDS } from '../types';
 export const EDGE_SANITY_NON_TOTAL_THRESHOLD = 0.2;
 export const EDGE_SANITY_GATE_CODE = 'EDGE_SANITY_NON_TOTAL';
 export const PROXY_CAP_GATE_CODE = 'PROXY_CAP';
-export const EDGE_VERIFICATION_TAG = 'EDGE_VERIFICATION_REQUIRED';
+export const EDGE_VERIFICATION_TAG = 'LINE_NOT_CONFIRMED';
+export const EDGE_VERIFICATION_LEGACY_TAG = 'EDGE_VERIFICATION_REQUIRED';
 
 const EDGE_VERIFICATION_REASON_CODES = new Set([
   EDGE_VERIFICATION_TAG,
+  EDGE_VERIFICATION_LEGACY_TAG,
+  'EDGE_RECHECK_PENDING',
+  'EDGE_NO_LONGER_CONFIRMED',
+  'PRICE_SYNC_PENDING',
   EDGE_SANITY_GATE_CODE,
   'PASS_EDGE_SANITY_NON_TOTAL',
   'DOWNGRADED_EDGE_SANITY_NON_TOTAL',
@@ -47,7 +52,11 @@ export function hasEdgeVerificationSignals(play: {
   decision_v2?: { price_reason_codes?: string[] };
 } | null | undefined): boolean {
   if (!play) return false;
-  if (Array.isArray(play.tags) && play.tags.includes(EDGE_VERIFICATION_TAG)) {
+  if (
+    Array.isArray(play.tags) &&
+    (play.tags.includes(EDGE_VERIFICATION_TAG) ||
+      play.tags.includes(EDGE_VERIFICATION_LEGACY_TAG))
+  ) {
     return true;
   }
   if (

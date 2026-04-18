@@ -1,6 +1,7 @@
 'use strict';
 
-const { twoSidedFairProb } = require('@cheddar-logic/models').edgeCalculator;
+const { edgeCalculator, classifyNhlSogTier } = require('@cheddar-logic/models');
+const { twoSidedFairProb } = edgeCalculator;
 
 /**
  * NHL Player Shots (SOG) Model
@@ -166,14 +167,8 @@ function classifyEdge(mu, marketLine, confidence) {
   const absEdge = Math.abs(edge);
   const direction = edge >= 0 ? 'OVER' : 'UNDER';
 
-  let tier;
-  if (absEdge >= 0.8 && confidence >= 0.5) {
-    tier = 'HOT';
-  } else if (absEdge >= 0.5 && confidence >= 0.5) {
-    tier = 'WATCH';
-  } else {
-    tier = 'COLD';
-  }
+  // Use centralized tier classification (handles precision normalization)
+  const tier = classifyNhlSogTier(absEdge, confidence);
 
   return { tier, direction, edge, mu };
 }

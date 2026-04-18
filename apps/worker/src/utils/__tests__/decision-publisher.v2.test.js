@@ -797,13 +797,13 @@ describe('decision publisher v2 pipeline', () => {
     expect(payload.decision_v2.sharp_price_status).toBe('PENDING_VERIFICATION');
     expect(payload.decision_v2.official_status).toBe('PASS');
     expect(payload.decision_v2.price_reason_codes).toContain(
-      'EDGE_VERIFICATION_REQUIRED',
+      'LINE_NOT_CONFIRMED',
     );
     expect(payload.decision_v2.price_reason_codes).toContain(
       'EDGE_SANITY_NON_TOTAL',
     );
     expect(payload.decision_v2.primary_reason_code).toBe(
-      'EDGE_VERIFICATION_REQUIRED',
+      'LINE_NOT_CONFIRMED',
     );
   });
 

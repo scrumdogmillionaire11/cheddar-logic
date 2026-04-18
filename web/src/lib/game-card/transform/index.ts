@@ -1037,6 +1037,14 @@ function selectWave1DecisionCandidate(
     return 1;
   };
 
+  const marketPriority = (play: ApiPlay): number => {
+    if (sport.toUpperCase() !== 'MLB') return 99;
+    const cardType = play.cardType?.toLowerCase() || '';
+    if (cardType === 'mlb-full-game-ml') return 0;
+    if (cardType === 'mlb-full-game') return 1;
+    return 99;
+  };
+
   const sorted = [...candidates].sort((a, b) => {
     const aDecision = a.decision_v2!;
     const bDecision = b.decision_v2!;
@@ -1044,6 +1052,9 @@ function selectWave1DecisionCandidate(
       officialRank(bDecision.official_status) -
       officialRank(aDecision.official_status);
     if (statusDiff !== 0) return statusDiff;
+
+    const marketPriorityDiff = marketPriority(a) - marketPriority(b);
+    if (marketPriorityDiff !== 0) return marketPriorityDiff;
 
     const aEdge = resolveDecisionV2EdgePct(aDecision) ?? -1;
     const bEdge = resolveDecisionV2EdgePct(bDecision) ?? -1;
@@ -1111,9 +1122,20 @@ function clamp(value: number, min: number, max: number): number {
 }
 
 function sortDriversByStrength(drivers: DriverRow[]): DriverRow[] {
+  const mlbMarketPriority = (driver: DriverRow): number => {
+    const cardType = driver.cardType?.toLowerCase() || '';
+    if (cardType === 'mlb-full-game-ml') return 0;
+    if (cardType === 'mlb-full-game') return 1;
+    return 99;
+  };
+
   return [...drivers].sort((a, b) => {
     const tierDiff = TIER_SCORE[b.tier] - TIER_SCORE[a.tier];
     if (tierDiff !== 0) return tierDiff;
+
+    const marketPriorityDiff = mlbMarketPriority(a) - mlbMarketPriority(b);
+    if (marketPriorityDiff !== 0) return marketPriorityDiff;
+
     const aConf = typeof a.confidence === 'number' ? a.confidence : 0.6;
     const bConf = typeof b.confidence === 'number' ? b.confidence : 0.6;
     return bConf - aConf;
@@ -1431,7 +1453,7 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
     );
     const tags = Array.from(new Set([...(wave1DecisionPlay.tags ?? [])]));
     if (edgeVerificationBlocked) {
-      tags.push('EDGE_VERIFICATION_REQUIRED');
+      tags.push('LINE_NOT_CONFIRMED');
     }
     if (
       effectiveDecisionV2.proxy_capped === true ||
@@ -1901,8 +1923,18 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
     });
 
   // Prefer PROP play if available, otherwise use best ranked source candidate
-  const preferredCanonical =
-    market === 'TOTAL'
+  const hasMlbFullGameMoneylineCandidate =
+    normalizeSport(game.sport) === 'MLB' &&
+    rankedSourceCandidates.some(
+      (candidate) =>
+        candidate.inference.canonical === 'MONEYLINE' &&
+        candidate.play.cardType?.toLowerCase() === 'mlb-full-game-ml' &&
+        candidate.actionRank >= 2,
+    );
+
+  const preferredCanonical = hasMlbFullGameMoneylineCandidate
+    ? 'MONEYLINE'
+    : market === 'TOTAL'
       ? 'TOTAL'
       : market === 'SPREAD'
         ? 'SPREAD'
