@@ -4,6 +4,7 @@ export const PROJECTION_SURFACE_CARD_TYPES = [
   'mlb-f5-ml',
   'mlb-full-game',
   'mlb-full-game-ml',
+  'mlb-pitcher-k',
 ] as const;
 
 const PROJECTION_SURFACE_CARD_TYPE_SET = new Set<string>(

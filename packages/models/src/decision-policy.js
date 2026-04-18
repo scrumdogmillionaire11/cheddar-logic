@@ -13,7 +13,7 @@ const {
   REASON_CODE_LABELS: CANONICAL_REASON_CODE_LABELS,
   classifyReasonCode,
   getReasonCodeLabel,
-} = require('@cheddar-logic/data/src/reason-codes');
+} = require('../../data/src/reason-codes');
 
 function toUpperToken(value) {
   if (value == null) return '';

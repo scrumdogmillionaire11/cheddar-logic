@@ -52,6 +52,8 @@ const {
   buildMlbBullpenContext,
   resolveMlbBullpenContext,
   selectPitcherRowForTeam,
+  getProbableStarterMapRow,
+  getProbableStarterIdentity,
   buildPitcherKLineContract,
   buildMlbPitcherKPayloadFields,
   resolvePitcherKPayloadIdentity,
@@ -4034,6 +4036,96 @@ describe('WI-0997: probable_date gates team-fallback pitcher lookup', () => {
 
     expect(row).toBeDefined();
     expect(row.full_name).toBe('Today Pitcher');
+  });
+});
+
+describe('matchup-based probable starter map lookup', () => {
+  let db;
+
+  beforeEach(() => {
+    db = new Database(':memory:');
+    db.exec(`
+      CREATE TABLE mlb_probable_starter_map (
+        game_pk_key TEXT PRIMARY KEY,
+        game_pk INTEGER NOT NULL,
+        game_date TEXT NOT NULL,
+        scheduled_start_utc TEXT NOT NULL,
+        home_team_abbr TEXT NOT NULL,
+        away_team_abbr TEXT NOT NULL,
+        home_pitcher_id INTEGER,
+        home_pitcher_name TEXT,
+        away_pitcher_id INTEGER,
+        away_pitcher_name TEXT,
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      )
+    `);
+  });
+
+  afterEach(() => {
+    db.close();
+  });
+
+  test('selects the closest scheduled matchup row for doubleheaders', () => {
+    db.prepare(`
+      INSERT INTO mlb_probable_starter_map (
+        game_pk_key, game_pk, game_date, scheduled_start_utc,
+        home_team_abbr, away_team_abbr,
+        home_pitcher_id, home_pitcher_name, away_pitcher_id, away_pitcher_name
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      '2026-04-18T00:11:00Z|MIN|CIN',
+      111,
+      '2026-04-18',
+      '2026-04-18T00:11:00Z',
+      'MIN',
+      'CIN',
+      1,
+      'Game 1 Starter',
+      2,
+      'Game 1 Opponent',
+    );
+
+    db.prepare(`
+      INSERT INTO mlb_probable_starter_map (
+        game_pk_key, game_pk, game_date, scheduled_start_utc,
+        home_team_abbr, away_team_abbr,
+        home_pitcher_id, home_pitcher_name, away_pitcher_id, away_pitcher_name
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      '2026-04-18T18:11:00Z|MIN|CIN',
+      222,
+      '2026-04-18',
+      '2026-04-18T18:11:00Z',
+      'MIN',
+      'CIN',
+      3,
+      'Game 2 Starter',
+      4,
+      'Game 2 Opponent',
+    );
+
+    const row = getProbableStarterMapRow(db, {
+      home_team: 'Minnesota Twins',
+      away_team: 'Cincinnati Reds',
+      game_time_utc: '2026-04-18T18:11:00Z',
+    });
+
+    expect(row?.game_pk).toBe(222);
+    expect(getProbableStarterIdentity(row, 'home')).toEqual({
+      mlb_id: 3,
+      full_name: 'Game 2 Starter',
+    });
+  });
+
+  test('returns null when matchup row is absent', () => {
+    const row = getProbableStarterMapRow(db, {
+      home_team: 'Boston Red Sox',
+      away_team: 'Detroit Tigers',
+      game_time_utc: '2026-04-18T20:10:00Z',
+    });
+
+    expect(row).toBeNull();
+    expect(getProbableStarterIdentity(row, 'home')).toBeNull();
   });
 });
 

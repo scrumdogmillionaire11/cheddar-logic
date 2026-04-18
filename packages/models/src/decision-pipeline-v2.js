@@ -8,7 +8,7 @@ const {
 const {
   REASON_CODE_ALIASES: _REASON_CODE_ALIASES,
   ALL_REASON_CODES: _ALL_REASON_CODES,
-} = require('@cheddar-logic/data/src/reason-codes');
+} = require('../../data/src/reason-codes');
 
 // Startup check: all locally-defined reason codes must be canonical or aliased.
 // This catches any future code added to WATCHDOG_REASONS / PRICE_REASONS without registration.

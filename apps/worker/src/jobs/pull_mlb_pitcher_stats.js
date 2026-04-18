@@ -89,6 +89,26 @@ function ensureMlbGamePkMap(db) {
   `);
 }
 
+function ensureMlbProbableStarterMap(db) {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS mlb_probable_starter_map (
+      game_pk_key         TEXT PRIMARY KEY,
+      game_pk             INTEGER NOT NULL,
+      game_date           TEXT NOT NULL,
+      scheduled_start_utc TEXT NOT NULL,
+      home_team_abbr      TEXT NOT NULL,
+      away_team_abbr      TEXT NOT NULL,
+      home_pitcher_id     INTEGER,
+      home_pitcher_name   TEXT,
+      away_pitcher_id     INTEGER,
+      away_pitcher_name   TEXT,
+      updated_at          TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_mlb_probable_starter_map_matchup
+      ON mlb_probable_starter_map (game_date, home_team_abbr, away_team_abbr, scheduled_start_utc);
+  `);
+}
+
 function upsertGamePkMap(db, gamePkKey, gamePk, gameDate) {
   ensureMlbGamePkMap(db);
   db.prepare(`
@@ -99,6 +119,86 @@ function upsertGamePkMap(db, gamePkKey, gamePk, gameDate) {
       game_date = excluded.game_date,
       updated_at = datetime('now')
   `).run(gamePkKey, gamePk, gameDate);
+}
+
+function upsertProbableStarterMap(db, entry) {
+  ensureMlbProbableStarterMap(db);
+  db.prepare(`
+    INSERT INTO mlb_probable_starter_map (
+      game_pk_key,
+      game_pk,
+      game_date,
+      scheduled_start_utc,
+      home_team_abbr,
+      away_team_abbr,
+      home_pitcher_id,
+      home_pitcher_name,
+      away_pitcher_id,
+      away_pitcher_name
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(game_pk_key) DO UPDATE SET
+      game_pk = excluded.game_pk,
+      game_date = excluded.game_date,
+      scheduled_start_utc = excluded.scheduled_start_utc,
+      home_team_abbr = excluded.home_team_abbr,
+      away_team_abbr = excluded.away_team_abbr,
+      home_pitcher_id = excluded.home_pitcher_id,
+      home_pitcher_name = excluded.home_pitcher_name,
+      away_pitcher_id = excluded.away_pitcher_id,
+      away_pitcher_name = excluded.away_pitcher_name,
+      updated_at = datetime('now')
+  `).run(
+    entry.gamePkKey,
+    entry.gamePk,
+    entry.gameDate,
+    entry.scheduledStartUtc,
+    entry.homeTeamAbbr,
+    entry.awayTeamAbbr,
+    entry.homePitcherId,
+    entry.homePitcherName,
+    entry.awayPitcherId,
+    entry.awayPitcherName,
+  );
+}
+
+function buildProbableStarterMapEntries(schedulePayload, fallbackDate) {
+  const entries = [];
+  const dates = Array.isArray(schedulePayload?.dates) ? schedulePayload.dates : [];
+  for (const d of dates) {
+    const games = Array.isArray(d.games) ? d.games : [];
+    for (const game of games) {
+      const gamePk = Number(game?.gamePk);
+      const scheduledStartUtc = String(game?.gameDate || '').trim();
+      const gameDate = (scheduledStartUtc || String(fallbackDate || '')).slice(0, 10);
+      const homeTeamAbbr = String(game?.teams?.home?.team?.abbreviation || '').trim();
+      const awayTeamAbbr = String(game?.teams?.away?.team?.abbreviation || '').trim();
+      if (!Number.isFinite(gamePk) || !scheduledStartUtc || !gameDate || !homeTeamAbbr || !awayTeamAbbr) {
+        continue;
+      }
+      entries.push({
+        gamePkKey: `${scheduledStartUtc}|${homeTeamAbbr}|${awayTeamAbbr}`,
+        gamePk,
+        gameDate,
+        scheduledStartUtc,
+        homeTeamAbbr,
+        awayTeamAbbr,
+        homePitcherId: game?.teams?.home?.probablePitcher?.id ? Number(game.teams.home.probablePitcher.id) : null,
+        homePitcherName: String(game?.teams?.home?.probablePitcher?.fullName || '').trim() || null,
+        awayPitcherId: game?.teams?.away?.probablePitcher?.id ? Number(game.teams.away.probablePitcher.id) : null,
+        awayPitcherName: String(game?.teams?.away?.probablePitcher?.fullName || '').trim() || null,
+      });
+    }
+  }
+  return entries;
+}
+
+function storeProbableStarterMap(db, schedulePayload, date) {
+  const entries = buildProbableStarterMapEntries(schedulePayload, date);
+  for (const entry of entries) {
+    upsertProbableStarterMap(db, entry);
+  }
+  return entries.length;
 }
 
 async function storeGamePkMap(db, date) {
@@ -761,6 +861,8 @@ async function pullMlbPitcherStats({
       const db = getDatabase();
       const gamePkCount = await storeGamePkMap(db, date);
       console.log(`[${JOB_NAME}] gamePkMap stored=${gamePkCount}`);
+      const probableStarterMapCount = storeProbableStarterMap(db, schedulePayload, date);
+      console.log(`[${JOB_NAME}] probableStarterMap stored=${probableStarterMapCount}`);
 
       const rows = await Promise.all(
         pitcherIds.map((id) =>
@@ -864,6 +966,10 @@ module.exports = {
   ensureMlbGamePkMap,
   upsertGamePkMap,
   storeGamePkMap,
+  ensureMlbProbableStarterMap,
+  upsertProbableStarterMap,
+  buildProbableStarterMapEntries,
+  storeProbableStarterMap,
   parseCliArgs,
   pullMlbPitcherStats,
   // Exported for WI-0764 unit tests
