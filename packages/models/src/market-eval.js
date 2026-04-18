@@ -156,6 +156,14 @@ function buildResult(card, ctx, status, reasonCodes, extra = {}) {
   const sport = (ctx && ctx.sport) || (card && card.sport) || null;
   const market = (card && card.market) || null;
 
+  // Provenance fields — defaults
+  const inputs_status = extra.inputs_status !== undefined ? extra.inputs_status : 'COMPLETE';
+  const evaluation_status = extra.evaluation_status !== undefined ? extra.evaluation_status : 'NO_EVALUATION';
+  const raw_edge_value = extra.raw_edge_value !== undefined ? extra.raw_edge_value : null;
+  const threshold_required = extra.threshold_required !== undefined ? extra.threshold_required : null;
+  const threshold_passed = extra.threshold_passed !== undefined ? extra.threshold_passed : null;
+  const block_reasons = Array.isArray(extra.block_reasons) ? extra.block_reasons : [];
+
   return {
     game_id: gameId,
     sport: sport,
@@ -171,6 +179,13 @@ function buildResult(card, ctx, status, reasonCodes, extra = {}) {
     status: status,
     reason_codes: Array.isArray(reasonCodes) ? reasonCodes : [],
     notes: Array.isArray(extra.notes) ? extra.notes : [],
+    // Provenance fields
+    inputs_status,
+    evaluation_status,
+    raw_edge_value,
+    threshold_required,
+    threshold_passed,
+    block_reasons,
   };
 }
 
@@ -187,7 +202,7 @@ function evaluateSingleMarket(card, ctx) {
       safeCtx,
       'REJECTED_INPUTS',
       [REASON_CODES.MISSING_MARKET_ODDS],
-      { inputs_ok: false },
+      { inputs_ok: false, inputs_status: 'MISSING', evaluation_status: 'NO_EVALUATION', threshold_passed: null },
     );
   }
 
@@ -202,7 +217,7 @@ function evaluateSingleMarket(card, ctx) {
       safeCtx,
       'REJECTED_INPUTS',
       [REASON_CODES.UNCLASSIFIED_MARKET_STATE],
-      { inputs_ok: false },
+      { inputs_ok: false, inputs_status: 'MISSING', evaluation_status: 'NO_EVALUATION', threshold_passed: null },
     );
   }
 
@@ -214,7 +229,12 @@ function evaluateSingleMarket(card, ctx) {
     
     if (isProjectionOnly) {
       // Projection-only cards allowed through — they'll use SYNTHETIC_FALLBACK or degraded inputs
-      return buildResult(card, safeCtx, 'QUALIFIED_LEAN', [], { official_tier: 'LEAN' });
+      return buildResult(card, safeCtx, 'QUALIFIED_LEAN', [], {
+        official_tier: 'LEAN',
+        inputs_status: 'COMPLETE',
+        evaluation_status: 'EDGE_COMPUTED',
+        threshold_passed: true,
+      });
     }
     
     const codes = card.missing_inputs.map((name) => {
@@ -225,7 +245,7 @@ function evaluateSingleMarket(card, ctx) {
       if (n.includes('odds') || n.includes('price') || n.includes('market')) return REASON_CODES.MISSING_MARKET_ODDS;
       return REASON_CODES.MISSING_MARKET_ODDS;
     });
-    return buildResult(card, safeCtx, 'REJECTED_INPUTS', codes, { inputs_ok: false });
+    return buildResult(card, safeCtx, 'REJECTED_INPUTS', codes, { inputs_ok: false, inputs_status: 'MISSING', evaluation_status: 'NO_EVALUATION', threshold_passed: null });
   }
 
   // --- Watchdog gate ---
@@ -250,7 +270,7 @@ function evaluateSingleMarket(card, ctx) {
       safeCtx,
       'REJECTED_WATCHDOG',
       [REASON_CODES.WATCHDOG_UNSAFE_FOR_BASE, ...watchdogCodes],
-      { watchdog_ok: false, official_tier: 'PASS', notes },
+      { watchdog_ok: false, official_tier: 'PASS', notes, inputs_status: 'PARTIAL', evaluation_status: 'NO_EVALUATION', threshold_passed: null },
     );
   }
 
@@ -260,7 +280,13 @@ function evaluateSingleMarket(card, ctx) {
     if (Array.isArray(card.reason_codes)) {
       codes.push(...card.reason_codes);
     }
-    return buildResult(card, safeCtx, 'REJECTED_THRESHOLD', codes, { official_tier: 'PASS' });
+    return buildResult(card, safeCtx, 'REJECTED_THRESHOLD', codes, {
+      official_tier: 'PASS',
+      inputs_status: 'COMPLETE',
+      evaluation_status: 'EDGE_COMPUTED',
+      raw_edge_value: card.edge != null ? card.edge : null,
+      threshold_passed: false,
+    });
   }
 
   // --- Card status === 'PASS' (model said pass explicitly) ---
@@ -269,17 +295,46 @@ function evaluateSingleMarket(card, ctx) {
     if (card.pass_reason_code) {
       codes.push(card.pass_reason_code);
     }
-    return buildResult(card, safeCtx, 'REJECTED_THRESHOLD', codes, { official_tier: 'PASS' });
+    // Derive provenance based on pass_reason_code
+    let passExtra;
+    if (card.pass_reason_code === 'PASS_NO_EDGE') {
+      passExtra = {
+        official_tier: 'PASS',
+        inputs_status: 'COMPLETE',
+        evaluation_status: 'EDGE_COMPUTED',
+        raw_edge_value: card.edge != null ? card.edge : null,
+        threshold_passed: false,
+      };
+    } else {
+      passExtra = {
+        official_tier: 'PASS',
+        inputs_status: 'COMPLETE',
+        evaluation_status: 'NO_EVALUATION',
+        threshold_passed: null,
+        block_reasons: card.pass_reason_code ? [card.pass_reason_code] : [],
+      };
+    }
+    return buildResult(card, safeCtx, 'REJECTED_THRESHOLD', codes, passExtra);
   }
 
   // --- LEAN / WATCH → QUALIFIED_LEAN ---
   if (card.classification === 'LEAN' || card.status === 'WATCH') {
-    return buildResult(card, safeCtx, 'QUALIFIED_LEAN', [], { official_tier: 'LEAN' });
+    return buildResult(card, safeCtx, 'QUALIFIED_LEAN', [], {
+      official_tier: 'LEAN',
+      inputs_status: 'COMPLETE',
+      evaluation_status: 'EDGE_COMPUTED',
+      threshold_passed: true,
+    });
   }
 
   // --- FIRE / BASE → QUALIFIED_OFFICIAL ---
   if (card.ev_threshold_passed === true && (card.status === 'FIRE' || card.classification === 'BASE')) {
-    return buildResult(card, safeCtx, 'QUALIFIED_OFFICIAL', [], { official_tier: 'PLAY' });
+    return buildResult(card, safeCtx, 'QUALIFIED_OFFICIAL', [], {
+      official_tier: 'PLAY',
+      inputs_status: 'COMPLETE',
+      evaluation_status: 'EDGE_COMPUTED',
+      threshold_passed: true,
+    });
   }
 
   // --- Default fallback ---
