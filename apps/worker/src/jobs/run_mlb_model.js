@@ -4278,7 +4278,7 @@ async function runMLBModel({
               threshold_required: Number.isFinite(driver.threshold_required)
                 ? driver.threshold_required
                 : (Number.isFinite(driverDetail.threshold) ? driverDetail.threshold : null),
-              threshold_passed: typeof driver.threshold_passed === 'boolean'
+              threshold_passed: driver.threshold_passed !== undefined
                 ? driver.threshold_passed
                 : (typeof driver.ev_threshold_passed === 'boolean' ? driver.ev_threshold_passed : null),
               blocked_by: driver.blocked_by ?? driver.pass_reason_code ?? null,
