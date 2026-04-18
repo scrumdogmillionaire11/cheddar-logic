@@ -1,10 +1,19 @@
 import type { DecisionV2, FinalMarketDecision } from '../../types';
 import { getReasonCodeLabel } from '../reason-labels';
-import cheddarData from '@cheddar-logic/data';
 
-const { MARKET_UNVERIFIED_CODES } = cheddarData as {
-  MARKET_UNVERIFIED_CODES: ReadonlySet<string>;
-};
+// Canonical source: packages/data/src/reason-codes.js — MARKET_UNVERIFIED_CODES
+// Inlined here to avoid pulling the server-only @cheddar-logic/data package
+// (which depends on better-sqlite3) into the client bundle.
+const MARKET_UNVERIFIED_CODES: ReadonlySet<string> = Object.freeze(new Set([
+  'LINE_NOT_CONFIRMED',
+  'EDGE_RECHECK_PENDING',
+  'PRICE_SYNC_PENDING',
+  'MARKET_DATA_STALE',
+  'BLOCKED_BET_VERIFICATION_REQUIRED',
+  'GATE_LINE_MOVEMENT',
+  'MISSING_DATA_NO_ODDS',
+  'MARKET_PRICE_MISSING',
+]));
 
 type GoalieStatus = 'CONFIRMED' | 'EXPECTED' | 'UNKNOWN' | null | undefined;
 
