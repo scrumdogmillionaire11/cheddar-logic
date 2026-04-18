@@ -16,12 +16,14 @@ const {
 const {
   isWebhookLeanEligible,
   collectReasonCodes,
+  collectStructuredReasons,
   describeWebhookReason,
   deriveWebhookWatchState,
   deriveWebhookWouldBecomePlay,
   deriveWebhookDropToPass,
   describeEdgeMagnitude,
 } = require('@cheddar-logic/models');
+const { getReasonCodeLabel } = require('@cheddar-logic/data');
 
 const JOB_NAME = 'post_discord_cards';
 const DEFAULT_CHAR_LIMIT = 1800;
@@ -965,12 +967,31 @@ function sectionLines(title, cards, bucket) {
   return [title, ...renderedItems];
 }
 
-// One-line collapsed PASS summary — no market-by-market spam
+// One-line collapsed PASS summary: one primary reason for humans, contextual hints for context.
+// Uses structured reasons so human sees clean signal, not machine noise.
 function collapsedPassSummary(cards) {
   if (cards.length === 0) return null;
-  const reasons = [...new Set(cards.map((c) => humanReason(c)).filter(Boolean))];
-  const reasonStr = reasons.slice(0, 2).join('; ');
-  return `⚪ PASS\n${reasonStr || 'No playable edges'}`;
+
+  const primaryLabels = new Set();
+  const marketIssues = new Set(); // unique issue types, not occurrence counts
+  const dataIssues = new Set();
+
+  for (const card of cards) {
+    const s = collectStructuredReasons(card?.payloadData || {});
+    if (s.primary_reason) {
+      primaryLabels.add(getReasonCodeLabel(s.primary_reason) || 'No edge');
+    }
+    for (const code of s.market_flags) marketIssues.add(code);
+    for (const code of s.data_flags) dataIssues.add(code);
+  }
+
+  const primaryLine = [...primaryLabels][0] || 'No playable edges';
+  const hints = [];
+  if (marketIssues.size > 0) hints.push('market stale');
+  if (dataIssues.size > 0) hints.push('data incomplete');
+  const hintLine = hints.length > 0 ? `\n_(${hints.join(', ')})_` : '';
+
+  return `⚪ PASS\n${primaryLine}${hintLine}`;
 }
 
 function chunkDiscordContent(content, charLimit = DEFAULT_CHAR_LIMIT) {

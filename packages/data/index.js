@@ -253,9 +253,20 @@ module.exports = {
   getProjectionProxyEvals:         projAccuracy.getProjectionProxyEvals,
   getProjectionAccuracySummary:    projAccuracy.getProjectionAccuracySummary,
 
-  // canonical reason-code registry (WI-1001)
-  BLOCKER_REASON_CODES:    reasonCodes.BLOCKER_REASON_CODES,
-  REASON_CODE_LABELS:      reasonCodes.REASON_CODE_LABELS,
-  MARKET_UNVERIFIED_CODES: reasonCodes.MARKET_UNVERIFIED_CODES,
-  getReasonCodeLabel:      reasonCodes.getReasonCodeLabel,
+  // canonical reason-code registry
+  BLOCKER_REASON_CODES:        reasonCodes.BLOCKER_REASON_CODES,
+  REASON_CODE_LABELS:          reasonCodes.REASON_CODE_LABELS,
+  MARKET_UNVERIFIED_CODES:     reasonCodes.MARKET_UNVERIFIED_CODES,
+  REASON_CODE_ALIASES:         reasonCodes.REASON_CODE_ALIASES,
+  MODEL_REASON_CODES:          reasonCodes.MODEL_REASON_CODES,
+  DATA_REASON_CODES:           reasonCodes.DATA_REASON_CODES,
+  DATA_BLOCKER_CODES:          reasonCodes.DATA_BLOCKER_CODES,
+  MARKET_REASON_CODES:         reasonCodes.MARKET_REASON_CODES,
+  GATE_REASON_CODES:           reasonCodes.GATE_REASON_CODES,
+  ALL_REASON_CODES:            reasonCodes.ALL_REASON_CODES,
+  REASON_CODE_SCHEMA_VERSION:  reasonCodes.REASON_CODE_SCHEMA_VERSION,
+  getReasonCodeLabel:          reasonCodes.getReasonCodeLabel,
+  classifyReasonCode:          reasonCodes.classifyReasonCode,
+  assertExclusiveBuckets:      reasonCodes.assertExclusiveBuckets,
+  assertAllCodesLabeled:       reasonCodes.assertAllCodesLabeled,
 };

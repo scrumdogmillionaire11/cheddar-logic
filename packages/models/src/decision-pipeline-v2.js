@@ -4,6 +4,22 @@ const {
   resolvePlayCleanlinessProfile,
   applyNbaTotalQuarantine,
 } = require('./decision-pipeline-v2-edge-config');
+// Import from source to avoid disruption when tests mock @cheddar-logic/data.
+const {
+  REASON_CODE_ALIASES: _REASON_CODE_ALIASES,
+  ALL_REASON_CODES: _ALL_REASON_CODES,
+} = require('../../data/src/reason-codes');
+
+// Startup check: all locally-defined reason codes must be canonical or aliased.
+// This catches any future code added to WATCHDOG_REASONS / PRICE_REASONS without registration.
+function _assertPipelineCodesRegistered(constantMap, label) {
+  const set = new Set(_ALL_REASON_CODES);
+  for (const code of Object.values(constantMap)) {
+    if (!set.has(code) && !_REASON_CODE_ALIASES[code]) {
+      throw new Error(`[decision-pipeline-v2] Unregistered ${label} code: ${code}`);
+    }
+  }
+}
 
 // Edge unit: all edge values in this pipeline are decimal fractions.
 // See CANONICAL_EDGE_CONTRACT in decision-gate.js for the authoritative definition.
@@ -79,6 +95,10 @@ const PRICE_REASONS = {
   // WI-0814: emitted when PLAY is downgraded to LEAN due to fallback sigma
   SIGMA_FALLBACK_DEGRADED: 'SIGMA_FALLBACK_DEGRADED',
 };
+
+// Verify all locally-defined reason codes are registered in the canonical taxonomy.
+_assertPipelineCodesRegistered(WATCHDOG_REASONS, 'WATCHDOG_REASONS');
+_assertPipelineCodesRegistered(PRICE_REASONS, 'PRICE_REASONS');
 
 /**
  * FIRST_PERIOD_POLICY (WI-0537)

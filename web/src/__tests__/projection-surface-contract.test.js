@@ -21,11 +21,13 @@ assert.deepEqual(PROJECTION_SURFACE_CARD_TYPES, [
   'mlb-f5-ml',
   'mlb-full-game',
   'mlb-full-game-ml',
+  'mlb-pitcher-k',
 ]);
 
 assert.equal(isProjectionSurfaceCardType('mlb-f5'), true);
 assert.equal(isProjectionSurfaceCardType('MLB-F5-ML'), true);
 assert.equal(isProjectionSurfaceCardType('mlb-full-game'), true);
+assert.equal(isProjectionSurfaceCardType('mlb-pitcher-k'), true);
 assert.equal(isProjectionSurfaceCardType('nba-total-projection'), false);
 
 for (const cardType of PROJECTION_SURFACE_CARD_TYPES) {

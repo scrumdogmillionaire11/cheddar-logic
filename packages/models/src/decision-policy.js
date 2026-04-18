@@ -1,3 +1,20 @@
+// Import reason-code constants directly from source to avoid disruption when
+// tests mock the full @cheddar-logic/data package (which mocks the DB layer).
+const {
+  REASON_CODE_ALIASES,
+  MODEL_REASON_CODES,
+  DATA_REASON_CODES,
+  DATA_BLOCKER_CODES,
+  MARKET_REASON_CODES,
+  MARKET_UNVERIFIED_CODES,
+  GATE_REASON_CODES,
+  ALL_REASON_CODES,
+  REASON_CODE_SCHEMA_VERSION,
+  REASON_CODE_LABELS: CANONICAL_REASON_CODE_LABELS,
+  classifyReasonCode,
+  getReasonCodeLabel,
+} = require('../../data/src/reason-codes');
+
 function toUpperToken(value) {
   if (value == null) return '';
   return String(value).trim().toUpperCase();
@@ -81,11 +98,15 @@ const WEBHOOK_REASON_LABELS = Object.freeze({
 });
 
 function canonicalizeReasonCode(value) {
-  const token = toUpperToken(value);
+  if (!value) return '';
+  let token = toUpperToken(value);
   if (!token) return '';
-  if (token.startsWith('PASS_EXECUTION_GATE_')) {
-    return token.replace('PASS_EXECUTION_GATE_', '');
-  }
+  // Idempotently resolve aliases (do-while guards against future alias chains)
+  let prev;
+  do {
+    prev = token;
+    token = REASON_CODE_ALIASES[token] || token;
+  } while (token !== prev);
   return token;
 }
 
@@ -106,7 +127,8 @@ function collectReasonCodes(payload) {
       ? decisionV2.price_reason_codes
       : []),
     payload.pass_reason_code,
-    payload.pass_reason,
+    // payload.pass_reason intentionally omitted — it's a legacy human-readable string
+    // (PassReason enum values), not a machine reason code. See card-model.js PassReason.
     ...(Array.isArray(payload.reason_codes) ? payload.reason_codes : []),
     ...(Array.isArray(payload?.nhl_totals_status?.reasonCodes)
       ? payload.nhl_totals_status.reasonCodes
@@ -114,15 +136,8 @@ function collectReasonCodes(payload) {
     payload?.nhl_1p_decision?.surfaced_reason_code,
   ];
 
-  const seen = new Set();
-  const normalized = [];
-  for (const value of ordered) {
-    const code = canonicalizeReasonCode(value);
-    if (!code || seen.has(code)) continue;
-    seen.add(code);
-    normalized.push(code);
-  }
-  return normalized;
+  // Dedup AFTER aliasing so STALE_MARKET_INPUT + MARKET_DATA_STALE collapse to one STALE_MARKET
+  return [...new Set(ordered.map(canonicalizeReasonCode).filter(Boolean))];
 }
 
 function formatAmericanPrice(value) {
@@ -368,24 +383,32 @@ function resolveCanonicalPlayState(payload) {
 
   const reasonCodes = collectReasonCodes(payload);
 
-  // BLOCKED: watchdog veto or official_eligible gate — terminal, no override.
+  // BLOCKED: watchdog veto, official_eligible gate, or canonical gate code — terminal.
   if (toUpperToken(decisionV2.watchdog_status) === 'BLOCKED') return 'BLOCKED';
   if (payload.official_eligible === false) return 'BLOCKED';
-  if (reasonCodes.some((code) => HARD_GATE_CODES.has(code))) return 'BLOCKED';
+  // Check both legacy HARD_GATE_CODES and new canonical GATE_REASON_CODES
+  if (
+    reasonCodes.some((code) => HARD_GATE_CODES.has(code)) ||
+    reasonCodes.some((code) => GATE_REASON_CODES.has(code))
+  ) return 'BLOCKED';
 
   const officialStatus = normalizeOfficialStatus(decisionV2.official_status);
 
-  // WATCH: positive signal (PLAY or LEAN) but market is in a waiting state.
-  // Positive edge + unavailable market ≠ LEAN; it is not actionable until resolved.
+  // WATCH: positive signal (PLAY or LEAN) but market or data is blocking action.
+  // Gate blocker → BLOCKED (handled above); market/data blocker → WATCH.
+  // Positive edge + unverified market ≠ LEAN; not actionable until condition resolves.
   if (officialStatus === 'PLAY' || officialStatus === 'LEAN') {
     if (toUpperToken(decisionV2.sharp_price_status) === 'PENDING_VERIFICATION') {
       return 'WATCH';
     }
-    if (reasonCodes.some((code) => WATCH_REASON_CODES.has(code))) return 'WATCH';
+    const hasMarketBlocker = reasonCodes.some((code) => MARKET_UNVERIFIED_CODES.has(code));
+    const hasDataBlocker = reasonCodes.some((code) => DATA_BLOCKER_CODES.has(code));
+    if (hasMarketBlocker || hasDataBlocker) return 'WATCH';
   }
 
   if (officialStatus === 'PLAY') return 'OFFICIAL_PLAY';
   if (officialStatus === 'LEAN') return 'LEAN';
+  // Explicit NO_PLAY — not a fallthrough. official_status is PASS or absent → no edge.
   return 'NO_PLAY';
 }
 
@@ -558,6 +581,89 @@ function isWebhookLeanEligible(payload, minEdge = 0.15) {
   return true;
 }
 
+// ---------------------------------------------------------------------------
+// Structured reason collection
+// ---------------------------------------------------------------------------
+
+const ALL_REASON_CODES_SET = new Set(ALL_REASON_CODES);
+
+// Throws in ALL environments — decision-critical producers must only emit valid codes.
+function assertValidReasonCodeStrict(code) {
+  const token = toUpperToken(code);
+  if (!ALL_REASON_CODES_SET.has(token) && !REASON_CODE_ALIASES[token]) {
+    throw new Error(`[reason-codes] Invalid reason code at decision source: ${token}`);
+  }
+}
+
+// Logs + metrics only — for non-critical/collection contexts (already-persisted legacy data).
+function assertValidReasonCodeSoft(code) {
+  const token = toUpperToken(code);
+  if (!ALL_REASON_CODES_SET.has(token) && !REASON_CODE_ALIASES[token]) {
+    console.error(`[reason-codes] INVALID_REASON_CODE_AT_SOURCE: ${token}`);
+  }
+}
+
+function isValidPrimary(code) {
+  if (!code) return false;
+  return ALL_REASON_CODES_SET.has(toUpperToken(code));
+}
+
+const MAX_FLAGS_PER_BUCKET = 2;
+const MAX_TOTAL_FLAGS = 4;
+
+function collectStructuredReasons(payload) {
+  const decisionV2 = (payload && typeof payload === 'object' && payload.decision_v2) || {};
+  const allCodes = collectReasonCodes(payload);
+
+  // Primary priority: validated primary_reason_code → GATE → MODEL → MARKET → DATA
+  const primary =
+    (isValidPrimary(decisionV2.primary_reason_code) && decisionV2.primary_reason_code) ||
+    allCodes.find(c => GATE_REASON_CODES.has(c)) ||
+    allCodes.find(c => MODEL_REASON_CODES.has(c)) ||
+    allCodes.find(c => MARKET_REASON_CODES.has(c)) ||
+    allCodes.find(c => DATA_REASON_CODES.has(c)) ||
+    allCodes[0] ||
+    null;
+
+  const gate_failures = [];
+  const data_flags = [];
+  const market_flags = [];
+  const model_flags = [];
+  const unknown_flags = [];
+
+  for (const code of allCodes) {
+    if (code === primary) continue;
+    const bucket = classifyReasonCode(code);
+    if (bucket === 'GATE') gate_failures.push(code);
+    else if (bucket === 'DATA') data_flags.push(code);
+    else if (bucket === 'MARKET') market_flags.push(code);
+    else if (bucket === 'MODEL') model_flags.push(code);
+    else unknown_flags.push(code); // logged by classifyReasonCode, preserved here
+  }
+
+  // Per-bucket cap then global cap with GATE > MARKET > DATA > MODEL priority
+  const allFlags = [
+    ...gate_failures.slice(0, MAX_FLAGS_PER_BUCKET),
+    ...market_flags.slice(0, MAX_FLAGS_PER_BUCKET),
+    ...data_flags.slice(0, MAX_FLAGS_PER_BUCKET),
+    ...model_flags.slice(0, MAX_FLAGS_PER_BUCKET),
+  ].slice(0, MAX_TOTAL_FLAGS);
+
+  const fingerprint = [primary, ...allFlags].filter(Boolean).join('|');
+
+  return {
+    primary_reason: primary,
+    gate_failures: allFlags.filter(c => GATE_REASON_CODES.has(c)),
+    market_flags: allFlags.filter(c => MARKET_REASON_CODES.has(c)),
+    data_flags: allFlags.filter(c => DATA_REASON_CODES.has(c)),
+    model_flags: allFlags.filter(c => MODEL_REASON_CODES.has(c)),
+    unknown_flags,
+    fingerprint,
+    state_fingerprint: (finalPlayState) => `${finalPlayState}|${fingerprint}`,
+    schema_version: REASON_CODE_SCHEMA_VERSION,
+  };
+}
+
 module.exports = {
   // Canonical play-state contract
   CANONICAL_PLAY_STATES,
@@ -582,4 +688,9 @@ module.exports = {
   normalizeOfficialStatusFromPayload,
   isOfficialStatusActionable,
   rankOfficialStatus,
+  // Structured reason collection
+  assertValidReasonCodeStrict,
+  assertValidReasonCodeSoft,
+  isValidPrimary,
+  collectStructuredReasons,
 };

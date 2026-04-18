@@ -139,7 +139,7 @@ describe('decision-policy helpers', () => {
 
     expect(collectReasonCodes(payload)).toEqual([
       'LINE_NOT_CONFIRMED',
-      'MIXED_BOOK_SOURCE_MISMATCH',
+      'PASS_EXECUTION_GATE_MIXED_BOOK_SOURCE_MISMATCH',
       'NO_EDGE_AT_PRICE',
     ]);
   });

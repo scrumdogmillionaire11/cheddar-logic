@@ -414,6 +414,77 @@ function resolveMlbTeamAbbreviation(teamName) {
   return null;
 }
 
+function resolveMlbSnapshotGameDate(oddsSnapshot) {
+  const value =
+    oddsSnapshot?.game_time_utc ??
+    oddsSnapshot?.start_time_utc ??
+    oddsSnapshot?.commence_time ??
+    oddsSnapshot?.captured_at ??
+    null;
+  if (!value || typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  return trimmed.length >= 10 ? trimmed.slice(0, 10) : null;
+}
+
+function resolveMlbSnapshotStartTime(oddsSnapshot) {
+  const value =
+    oddsSnapshot?.game_time_utc ??
+    oddsSnapshot?.start_time_utc ??
+    oddsSnapshot?.commence_time ??
+    oddsSnapshot?.captured_at ??
+    null;
+  if (!value || typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  return trimmed || null;
+}
+
+function getProbableStarterMapRow(db, oddsSnapshot) {
+  if (!db || !oddsSnapshot) return null;
+
+  const gameDate = resolveMlbSnapshotGameDate(oddsSnapshot);
+  const scheduledStartUtc = resolveMlbSnapshotStartTime(oddsSnapshot);
+  const homeTeamAbbr = resolveMlbTeamAbbreviation(oddsSnapshot?.home_team);
+  const awayTeamAbbr = resolveMlbTeamAbbreviation(oddsSnapshot?.away_team);
+
+  if (!gameDate || !scheduledStartUtc || !homeTeamAbbr || !awayTeamAbbr) {
+    return null;
+  }
+
+  try {
+    const rows = db.prepare(`
+      SELECT *
+      FROM mlb_probable_starter_map
+      WHERE game_date = ?
+        AND home_team_abbr = ?
+        AND away_team_abbr = ?
+      ORDER BY ABS(strftime('%s', scheduled_start_utc) - strftime('%s', ?)) ASC,
+               updated_at DESC
+    `).all(gameDate, homeTeamAbbr, awayTeamAbbr, scheduledStartUtc);
+
+    return rows[0] ?? null;
+  } catch (_) {
+    return null;
+  }
+}
+
+function getProbableStarterIdentity(probableStarterMapRow, side) {
+  if (!probableStarterMapRow || (side !== 'home' && side !== 'away')) return null;
+  const pitcherId =
+    side === 'home'
+      ? probableStarterMapRow.home_pitcher_id
+      : probableStarterMapRow.away_pitcher_id;
+  const fullName =
+    side === 'home'
+      ? probableStarterMapRow.home_pitcher_name
+      : probableStarterMapRow.away_pitcher_name;
+
+  if (pitcherId == null && !fullName) return null;
+  return {
+    mlb_id: pitcherId != null ? Number(pitcherId) : null,
+    full_name: fullName ?? null,
+  };
+}
+
 function resolveMlbF5OffenseProfile(teamName) {
   const abbreviation = resolveMlbTeamAbbreviation(teamName);
   return abbreviation ? (MLB_F5_TEAM_OFFENSE_SPLITS[abbreviation] ?? null) : null;
@@ -3124,12 +3195,15 @@ function enrichMlbPitcherData(
     const mlb = existingRaw.mlb ?? {};
     const existingHomePitcher = mlb.home_pitcher ?? null;
     const existingAwayPitcher = mlb.away_pitcher ?? null;
+    const probableStarterMapRow = getProbableStarterMapRow(db, oddsSnapshot);
+    const probableHomePitcher = getProbableStarterIdentity(probableStarterMapRow, 'home');
+    const probableAwayPitcher = getProbableStarterIdentity(probableStarterMapRow, 'away');
 
-    // Query by specific pitcher ID first, then by name.
-    // If snapshot identity is missing (common in some odds feeds), use a guarded
-    // team+probable_date fallback so we can still emit pitcher-K cards while
-    // minimizing cross-game leakage risk.
-    function getPitcherRow(team, existingPitcher) {
+    // Query by specific pitcher ID first, then by name. Do not fallback to team,
+    // which can silently bind the wrong pitcher when probable assignments shift.
+    // If the snapshot lacks explicit starter identity, use the schedule-derived
+    // matchup-specific probable starter assignment for this exact game.
+    function getPitcherRow(team, existingPitcher, probablePitcher) {
       // Priority 1: match by mlb_id if available
       if (existingPitcher?.mlb_id != null) {
         const byId = forKEngine
@@ -3148,24 +3222,28 @@ function enrichMlbPitcherData(
         if (row) return row;
       }
 
-      // Priority 3: guarded team fallback using today's probable starters only.
-      // This is intentionally constrained by probable_date + role to avoid binding
-      // stale historical team rows when probable assignments drift.
-      const byTeam = forKEngine
-        ? db.prepare(
-            "SELECT * FROM mlb_pitcher_stats WHERE probable_date = ? AND role = 'starter' ORDER BY updated_at DESC",
-          )
-        : db.prepare(
-            "SELECT * FROM mlb_pitcher_stats WHERE probable_date = ? AND role = 'starter' AND date(updated_at) = date('now') ORDER BY updated_at DESC",
-          );
-      const row = selectPitcherRowForTeam(byTeam.all(todayIso), team);
-      if (row) return row;
+      // Priority 3: use schedule-derived probable starters for this exact matchup.
+      if (probablePitcher?.mlb_id != null) {
+        const byId = forKEngine
+          ? db.prepare('SELECT * FROM mlb_pitcher_stats WHERE mlb_id = ?')
+          : db.prepare("SELECT * FROM mlb_pitcher_stats WHERE mlb_id = ? AND date(updated_at) = date('now')");
+        const row = byId.get(probablePitcher.mlb_id);
+        if (row) return row;
+      }
+
+      if (probablePitcher?.full_name) {
+        const byName = forKEngine
+          ? db.prepare('SELECT * FROM mlb_pitcher_stats WHERE full_name = ? COLLATE NOCASE ORDER BY updated_at DESC')
+          : db.prepare("SELECT * FROM mlb_pitcher_stats WHERE full_name = ? COLLATE NOCASE AND date(updated_at) = date('now') ORDER BY updated_at DESC");
+        const row = selectPitcherRowForTeam(byName.all(probablePitcher.full_name), team);
+        if (row) return row;
+      }
 
       return null;
     }
 
-    const homeRow = getPitcherRow(homeTeam, existingHomePitcher);
-    const awayRow = getPitcherRow(awayTeam, existingAwayPitcher);
+    const homeRow = getPitcherRow(homeTeam, existingHomePitcher, probableHomePitcher);
+    const awayRow = getPitcherRow(awayTeam, existingAwayPitcher, probableAwayPitcher);
 
     // Canonical contract: hydrate full-game totals as mlb.full_game_line.
     const hydratedMlb = hydrateCanonicalMlbMarketLines(
@@ -4644,6 +4722,8 @@ module.exports = {
   MLB_PIPELINE_REASON_CODES,
   resolveMlbTeamLookupKeys,
   selectPitcherRowForTeam,
+  getProbableStarterMapRow,
+  getProbableStarterIdentity,
   resolvePitcherKsMode,
   resolveMlbPitcherPropRolloutState,
   resolvePitcherKPayloadIdentity,
