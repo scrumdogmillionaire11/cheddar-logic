@@ -36,7 +36,7 @@ const REASON_CODES = Object.freeze({
 });
 
 // ---------------------------------------------------------------------------
-// VALID_STATUSES — all nine terminal state values for consumer validation
+// VALID_STATUSES — all ten terminal state values for consumer validation
 // ---------------------------------------------------------------------------
 const VALID_STATUSES = Object.freeze([
   'QUALIFIED_OFFICIAL',
