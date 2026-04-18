@@ -774,7 +774,7 @@ function decisionReason(card) {
   const reasonCode = Array.isArray(payload?.reason_codes) ? payload.reason_codes[0] : null;
   if (reasonCode) return normalizeToken(reasonCode);
   if (payload?.blocked_reason_code) return normalizeToken(payload.blocked_reason_code);
-  return 'PASS_NO_EDGE';
+  return null;
 }
 
 function summarizeReasoning(card) {
@@ -1379,4 +1379,5 @@ module.exports = {
   classifyDecisionBucketLegacy,
   selectionSummary,
   passesLeanThreshold,
+  decisionReason,
 };

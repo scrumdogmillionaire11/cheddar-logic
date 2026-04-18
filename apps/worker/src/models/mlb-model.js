@@ -631,6 +631,53 @@ const MLB_TOTAL_VOL_BUCKETS = Object.freeze({
   HIGH: 'HIGH_VOL',
 });
 
+// Priority-ordered list of PASS_ reason codes. Higher position = higher priority.
+// Used by selectPassReasonCode() to replace unsafe Array.find() fallbacks.
+const PASS_REASON_PRIORITY = [
+  'PASS_DEGRADED_TOTAL_MODEL',
+  'PASS_CONFIDENCE_GATE',
+  'PASS_MODEL_DEGRADED',
+  'PASS_INPUTS_INCOMPLETE',
+  'PASS_SYNTHETIC_FALLBACK',
+  'PASS_NO_DISTRIBUTION',
+  'PASS_NO_EDGE',
+];
+
+function selectPassReasonCode(reasonCodes) {
+  for (const code of PASS_REASON_PRIORITY) {
+    if (reasonCodes.includes(code)) return code;
+  }
+  return reasonCodes.find((c) => c.startsWith('PASS_')) ?? null;
+}
+
+function hasBlockingPassReason(reasonCodes) {
+  return reasonCodes.some((code) => code.startsWith('PASS_') && code !== 'PASS_NO_EDGE');
+}
+
+function buildPassTruthSurface({
+  rawEdgeValue,
+  thresholdRequired,
+  thresholdPassed,
+  passReasonCode,
+  status,
+  inputsStatus = 'COMPLETE',
+  evaluationStatus = 'EDGE_COMPUTED',
+}) {
+  const blockReasons =
+    status === 'PASS' && passReasonCode && passReasonCode !== 'PASS_NO_EDGE'
+      ? [passReasonCode]
+      : [];
+  return {
+    inputs_status: inputsStatus,
+    evaluation_status: evaluationStatus,
+    raw_edge_value: toFiniteNumberOrNull(rawEdgeValue),
+    threshold_required: toFiniteNumberOrNull(thresholdRequired),
+    threshold_passed: typeof thresholdPassed === 'boolean' ? thresholdPassed : null,
+    blocked_by: status === 'PASS' ? (passReasonCode ?? null) : null,
+    block_reasons: blockReasons,
+  };
+}
+
 function absOrZero(value) {
   return Number.isFinite(value) ? Math.abs(value) : 0;
 }
@@ -1291,6 +1338,7 @@ function projectFullGameTotalCard(homePitcher, awayPitcher, fullGameLine, contex
     fullGameLine,
   );
   if (!distribution) {
+    const passReasonCode = 'PASS_NO_DISTRIBUTION';
     return {
       market: 'full_game_total',
       prediction: 'PASS',
@@ -1302,8 +1350,16 @@ function projectFullGameTotalCard(homePitcher, awayPitcher, fullGameLine, contex
       classification: 'PASS',
       projection_source: proj.projection_source,
       status_cap: 'PASS',
-      pass_reason_code: 'PASS_NO_DISTRIBUTION',
+      pass_reason_code: passReasonCode,
       reason_codes: ['PASS_NO_DISTRIBUTION'],
+      ...buildPassTruthSurface({
+        rawEdgeValue: null,
+        thresholdRequired: MLB_FULL_GAME_LEAN_EDGE_THRESHOLD,
+        thresholdPassed: null,
+        passReasonCode,
+        status: 'PASS',
+        evaluationStatus: 'NO_EVALUATION',
+      }),
       missing_inputs: proj.missing_inputs,
       playability: null,
       projection: {
@@ -1442,8 +1498,8 @@ function projectFullGameTotalCard(homePitcher, awayPitcher, fullGameLine, contex
     }
   }
 
-  if (!hasLeanEdge) reasonCodes.push('PASS_NO_EDGE');
   if (confidenceBelowGate && !isDegraded) reasonCodes.push('PASS_CONFIDENCE_GATE');
+  if (!hasLeanEdge && !hasBlockingPassReason(reasonCodes)) reasonCodes.push('PASS_NO_EDGE');
 
   // WI-0944: DEGRADED_MODEL with edge present — surface as WATCH (LEAN) rather than hard PASS.
   // Confidence gate remains a hard veto only for FULL_MODEL paths; degraded projections
@@ -1466,6 +1522,10 @@ function projectFullGameTotalCard(homePitcher, awayPitcher, fullGameLine, contex
   }
   const action = status === 'FIRE' ? 'FIRE' : status === 'WATCH' ? 'HOLD' : 'PASS';
   const classification = status === 'FIRE' ? 'BASE' : status === 'WATCH' ? 'LEAN' : 'PASS';
+  const passReasonCode =
+    status !== 'PASS'
+      ? null
+      : selectPassReasonCode(reasonCodes);
   const playability = {
     over_playable_at_or_below: roundToHalf(
       (finalModelTotal ?? proj.projected_total_mean) - MLB_FULL_GAME_LEAN_EDGE_THRESHOLD,
@@ -1490,12 +1550,17 @@ function projectFullGameTotalCard(homePitcher, awayPitcher, fullGameLine, contex
     projection_source: proj.projection_source,
     model_quality: modelQuality,
     status_cap: status === 'PASS' ? 'PASS' : proj.status_cap,
-    pass_reason_code:
-      status !== 'PASS'
-        ? null
-        : (reasonCodes.find((code) => code.startsWith('PASS_')) ??
-          'PASS_NO_EDGE'),
+    pass_reason_code: passReasonCode,
     reason_codes: reasonCodes,
+    ...buildPassTruthSurface({
+      rawEdgeValue: rawEdge,
+      thresholdRequired: MLB_FULL_GAME_LEAN_EDGE_THRESHOLD,
+      thresholdPassed: hasLeanEdge,
+      passReasonCode,
+      status,
+      inputsStatus: 'COMPLETE',
+      evaluationStatus: 'EDGE_COMPUTED',
+    }),
     missing_inputs: proj.missing_inputs,
     directional_audit: {
       raw_model_total: roundToTenth(rawModelTotal),
@@ -1607,12 +1672,17 @@ function projectF5TotalCard(homePitcher, awayPitcher, f5Line, context = {}) {
     : degradedProjection
       ? 'WATCH'
       : 'FIRE';
+  const confidenceGateBlocked = !fallbackProjection && hasEdge && !evThresholdPassed;
   const reasonCodes = Array.from(new Set([
     ...(proj.reason_codes || []),
     ...(fallbackProjection ? ['PASS_SYNTHETIC_FALLBACK'] : []),
-    ...(!hasEdge ? ['PASS_NO_EDGE'] : []),
+    ...(confidenceGateBlocked ? ['PASS_CONFIDENCE_GATE'] : []),
+    ...(!fallbackProjection && !hasEdge && !confidenceGateBlocked ? ['PASS_NO_EDGE'] : []),
     ...(degradedProjection && evThresholdPassed ? ['MODEL_DEGRADED_INPUTS'] : []),
   ]));
+  const passReasonCode = status !== 'PASS'
+    ? null
+    : selectPassReasonCode(reasonCodes);
 
   return buildModelOutput({
     market: 'MLB_F5_TOTAL',
@@ -1653,9 +1723,16 @@ function projectF5TotalCard(homePitcher, awayPitcher, f5Line, context = {}) {
     status_cap: proj.status_cap,
     missing_inputs: proj.missing_inputs,
     reason_codes: reasonCodes,
-    pass_reason_code: status !== 'PASS'
-      ? null
-      : (reasonCodes.find((code) => code.startsWith('PASS_')) ?? 'PASS_NO_EDGE'),
+    pass_reason_code: passReasonCode,
+    ...buildPassTruthSurface({
+      rawEdgeValue: edge,
+      thresholdRequired: MLB_F5_EDGE_THRESHOLD,
+      thresholdPassed: fallbackProjection ? null : hasEdge,
+      passReasonCode,
+      status,
+      inputsStatus: fallbackProjection ? 'PARTIAL' : 'COMPLETE',
+      evaluationStatus: fallbackProjection ? 'NO_EVALUATION' : 'EDGE_COMPUTED',
+    }),
     playability: proj.playability,
     projection: {
       projected_total: roundToTenth(proj.projected_total_mean ?? proj.base),
@@ -1986,6 +2063,10 @@ function projectFullGameML(homePitcher, awayPitcher, mlHome, mlAway, context = {
     edge = awayEdge;
   }
 
+  const rawBestEdge = Math.max(homeEdge, awayEdge);
+  const rawEdgeCleared = rawBestEdge >= LEAN_EDGE_MIN;
+  const confidenceGateBlocked = rawEdgeCleared && confidence < CONFIDENCE_MIN;
+
   const softReasons = [];
   let softPenaltyPoints = 0;
   if (!MLB_PURE_SIGNAL_MODE) {
@@ -2021,8 +2102,20 @@ function projectFullGameML(homePitcher, awayPitcher, mlHome, mlAway, context = {
     ...(MLB_PURE_SIGNAL_MODE ? ['PURE_SIGNAL_MODE'] : []),
     ...(isDegraded ? ['FULL_GAME_ML_DEGRADED'] : []),
     ...softReasons,
-    ...(side === 'PASS' ? ['PASS_NO_EDGE'] : []),
+    ...(confidenceGateBlocked ? ['PASS_CONFIDENCE_GATE'] : []),
+    ...(side === 'PASS' && !confidenceGateBlocked && isDegraded && rawEdgeCleared
+      ? ['PASS_MODEL_DEGRADED']
+      : []),
+    ...(side === 'PASS' && !confidenceGateBlocked && !rawEdgeCleared ? ['PASS_NO_EDGE'] : []),
   ];
+  const passReasonCode =
+    side !== 'PASS'
+      ? null
+      : confidenceGateBlocked
+        ? 'PASS_CONFIDENCE_GATE'
+        : isDegraded && rawEdgeCleared
+          ? 'PASS_MODEL_DEGRADED'
+          : 'PASS_NO_EDGE';
 
   return {
     side,
@@ -2063,6 +2156,14 @@ function projectFullGameML(homePitcher, awayPitcher, mlHome, mlAway, context = {
     degraded_inputs: proj.degraded_inputs,
     missing_inputs: proj.missing_inputs,
     ev_threshold_passed: side !== 'PASS',
+    pass_reason_code: passReasonCode,
+    inputs_status: 'COMPLETE',
+    evaluation_status: 'EDGE_COMPUTED',
+    raw_edge_value: rawBestEdge,
+    threshold_required: LEAN_EDGE_MIN,
+    threshold_passed: rawEdgeCleared,
+    blocked_by: side === 'PASS' ? passReasonCode : null,
+    block_reasons: side === 'PASS' && passReasonCode !== 'PASS_NO_EDGE' ? [passReasonCode] : [],
     reasoning: `FullGameML: homeProj=${homeProj.toFixed(2)} awayProj=${awayProj.toFixed(2)} runDiff=${runDiff >= 0 ? '+' : ''}${runDiff.toFixed(2)} var=${variance.run_diff_variance.toFixed(2)} pWin(H)=${(winProbHome * 100).toFixed(1)}% implH=${(impliedHome * 100).toFixed(1)}% implA=${(impliedAway * 100).toFixed(1)}% edgeH=${homeEdge >= 0 ? '+' : ''}${(homeEdge * 100).toFixed(1)}pp edgeA=${awayEdge >= 0 ? '+' : ''}${(awayEdge * 100).toFixed(1)}pp support=${supportCount} conf=${confidence}/10`,
   };
 }
@@ -2131,6 +2232,13 @@ function computeMLBDriverCards(gameId, oddsSnapshot) {
         status_cap: result.status_cap,
         pass_reason_code: result.pass_reason_code,
         reason_codes: result.reason_codes,
+        inputs_status: result.inputs_status,
+        evaluation_status: result.evaluation_status,
+        raw_edge_value: result.raw_edge_value,
+        threshold_required: result.threshold_required,
+        threshold_passed: result.threshold_passed,
+        blocked_by: result.blocked_by,
+        block_reasons: result.block_reasons,
         missing_inputs: result.missing_inputs,
         playability: result.playability,
         projection: result.projection,
@@ -2211,8 +2319,17 @@ function computeMLBDriverCards(gameId, oddsSnapshot) {
         classification,
         projection_source: mlResult.projection_source,
         status_cap: mlResult.status_cap,
-        pass_reason_code: !mlResult.ev_threshold_passed ? 'PASS_NO_EDGE' : null,
+        pass_reason_code: !mlResult.ev_threshold_passed
+          ? (mlResult.pass_reason_code ?? 'PASS_UNKNOWN')
+          : null,
         reason_codes: mlResult.reason_codes,
+        inputs_status: mlResult.inputs_status,
+        evaluation_status: mlResult.evaluation_status,
+        raw_edge_value: mlResult.raw_edge_value,
+        threshold_required: mlResult.threshold_required,
+        threshold_passed: mlResult.threshold_passed,
+        blocked_by: mlResult.blocked_by,
+        block_reasons: mlResult.block_reasons,
         flags: mlResult.flags,
         driver_support: mlResult.driver_support,
         fair_ml_home: mlResult.fair_ml_home,
@@ -3858,4 +3975,6 @@ module.exports = {
   setLeagueConstants,
   // WI-0874: POTD MLB model signal resolver
   resolveMLBModelSignal,
+  // Exported for unit testing (pass-reason-integrity-02)
+  selectPassReasonCode,
 };

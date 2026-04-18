@@ -2976,6 +2976,7 @@ function computeSyntheticLineF5Driver(mlb, context, gameId) {
     projection_source: 'FULL_MODEL',
     reason_codes: reasonCodes,
     missing_inputs: [],
+    // INVARIANT: PASS_NO_EDGE is legal here — edge was computed against synthetic line and failed MLB_F5_SYNTHETIC_EDGE_THRESHOLD. Inputs were present.
     ...(status === 'PASS' ? { pass_reason_code: 'PASS_NO_EDGE' } : {}),
     playability: {
       over_playable_at_or_below: syntheticLine,
@@ -3966,7 +3967,7 @@ async function runMLBModel({
                   ev_threshold_passed: false,
                   projection_source: 'SYNTHETIC_FALLBACK',
                   status_cap: 'PASS',
-                  reason_codes: ['PASS_SYNTHETIC_FALLBACK', 'PASS_NO_EDGE'],
+                  reason_codes: ['PASS_SYNTHETIC_FALLBACK'],
                   missing_inputs: ['market_line'],
                   pass_reason_code: 'PASS_SYNTHETIC_FALLBACK',
                   playability: {
@@ -4268,6 +4269,24 @@ async function runMLBModel({
                   : []),
               ]),
               pass_reason_code: driver.pass_reason_code ?? null,
+              inputs_status: driver.inputs_status ?? 'COMPLETE',
+              evaluation_status: driver.evaluation_status ??
+                (typeof driver.ev_threshold_passed === 'boolean' ? 'EDGE_COMPUTED' : 'NO_EVALUATION'),
+              raw_edge_value: Number.isFinite(driver.raw_edge_value)
+                ? driver.raw_edge_value
+                : (Number.isFinite(driverDetail.edge) ? driverDetail.edge : null),
+              threshold_required: Number.isFinite(driver.threshold_required)
+                ? driver.threshold_required
+                : (Number.isFinite(driverDetail.threshold) ? driverDetail.threshold : null),
+              threshold_passed: driver.threshold_passed !== undefined
+                ? driver.threshold_passed
+                : (typeof driver.ev_threshold_passed === 'boolean' ? driver.ev_threshold_passed : null),
+              blocked_by: driver.blocked_by ?? driver.pass_reason_code ?? null,
+              block_reasons: Array.isArray(driver.block_reasons)
+                ? driver.block_reasons
+                : (driver.pass_reason_code && driver.pass_reason_code !== 'PASS_NO_EDGE'
+                    ? [driver.pass_reason_code]
+                    : []),
               projection_source: driver.projection_source ?? null,
               status_cap: driver.status_cap ?? null,
               playability: driver.playability ?? null,

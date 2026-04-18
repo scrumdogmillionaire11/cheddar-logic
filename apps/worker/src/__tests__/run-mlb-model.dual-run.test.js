@@ -787,6 +787,13 @@ describe('runMLBModel dual-run orchestration', () => {
       confidence: 0.76,
       ev_threshold_passed: false,
       pass_reason_code: 'PASS_NO_EDGE',
+      inputs_status: 'COMPLETE',
+      evaluation_status: 'EDGE_COMPUTED',
+      raw_edge_value: 0.2,
+      threshold_required: 0.5,
+      threshold_passed: false,
+      blocked_by: 'PASS_NO_EDGE',
+      block_reasons: [],
       reason_codes: ['PASS_NO_EDGE'],
       drivers: [{ type: 'mlb-f5', edge: 0.2, projected: 4.7 }],
       projection: {
@@ -844,11 +851,88 @@ describe('runMLBModel dual-run orchestration', () => {
       projection_source: 'FULL_MODEL',
       reason_codes: ['PASS_NO_EDGE'],
       pass_reason_code: 'PASS_NO_EDGE',
+      inputs_status: 'COMPLETE',
+      evaluation_status: 'EDGE_COMPUTED',
+      raw_edge_value: 0.2,
+      threshold_required: 0.5,
+      threshold_passed: false,
+      blocked_by: 'PASS_NO_EDGE',
+      block_reasons: [],
       playability: {
         over_playable_at_or_below: 4.0,
         under_playable_at_or_above: 5.5,
       },
     });
+  });
+
+  test('projection-floor mlb-f5 PASS payload keeps synthetic fallback separate from PASS_NO_EDGE', async () => {
+    const projectionFloorDriver = {
+      ...gameDriver,
+      prediction: 'OVER',
+      status: 'PASS',
+      action: 'PASS',
+      classification: 'PASS',
+      confidence: 0.62,
+      ev_threshold_passed: false,
+      pass_reason_code: 'PASS_SYNTHETIC_FALLBACK',
+      inputs_status: 'PARTIAL',
+      evaluation_status: 'NO_EVALUATION',
+      raw_edge_value: null,
+      threshold_required: null,
+      threshold_passed: null,
+      blocked_by: 'PASS_SYNTHETIC_FALLBACK',
+      block_reasons: ['PASS_SYNTHETIC_FALLBACK'],
+      reason_codes: ['PASS_SYNTHETIC_FALLBACK'],
+      projection_floor: true,
+      without_odds_mode: true,
+      projection: {
+        projected_total: 4.5,
+        projected_total_low: 4.0,
+        projected_total_high: 5.0,
+      },
+      playability: {
+        over_playable_at_or_below: 4.0,
+        under_playable_at_or_above: 5.0,
+      },
+    };
+    const selection = {
+      chosen_market: 'F5_TOTAL',
+      why_this_market: 'Projection floor fallback',
+      markets: [
+        {
+          market: 'F5_TOTAL',
+          status: 'PASS',
+          prediction: 'OVER',
+          score: 0.62,
+          projection_source: 'SYNTHETIC_FALLBACK',
+          pass_reason_code: 'PASS_SYNTHETIC_FALLBACK',
+        },
+      ],
+      rejected: {},
+      selected_driver: projectionFloorDriver,
+    };
+
+    const { runMLBModel, mocks } = loadRunMlbModel({
+      mode: 'PROJECTION_ONLY',
+      gameDriverCards: [projectionFloorDriver],
+      pitcherKDriverCards: [],
+      selection,
+    });
+    jest.spyOn(console, 'log').mockImplementation(() => {});
+    jest.spyOn(console, 'error').mockImplementation(() => {});
+    jest.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const result = await runMLBModel();
+
+    expect(result.success).toBe(true);
+    const payload = mocks.insertCardPayload.mock.calls[0][0].payloadData;
+    expect(payload.reason_codes).toContain('PASS_SYNTHETIC_FALLBACK');
+    expect(payload.reason_codes).not.toContain('PASS_NO_EDGE');
+    expect(payload.pass_reason_code).toBe('PASS_SYNTHETIC_FALLBACK');
+    expect(payload.inputs_status).toBe('PARTIAL');
+    expect(payload.evaluation_status).toBe('NO_EVALUATION');
+    expect(payload.threshold_passed).toBeNull();
+    expect(payload.block_reasons).toEqual(['PASS_SYNTHETIC_FALLBACK']);
   });
 
   test('execution-gate-demoted full_game_ml payload keeps terminal status fields in parity', async () => {
@@ -865,6 +949,13 @@ describe('runMLBModel dual-run orchestration', () => {
       reason_codes: [],
       missing_inputs: [],
       pass_reason_code: null,
+      inputs_status: 'COMPLETE',
+      evaluation_status: 'EDGE_COMPUTED',
+      raw_edge_value: 0.055,
+      threshold_required: 0.025,
+      threshold_passed: true,
+      blocked_by: null,
+      block_reasons: [],
       drivers: [{
         type: 'mlb-full-game-ml',
         edge: 0.055,
@@ -913,6 +1004,12 @@ describe('runMLBModel dual-run orchestration', () => {
     expect(payload.classification).toBe('PASS');
     expect(payload.execution_status).toBe('BLOCKED');
     expect(payload.pass_reason_code).toBe('PASS_EXECUTION_GATE_NET_EDGE_INSUFFICIENT');
+    expect(payload.inputs_status).toBe('COMPLETE');
+    expect(payload.evaluation_status).toBe('EDGE_COMPUTED');
+    expect(payload.raw_edge_value).toBe(0.055);
+    expect(payload.threshold_required).toBe(0.025);
+    expect(payload.threshold_passed).toBe(true);
+    expect(payload.block_reasons).toEqual([]);
   });
 
   test('active F5 ML expectation emits F5_ML_UNAVAILABLE in pipeline state', async () => {

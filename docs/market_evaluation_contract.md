@@ -36,6 +36,14 @@ This contract applies to both MLB and NHL game market evaluation, and is enforce
   status: string,               // one of VALID_STATUSES (terminal state)
   reason_codes: string[],       // must be non-empty when status starts with "REJECTED_"
   notes: string[],              // optional human-readable context
+
+  inputs_status: "COMPLETE" | "PARTIAL" | "MISSING",
+  evaluation_status: "EDGE_COMPUTED" | "NO_EVALUATION",
+  raw_edge_value: number | null,
+  threshold_required: number | null,
+  threshold_passed: boolean | null,
+  block_reasons: string[],
+  pass_reason_code: string | null,
 }
 ```
 
@@ -63,6 +71,7 @@ This contract applies to both MLB and NHL game market evaluation, and is enforce
 | `LEANS_ONLY` | No PLAY-tier markets; at least one LEAN |
 | `SKIP_MARKET_NO_EDGE` | All markets evaluated and rejected (no qualifying edge) |
 | `SKIP_GAME_INPUT_FAILURE` | All markets rejected due to missing inputs |
+| `SKIP_GAME_MIXED_FAILURES` | Rejected markets include at least one non-edge blocker or no-evaluation result |
 
 ---
 
@@ -90,6 +99,28 @@ Sole source of rejection reason strings in `packages/models/src/market-eval.js`.
 1. **Terminal-state invariant:** every `market_result.status` must be in `VALID_STATUSES`. Checked by `assertNoSilentMarketDrop`.
 2. **Count invariant:** `official_plays.length + leans.length + rejected.length === market_results.length`. Enforced by `assertNoSilentMarketDrop`; throws `UNACCOUNTED_MARKET_RESULTS` on violation.
 3. **Reason-required invariant:** any result with `status` starting with `REJECTED_` must have `reason_codes.length >= 1`.
+4. **PASS_NO_EDGE legality invariant:** `PASS_NO_EDGE` may appear only when inputs are complete, an edge was computed, the edge failed threshold, and `block_reasons` is empty. `assertLegalPassNoEdge` hard-throws on violations.
+
+## Stored Payload Truth Surface
+
+MLB game-line card payloads written to `card_payloads.payload_data` must carry
+the same provenance fields so downstream consumers can distinguish true
+no-edge from blocked edge and no-evaluation states:
+
+```json
+{
+  "inputs_status": "COMPLETE",
+  "evaluation_status": "EDGE_COMPUTED",
+  "raw_edge_value": 0.031,
+  "threshold_required": 0.025,
+  "threshold_passed": true,
+  "blocked_by": "PASS_CONFIDENCE_GATE",
+  "block_reasons": ["PASS_CONFIDENCE_GATE"]
+}
+```
+
+Display, health, and API consumers must not synthesize `PASS_NO_EDGE` when
+these fields are absent. See `docs/decisions/ADR-0016-pass-reason-integrity-contract.md`.
 
 ---
 
@@ -178,7 +209,7 @@ status:         SKIP_MARKET_NO_EDGE
 
 ## VALID_STATUSES
 
-All nine terminal states; exported from `packages/models/src/market-eval.js`:
+All ten terminal states; exported from `packages/models/src/market-eval.js`:
 
 ```js
 VALID_STATUSES = [
@@ -191,6 +222,7 @@ VALID_STATUSES = [
   'REJECTED_SELECTOR',
   'REJECTED_DUPLICATE',
   'REJECTED_MARKET_POLICY',
+  'SKIP_GAME_MIXED_FAILURES',
 ]
 ```
 
