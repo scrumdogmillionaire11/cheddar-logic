@@ -59,9 +59,37 @@ export interface ProjectionAccuracyRecord {
   failure_flags: string | null;
 }
 
+export interface ProjectionAccuracyMarketHealth {
+  market_family: string;
+  line_role: string;
+  generated_at: string;
+  sample_size: number;
+  wins: number;
+  losses: number;
+  pushes: number;
+  no_bets: number;
+  win_rate: number | null;
+  mae: number | null;
+  bias: number | null;
+  calibration_gap: number | null;
+  avg_confidence: number | null;
+  weak_direction_share: number | null;
+  confidence_lift_json?: string | null;
+  confidence_lift?: Record<string, {
+    wins: number;
+    losses: number;
+    sample_size: number;
+    win_rate: number | null;
+    mae: number | null;
+    bias: number | null;
+  }>;
+  market_trust_status: string;
+}
+
 export interface ProjectionAccuracyResponse {
   generatedAt: string;
   lookbackDays: number;
   summary: ProjectionAccuracySummary;
+  marketHealth: ProjectionAccuracyMarketHealth[];
   rows: ProjectionAccuracyRecord[];
 }

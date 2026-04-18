@@ -5,6 +5,7 @@ import {
   getDatabaseReadOnly,
   getProjectionAccuracyEvalSummary,
   getProjectionAccuracyEvals,
+  getProjectionAccuracyMarketHealth,
 } from '@cheddar-logic/data';
 
 const DEFAULT_LOOKBACK_DAYS = 90;
@@ -55,11 +56,15 @@ export async function GET(request: Request): Promise<NextResponse> {
       ...filters,
       limit: 200,
     });
+    const marketHealth = getProjectionAccuracyMarketHealth(db, {
+      ...(marketFamily ? { marketFamily } : {}),
+    });
 
     const payload: ProjectionAccuracyResponse = {
       generatedAt: new Date().toISOString(),
       lookbackDays: days,
       summary,
+      marketHealth,
       rows,
     };
 

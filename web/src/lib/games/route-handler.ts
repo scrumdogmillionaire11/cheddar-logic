@@ -176,6 +176,12 @@ const API_GAMES_MAX_CARD_ROWS = Math.max(
 );
 const API_GAMES_PROP_PRIORITY_SQL =
   "(LOWER(card_type) LIKE '%player%' OR LOWER(card_type) = 'mlb-pitcher-k')";
+const PROP_FALLBACK_CARD_TYPES = new Set<string>([
+  'nhl-player-shots',
+  'nhl-player-shots-1p',
+  'nhl-player-blk',
+  'mlb-pitcher-k',
+]);
 const MLB_GAME_LINE_FALLBACK_CARD_TYPES = ['mlb-full-game', 'mlb-full-game-ml'] as const;
 const MLB_GAME_LINE_PRIMARY_CARD_TYPE = 'mlb-f5';
 const RAW_API_GAMES_MLB_FALLBACK_MAX_AGE_MINUTES = Number.parseInt(
@@ -2414,12 +2420,53 @@ export async function GET(request: NextRequest) {
 
           // MLB full-game fallback merge by canonical (game_id, card_type) so
           // current-run mlb-f5 rows do not mask publishable full-game rows.
+function mergePropFallbackRows(params: {
+  currentRows: CardPayloadRow[];
+  fallbackRows: CardPayloadRow[];
+  externalToCanonicalMap: Map<string, string>;
+}): CardPayloadRow[] {
+  const { currentRows, fallbackRows, externalToCanonicalMap } = params;
+
+  const semanticKeys = new Set<string>();
+  const mergedRows = [...currentRows];
+
+  for (const row of currentRows) {
+    const cardType = String(row.card_type || '').trim().toLowerCase();
+    if (!PROP_FALLBACK_CARD_TYPES.has(cardType)) continue;
+    const canonicalGameId = externalToCanonicalMap.get(row.game_id) ?? row.game_id;
+    semanticKeys.add(`${canonicalGameId}|${cardType}|${row.card_title}`);
+  }
+
+  for (const row of fallbackRows) {
+    const cardType = String(row.card_type || '').trim().toLowerCase();
+    if (!PROP_FALLBACK_CARD_TYPES.has(cardType)) continue;
+
+    const canonicalGameId = externalToCanonicalMap.get(row.game_id) ?? row.game_id;
+    const semanticKey = `${canonicalGameId}|${cardType}|${row.card_title}`;
+    if (semanticKeys.has(semanticKey)) continue;
+
+    semanticKeys.add(semanticKey);
+    mergedRows.push(row);
+  }
+
+  const dedupedById = new Map<string, CardPayloadRow>();
+  for (const row of mergedRows) {
+    dedupedById.set(row.id, row);
+  }
+  return Array.from(dedupedById.values());
+}
           if (allQueryableIds.length > 0) {
             const fallbackStmt = db.prepare(buildCardsSql(allQueryableIds, ''));
             const fallbackRows = fallbackStmt.all(
               ...allQueryableIds,
             ) as CardPayloadRow[];
             if (fallbackRows.length > 0) {
+              cardRows = mergePropFallbackRows({
+                currentRows: cardRows,
+                fallbackRows,
+                externalToCanonicalMap,
+              });
+
               const latestOddsCapturedAtByCanonicalId = new Map<string, string | null>(
                 rows.map((row) => [row.game_id, row.odds_captured_at]),
               );

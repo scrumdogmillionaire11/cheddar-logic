@@ -230,18 +230,24 @@ module.exports = {
   RECORD_TABLES: dbDualInit.RECORD_TABLES,
   LOCAL_TABLES: dbDualInit.LOCAL_TABLES,
 
-  // projection-accuracy (proxy eval data layer — WI-0864)
+  // projection-accuracy confidence engine
   captureProjectionAccuracyForCard: projAccuracy.captureProjectionAccuracyForCard,
   captureProjectionAccuracyEval:    projAccuracy.captureProjectionAccuracyEval,
   gradeProjectionAccuracyEval:      projAccuracy.gradeProjectionAccuracyEval,
   getProjectionAccuracyEvals:       projAccuracy.getProjectionAccuracyEvals,
   getProjectionAccuracyLineEvals:   projAccuracy.getProjectionAccuracyLineEvals,
   getProjectionAccuracyEvalSummary: projAccuracy.getProjectionAccuracyEvalSummary,
+  getProjectionAccuracyMarketHealth: projAccuracy.getProjectionAccuracyMarketHealth,
+  backfillProjectionAccuracyEvals:  projAccuracy.backfillProjectionAccuracyEvals,
+  materializeProjectionAccuracyMarketHealth: projAccuracy.materializeProjectionAccuracyMarketHealth,
   deriveProjectionAccuracyCapture:  projAccuracy.deriveProjectionAccuracyCapture,
   roundToNearestHalf:               projAccuracy.roundToNearestHalf,
   expectedOverProbability:          projAccuracy.expectedOverProbability,
   expectedDirectionProbability:     projAccuracy.expectedDirectionProbability,
   computeMarketTrustStatus:         projAccuracy.computeMarketTrustStatus,
+  computeProjectionAccuracyMarketHealth: projAccuracy.computeProjectionAccuracyMarketHealth,
+  // Legacy proxy eval read/write surface retained for compatibility. New work
+  // should use projection_accuracy_evals and projection_accuracy_line_evals.
   insertProjectionProxyEval:       projAccuracy.insertProjectionProxyEval,
   batchInsertProjectionProxyEvals: projAccuracy.batchInsertProjectionProxyEvals,
   getProjectionProxyEvals:         projAccuracy.getProjectionProxyEvals,

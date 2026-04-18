@@ -3,8 +3,7 @@
 /**
  * projection-accuracy.js — WI-0864
  *
- * Data access layer for projection_proxy_evals table.
- * Stores per-game × per-proxy-line graded rows for MLB F5 and NHL 1P projections.
+ * Data access layer for projection-only accuracy.
  *
  * All functions accept `db` as first argument (better-sqlite3 / DatabaseProxy instance).
  */
@@ -97,6 +96,12 @@ const MARKET_CONFIDENCE_DEFAULTS = Object.freeze({
 const WEAK_DIRECTION_EDGE_THRESHOLD = 0.15;
 const SYNTHETIC_RULE_NEAREST_HALF = 'nearest_half';
 const MIN_MARKET_TRUST_SAMPLE = 25;
+const PROJECTION_ACCURACY_MARKET_FAMILIES = Object.freeze([
+  'MLB_F5_TOTAL',
+  'MLB_PITCHER_K',
+  'NHL_PLAYER_SHOTS',
+  'NHL_PLAYER_BLOCKS',
+]);
 
 function normalizeCardType(value) {
   return String(value || '').trim().toLowerCase();
@@ -653,6 +658,13 @@ function arrayFromJson(value) {
   }
 }
 
+function mergeFailureFlags(existing, additions = []) {
+  return [...new Set([
+    ...arrayFromJson(existing),
+    ...additions.map(String),
+  ].map((flag) => String(flag).trim()).filter(Boolean))].sort();
+}
+
 function getHistoricalBucketHitRate(db, marketFamily, calibrationBucket) {
   try {
     const row = db.prepare(`
@@ -773,6 +785,192 @@ function computeMarketTrustStatusForFamily(db, marketFamily) {
   } catch {
     return 'INSUFFICIENT_DATA';
   }
+}
+
+function computeProjectionAccuracyMarketHealth(db, {
+  marketFamily,
+  lineRole = 'SYNTHETIC',
+  generatedAt = new Date().toISOString(),
+} = {}) {
+  if (!db || !marketFamily) return null;
+
+  const overall = db.prepare(`
+    SELECT
+      SUM(CASE WHEN l.graded_result = 'WIN' AND COALESCE(l.weak_direction_flag, 0) = 0 THEN 1 ELSE 0 END) AS wins,
+      SUM(CASE WHEN l.graded_result = 'LOSS' AND COALESCE(l.weak_direction_flag, 0) = 0 THEN 1 ELSE 0 END) AS losses,
+      SUM(CASE WHEN l.graded_result = 'PUSH' THEN 1 ELSE 0 END) AS pushes,
+      SUM(CASE WHEN l.graded_result = 'NO_BET' THEN 1 ELSE 0 END) AS no_bets,
+      COUNT(l.id) AS total_line_evals,
+      SUM(CASE WHEN l.weak_direction_flag = 1 THEN 1 ELSE 0 END) AS weak_direction_count,
+      AVG(e.absolute_error) AS mae,
+      AVG(e.signed_error) AS bias,
+      AVG(e.projection_confidence) AS avg_confidence,
+      AVG(
+        CASE
+          WHEN e.actual_value IS NOT NULL
+           AND e.synthetic_line IS NOT NULL
+           AND e.expected_over_prob IS NOT NULL
+          THEN ABS(e.expected_over_prob - CASE WHEN e.actual_value > e.synthetic_line THEN 1.0 ELSE 0.0 END)
+        END
+      ) AS calibration_gap
+    FROM projection_accuracy_line_evals l
+    JOIN projection_accuracy_evals e ON e.card_id = l.card_id
+    WHERE e.market_family = ?
+      AND l.line_role = ?
+      AND l.grade_status = 'GRADED'
+  `).get(marketFamily, lineRole);
+
+  const confidenceRows = db.prepare(`
+    SELECT
+      l.confidence_band AS band,
+      SUM(CASE WHEN l.graded_result = 'WIN' AND COALESCE(l.weak_direction_flag, 0) = 0 THEN 1 ELSE 0 END) AS wins,
+      SUM(CASE WHEN l.graded_result = 'LOSS' AND COALESCE(l.weak_direction_flag, 0) = 0 THEN 1 ELSE 0 END) AS losses,
+      AVG(e.absolute_error) AS mae,
+      AVG(e.signed_error) AS bias
+    FROM projection_accuracy_line_evals l
+    JOIN projection_accuracy_evals e ON e.card_id = l.card_id
+    WHERE e.market_family = ?
+      AND l.line_role = ?
+      AND l.grade_status = 'GRADED'
+    GROUP BY l.confidence_band
+  `).all(marketFamily, lineRole);
+
+  const wins = Number(overall?.wins || 0);
+  const losses = Number(overall?.losses || 0);
+  const sampleSize = wins + losses;
+  const totalLineEvals = Number(overall?.total_line_evals || 0);
+  const weakDirectionShare = totalLineEvals > 0
+    ? Number(overall?.weak_direction_count || 0) / totalLineEvals
+    : 0;
+  const calibrationGap = Number(overall?.calibration_gap || 0);
+  const confidenceLift = {};
+  for (const row of confidenceRows) {
+    const bandWins = Number(row.wins || 0);
+    const bandLosses = Number(row.losses || 0);
+    confidenceLift[row.band || 'UNKNOWN'] = {
+      wins: bandWins,
+      losses: bandLosses,
+      sample_size: bandWins + bandLosses,
+      win_rate: bandWins + bandLosses > 0 ? bandWins / (bandWins + bandLosses) : null,
+      mae: row.mae ?? null,
+      bias: row.bias ?? null,
+    };
+  }
+
+  const confidenceBandsImprove = hasMonotonicConfidenceLift(confidenceRows);
+  const marketTrustStatus = computeMarketTrustStatus({
+    wins,
+    losses,
+    calibrationGap,
+    weakShare: weakDirectionShare,
+    monotonicLift: confidenceBandsImprove,
+  });
+
+  return {
+    market_family: marketFamily,
+    line_role: lineRole,
+    generated_at: generatedAt,
+    sample_size: sampleSize,
+    wins,
+    losses,
+    pushes: Number(overall?.pushes || 0),
+    no_bets: Number(overall?.no_bets || 0),
+    win_rate: sampleSize > 0 ? wins / sampleSize : null,
+    mae: overall?.mae ?? null,
+    bias: overall?.bias ?? null,
+    calibration_gap: overall?.calibration_gap ?? null,
+    avg_confidence: overall?.avg_confidence ?? null,
+    weak_direction_share: weakDirectionShare,
+    confidence_lift: confidenceLift,
+    confidence_bands_improve: confidenceBandsImprove,
+    market_trust_status: marketTrustStatus,
+  };
+}
+
+function materializeProjectionAccuracyMarketHealth(db, {
+  marketFamilies = PROJECTION_ACCURACY_MARKET_FAMILIES,
+  lineRole = 'SYNTHETIC',
+  generatedAt = new Date().toISOString(),
+} = {}) {
+  if (!db) return [];
+  const rows = [];
+
+  const write = () => {
+    for (const marketFamily of marketFamilies) {
+      const row = computeProjectionAccuracyMarketHealth(db, {
+        marketFamily,
+        lineRole,
+        generatedAt,
+      });
+      if (!row) continue;
+      rows.push(row);
+
+      db.prepare(`
+        INSERT INTO projection_accuracy_market_health (
+          market_family, line_role, generated_at, sample_size,
+          wins, losses, pushes, no_bets, win_rate, mae, bias,
+          calibration_gap, avg_confidence, weak_direction_share,
+          confidence_lift_json, market_trust_status, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(market_family) DO UPDATE SET
+          line_role = excluded.line_role,
+          generated_at = excluded.generated_at,
+          sample_size = excluded.sample_size,
+          wins = excluded.wins,
+          losses = excluded.losses,
+          pushes = excluded.pushes,
+          no_bets = excluded.no_bets,
+          win_rate = excluded.win_rate,
+          mae = excluded.mae,
+          bias = excluded.bias,
+          calibration_gap = excluded.calibration_gap,
+          avg_confidence = excluded.avg_confidence,
+          weak_direction_share = excluded.weak_direction_share,
+          confidence_lift_json = excluded.confidence_lift_json,
+          market_trust_status = excluded.market_trust_status,
+          updated_at = CURRENT_TIMESTAMP
+      `).run(
+        row.market_family,
+        row.line_role,
+        row.generated_at,
+        row.sample_size,
+        row.wins,
+        row.losses,
+        row.pushes,
+        row.no_bets,
+        row.win_rate,
+        row.mae,
+        row.bias,
+        row.calibration_gap,
+        row.avg_confidence,
+        row.weak_direction_share,
+        JSON.stringify(row.confidence_lift),
+        row.market_trust_status,
+      );
+
+      db.prepare(`
+        UPDATE projection_accuracy_evals
+        SET market_trust_status = ?,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE market_family = ?
+      `).run(row.market_trust_status, row.market_family);
+    }
+  };
+
+  if (typeof db.transaction === 'function') {
+    db.transaction(write)();
+  } else {
+    db.exec('BEGIN');
+    try {
+      write();
+      db.exec('COMMIT');
+    } catch (error) {
+      try { db.exec('ROLLBACK'); } catch {}
+      throw error;
+    }
+  }
+
+  return rows;
 }
 
 function buildProjectionAccuracyLineRows(capture) {
@@ -1208,6 +1406,201 @@ function gradeProjectionAccuracyEval(db, { cardId, actualResult, gradedAt = new 
   return true;
 }
 
+function actualResultFromEvalRow(row) {
+  const config = TRACKED_PROJECTION_ACCURACY_CARD_TYPES[normalizeCardType(row?.card_type)];
+  const actualValue = toFiniteNumberOrNull(row?.actual_value ?? row?.actual);
+  if (!config || actualValue === null) return null;
+  return { [config.actualKeys[0]]: actualValue };
+}
+
+function backfillProjectionAccuracyEvals(db, {
+  limit = 1000,
+  now = new Date().toISOString(),
+} = {}) {
+  if (!db) return { processed: 0, updated: 0, lineRowsInserted: 0, graded: 0, unableToReconstruct: 0 };
+  const maxRows = Math.max(1, Math.min(Number(limit) || 1000, 10000));
+  const rows = db.prepare(`
+    SELECT *
+    FROM projection_accuracy_evals
+    WHERE projection_raw IS NULL
+       OR synthetic_line IS NULL
+       OR synthetic_direction IS NULL
+       OR direction_strength IS NULL
+       OR projection_confidence IS NULL
+       OR failure_flags IS NULL
+       OR expected_over_prob IS NULL
+       OR expected_direction_prob IS NULL
+       OR calibration_bucket IS NULL
+       OR market_type IS NULL
+       OR player_or_game_id IS NULL
+    ORDER BY id ASC
+    LIMIT ?
+  `).all(maxRows);
+
+  let updated = 0;
+  let lineRowsInserted = 0;
+  let graded = 0;
+  let unableToReconstruct = 0;
+
+  const write = () => {
+    for (const row of rows) {
+      const projectionRaw = toFiniteNumberOrNull(row.projection_raw) ?? toFiniteNumberOrNull(row.projection_value);
+      const syntheticLine =
+        toFiniteNumberOrNull(row.synthetic_line) ??
+        toFiniteNumberOrNull(row.nearest_half_line) ??
+        roundToNearestHalf(projectionRaw);
+      const failureAdditions = [];
+      if (projectionRaw === null || syntheticLine === null) {
+        failureAdditions.push('BACKFILL_UNABLE_TO_RECONSTRUCT');
+        unableToReconstruct += 1;
+      }
+
+      const syntheticDirection = projectionRaw === null || syntheticLine === null
+        ? 'NO_EDGE'
+        : directionFromProjectionLine(projectionRaw, syntheticLine);
+      const edgeDistance = projectionRaw === null || syntheticLine === null
+        ? 0
+        : Math.abs(projectionRaw - syntheticLine);
+      const weakDirectionFlag = syntheticDirection === 'NO_EDGE' || edgeDistance < WEAK_DIRECTION_EDGE_THRESHOLD ? 1 : 0;
+      if (weakDirectionFlag) failureAdditions.push('DIRECTION_TOO_WEAK');
+      const actualValue = toFiniteNumberOrNull(row.actual_value ?? row.actual);
+      const confidence = deriveProjectionConfidence({
+        edgeDistance,
+        historicalBucketHitRate: 0.5,
+        varianceOfMarket: null,
+        marketFamily: row.market_family,
+      });
+      const expectedOverProb = expectedOverProbability(projectionRaw, syntheticLine);
+      const expectedDirProb = expectedDirectionProbability(projectionRaw, syntheticLine, syntheticDirection);
+      const absError = actualValue === null || projectionRaw === null
+        ? null
+        : roundMetric(Math.abs(projectionRaw - actualValue), 6);
+      const signedError = actualValue === null || projectionRaw === null
+        ? null
+        : roundMetric(projectionRaw - actualValue, 6);
+      const playerOrGameId = row.player_or_game_id || row.player_id || row.player_name || row.game_id || null;
+
+      db.prepare(`
+        UPDATE projection_accuracy_evals
+        SET market_type = COALESCE(market_type, ?),
+            player_or_game_id = COALESCE(player_or_game_id, ?),
+            projection_raw = COALESCE(projection_raw, ?),
+            synthetic_line = COALESCE(synthetic_line, ?),
+            synthetic_rule = COALESCE(synthetic_rule, ?),
+            synthetic_direction = COALESCE(synthetic_direction, ?),
+            direction_strength = COALESCE(direction_strength, ?),
+            weak_direction_flag = ?,
+            projection_confidence = COALESCE(projection_confidence, ?),
+            confidence_score = COALESCE(confidence_score, ?),
+            confidence_band = CASE
+              WHEN confidence_band IS NULL OR confidence_band = 'UNKNOWN' THEN ?
+              ELSE confidence_band
+            END,
+            failure_flags = ?,
+            actual = COALESCE(actual, ?),
+            abs_error = COALESCE(abs_error, ?),
+            signed_error = COALESCE(signed_error, ?),
+            absolute_error = COALESCE(absolute_error, ?),
+            expected_over_prob = COALESCE(expected_over_prob, ?),
+            expected_direction_prob = COALESCE(expected_direction_prob, ?),
+            calibration_bucket = COALESCE(calibration_bucket, ?),
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `).run(
+        row.market_family,
+        playerOrGameId,
+        projectionRaw,
+        syntheticLine,
+        SYNTHETIC_RULE_NEAREST_HALF,
+        syntheticDirection,
+        weakDirectionFlag ? 'WEAK' : 'STRONG',
+        weakDirectionFlag,
+        confidence,
+        confidence,
+        confidenceBand(confidence),
+        JSON.stringify(mergeFailureFlags(row.failure_flags, failureAdditions)),
+        actualValue,
+        absError,
+        signedError,
+        absError,
+        expectedOverProb,
+        expectedDirProb,
+        calibrationBucketForProjection(projectionRaw),
+        row.id,
+      );
+      updated += 1;
+
+      if (projectionRaw !== null && syntheticLine !== null) {
+        const capture = {
+          cardId: row.card_id,
+          projectionValue: projectionRaw,
+          nearestHalfLine: syntheticLine,
+          selectedLine: toFiniteNumberOrNull(row.selected_line),
+          marketFamily: row.market_family,
+          marketTrust: row.market_trust || 'UNVERIFIED',
+          historicalBucketHitRate: 0.5,
+          varianceOfMarket: null,
+        };
+        const parent = { id: row.id };
+        for (const lineRow of buildProjectionAccuracyLineRows(capture)) {
+          const info = db.prepare(`
+            INSERT OR IGNORE INTO projection_accuracy_line_evals (
+              eval_id, card_id, line_role, line, eval_line, projection_value,
+              direction, weak_direction_flag, edge_vs_line,
+              confidence_score, confidence_band, market_trust,
+              expected_over_prob, expected_direction_prob, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+          `).run(
+            parent.id,
+            lineRow.card_id,
+            lineRow.line_role,
+            lineRow.line,
+            lineRow.eval_line,
+            lineRow.projection_value,
+            lineRow.direction,
+            lineRow.weak_direction_flag,
+            lineRow.edge_vs_line,
+            lineRow.confidence_score,
+            lineRow.confidence_band,
+            lineRow.market_trust,
+            lineRow.expected_over_prob,
+            lineRow.expected_direction_prob,
+          );
+          lineRowsInserted += Number(info?.changes || 0);
+        }
+      }
+    }
+  };
+
+  if (typeof db.transaction === 'function') {
+    db.transaction(write)();
+  } else {
+    db.exec('BEGIN');
+    try {
+      write();
+      db.exec('COMMIT');
+    } catch (error) {
+      try { db.exec('ROLLBACK'); } catch {}
+      throw error;
+    }
+  }
+
+  for (const row of rows) {
+    const actualResult = actualResultFromEvalRow(row);
+    if (actualResult && gradeProjectionAccuracyEval(db, { cardId: row.card_id, actualResult, gradedAt: now })) {
+      graded += 1;
+    }
+  }
+
+  return {
+    processed: rows.length,
+    updated,
+    lineRowsInserted,
+    graded,
+    unableToReconstruct,
+  };
+}
+
 function buildWhereClause(opts = {}, tableAlias = 'e') {
   const clauses = [];
   const params = [];
@@ -1276,6 +1669,30 @@ function getProjectionAccuracyLineEvals(db, opts = {}) {
       LIMIT ?
     `)
     .all(...lineParams, limit);
+}
+
+function getProjectionAccuracyMarketHealth(db, opts = {}) {
+  const clauses = [];
+  const params = [];
+  if (opts.marketFamily) {
+    clauses.push('market_family = ?');
+    params.push(opts.marketFamily);
+  }
+  const where = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
+  try {
+    const rows = db.prepare(`
+      SELECT *
+      FROM projection_accuracy_market_health
+      ${where}
+      ORDER BY market_family ASC
+    `).all(...params);
+    return rows.map((row) => ({
+      ...row,
+      confidence_lift: parseJsonObject(row.confidence_lift_json) || {},
+    }));
+  } catch {
+    return [];
+  }
 }
 
 function rowsByKey(rows, keyName) {
@@ -1398,6 +1815,7 @@ module.exports = {
   TRACKED_PROJECTION_ACCURACY_CARD_TYPES,
   COMMON_LINES_BY_MARKET_FAMILY,
   MARKET_CONFIDENCE_DEFAULTS,
+  PROJECTION_ACCURACY_MARKET_FAMILIES,
   WEAK_DIRECTION_EDGE_THRESHOLD,
   isProjectionAccuracyCardType,
   roundToNearestHalf,
@@ -1405,6 +1823,9 @@ module.exports = {
   expectedDirectionProbability,
   calibrationBucketForProjection,
   computeMarketTrustStatus,
+  computeProjectionAccuracyMarketHealth,
+  materializeProjectionAccuracyMarketHealth,
+  backfillProjectionAccuracyEvals,
   deriveProjectionAccuracyCapture,
   deriveProjectionConfidence,
   resolveProjectionMarketTrust,
@@ -1413,6 +1834,7 @@ module.exports = {
   gradeProjectionAccuracyEval,
   getProjectionAccuracyEvals,
   getProjectionAccuracyLineEvals,
+  getProjectionAccuracyMarketHealth,
   getProjectionAccuracyEvalSummary,
   insertProjectionProxyEval,
   batchInsertProjectionProxyEvals,

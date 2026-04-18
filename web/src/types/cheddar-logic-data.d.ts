@@ -52,4 +52,6 @@ declare module '@cheddar-logic/data' {
   export function getProjectionAccuracyEvalSummary(db: any, opts?: any): any;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   export function getProjectionAccuracyEvals(db: any, opts?: any): any[];
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  export function getProjectionAccuracyMarketHealth(db: any, opts?: any): any[];
 }

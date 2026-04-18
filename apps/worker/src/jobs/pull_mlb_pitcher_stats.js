@@ -16,6 +16,40 @@ const JOB_NAME = 'pull_mlb_pitcher_stats';
 const MLB_API_BASE = 'https://statsapi.mlb.com/api/v1';
 const MLB_SEASON = 2026;
 
+const MLB_TEAM_NAME_TO_ABBR = {
+  'ARIZONA DIAMONDBACKS': 'AZ',
+  'ATLANTA BRAVES': 'ATL',
+  'BALTIMORE ORIOLES': 'BAL',
+  'BOSTON RED SOX': 'BOS',
+  'CHICAGO CUBS': 'CHC',
+  'CHICAGO WHITE SOX': 'CHW',
+  'CINCINNATI REDS': 'CIN',
+  'CLEVELAND GUARDIANS': 'CLE',
+  'COLORADO ROCKIES': 'COL',
+  'DETROIT TIGERS': 'DET',
+  'HOUSTON ASTROS': 'HOU',
+  'KANSAS CITY ROYALS': 'KC',
+  'LOS ANGELES ANGELS': 'LAA',
+  'LOS ANGELES DODGERS': 'LAD',
+  'MIAMI MARLINS': 'MIA',
+  'MILWAUKEE BREWERS': 'MIL',
+  'MINNESOTA TWINS': 'MIN',
+  'NEW YORK METS': 'NYM',
+  'NEW YORK YANKEES': 'NYY',
+  'ATHLETICS': 'ATH',
+  'OAKLAND ATHLETICS': 'ATH',
+  'PHILADELPHIA PHILLIES': 'PHI',
+  'PITTSBURGH PIRATES': 'PIT',
+  'SAN DIEGO PADRES': 'SD',
+  'SAN FRANCISCO GIANTS': 'SF',
+  'SEATTLE MARINERS': 'SEA',
+  'ST. LOUIS CARDINALS': 'STL',
+  'TAMPA BAY RAYS': 'TB',
+  'TEXAS RANGERS': 'TEX',
+  'TORONTO BLUE JAYS': 'TOR',
+  'WASHINGTON NATIONALS': 'WSH',
+};
+
 function todayDateString() {
   return new Date().toISOString().slice(0, 10);
 }
@@ -68,12 +102,40 @@ function buildPitcherTeamMap(schedulePayload) {
         const pitcher = game?.teams?.[side]?.probablePitcher;
         const abbrev = game?.teams?.[side]?.team?.abbreviation;
         if (pitcher?.id && abbrev) {
-          map.set(Number(pitcher.id), abbrev);
+          const pitcherId = Number(pitcher.id);
+          const existing = map.get(pitcherId);
+          if (existing && existing !== abbrev) {
+            // Keep the first mapping and let fetchAllPitcherData reconcile against current team.
+            console.warn(
+              `[${JOB_NAME}] conflicting schedule team for pitcher ${pitcherId}: keeping ${existing}, ignoring ${abbrev}`,
+            );
+            continue;
+          }
+          map.set(pitcherId, abbrev);
         }
       }
     }
   }
   return map;
+}
+
+function normalizeMlbTeamAbbreviation(value) {
+  if (!value || typeof value !== 'string') return null;
+  const token = value.trim().toUpperCase();
+  if (!token) return null;
+  if (/^[A-Z]{2,4}$/.test(token)) return token;
+  return MLB_TEAM_NAME_TO_ABBR[token] ?? null;
+}
+
+function selectPitcherTeamAbbreviation(teamFromSchedule, currentTeamValue) {
+  const scheduleTeam = normalizeMlbTeamAbbreviation(teamFromSchedule);
+  const currentTeam = normalizeMlbTeamAbbreviation(currentTeamValue);
+
+  if (scheduleTeam && currentTeam && scheduleTeam !== currentTeam) {
+    return currentTeam;
+  }
+
+  return scheduleTeam ?? currentTeam ?? null;
 }
 
 function ensureMlbGamePkMap(db) {
@@ -396,6 +458,7 @@ async function fetchPitcherInfo(pitcherId) {
   return {
     full_name: person?.fullName || null,
     team: person?.currentTeam?.name || null,
+    team_abbr: person?.currentTeam?.abbreviation || null,
     // pitcher_input_schema.md: handedness required for opp splits
     handedness: person?.pitchHand?.code || null, // 'R' or 'L'
   };
@@ -468,10 +531,24 @@ async function fetchAllPitcherData(pitcherId, { teamFromSchedule = null } = {}) 
     supplementalSplits = priorRecentStats.allSplits ?? [];
   }
 
-  // Prefer schedule-derived team abbreviation (matches odds_snapshot.home_team / away_team
-  // used by run_mlb_model.js enrichment). Fall back to currentTeam.name if schedule didn't
-  // include this pitcher (edge case).
-  const team = teamFromSchedule ?? info.team;
+  // Prefer schedule-derived team abbreviation for game-day context, but if the schedule
+  // assignment conflicts with current-team identity, trust current-team to avoid
+  // poisoning mlb_pitcher_stats with incorrect team bindings.
+  const team = selectPitcherTeamAbbreviation(
+    teamFromSchedule,
+    info.team_abbr || info.team,
+  );
+  const normalizedScheduleTeam = normalizeMlbTeamAbbreviation(teamFromSchedule);
+  const normalizedCurrentTeam = normalizeMlbTeamAbbreviation(info.team_abbr || info.team);
+  if (
+    normalizedScheduleTeam &&
+    normalizedCurrentTeam &&
+    normalizedScheduleTeam !== normalizedCurrentTeam
+  ) {
+    console.warn(
+      `[${JOB_NAME}] pitcher ${pitcherId} schedule/current team mismatch: schedule=${normalizedScheduleTeam}, current=${normalizedCurrentTeam}; using current team`,
+    );
+  }
 
   return {
     mlb_id: pitcherId,
@@ -854,6 +931,8 @@ module.exports = {
   fetchSchedule,
   fetchProbablePitcherIds,
   buildPitcherTeamMap,
+  normalizeMlbTeamAbbreviation,
+  selectPitcherTeamAbbreviation,
   fetchPitcherSeasonStats,
   fetchPitcherRecentStats,
   fetchAllPitcherData,
