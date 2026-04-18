@@ -148,8 +148,10 @@ function resolveStarterSkillProfile(pitcher) {
     (sum, part) => sum + part.weight,
     0,
   );
+  // starter_xera is a planned future feature (always null) — exclude from degraded
+  // inputs so it does not reduce confidence when siera + x_fip are available.
   const missingSkillParts = skillParts
-    .filter((part) => part.value === null)
+    .filter((part) => part.value === null && part.missing !== 'starter_xera')
     .map((part) => part.missing);
 
   const kPct = toFiniteNumberOrNull(pitcher?.season_k_pct ?? pitcher?.k_pct);
@@ -1441,7 +1443,7 @@ function projectFullGameTotalCard(homePitcher, awayPitcher, fullGameLine, contex
   }
 
   if (!hasLeanEdge) reasonCodes.push('PASS_NO_EDGE');
-  if (confidenceBelowGate) reasonCodes.push('PASS_CONFIDENCE_GATE');
+  if (confidenceBelowGate && !isDegraded) reasonCodes.push('PASS_CONFIDENCE_GATE');
 
   // WI-0944: DEGRADED_MODEL with edge present — surface as WATCH (LEAN) rather than hard PASS.
   // Confidence gate remains a hard veto only for FULL_MODEL paths; degraded projections
@@ -1481,7 +1483,7 @@ function projectFullGameTotalCard(homePitcher, awayPitcher, fullGameLine, contex
     prediction,
     confidence: proj.confidence / 10,
     ev_threshold_passed: status !== 'PASS',
-    reasoning: `FG TOTAL ${proj.projection_source} raw ${rawModelTotal.toFixed(2)} recentered ${recenteredModelTotal.toFixed(2)} shrunk ${finalModelTotal.toFixed(2)} vs line ${fullGameLine.toFixed(1)} rawEdge ${rawEdge >= 0 ? '+' : ''}${rawEdge.toFixed(2)} recenteredEdge ${recenteredEdge >= 0 ? '+' : ''}${recenteredEdge.toFixed(2)} finalEdge ${finalEdge >= 0 ? '+' : ''}${finalEdge.toFixed(2)} shrink=${Number.isFinite(shrinkFactor) ? shrinkFactor.toFixed(2) : 'n/a'} bucket=${proj.volatility_bucket} thr=${dynamicThreshold.toFixed(2)} pOver=${(pOver * 100).toFixed(1)}% pUnder=${(pUnder * 100).toFixed(1)}% drivers=${driverValidation.drivers.join('|') || 'none'} conf=${proj.confidence}/10`,
+    reasoning: `FG TOTAL ${proj.projection_source} raw ${rawModelTotal.toFixed(2)} recentered ${recenteredModelTotal.toFixed(2)} shrunk ${finalModelTotal.toFixed(2)} vs line ${fullGameLine.toFixed(1)} rawEdge ${rawEdge >= 0 ? '+' : ''}${rawEdge.toFixed(2)} recenteredEdge ${recenteredEdge >= 0 ? '+' : ''}${recenteredEdge.toFixed(2)} finalEdge ${finalEdge >= 0 ? '+' : ''}${finalEdge.toFixed(2)} shrink=${Number.isFinite(shrinkFactor) ? shrinkFactor.toFixed(2) : 'n/a'} bucket=${proj.volatility_bucket} dynThr=${dynamicThreshold.toFixed(2)} leanThr=${MLB_FULL_GAME_LEAN_EDGE_THRESHOLD.toFixed(2)} pOver=${(pOver * 100).toFixed(1)}% pUnder=${(pUnder * 100).toFixed(1)}% drivers=${driverValidation.drivers.join('|') || 'none'} conf=${proj.confidence}/10`,
     status,
     action,
     classification,
@@ -1750,14 +1752,24 @@ function projectF5ML(
       const awayDegradedInputs = Array.isArray(awayRunsResult.degraded_inputs)
         ? awayRunsResult.degraded_inputs
         : [];
+      // Exclude features not yet implemented in the data pipeline from the
+      // confidence deduction — they are tracked in degraded_inputs for
+      // observability but should not suppress card generation.
+      const UNIMPLEMENTED_INPUTS = new Set(['times_through_order_profile']);
+      const homeMeaningfulDegraded = homeDegradedInputs.filter(
+        (k) => !UNIMPLEMENTED_INPUTS.has(k),
+      );
+      const awayMeaningfulDegraded = awayDegradedInputs.filter(
+        (k) => !UNIMPLEMENTED_INPUTS.has(k),
+      );
       projection = {
         homeExpected: homeRunsResult.f5_runs,
         awayExpected: awayRunsResult.f5_runs,
         confidence: Math.max(
           5,
           7 -
-            (homeDegradedInputs.length > 0 ? 1 : 0) -
-            (awayDegradedInputs.length > 0 ? 1 : 0),
+            (homeMeaningfulDegraded.length > 0 ? 1 : 0) -
+            (awayMeaningfulDegraded.length > 0 ? 1 : 0),
         ),
         projectionSource: 'FULL_MODEL',
         reasonCodes: [],

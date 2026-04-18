@@ -142,7 +142,7 @@ export default function CardsList() {
         <div className="space-y-4">
           {projectionItems.map(({ game, play }) => (
             <ProjectionCard
-              key={`${game.gameId}-gameprops`}
+              key={`${game.gameId}-${play.cardType}-gameprops`}
               homeTeam={game.homeTeam}
               awayTeam={game.awayTeam}
               startTime={game.gameTimeUtc}
