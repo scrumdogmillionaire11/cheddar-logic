@@ -202,7 +202,7 @@ describe('run_nba_model job', () => {
       model_status: 'MODEL_OK',
       snapshot_age_ms: 90_000,
     });
-    expect(card.payloadData.execution_gate.net_edge).toBeCloseTo(0.06, 6);
+    expect(card.payloadData.execution_gate.net_edge).toBeCloseTo(0.11, 6);
     expect(card.payloadData.status).not.toBe('PASS');
   });
 
@@ -210,7 +210,7 @@ describe('run_nba_model job', () => {
     const card = {
       payloadData: {
         execution_status: 'EXECUTABLE',
-        edge: 0.055,
+        edge: 0.005,
         confidence: 0.74,
         model_status: 'MODEL_OK',
         status: 'FIRE',

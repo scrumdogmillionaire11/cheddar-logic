@@ -584,7 +584,7 @@ describe('run_nhl_model market call generation', () => {
     const mlCard = {
       payloadData: {
         execution_status: 'EXECUTABLE',
-        edge: 0.055,
+        edge: 0.005,
         confidence: 0.74,
         model_status: 'MODEL_OK',
         status: 'FIRE',
