@@ -4,6 +4,7 @@
 const {
   projectF5ML,
   projectF5Total,
+  projectF5TotalCard,
   projectFullGameTotal,
   projectFullGameTotalCard,
   projectFullGameML,
@@ -11,6 +12,7 @@ const {
   evaluateMlbGameMarkets,
   resolveOffenseComposite,
   resolveMLBModelSignal,
+  selectPassReasonCode,
 } = require('../mlb-model');
 
 describe('resolveOffenseComposite', () => {
@@ -997,5 +999,55 @@ describe('evaluateMlbGameMarkets (IME-01)', () => {
     expect(result.rejected).toHaveLength(1);
     expect(result.rejected[0].status).toBe('REJECTED_THRESHOLD');
     expect(result.rejected[0].reason_codes).toContain('EDGE_BELOW_THRESHOLD');
+  });
+});
+
+// ── PRI-MLB-02: selectPassReasonCode helper unit tests (Scenario B) ───────────
+
+describe('selectPassReasonCode (PRI-MLB-02)', () => {
+  test('Scenario B: PASS_CONFIDENCE_GATE beats PASS_NO_EDGE regardless of array order', () => {
+    // Array.find would return 'PASS_NO_EDGE' (first match); selectPassReasonCode must return
+    // 'PASS_CONFIDENCE_GATE' (higher priority in PASS_REASON_PRIORITY list).
+    expect(selectPassReasonCode(['PASS_NO_EDGE', 'PASS_CONFIDENCE_GATE'])).toBe('PASS_CONFIDENCE_GATE');
+    expect(selectPassReasonCode(['PASS_CONFIDENCE_GATE', 'PASS_NO_EDGE'])).toBe('PASS_CONFIDENCE_GATE');
+  });
+
+  test('Scenario B2: single PASS_NO_EDGE → returns PASS_NO_EDGE', () => {
+    expect(selectPassReasonCode(['PASS_NO_EDGE'])).toBe('PASS_NO_EDGE');
+  });
+
+  test('Scenario B3: empty array → returns null (not PASS_NO_EDGE default)', () => {
+    expect(selectPassReasonCode([])).toBeNull();
+  });
+
+  test('PASS_DEGRADED_TOTAL_MODEL beats PASS_CONFIDENCE_GATE and PASS_NO_EDGE', () => {
+    expect(selectPassReasonCode(['PASS_NO_EDGE', 'PASS_CONFIDENCE_GATE', 'PASS_DEGRADED_TOTAL_MODEL']))
+      .toBe('PASS_DEGRADED_TOTAL_MODEL');
+  });
+
+  test('unknown PASS_ code falls back to Array.find when no known priority code exists', () => {
+    expect(selectPassReasonCode(['PASS_SOME_FUTURE_CODE'])).toBe('PASS_SOME_FUTURE_CODE');
+  });
+
+  test('non-PASS codes are ignored — returns null when no PASS_ code present', () => {
+    expect(selectPassReasonCode(['SOFT_RUN_DIFF_SMALL', 'FULL_GAME_ML_DEGRADED'])).toBeNull();
+  });
+
+  test('projectFullGameTotalCard uses selectPassReasonCode: PASS_NO_EDGE scenario returns PASS_NO_EDGE', () => {
+    // Symmetric pitchers with calibrated line → no lean edge → PASS_NO_EDGE
+    const result = projectFullGameTotalCard(avgPitcher, avgPitcher, 9.05, baseContext);
+    expect(result).not.toBeNull();
+    if (result.status === 'PASS' && result.reason_codes.includes('PASS_NO_EDGE')) {
+      expect(result.pass_reason_code).toBe('PASS_NO_EDGE');
+    }
+  });
+
+  test('projectF5TotalCard uses selectPassReasonCode: PASS_NO_EDGE scenario returns PASS_NO_EDGE', () => {
+    // calibrated line matches F5 projection
+    const result = projectF5TotalCard(avgPitcher, avgPitcher, 4.5, baseContext);
+    expect(result).not.toBeNull();
+    if (result.status === 'PASS' && result.reason_codes.includes('PASS_NO_EDGE')) {
+      expect(result.pass_reason_code).toBe('PASS_NO_EDGE');
+    }
   });
 });

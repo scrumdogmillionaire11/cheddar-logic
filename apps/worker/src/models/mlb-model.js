@@ -3877,4 +3877,6 @@ module.exports = {
   setLeagueConstants,
   // WI-0874: POTD MLB model signal resolver
   resolveMLBModelSignal,
+  // Exported for unit testing (pass-reason-integrity-02)
+  selectPassReasonCode,
 };
