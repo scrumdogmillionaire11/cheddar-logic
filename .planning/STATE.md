@@ -4,7 +4,7 @@ milestone: v1.1
 milestone_name: Model Integrity & Betting Execution Hardening
 status: active
 last_updated: "2026-04-18T00:00:00Z"
-last_activity: "2026-04-18 - Completed pass-reason-integrity-01: MarketEvalResult contract extension with 6 provenance fields, assertLegalPassNoEdge enforcer, SKIP_GAME_MIXED_FAILURES"
+last_activity: "2026-04-18 - Completed pass-reason-integrity-02: Fixed projectFullGameML PASS_NO_EDGE bug (PASS_CONFIDENCE_GATE/PASS_MODEL_DEGRADED), selectPassReasonCode priority helper, extended return contract"
 ---
 
 # Project State
