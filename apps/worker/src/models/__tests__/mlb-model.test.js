@@ -1039,6 +1039,10 @@ describe('selectPassReasonCode (PRI-MLB-02)', () => {
     expect(result).not.toBeNull();
     if (result.status === 'PASS' && result.reason_codes.includes('PASS_NO_EDGE')) {
       expect(result.pass_reason_code).toBe('PASS_NO_EDGE');
+      expect(result.raw_edge_value).toEqual(expect.any(Number));
+      expect(result.threshold_required).toEqual(expect.any(Number));
+      expect(result.threshold_passed).toBe(false);
+      expect(result.blocked_by).toBe('PASS_NO_EDGE');
     }
   });
 
@@ -1048,6 +1052,28 @@ describe('selectPassReasonCode (PRI-MLB-02)', () => {
     expect(result).not.toBeNull();
     if (result.status === 'PASS' && result.reason_codes.includes('PASS_NO_EDGE')) {
       expect(result.pass_reason_code).toBe('PASS_NO_EDGE');
+      expect(result.raw_edge_value).toEqual(expect.any(Number));
+      expect(result.threshold_required).toEqual(expect.any(Number));
+      expect(result.threshold_passed).toBe(false);
+      expect(result.blocked_by).toBe('PASS_NO_EDGE');
+    }
+  });
+
+  test('PASS_NO_EDGE is not emitted alongside a stronger PASS_ blocker', () => {
+    const lowConfidenceContext = {
+      ...baseContext,
+      temp_f: 45,
+      wind_mph: 28,
+      wind_dir: 'OUT',
+      lineup_confirmed_home: false,
+      lineup_confirmed_away: false,
+    };
+    const result = projectFullGameTotalCard(avgPitcher, avgPitcher, 9.05, lowConfidenceContext);
+    expect(result).not.toBeNull();
+    if (result.status === 'PASS' && result.pass_reason_code === 'PASS_CONFIDENCE_GATE') {
+      expect(result.reason_codes).toContain('PASS_CONFIDENCE_GATE');
+      expect(result.reason_codes).not.toContain('PASS_NO_EDGE');
+      expect(result.blocked_by).toBe('PASS_CONFIDENCE_GATE');
     }
   });
 });
@@ -1109,6 +1135,10 @@ describe('PRI-RUNNER-01: computeMLBDriverCards propagates pass_reason_code from 
       // KEY INVARIANT (PRI-RUNNER-01): card must propagate mlResult.pass_reason_code,
       // not hardcode 'PASS_NO_EDGE' regardless of what the model computed.
       expect(mlCard.pass_reason_code).toBe(mlResult.pass_reason_code);
+      expect(mlCard.raw_edge_value).toBe(mlResult.raw_edge_value);
+      expect(mlCard.threshold_required).toBe(mlResult.threshold_required);
+      expect(mlCard.threshold_passed).toBe(mlResult.threshold_passed);
+      expect(mlCard.blocked_by).toBe(mlResult.pass_reason_code);
     }
   });
 });

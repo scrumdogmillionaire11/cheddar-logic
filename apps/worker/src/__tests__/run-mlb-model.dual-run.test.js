@@ -787,6 +787,10 @@ describe('runMLBModel dual-run orchestration', () => {
       confidence: 0.76,
       ev_threshold_passed: false,
       pass_reason_code: 'PASS_NO_EDGE',
+      raw_edge_value: 0.2,
+      threshold_required: 0.5,
+      threshold_passed: false,
+      blocked_by: 'PASS_NO_EDGE',
       reason_codes: ['PASS_NO_EDGE'],
       drivers: [{ type: 'mlb-f5', edge: 0.2, projected: 4.7 }],
       projection: {
@@ -844,6 +848,10 @@ describe('runMLBModel dual-run orchestration', () => {
       projection_source: 'FULL_MODEL',
       reason_codes: ['PASS_NO_EDGE'],
       pass_reason_code: 'PASS_NO_EDGE',
+      raw_edge_value: 0.2,
+      threshold_required: 0.5,
+      threshold_passed: false,
+      blocked_by: 'PASS_NO_EDGE',
       playability: {
         over_playable_at_or_below: 4.0,
         under_playable_at_or_above: 5.5,
