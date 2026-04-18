@@ -27,7 +27,21 @@ const {
   insertDecisionEvent,
   updateDecisionCandidateTracking,
   upsertDecisionRecord,
+  BLOCKER_REASON_CODES,
 } = require('@cheddar-logic/data');
+
+const PRICING_UNAVAILABLE_CODES = new Set([
+  'MARKET_PRICE_MISSING',
+  'MODEL_PROB_MISSING',
+  'MARKET_EDGE_UNAVAILABLE',
+  'PROXY_EDGE_BLOCKED',
+  'NO_PRIMARY_SUPPORT',
+]);
+
+const POLICY_BLOCK_CODES = new Set([
+  'HEAVY_FAVORITE_PRICE_CAP',
+  'FIRST_PERIOD_NO_PROJECTION',
+]);
 
 const WEBHOOK_MIN_LEAN_EDGE = Number(process.env.DISCORD_MIN_LEAN_EDGE ?? 0.15);
 
@@ -76,24 +90,10 @@ function deriveTerminalReasonFamilyForPayload({
   ) {
     return 'LINE_NOT_CONFIRMED';
   }
-  if (
-    reasonCodes.some((code) =>
-      [
-        'MARKET_PRICE_MISSING',
-        'MODEL_PROB_MISSING',
-        'MARKET_EDGE_UNAVAILABLE',
-        'PROXY_EDGE_BLOCKED',
-        'NO_PRIMARY_SUPPORT',
-      ].includes(code),
-    )
-  ) {
+  if (reasonCodes.some((code) => PRICING_UNAVAILABLE_CODES.has(code))) {
     return 'PRICING_UNAVAILABLE';
   }
-  if (
-    reasonCodes.some((code) =>
-      ['HEAVY_FAVORITE_PRICE_CAP', 'FIRST_PERIOD_NO_PROJECTION'].includes(code),
-    )
-  ) {
+  if (reasonCodes.some((code) => POLICY_BLOCK_CODES.has(code))) {
     return 'POLICY_BLOCK';
   }
   if (

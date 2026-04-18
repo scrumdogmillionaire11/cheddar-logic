@@ -25,6 +25,7 @@ function loadSchedulerModule() {
     shouldRunJobKey: jest.fn(() => true),
     hasRunningJobRun: jest.fn(() => false),
     hasRunningJobName: jest.fn(() => false),
+    wasJobKeyRecentlySuccessful: mockWasJobRecentlySuccessful,
     wasJobRecentlySuccessful: mockWasJobRecentlySuccessful,
     claimTminusPullSlot: jest.fn(() => true),
     purgeStaleTminusPullLog: jest.fn(),
@@ -43,7 +44,13 @@ function loadSchedulerModule() {
   jest.doMock('../jobs/run_mlb_model', () => ({ runMLBModel: mockRunMLBModel }));
   jest.doMock('../jobs/settle_game_results', () => ({ settleGameResults: jest.fn() }));
   jest.doMock('../jobs/settle_pending_cards', () => ({ settlePendingCards: jest.fn() }));
+  jest.doMock('../jobs/settle_mlb_f5', () => ({ settleMlbF5: jest.fn() }));
   jest.doMock('../jobs/backfill_card_results', () => ({ backfillCardResults: jest.fn() }));
+  jest.doMock('../jobs/report_settlement_health', () => ({ generateSettlementHealthReport: jest.fn() }));
+  jest.doMock('../jobs/pull_public_splits', () => ({ runPullPublicSplits: jest.fn() }));
+  jest.doMock('../jobs/pull_vsin_splits', () => ({ runPullVsinSplits: jest.fn() }));
+  jest.doMock('../jobs/sync_game_statuses', () => ({ syncGameStatuses: jest.fn() }));
+  jest.doMock('../jobs/settle_projections', () => ({ settleProjections: jest.fn() }));
   jest.doMock('../jobs/check_pipeline_health', () => ({ checkPipelineHealth: jest.fn() }));
   jest.doMock('../jobs/check_odds_health', () => ({ checkOddsHealth: jest.fn() }));
   jest.doMock('../jobs/refresh_team_metrics_daily', () => ({ run: jest.fn() }));
@@ -57,14 +64,27 @@ function loadSchedulerModule() {
   jest.doMock('../jobs/run_clv_snapshot', () => ({ runClvSnapshot: jest.fn() }));
   jest.doMock('../jobs/run_daily_performance_report', () => ({ runDailyPerformanceReport: jest.fn() }));
   jest.doMock('../jobs/run_calibration_report', () => ({ runCalibrationReport: jest.fn() }));
-    jest.doMock('@cheddar-logic/odds/src/config', () => ({
-      SPORTS_CONFIG: {
-        NHL: { active: true },
-        NBA: { active: true },
-        MLB: { active: true },
-        NFL: { active: false },
-      },
-    }));
+  jest.doMock('@cheddar-logic/data/src/feature-flags', () => ({
+    isFeatureEnabled: jest.fn((sport, feature) => {
+      const s = String(sport || '').toLowerCase();
+      const f = String(feature || '').toLowerCase();
+
+      if (f !== 'model') return false;
+      if (s === 'nba') return process.env.ENABLE_NBA_MODEL === 'true';
+      if (s === 'mlb') return process.env.ENABLE_MLB_MODEL === 'true';
+      if (s === 'nhl') return process.env.ENABLE_NHL_MODEL === 'true';
+      if (s === 'nfl') return process.env.ENABLE_NFL_MODEL === 'true';
+      return false;
+    }),
+  }));
+  jest.doMock('@cheddar-logic/odds/src/config', () => ({
+    SPORTS_CONFIG: {
+      NHL: { active: true },
+      NBA: { active: true },
+      MLB: { active: true },
+      NFL: { active: false },
+    },
+  }));
 
   return require('../schedulers/main');
 }
@@ -84,6 +104,9 @@ describe('scheduler: run_calibration_report nightly at 04:00 ET (WI-0860)', () =
     process.env.ENABLE_FPL_MODEL = 'false';
     process.env.ENABLE_NFL_MODEL = 'false';
     process.env.ENABLE_MLB_MODEL = 'false';
+    process.env.ENABLE_PULL_SCHEDULE_NBA = 'false';
+    process.env.ENABLE_PULL_SCHEDULE_NHL = 'false';
+    process.env.ENABLE_TEAM_METRICS_CACHE = 'false';
     process.env.ENABLE_PIPELINE_HEALTH_WATCHDOG = 'false';
     process.env.ENABLE_ODDS_HEALTH_WATCHDOG = 'false';
     process.env.ENABLE_POTD = 'false';
@@ -170,6 +193,7 @@ describe('scheduler: run_calibration_report nightly at 04:00 ET (WI-0860)', () =
     jest.useFakeTimers();
     jest.setSystemTime(new Date('2026-04-10T16:00:00Z'));
     process.env.ENABLE_ODDS_PULL = 'true';
+    process.env.ENABLE_SETTLEMENT = 'false';
     process.env.ENABLE_MLB_MODEL = 'true';
     const scheduler = loadSchedulerModule();
     mockWasJobRecentlySuccessful.mockReturnValue(false);
@@ -183,6 +207,7 @@ describe('scheduler: run_calibration_report nightly at 04:00 ET (WI-0860)', () =
     jest.useFakeTimers();
     jest.setSystemTime(new Date('2026-04-10T16:00:00Z'));
     process.env.ENABLE_ODDS_PULL = 'true';
+    process.env.ENABLE_SETTLEMENT = 'false';
     process.env.ENABLE_NBA_MODEL = 'true';
     const scheduler = loadSchedulerModule();
     mockWasJobRecentlySuccessful.mockReturnValue(false);

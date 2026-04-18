@@ -4,7 +4,6 @@ function toUpperToken(value) {
 }
 
 const WEBHOOK_REASON_LABELS = Object.freeze({
-  EDGE_VERIFICATION_REQUIRED: 'Line not confirmed',
   LINE_NOT_CONFIRMED: 'Line not confirmed',
   EDGE_RECHECK_PENDING: 'Edge needs recheck before action',
   EDGE_NO_LONGER_CONFIRMED: 'Edge no longer clears threshold',
