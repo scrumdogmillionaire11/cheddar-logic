@@ -23,6 +23,7 @@ const {
   buildCandidates,
   confidenceMultiplier,
   confidenceThreshold,
+  resolveEdgeSourceContract,
   resolveNoiseFloor,
   scoreCandidate,
   selectBestPlay,
@@ -276,6 +277,20 @@ function auditLogCandidate(candidate, noiseFloor) {
       rejectedReason,
     }),
   );
+
+  // Contract mismatch check: edgeSourceTag must agree with EDGE_SOURCE_CONTRACT.
+  const contractExpected = resolveEdgeSourceContract(candidate.sport, candidate.marketType);
+  const tagActual = candidate.edgeSourceTag ?? null;
+  if (contractExpected !== 'UNKNOWN' && tagActual !== null && tagActual !== contractExpected) {
+    console.log(JSON.stringify({
+      type: 'POTD_AUDIT_CONTRACT_MISMATCH',
+      sport: candidate.sport ?? null,
+      marketType: candidate.marketType ?? null,
+      edgeSourceTag: tagActual,
+      contractExpected,
+      note: 'edgeSourceTag does not match EDGE_SOURCE_CONTRACT — scoring path bug suspected',
+    }));
+  }
 }
 
 const POTD_SPORT_ENV = {
@@ -530,6 +545,33 @@ async function gatherBestCandidate({
     maxNominees: POTD_MAX_NOMINEES,
     requirePositiveEdge: true,
   });
+
+  // Cross-ranking warning (WI-1032): if the top fireable nominee is CONSENSUS_FALLBACK
+  // and any other nominee is MODEL, the ranking may be mixing incompatible edge scales.
+  if (POTD_AUDIT_LOG_ENABLED && fireableNominees.length > 1) {
+    const topNominee = fireableNominees[0];
+    if (topNominee?.edgeSourceTag === 'CONSENSUS_FALLBACK') {
+      const displacedModel = fireableNominees.slice(1).find(n => n.edgeSourceTag === 'MODEL');
+      if (displacedModel) {
+        console.log(JSON.stringify({
+          type: 'POTD_CROSS_RANKING_WARNING',
+          winner: {
+            sport: topNominee.sport,
+            marketType: topNominee.marketType,
+            edgePct: topNominee.edgePct,
+            totalScore: topNominee.totalScore,
+          },
+          displaced_model_candidate: {
+            sport: displacedModel.sport,
+            marketType: displacedModel.marketType,
+            edgePct: displacedModel.edgePct,
+            totalScore: displacedModel.totalScore,
+          },
+          note: 'CONSENSUS_FALLBACK candidate ranked above MODEL candidate — verify edge scale parity',
+        }));
+      }
+    }
+  }
   // diagnosticNominees are for no-pick diagnostics only — they include
   // sub-threshold and negative-edge candidates and must never select a POTD.
   const diagnosticNominees = selectTopPlaysFn(scoredCandidates, {

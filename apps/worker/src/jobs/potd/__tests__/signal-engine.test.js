@@ -982,3 +982,57 @@ describe('edgeSourceTag', () => {
     });
   });
 });
+
+// ---------------------------------------------------------------------------
+// WI-1032: resolveEdgeSourceContract
+// ---------------------------------------------------------------------------
+describe('resolveEdgeSourceContract', () => {
+  const { resolveEdgeSourceContract, EDGE_SOURCE_CONTRACT } = require('../signal-engine');
+
+  test('returns MODEL for MLB and NHL moneyline', () => {
+    expect(resolveEdgeSourceContract('MLB', 'MONEYLINE')).toBe('MODEL');
+    expect(resolveEdgeSourceContract('BASEBALL_MLB', 'MONEYLINE')).toBe('MODEL');
+    expect(resolveEdgeSourceContract('NHL', 'MONEYLINE')).toBe('MODEL');
+    expect(resolveEdgeSourceContract('icehockey_nhl', 'MONEYLINE')).toBe('MODEL');
+  });
+
+  test('returns CONSENSUS_FALLBACK for MLB/NHL spread and total', () => {
+    expect(resolveEdgeSourceContract('MLB', 'SPREAD')).toBe('CONSENSUS_FALLBACK');
+    expect(resolveEdgeSourceContract('MLB', 'TOTAL')).toBe('CONSENSUS_FALLBACK');
+    expect(resolveEdgeSourceContract('NHL', 'SPREAD')).toBe('CONSENSUS_FALLBACK');
+    expect(resolveEdgeSourceContract('NHL', 'TOTAL')).toBe('CONSENSUS_FALLBACK');
+  });
+
+  test('returns CONSENSUS_FALLBACK for all NBA markets before WI-1030', () => {
+    expect(resolveEdgeSourceContract('NBA', 'MONEYLINE')).toBe('CONSENSUS_FALLBACK');
+    expect(resolveEdgeSourceContract('basketball_nba', 'SPREAD')).toBe('CONSENSUS_FALLBACK');
+    expect(resolveEdgeSourceContract('NBA', 'TOTAL')).toBe('CONSENSUS_FALLBACK');
+  });
+
+  test('returns CONSENSUS_FALLBACK for all NFL markets', () => {
+    expect(resolveEdgeSourceContract('NFL', 'MONEYLINE')).toBe('CONSENSUS_FALLBACK');
+    expect(resolveEdgeSourceContract('americanfootball_nfl', 'SPREAD')).toBe('CONSENSUS_FALLBACK');
+    expect(resolveEdgeSourceContract('NFL', 'TOTAL')).toBe('CONSENSUS_FALLBACK');
+  });
+
+  test('returns UNKNOWN for unregistered sport/market combinations', () => {
+    expect(resolveEdgeSourceContract('SOCCER', 'MONEYLINE')).toBe('UNKNOWN');
+    expect(resolveEdgeSourceContract('MLB', 'UNKNOWN_MARKET')).toBe('UNKNOWN');
+    expect(resolveEdgeSourceContract(null, null)).toBe('UNKNOWN');
+    expect(resolveEdgeSourceContract(undefined, undefined)).toBe('UNKNOWN');
+    expect(resolveEdgeSourceContract('', '')).toBe('UNKNOWN');
+  });
+
+  test('EDGE_SOURCE_CONTRACT is a frozen object (immutable)', () => {
+    expect(Object.isFrozen(EDGE_SOURCE_CONTRACT)).toBe(true);
+    expect(Object.isFrozen(EDGE_SOURCE_CONTRACT.MLB)).toBe(true);
+    expect(Object.isFrozen(EDGE_SOURCE_CONTRACT.NHL)).toBe(true);
+    expect(Object.isFrozen(EDGE_SOURCE_CONTRACT.NBA)).toBe(true);
+    expect(Object.isFrozen(EDGE_SOURCE_CONTRACT.NFL)).toBe(true);
+  });
+
+  // xtest: will pass once WI-1030 ships and NBA TOTAL is updated to 'MODEL'
+  xtest('WI-1030 post-ship: NBA TOTAL should be MODEL once NBA totals model is wired in', () => {
+    expect(resolveEdgeSourceContract('NBA', 'TOTAL')).toBe('MODEL');
+  });
+});

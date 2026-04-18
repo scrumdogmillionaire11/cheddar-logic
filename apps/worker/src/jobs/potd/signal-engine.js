@@ -99,6 +99,33 @@ const NOISE_FLOORS = {
   },
 };
 
+// Canonical per-sport/market edge source contract (WI-1032).
+// MODEL = edge derived from a calibrated predictive model.
+// CONSENSUS_FALLBACK = edge derived from market devigging (best book vs consensus).
+// Update this table when a new model signal is wired in for a market.
+// After WI-1030 ships, update NBA TOTAL to 'MODEL'.
+const EDGE_SOURCE_CONTRACT = Object.freeze({
+  MLB: Object.freeze({ MONEYLINE: 'MODEL', SPREAD: 'CONSENSUS_FALLBACK', TOTAL: 'CONSENSUS_FALLBACK' }),
+  NHL: Object.freeze({ MONEYLINE: 'MODEL', SPREAD: 'CONSENSUS_FALLBACK', TOTAL: 'CONSENSUS_FALLBACK' }),
+  NBA: Object.freeze({ MONEYLINE: 'CONSENSUS_FALLBACK', SPREAD: 'CONSENSUS_FALLBACK', TOTAL: 'CONSENSUS_FALLBACK' }),
+  NFL: Object.freeze({ MONEYLINE: 'CONSENSUS_FALLBACK', SPREAD: 'CONSENSUS_FALLBACK', TOTAL: 'CONSENSUS_FALLBACK' }),
+});
+
+/**
+ * Returns 'MODEL', 'CONSENSUS_FALLBACK', or 'UNKNOWN' for the given sport+market.
+ * Strips API-prefix variants (BASEBALL_, ICEHOCKEY_, BASKETBALL_, AMERICANFOOTBALL_).
+ */
+function resolveEdgeSourceContract(sport, marketType) {
+  const sportKey = String(sport || '')
+    .toUpperCase()
+    .replace('BASEBALL_', '')
+    .replace('ICEHOCKEY_', '')
+    .replace('BASKETBALL_', '')
+    .replace('AMERICANFOOTBALL_', '');
+  const marketKey = String(marketType || '').toUpperCase();
+  return EDGE_SOURCE_CONTRACT[sportKey]?.[marketKey] ?? 'UNKNOWN';
+}
+
 /**
  * Returns the minimum gross edge (noise floor) for a sport+market combination.
  * Strips API-prefixes (BASEBALL_, ICEHOCKEY_, BASKETBALL_) before lookup.
@@ -901,9 +928,11 @@ module.exports = {
   buildCandidates,
   confidenceMultiplier,
   confidenceThreshold,
+  EDGE_SOURCE_CONTRACT,
   isNhlSport,
   kellySize,
   removeVig,
+  resolveEdgeSourceContract,
   resolveNHLModelSignal,
   resolveNoiseFloor,
   scoreCandidate,
