@@ -212,7 +212,7 @@ describe('projectF5ML alignment (WI-0871)', () => {
     );
   });
 
-  test('confidence starts at 7 on the aligned path and drops for degraded inputs', () => {
+  test('confidence starts at 7 on the aligned path and does not drop for unimplemented inputs', () => {
     const cleanResult = projectF5ML(
       homePitcher,
       awayPitcher,
@@ -233,10 +233,13 @@ describe('projectF5ML alignment (WI-0871)', () => {
     );
 
     expect(cleanResult.confidence).toBe(7);
-    expect(degradedResult.confidence).toBe(5);
+    // times_through_order_profile and starter_xera are not-yet-implemented features;
+    // they populate degraded_inputs for observability but do not reduce confidence.
+    // starter_xera is fully excluded from degraded_inputs (never added).
+    // times_through_order_profile is still tracked but not penalized.
+    expect(degradedResult.confidence).toBe(7);
     expect(degradedResult.degraded_inputs).toEqual(
       expect.arrayContaining([
-        'home_starter_xera',
         'away_times_through_order_profile',
       ]),
     );
