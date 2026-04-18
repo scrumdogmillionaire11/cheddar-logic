@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Model Integrity & Betting Execution Hardening
 status: active
-last_updated: "2026-04-18T00:00:00Z"
-last_activity: "2026-04-18 - Completed pass-reason-integrity-02: Fixed projectFullGameML PASS_NO_EDGE bug (PASS_CONFIDENCE_GATE/PASS_MODEL_DEGRADED), selectPassReasonCode priority helper, extended return contract"
+last_updated: "2026-04-18T19:28:00Z"
+last_activity: "2026-04-18 - Completed pass-reason-integrity-03: Card builder propagation (mlResult.pass_reason_code), projection-floor PASS_NO_EDGE scrub, decisionReason() null fallback — PASS_NO_EDGE truth chain fully closed"
 ---
 
 # Project State
