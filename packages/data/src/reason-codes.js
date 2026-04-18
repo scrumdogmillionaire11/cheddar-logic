@@ -56,6 +56,17 @@ const REASON_CODE_LABELS = Object.freeze({
   FIRST_PERIOD_NO_PROJECTION: 'No 1P projection available',
 });
 
+const MARKET_UNVERIFIED_CODES = Object.freeze(new Set([
+  'LINE_NOT_CONFIRMED',
+  'EDGE_RECHECK_PENDING',
+  'PRICE_SYNC_PENDING',
+  'MARKET_DATA_STALE',
+  'BLOCKED_BET_VERIFICATION_REQUIRED',
+  'GATE_LINE_MOVEMENT',
+  'MISSING_DATA_NO_ODDS',
+  'MARKET_PRICE_MISSING',
+]));
+
 function getReasonCodeLabel(code) {
   if (!code) return null;
   const token = String(code).trim().toUpperCase();
@@ -68,5 +79,6 @@ function getReasonCodeLabel(code) {
 module.exports = {
   BLOCKER_REASON_CODES,
   REASON_CODE_LABELS,
+  MARKET_UNVERIFIED_CODES,
   getReasonCodeLabel,
 };

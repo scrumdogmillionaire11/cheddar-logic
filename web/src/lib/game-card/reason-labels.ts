@@ -1,11 +1,12 @@
-import {
-  REASON_CODE_LABELS as CANONICAL_REASON_CODE_LABELS,
-  getReasonCodeLabel as canonicalGetReasonCodeLabel,
-} from '@cheddar-logic/data';
+import cheddarData from '@cheddar-logic/data';
 
-export const REASON_CODE_LABELS: Record<string, string> =
-  CANONICAL_REASON_CODE_LABELS as Record<string, string>;
+const { REASON_CODE_LABELS: _LABELS, getReasonCodeLabel: _getLabel } = cheddarData as {
+  REASON_CODE_LABELS: Record<string, string>;
+  getReasonCodeLabel: (code: string | null | undefined) => string | null;
+};
+
+export const REASON_CODE_LABELS: Record<string, string> = _LABELS;
 
 export function getReasonCodeLabel(code?: string | null): string | null {
-  return canonicalGetReasonCodeLabel(code ?? null);
+  return _getLabel(code ?? null);
 }
