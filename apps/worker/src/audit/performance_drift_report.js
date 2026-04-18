@@ -701,6 +701,8 @@ function buildSegments(rows, previousModelVersions) {
       if (row.result === 'WIN') wins += 1;
       else if (row.result === 'LOSS') losses += 1;
       else if (row.result === 'PUSH') pushes += 1;
+      // no_contest: normalizeResultToken maps it to null — excluded from wins/losses/pushes.
+      // pnl_units is null for no_contest rows, so Number.isFinite sets roiAvailable=false.
 
       if (Number.isFinite(row.pnl_units)) {
         pnlSum += row.pnl_units;

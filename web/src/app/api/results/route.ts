@@ -853,6 +853,7 @@ export async function GET(request: NextRequest) {
       if (row.result === 'win') wins += 1;
       else if (row.result === 'loss') losses += 1;
       else if (row.result === 'push') pushes += 1;
+      // no_contest: excluded from win_rate (wins+losses) and avg_pnl (wins+losses+pushes) denominators
       if (typeof row.pnl_units === 'number' && Number.isFinite(row.pnl_units)) {
         totalPnlSum += row.pnl_units;
         hasTotalPnl = true;
@@ -902,6 +903,7 @@ export async function GET(request: NextRequest) {
         if (row.result === 'win') existing.wins += 1;
         else if (row.result === 'loss') existing.losses += 1;
         else if (row.result === 'push') existing.pushes += 1;
+        // no_contest: excluded from win_rate (wins+losses) and avg_pnl (wins+losses+pushes) denominators
         if (typeof row.pnl_units === 'number' && Number.isFinite(row.pnl_units)) {
           existing.pnlSum += row.pnl_units;
           existing.hasPnl = true;

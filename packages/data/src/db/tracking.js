@@ -133,8 +133,8 @@ function incrementTrackingStat(params) {
         ELSE 0 
       END,
       avg_pnl_per_card = CASE
-        WHEN (settled_cards + ?) > 0
-        THEN (total_pnl_units + ?) / (settled_cards + ?)
+        WHEN (wins + ? + losses + ? + pushes + ?) > 0
+        THEN (total_pnl_units + ?) / (wins + ? + losses + ? + pushes + ?)
         ELSE 0
       END,
       metadata = CASE WHEN ? IS NOT NULL THEN ? ELSE metadata END,
@@ -172,8 +172,8 @@ function incrementTrackingStat(params) {
     deltaPnl,
     // win_rate calculation
     deltaWins, deltaLosses, deltaWins, deltaWins, deltaLosses,
-    // avg_pnl_per_card calculation
-    deltaTotal, deltaPnl, deltaTotal,
+    // avg_pnl_per_card calculation (denominator = wins+losses+pushes, excludes no_contest)
+    deltaWins, deltaLosses, deltaPushes, deltaPnl, deltaWins, deltaLosses, deltaPushes,
     // metadata
     metadataJson, metadataJson
   );
@@ -469,7 +469,8 @@ function recomputeTrackingStats(opts = {}) {
       const totalPnl = Number(row.total_pnl) || 0;
       const decided = wins + losses;
       const winRate = decided > 0 ? wins / decided : 0;
-      const avgPnl = total > 0 ? totalPnl / total : 0;
+      const pnlDecided = wins + losses + pushes;
+      const avgPnl = pnlDecided > 0 ? totalPnl / pnlDecided : 0;
 
       upsertTrackingStat({
         id: `stat-${s}-${mt}-alltime`,
@@ -521,7 +522,8 @@ function recomputeTrackingStats(opts = {}) {
       const totalPnl = Number(row.total_pnl) || 0;
       const decided = wins + losses;
       const winRate = decided > 0 ? wins / decided : 0;
-      const avgPnl = total > 0 ? totalPnl / total : 0;
+      const pnlDecided = wins + losses + pushes;
+      const avgPnl = pnlDecided > 0 ? totalPnl / pnlDecided : 0;
       const driverKey = `edge_verification:${ss}`;
 
       upsertTrackingStat({

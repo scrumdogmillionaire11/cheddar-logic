@@ -2896,7 +2896,10 @@ async function settlePendingCards({
             sharpPriceStatus: row.sharp_price_status || null,
             direction: row.selection || null,
             result: row.result,
-            pnlUnits: Number(row.pnl_units) || 0,
+            // no_contest: card_results.pnl_units is NULL (settle_mlb_f5 never sets it); coerce to
+            // 0 because projection_audit.pnl_units is NOT NULL DEFAULT 0. SUM ignores nothing
+            // here but the denominator fix (wins+losses+pushes) correctly excludes no_contest.
+            pnlUnits: typeof row.pnl_units === 'number' ? row.pnl_units : 0,
             settledAt: row.settled_at,
             jobRunId: jobRunId || null,
             metadata: null,

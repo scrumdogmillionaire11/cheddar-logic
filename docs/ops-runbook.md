@@ -223,7 +223,7 @@ npm --prefix apps/worker run job:check-pipeline-health
 
 # Expected calibration log format includes per-market detail:
 # [check_pipeline_health] Calibration rows: NBA_TOTAL(ECE=...,n=...,kill=0), ...
-
+npm --prefix apps/worker run job:projection-accuracy-health
 # Confirm fresh same-day NBA odds exist in the production DB
 sqlite3 "$CHEDDAR_DB_PATH" "
 SELECT g.away_team || ' @ ' || g.home_team AS matchup, MAX(o.captured_at) AS latest_captured_at
