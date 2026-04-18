@@ -107,7 +107,7 @@ const NOISE_FLOORS = {
 const EDGE_SOURCE_CONTRACT = Object.freeze({
   MLB: Object.freeze({ MONEYLINE: 'MODEL', SPREAD: 'CONSENSUS_FALLBACK', TOTAL: 'CONSENSUS_FALLBACK' }),
   NHL: Object.freeze({ MONEYLINE: 'MODEL', SPREAD: 'CONSENSUS_FALLBACK', TOTAL: 'CONSENSUS_FALLBACK' }),
-  NBA: Object.freeze({ MONEYLINE: 'CONSENSUS_FALLBACK', SPREAD: 'CONSENSUS_FALLBACK', TOTAL: 'CONSENSUS_FALLBACK' }),
+  NBA: Object.freeze({ MONEYLINE: 'CONSENSUS_FALLBACK', SPREAD: 'CONSENSUS_FALLBACK', TOTAL: 'MODEL' }),
   NFL: Object.freeze({ MONEYLINE: 'CONSENSUS_FALLBACK', SPREAD: 'CONSENSUS_FALLBACK', TOTAL: 'CONSENSUS_FALLBACK' }),
 });
 
@@ -209,6 +209,15 @@ function resolveNHLModelSignal(game) {
     homeHasData && awayHasData ? 'NHL_GOALIE_COMPOSITE' : 'NHL_GOALIE_PARTIAL';
 
   return { homeModelWinProb: round(homeModelWinProb, 6), projection_source };
+}
+
+function resolveNBAModelSignal(game) {
+  const snap = game?.nbaSnapshot;
+  if (!snap || !Number.isFinite(snap.totalProjection)) return null;
+  return {
+    totalProjection: snap.totalProjection,
+    projection_source: snap.projection_source ?? 'NBA_TOTALS_MODEL',
+  };
 }
 
 function toSelectionLabel({ selection, homeTeam, awayTeam, line }) {
@@ -590,6 +599,17 @@ function buildCandidates(game) {
         return candidates.map((candidate) => ({ ...candidate, nhlSignal }));
       }
     }
+    // NBA model signal block: inject nbaSnapshot onto TOTAL candidates only
+    if (String(game.sport || '').toUpperCase() === 'NBA' && game.nbaSnapshot) {
+      const nbaSignal = resolveNBAModelSignal(game);
+      if (nbaSignal) {
+        return candidates.map((candidate) =>
+          candidate.marketType === 'TOTAL'
+            ? { ...candidate, nbaSnapshot: game.nbaSnapshot }
+            : candidate
+        );
+      }
+    }
     return candidates;
   }
 
@@ -801,6 +821,54 @@ function scoreCandidate(candidate) {
         marketConsensus,
         marketType: candidate.marketType,
         projectionSource: nhlSignal.projection_source ?? null,
+      }),
+    };
+  }
+
+  // NBA totals model override: replace consensus edge with total projection signal (WI-1030)
+  const nbaSignal = candidate.nbaSnapshot ? resolveNBAModelSignal({ nbaSnapshot: candidate.nbaSnapshot }) : null;
+  const useNbaModelSignal =
+    String(candidate.sport || '').toUpperCase() === 'NBA' &&
+    candidate.marketType === 'TOTAL' &&
+    nbaSignal !== null;
+  if (useNbaModelSignal) {
+    const refLine = isFiniteNumber(candidate.consensusLine) ? candidate.consensusLine : candidate.line;
+    const modelOverProb = clamp(0.5 + (nbaSignal.totalProjection - refLine) / 20, 0.05, 0.95);
+    const modelSelectionProb = candidate.selection === 'OVER'
+      ? round(modelOverProb, 6)
+      : round(1 - modelOverProb, 6);
+    const modelEdge = round(modelSelectionProb - impliedProb, 6);
+    const totalScore = round((lineValue * 0.625) + (marketConsensus * 0.375), 6);
+    return {
+      ...candidate,
+      lineValue,
+      marketConsensus,
+      totalScore,
+      modelWinProb: modelSelectionProb,
+      impliedProb,
+      edgePct: modelEdge,
+      edgeSourceTag: 'MODEL',
+      edgeSourceMeta: {
+        projection_source: nbaSignal.projection_source,
+        model_win_prob: modelSelectionProb,
+        signal_type: 'NBA_TOTALS_MODEL',
+      },
+      confidenceLabel: confidenceLabel(totalScore),
+      scoreBreakdown: {
+        lineValue,
+        marketConsensus,
+        model_win_prob: modelSelectionProb,
+        projection_source: nbaSignal.projection_source,
+      },
+      reasoning: buildReasoningString({
+        selectionLabel: candidate.selectionLabel,
+        price: candidate.price,
+        edgePct: modelEdge,
+        modelWinProb: modelSelectionProb,
+        lineValue,
+        marketConsensus,
+        marketType: candidate.marketType,
+        projectionSource: nbaSignal.projection_source,
       }),
     };
   }

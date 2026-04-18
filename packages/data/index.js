@@ -104,6 +104,7 @@ module.exports = {
   
   // Convenience exports - card_payloads
   getLatestNhlModelOutput: db.getLatestNhlModelOutput,
+  getLatestNbaModelOutput: db.getLatestNbaModelOutput,
   insertCardPayload: db.insertCardPayload,
   insertCardResult: db.insertCardResult,
   deleteCardPayloadsByGameAndType: db.deleteCardPayloadsByGameAndType,
