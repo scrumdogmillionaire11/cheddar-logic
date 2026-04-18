@@ -35,12 +35,17 @@ Any other PASS condition must use a more specific code. Examples:
 | Code | Meaning |
 |------|---------|
 | `PASS_CONFIDENCE_GATE` | Edge cleared the raw threshold, but confidence blocked action |
-| `PASS_MODEL_DEGRADED` | Edge cleared, but model quality/degraded inputs blocked action |
+| `PASS_MODEL_DEGRADED` | Edge cleared, but model quality/degraded inputs blocked action in a model family that treats degraded reliability as a veto |
 | `PASS_INPUTS_INCOMPLETE` | Required inputs were missing before reliable edge evaluation |
 | `PASS_SYNTHETIC_FALLBACK` | Projection came from fallback/synthetic mode, not a real evaluated market edge |
 | `PASS_NO_DISTRIBUTION` | Required distribution could not be built |
 | `PASS_UNKNOWN` | Model contract failed to provide a specific reason |
 | `PASS_NO_EDGE` | Edge was computed, inputs were complete, and edge failed threshold with no other blocker |
+
+MLB full-game ML currently follows ADR-0015: degraded positive-edge signals are
+tier-downgraded to WATCH rather than vetoed, so they normally should not emit
+`PASS_MODEL_DEGRADED`. That code remains reserved for model families where
+degraded reliability is explicitly a PASS blocker.
 
 ## Required MarketEvalResult Fields
 
