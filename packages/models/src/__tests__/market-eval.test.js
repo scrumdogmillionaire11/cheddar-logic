@@ -94,6 +94,27 @@ describe('evaluateSingleMarket: ev_threshold_passed=false', () => {
     expect(result.reason_codes).toContain(REASON_CODES.EDGE_BELOW_THRESHOLD);
     expect(result.reason_codes).toContain('SOME_WATCHDOG_REASON');
   });
+
+  test('production PASS + ev_threshold_passed=false + PASS_CONFIDENCE_GATE preserves blocker provenance', () => {
+    const card = buildCard({
+      status: 'PASS',
+      ev_threshold_passed: false,
+      pass_reason_code: 'PASS_CONFIDENCE_GATE',
+      raw_edge_value: 0.031,
+      threshold_required: 0.025,
+      threshold_passed: true,
+    });
+    const result = evaluateSingleMarket(card, DEFAULT_CTX);
+
+    expect(result.status).toBe('REJECTED_THRESHOLD');
+    expect(result.pass_reason_code).toBe('PASS_CONFIDENCE_GATE');
+    expect(result.evaluation_status).toBe('EDGE_COMPUTED');
+    expect(result.raw_edge_value).toBe(0.031);
+    expect(result.threshold_required).toBe(0.025);
+    expect(result.threshold_passed).toBe(true);
+    expect(result.block_reasons).toContain('PASS_CONFIDENCE_GATE');
+    expect(result.reason_codes).not.toContain('PASS_NO_EDGE');
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -337,6 +358,20 @@ describe('Scenario G: assertLegalPassNoEdge throws when PASS_NO_EDGE with positi
     };
     expect(() => assertLegalPassNoEdge(result)).toThrow('ILLEGAL_PASS_NO_EDGE');
   });
+
+  test('G4: result with pass_reason_code=PASS_NO_EDGE and positive raw_edge_value throws even when reason_codes is empty', () => {
+    const result = {
+      candidate_id: 'game-g4::full_game_ml',
+      pass_reason_code: 'PASS_NO_EDGE',
+      reason_codes: [],
+      raw_edge_value: 0.031,
+      evaluation_status: 'EDGE_COMPUTED',
+      inputs_status: 'COMPLETE',
+      threshold_passed: false,
+      block_reasons: [],
+    };
+    expect(() => assertLegalPassNoEdge(result)).toThrow('ILLEGAL_PASS_NO_EDGE');
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -391,6 +426,35 @@ describe('Scenario K: finalizeGameMarketEvaluation emits SKIP_GAME_MIXED_FAILURE
       game_id: 'game-k',
       sport: 'MLB',
       market_results: results,
+    });
+
+    expect(game.status).toBe('SKIP_GAME_MIXED_FAILURES');
+  });
+
+  test('K2: two REJECTED_THRESHOLD results where one has block_reasons → SKIP_GAME_MIXED_FAILURES', () => {
+    const ctx = { game_id: 'game-k2', sport: 'MLB' };
+    const noEdge = buildCard({
+      status: 'PASS',
+      ev_threshold_passed: false,
+      pass_reason_code: 'PASS_NO_EDGE',
+      raw_edge_value: -0.01,
+      threshold_passed: false,
+    });
+    const blocked = buildCard({
+      status: 'PASS',
+      ev_threshold_passed: false,
+      pass_reason_code: 'PASS_CONFIDENCE_GATE',
+      raw_edge_value: 0.031,
+      threshold_passed: true,
+    });
+
+    const game = finalizeGameMarketEvaluation({
+      game_id: 'game-k2',
+      sport: 'MLB',
+      market_results: [
+        evaluateSingleMarket(noEdge, ctx),
+        evaluateSingleMarket(blocked, ctx),
+      ],
     });
 
     expect(game.status).toBe('SKIP_GAME_MIXED_FAILURES');
