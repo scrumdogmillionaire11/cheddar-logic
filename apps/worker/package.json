@@ -45,6 +45,7 @@
     "job:potd-shadow-settlement": "node src/jobs/potd/settle-shadow-candidates.js",
     "job:settlement-report": "node src/jobs/report_settlement_health.js",
     "job:report-telemetry-calibration": "node src/jobs/report_telemetry_calibration.js",
+    "job:projection-accuracy-health": "node src/jobs/projection_accuracy_health.js",
     "job:run-residual-validation": "node src/jobs/run_residual_validation.js",
     "db:backup": "node -e \"require('./src/utils/db-backup.js').backupDatabase('manual')\"",
     "db:backups": "node src/utils/list-backups.js",

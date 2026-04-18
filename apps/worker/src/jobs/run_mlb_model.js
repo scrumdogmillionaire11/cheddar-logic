@@ -3111,6 +3111,7 @@ function enrichMlbPitcherData(
 ) {
   const homeTeam = oddsSnapshot?.home_team ?? '';
   const awayTeam = oddsSnapshot?.away_team ?? '';
+  const todayIso = new Date().toISOString().slice(0, 10);
 
   try {
     const db = getDatabase();
@@ -3124,8 +3125,10 @@ function enrichMlbPitcherData(
     const existingHomePitcher = mlb.home_pitcher ?? null;
     const existingAwayPitcher = mlb.away_pitcher ?? null;
 
-    // Query by specific pitcher ID first, then by name. Do not fallback to team,
-    // which can silently bind the wrong pitcher when probable assignments shift.
+    // Query by specific pitcher ID first, then by name.
+    // If snapshot identity is missing (common in some odds feeds), use a guarded
+    // team+probable_date fallback so we can still emit pitcher-K cards while
+    // minimizing cross-game leakage risk.
     function getPitcherRow(team, existingPitcher) {
       // Priority 1: match by mlb_id if available
       if (existingPitcher?.mlb_id != null) {
@@ -3144,6 +3147,19 @@ function enrichMlbPitcherData(
         const row = selectPitcherRowForTeam(byName.all(existingPitcher.full_name), team);
         if (row) return row;
       }
+
+      // Priority 3: guarded team fallback using today's probable starters only.
+      // This is intentionally constrained by probable_date + role to avoid binding
+      // stale historical team rows when probable assignments drift.
+      const byTeam = forKEngine
+        ? db.prepare(
+            "SELECT * FROM mlb_pitcher_stats WHERE probable_date = ? AND role = 'starter' ORDER BY updated_at DESC",
+          )
+        : db.prepare(
+            "SELECT * FROM mlb_pitcher_stats WHERE probable_date = ? AND role = 'starter' AND date(updated_at) = date('now') ORDER BY updated_at DESC",
+          );
+      const row = selectPitcherRowForTeam(byTeam.all(todayIso), team);
+      if (row) return row;
 
       return null;
     }
