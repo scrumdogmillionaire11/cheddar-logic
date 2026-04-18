@@ -80,11 +80,12 @@ describe('WI-1017: tracking_stats denominator correctness', () => {
     seedRow({ cardResultId: 'cr-p2', result: 'push',      pnlUnits: 0.0 });
     seedRow({ cardResultId: 'cr-p3', result: 'push',      pnlUnits: 0.0 });
     seedRow({ cardResultId: 'cr-p4', result: 'push',      pnlUnits: 0.0 });
-    seedRow({ cardResultId: 'cr-nc1', result: 'no_contest', pnlUnits: null });
-    seedRow({ cardResultId: 'cr-nc2', result: 'no_contest', pnlUnits: null });
-    seedRow({ cardResultId: 'cr-nc3', result: 'no_contest', pnlUnits: null });
-    seedRow({ cardResultId: 'cr-nc4', result: 'no_contest', pnlUnits: null });
-    seedRow({ cardResultId: 'cr-nc5', result: 'no_contest', pnlUnits: null });
+    // production path: settle_pending_cards coerces null pnl_units → 0 (NOT NULL DEFAULT 0 column)
+    seedRow({ cardResultId: 'cr-nc1', result: 'no_contest', pnlUnits: 0 });
+    seedRow({ cardResultId: 'cr-nc2', result: 'no_contest', pnlUnits: 0 });
+    seedRow({ cardResultId: 'cr-nc3', result: 'no_contest', pnlUnits: 0 });
+    seedRow({ cardResultId: 'cr-nc4', result: 'no_contest', pnlUnits: 0 });
+    seedRow({ cardResultId: 'cr-nc5', result: 'no_contest', pnlUnits: 0 });
 
     recomputeTrackingStats({ fullReplace: true });
 
@@ -103,22 +104,24 @@ describe('WI-1017: tracking_stats denominator correctness', () => {
   });
 
   test('avg_pnl_per_card uses (wins+losses+pushes) denominator — no_contest rows excluded', () => {
-    // 3 wins (+1 each), 2 losses (-1 each), 4 pushes (0 each), 5 no_contests (null pnl)
-    // totalPnl = 3 - 2 = 1; denominator = 3+2+4 = 9; expected avg = 1/9 ≈ 0.1111
-    seedRow({ cardResultId: 'cr-w1', result: 'win',       pnlUnits: 1.0 });
-    seedRow({ cardResultId: 'cr-w2', result: 'win',       pnlUnits: 1.0 });
-    seedRow({ cardResultId: 'cr-w3', result: 'win',       pnlUnits: 1.0 });
-    seedRow({ cardResultId: 'cr-l1', result: 'loss',      pnlUnits: -1.0 });
-    seedRow({ cardResultId: 'cr-l2', result: 'loss',      pnlUnits: -1.0 });
-    seedRow({ cardResultId: 'cr-p1', result: 'push',      pnlUnits: 0.0 });
-    seedRow({ cardResultId: 'cr-p2', result: 'push',      pnlUnits: 0.0 });
-    seedRow({ cardResultId: 'cr-p3', result: 'push',      pnlUnits: 0.0 });
-    seedRow({ cardResultId: 'cr-p4', result: 'push',      pnlUnits: 0.0 });
-    seedRow({ cardResultId: 'cr-nc1', result: 'no_contest', pnlUnits: null });
-    seedRow({ cardResultId: 'cr-nc2', result: 'no_contest', pnlUnits: null });
-    seedRow({ cardResultId: 'cr-nc3', result: 'no_contest', pnlUnits: null });
-    seedRow({ cardResultId: 'cr-nc4', result: 'no_contest', pnlUnits: null });
-    seedRow({ cardResultId: 'cr-nc5', result: 'no_contest', pnlUnits: null });
+    // 3 wins (+1 each), 2 losses (-1 each), 4 pushes (0 each), 5 no_contests (0 pnl)
+    // Production: settle_pending_cards coerces card_results.pnl_units=NULL → 0 for no_contest
+    // totalPnl = 3*1 + 2*(-1) + 4*0 + 5*0 = 1; denominator = wins+losses+pushes = 9
+    // expected avg = 1/9 ≈ 0.1111
+    seedRow({ cardResultId: 'cr-w1', result: 'win',        pnlUnits: 1.0 });
+    seedRow({ cardResultId: 'cr-w2', result: 'win',        pnlUnits: 1.0 });
+    seedRow({ cardResultId: 'cr-w3', result: 'win',        pnlUnits: 1.0 });
+    seedRow({ cardResultId: 'cr-l1', result: 'loss',       pnlUnits: -1.0 });
+    seedRow({ cardResultId: 'cr-l2', result: 'loss',       pnlUnits: -1.0 });
+    seedRow({ cardResultId: 'cr-p1', result: 'push',       pnlUnits: 0.0 });
+    seedRow({ cardResultId: 'cr-p2', result: 'push',       pnlUnits: 0.0 });
+    seedRow({ cardResultId: 'cr-p3', result: 'push',       pnlUnits: 0.0 });
+    seedRow({ cardResultId: 'cr-p4', result: 'push',       pnlUnits: 0.0 });
+    seedRow({ cardResultId: 'cr-nc1', result: 'no_contest', pnlUnits: 0 });
+    seedRow({ cardResultId: 'cr-nc2', result: 'no_contest', pnlUnits: 0 });
+    seedRow({ cardResultId: 'cr-nc3', result: 'no_contest', pnlUnits: 0 });
+    seedRow({ cardResultId: 'cr-nc4', result: 'no_contest', pnlUnits: 0 });
+    seedRow({ cardResultId: 'cr-nc5', result: 'no_contest', pnlUnits: 0 });
 
     recomputeTrackingStats({ fullReplace: true });
 
