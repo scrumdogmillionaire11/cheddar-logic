@@ -4227,3 +4227,26 @@ describe('applyExecutionGateToMlbPayload timestamp provenance', () => {
     expect(payload.execution_gate).toHaveProperty('freshness_decision');
   });
 });
+
+// ── PRI-RUNNER-02: projection-floor fallback driver — PASS_NO_EDGE scrub ─────
+
+describe('PRI-RUNNER-02: projection-floor fallback driver must not carry PASS_NO_EDGE', () => {
+  const fs = require('fs');
+  const path = require('path');
+
+  test('Test I: projection-floor fallback driver reason_codes must NOT contain PASS_NO_EDGE', () => {
+    // The projection-floor driver (SYNTHETIC_FALLBACK path, no real market line) was
+    // incorrectly including 'PASS_NO_EDGE' in reason_codes alongside 'PASS_SYNTHETIC_FALLBACK'.
+    // Edge was never computed — inputs were absent — so PASS_NO_EDGE is semantically wrong.
+    //
+    // This test scans the source code for the forbidden literal to catch regressions.
+    // The fix is to remove 'PASS_NO_EDGE' from the inline reason_codes array.
+    const sourcePath = path.resolve(__dirname, '../run_mlb_model.js');
+    const source = fs.readFileSync(sourcePath, 'utf8');
+
+    // The forbidden pattern: projection-floor driver has PASS_NO_EDGE in reason_codes
+    // Look for the SYNTHETIC_FALLBACK reason_codes array that incorrectly includes PASS_NO_EDGE
+    const forbiddenPattern = /'PASS_SYNTHETIC_FALLBACK',\s*'PASS_NO_EDGE'/;
+    expect(source).not.toMatch(forbiddenPattern);
+  });
+});

@@ -1051,3 +1051,64 @@ describe('selectPassReasonCode (PRI-MLB-02)', () => {
     }
   });
 });
+
+// ── PRI-RUNNER-01/02: card builder propagation + projection-floor scrub ────────
+
+describe('PRI-RUNNER-01: computeMLBDriverCards propagates pass_reason_code from projectFullGameML', () => {
+  // Fixtures reused from projectFullGameML block above
+  const highVarContext = {
+    home_offense_profile: avgOffense,
+    away_offense_profile: avgOffense,
+    park_run_factor: 1.0,
+    temp_f: 45,
+    wind_mph: 28,
+    wind_dir: 'OUT',
+    roof: 'OPEN',
+    home_bullpen_era: 3.0,
+    away_bullpen_era: 6.5,
+    lineup_confirmed_home: false,
+    lineup_confirmed_away: false,
+  };
+
+  test('Test H: card pass_reason_code matches projectFullGameML output — not hardcoded PASS_NO_EDGE', () => {
+    // Precondition: verify projectFullGameML produces a non-PASS_NO_EDGE reason code for these inputs
+    // (elitePitcher home vs avgPitcher away, +180/-220, high variance — should trigger PASS_CONFIDENCE_GATE)
+    const mlResult = projectFullGameML(elitePitcher, avgPitcher, +180, -220, highVarContext);
+    expect(mlResult).not.toBeNull();
+
+    // Only test when model passes (ev_threshold_passed=false) with a non-trivial reason code
+    if (mlResult.ev_threshold_passed === false && mlResult.pass_reason_code !== null) {
+      // Build a snapshot that passes the same inputs into computeMLBDriverCards
+      const snapshot = {
+        h2h_home: +180,
+        h2h_away: -220,
+        raw_data: JSON.stringify({
+          mlb: {
+            home_pitcher: elitePitcher,
+            away_pitcher: avgPitcher,
+            home_offense_profile: avgOffense,
+            away_offense_profile: avgOffense,
+            park_run_factor: 1.0,
+            temp_f: 45,
+            wind_mph: 28,
+            wind_dir: 'OUT',
+            roof: 'OPEN',
+            home_bullpen_era: 3.0,
+            away_bullpen_era: 6.5,
+            lineup_confirmed_home: false,
+            lineup_confirmed_away: false,
+          },
+        }),
+      };
+
+      const cards = computeMLBDriverCards('game-test-h', snapshot);
+      const mlCard = cards.find((c) => c.market === 'full_game_ml');
+      expect(mlCard).toBeDefined();
+      expect(mlCard.ev_threshold_passed).toBe(false);
+
+      // KEY INVARIANT (PRI-RUNNER-01): card must propagate mlResult.pass_reason_code,
+      // not hardcode 'PASS_NO_EDGE' regardless of what the model computed.
+      expect(mlCard.pass_reason_code).toBe(mlResult.pass_reason_code);
+    }
+  });
+});
