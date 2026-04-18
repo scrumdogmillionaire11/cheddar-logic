@@ -1043,6 +1043,9 @@ describe('selectPassReasonCode (PRI-MLB-02)', () => {
       expect(result.threshold_required).toEqual(expect.any(Number));
       expect(result.threshold_passed).toBe(false);
       expect(result.blocked_by).toBe('PASS_NO_EDGE');
+      expect(result.inputs_status).toBe('COMPLETE');
+      expect(result.evaluation_status).toBe('EDGE_COMPUTED');
+      expect(result.block_reasons).toEqual([]);
     }
   });
 
@@ -1056,6 +1059,9 @@ describe('selectPassReasonCode (PRI-MLB-02)', () => {
       expect(result.threshold_required).toEqual(expect.any(Number));
       expect(result.threshold_passed).toBe(false);
       expect(result.blocked_by).toBe('PASS_NO_EDGE');
+      expect(result.inputs_status).toBe('COMPLETE');
+      expect(result.evaluation_status).toBe('EDGE_COMPUTED');
+      expect(result.block_reasons).toEqual([]);
     }
   });
 
@@ -1075,6 +1081,28 @@ describe('selectPassReasonCode (PRI-MLB-02)', () => {
       expect(result.reason_codes).not.toContain('PASS_NO_EDGE');
       expect(result.blocked_by).toBe('PASS_CONFIDENCE_GATE');
     }
+  });
+
+  test('SYNTHETIC_FALLBACK F5 total does not also emit PASS_NO_EDGE', () => {
+    const pitcherMissingHandedness = { ...avgPitcher };
+    delete pitcherMissingHandedness.handedness;
+
+    const result = projectF5TotalCard(
+      pitcherMissingHandedness,
+      avgPitcher,
+      4.5,
+      baseContext,
+    );
+
+    expect(result).not.toBeNull();
+    expect(result.projection_source).toBe('SYNTHETIC_FALLBACK');
+    expect(result.pass_reason_code).toBe('PASS_SYNTHETIC_FALLBACK');
+    expect(result.reason_codes).toContain('PASS_SYNTHETIC_FALLBACK');
+    expect(result.reason_codes).not.toContain('PASS_NO_EDGE');
+    expect(result.blocked_by).toBe('PASS_SYNTHETIC_FALLBACK');
+    expect(result.inputs_status).toBe('PARTIAL');
+    expect(result.evaluation_status).toBe('NO_EVALUATION');
+    expect(result.block_reasons).toEqual(['PASS_SYNTHETIC_FALLBACK']);
   });
 });
 
@@ -1139,6 +1167,9 @@ describe('PRI-RUNNER-01: computeMLBDriverCards propagates pass_reason_code from 
       expect(mlCard.threshold_required).toBe(mlResult.threshold_required);
       expect(mlCard.threshold_passed).toBe(mlResult.threshold_passed);
       expect(mlCard.blocked_by).toBe(mlResult.pass_reason_code);
+      expect(mlCard.inputs_status).toBe(mlResult.inputs_status);
+      expect(mlCard.evaluation_status).toBe(mlResult.evaluation_status);
+      expect(mlCard.block_reasons).toEqual(mlResult.block_reasons);
     }
   });
 });

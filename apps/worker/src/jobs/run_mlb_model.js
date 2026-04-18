@@ -4269,6 +4269,24 @@ async function runMLBModel({
                   : []),
               ]),
               pass_reason_code: driver.pass_reason_code ?? null,
+              inputs_status: driver.inputs_status ?? 'COMPLETE',
+              evaluation_status: driver.evaluation_status ??
+                (typeof driver.ev_threshold_passed === 'boolean' ? 'EDGE_COMPUTED' : 'NO_EVALUATION'),
+              raw_edge_value: Number.isFinite(driver.raw_edge_value)
+                ? driver.raw_edge_value
+                : (Number.isFinite(driverDetail.edge) ? driverDetail.edge : null),
+              threshold_required: Number.isFinite(driver.threshold_required)
+                ? driver.threshold_required
+                : (Number.isFinite(driverDetail.threshold) ? driverDetail.threshold : null),
+              threshold_passed: typeof driver.threshold_passed === 'boolean'
+                ? driver.threshold_passed
+                : (typeof driver.ev_threshold_passed === 'boolean' ? driver.ev_threshold_passed : null),
+              blocked_by: driver.blocked_by ?? driver.pass_reason_code ?? null,
+              block_reasons: Array.isArray(driver.block_reasons)
+                ? driver.block_reasons
+                : (driver.pass_reason_code && driver.pass_reason_code !== 'PASS_NO_EDGE'
+                    ? [driver.pass_reason_code]
+                    : []),
               projection_source: driver.projection_source ?? null,
               status_cap: driver.status_cap ?? null,
               playability: driver.playability ?? null,

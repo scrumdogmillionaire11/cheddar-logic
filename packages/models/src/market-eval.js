@@ -149,6 +149,42 @@ function normaliseMarketType(market) {
   return MARKET_TYPE_MAP[lower] || String(market).toUpperCase();
 }
 
+function finiteNumberOrNull(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function cardRawEdgeValue(card) {
+  if (card == null) return null;
+  if (card.raw_edge_value !== undefined) return finiteNumberOrNull(card.raw_edge_value);
+  if (card.edge !== undefined) return finiteNumberOrNull(card.edge);
+  return null;
+}
+
+function cardThresholdRequired(card) {
+  if (card == null) return null;
+  return card.threshold_required !== undefined
+    ? finiteNumberOrNull(card.threshold_required)
+    : null;
+}
+
+function cardThresholdPassed(card, fallback = null) {
+  if (card != null && typeof card.threshold_passed === 'boolean') {
+    return card.threshold_passed;
+  }
+  return fallback;
+}
+
+function passBlockReasons(card) {
+  const direct = card?.pass_reason_code;
+  if (direct && direct !== 'PASS_NO_EDGE') return [direct];
+  if (Array.isArray(card?.block_reasons)) {
+    return card.block_reasons.filter((code) => code && code !== 'PASS_NO_EDGE');
+  }
+  return [];
+}
+
 // ---------------------------------------------------------------------------
 // buildResult — construct a canonical MarketEvalResult from a driver card
 // ---------------------------------------------------------------------------
@@ -164,6 +200,9 @@ function buildResult(card, ctx, status, reasonCodes, extra = {}) {
   const threshold_required = extra.threshold_required !== undefined ? extra.threshold_required : null;
   const threshold_passed = extra.threshold_passed !== undefined ? extra.threshold_passed : null;
   const block_reasons = Array.isArray(extra.block_reasons) ? extra.block_reasons : [];
+  const pass_reason_code = extra.pass_reason_code !== undefined
+    ? extra.pass_reason_code
+    : (card?.pass_reason_code ?? null);
 
   return {
     game_id: gameId,
@@ -173,9 +212,10 @@ function buildResult(card, ctx, status, reasonCodes, extra = {}) {
     inputs_ok: extra.inputs_ok !== undefined ? extra.inputs_ok : true,
     consistency_ok: extra.consistency_ok !== undefined ? extra.consistency_ok : true,
     watchdog_ok: extra.watchdog_ok !== undefined ? extra.watchdog_ok : true,
-    model_edge: card != null && card.edge !== undefined ? card.edge : null,
+    model_edge: cardRawEdgeValue(card),
     fair_price: card != null && card.fair_price !== undefined ? card.fair_price : null,
     win_probability: card != null && card.win_probability !== undefined ? card.win_probability : null,
+    pass_reason_code,
     official_tier: extra.official_tier || 'PASS',
     status: status,
     reason_codes: Array.isArray(reasonCodes) ? reasonCodes : [],
@@ -218,7 +258,7 @@ function evaluateSingleMarket(card, ctx) {
       safeCtx,
       'REJECTED_INPUTS',
       [REASON_CODES.UNCLASSIFIED_MARKET_STATE],
-      { inputs_ok: false, inputs_status: 'MISSING', evaluation_status: 'NO_EVALUATION', threshold_passed: null },
+      { inputs_ok: false, inputs_status: 'MISSING', evaluation_status: 'NO_EVALUATION', threshold_passed: null, pass_reason_code: null },
     );
   }
 
@@ -246,7 +286,13 @@ function evaluateSingleMarket(card, ctx) {
       if (n.includes('odds') || n.includes('price') || n.includes('market')) return REASON_CODES.MISSING_MARKET_ODDS;
       return REASON_CODES.MISSING_MARKET_ODDS;
     });
-    return buildResult(card, safeCtx, 'REJECTED_INPUTS', codes, { inputs_ok: false, inputs_status: 'MISSING', evaluation_status: 'NO_EVALUATION', threshold_passed: null });
+    return buildResult(card, safeCtx, 'REJECTED_INPUTS', codes, {
+      inputs_ok: false,
+      inputs_status: 'MISSING',
+      evaluation_status: 'NO_EVALUATION',
+      threshold_passed: null,
+      pass_reason_code: null,
+    });
   }
 
   // --- Watchdog gate ---
@@ -271,22 +317,34 @@ function evaluateSingleMarket(card, ctx) {
       safeCtx,
       'REJECTED_WATCHDOG',
       [REASON_CODES.WATCHDOG_UNSAFE_FOR_BASE, ...watchdogCodes],
-      { watchdog_ok: false, official_tier: 'PASS', notes, inputs_status: 'PARTIAL', evaluation_status: 'NO_EVALUATION', threshold_passed: null },
+      { watchdog_ok: false, official_tier: 'PASS', notes, inputs_status: 'PARTIAL', evaluation_status: 'NO_EVALUATION', threshold_passed: null, pass_reason_code: null },
     );
   }
 
   // --- EV threshold explicitly false ---
   if (card.ev_threshold_passed === false) {
-    const codes = [REASON_CODES.EDGE_BELOW_THRESHOLD];
+    const blocks = passBlockReasons(card);
+    const thresholdPassed = cardThresholdPassed(card, false);
+    const rawEdgeValue = cardRawEdgeValue(card);
+    const evaluationStatus = card.evaluation_status ||
+      (rawEdgeValue !== null || thresholdPassed !== null ? 'EDGE_COMPUTED' : 'NO_EVALUATION');
+    const codes = [
+      blocks.length > 0 ? REASON_CODES.EV_BELOW_THRESHOLD : REASON_CODES.EDGE_BELOW_THRESHOLD,
+    ];
     if (Array.isArray(card.reason_codes)) {
       codes.push(...card.reason_codes);
     }
+    if (card.pass_reason_code && !codes.includes(card.pass_reason_code)) {
+      codes.push(card.pass_reason_code);
+    }
     return buildResult(card, safeCtx, 'REJECTED_THRESHOLD', codes, {
       official_tier: 'PASS',
-      inputs_status: 'COMPLETE',
-      evaluation_status: 'EDGE_COMPUTED',
-      raw_edge_value: card.edge != null ? card.edge : null,
-      threshold_passed: false,
+      inputs_status: card.inputs_status || 'COMPLETE',
+      evaluation_status: evaluationStatus,
+      raw_edge_value: rawEdgeValue,
+      threshold_required: cardThresholdRequired(card),
+      threshold_passed: thresholdPassed,
+      block_reasons: blocks,
     });
   }
 
@@ -301,18 +359,25 @@ function evaluateSingleMarket(card, ctx) {
     if (card.pass_reason_code === 'PASS_NO_EDGE') {
       passExtra = {
         official_tier: 'PASS',
-        inputs_status: 'COMPLETE',
-        evaluation_status: 'EDGE_COMPUTED',
-        raw_edge_value: card.edge != null ? card.edge : null,
-        threshold_passed: false,
+        inputs_status: card.inputs_status || 'COMPLETE',
+        evaluation_status: card.evaluation_status || 'EDGE_COMPUTED',
+        raw_edge_value: cardRawEdgeValue(card),
+        threshold_required: cardThresholdRequired(card),
+        threshold_passed: cardThresholdPassed(card, false),
       };
     } else {
+      const rawEdgeValue = cardRawEdgeValue(card);
+      const thresholdPassed = cardThresholdPassed(card, null);
+      const blocks = passBlockReasons(card);
       passExtra = {
         official_tier: 'PASS',
-        inputs_status: 'COMPLETE',
-        evaluation_status: 'NO_EVALUATION',
-        threshold_passed: null,
-        block_reasons: card.pass_reason_code ? [card.pass_reason_code] : [],
+        inputs_status: card.inputs_status || 'COMPLETE',
+        evaluation_status: card.evaluation_status ||
+          (rawEdgeValue !== null || thresholdPassed !== null ? 'EDGE_COMPUTED' : 'NO_EVALUATION'),
+        raw_edge_value: rawEdgeValue,
+        threshold_required: cardThresholdRequired(card),
+        threshold_passed: thresholdPassed,
+        block_reasons: blocks,
       };
     }
     return buildResult(card, safeCtx, 'REJECTED_THRESHOLD', codes, passExtra);
@@ -353,18 +418,21 @@ function evaluateSingleMarket(card, ctx) {
 // ---------------------------------------------------------------------------
 function assertLegalPassNoEdge(result) {
   const hasNoEdgeCode =
-    Array.isArray(result.reason_codes) && result.reason_codes.includes('PASS_NO_EDGE');
+    result?.pass_reason_code === 'PASS_NO_EDGE' ||
+    (Array.isArray(result.reason_codes) && result.reason_codes.includes('PASS_NO_EDGE'));
   if (!hasNoEdgeCode) return;
 
   const positiveEdge = typeof result.raw_edge_value === 'number' && result.raw_edge_value > 0;
   const noEvaluation = result.evaluation_status === 'NO_EVALUATION';
   const missingInputs = result.inputs_status === 'MISSING';
+  const thresholdPassed = result.threshold_passed === true;
+  const hasBlockReasons = Array.isArray(result.block_reasons) && result.block_reasons.length > 0;
 
-  if (positiveEdge || noEvaluation || missingInputs) {
+  if (positiveEdge || noEvaluation || missingInputs || thresholdPassed || hasBlockReasons) {
     throw new Error(
       `ILLEGAL_PASS_NO_EDGE: candidate=${result.candidate_id} raw_edge=${result.raw_edge_value} ` +
       `evaluation_status=${result.evaluation_status} inputs_status=${result.inputs_status}. ` +
-      `PASS_NO_EDGE requires: EDGE_COMPUTED + COMPLETE inputs + non-positive edge.`,
+      `PASS_NO_EDGE requires: EDGE_COMPUTED + COMPLETE inputs + threshold_passed=false + no block_reasons.`,
     );
   }
 }
@@ -453,7 +521,10 @@ function finalizeGameMarketEvaluation({ game_id, sport, market_results }) {
   // result never ran evaluation (some candidates were never evaluated)
   if (status === 'SKIP_MARKET_NO_EDGE') {
     const anyNoEvaluation = rejected.some((r) => r.evaluation_status === 'NO_EVALUATION');
-    if (anyNoEvaluation) status = 'SKIP_GAME_MIXED_FAILURES';
+    const anyBlocked = rejected.some(
+      (r) => Array.isArray(r.block_reasons) && r.block_reasons.length > 0,
+    );
+    if (anyNoEvaluation || anyBlocked) status = 'SKIP_GAME_MIXED_FAILURES';
   }
 
   gameEval.status = status;
