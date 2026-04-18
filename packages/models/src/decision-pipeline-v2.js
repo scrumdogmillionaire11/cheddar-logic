@@ -4,11 +4,11 @@ const {
   resolvePlayCleanlinessProfile,
   applyNbaTotalQuarantine,
 } = require('./decision-pipeline-v2-edge-config');
+// Import from source to avoid disruption when tests mock @cheddar-logic/data.
 const {
-  assertValidReasonCodeStrict: _assertValidReasonCodeStrict,
   REASON_CODE_ALIASES: _REASON_CODE_ALIASES,
   ALL_REASON_CODES: _ALL_REASON_CODES,
-} = require('@cheddar-logic/data');
+} = require('@cheddar-logic/data/src/reason-codes');
 
 // Startup check: all locally-defined reason codes must be canonical or aliased.
 // This catches any future code added to WATCHDOG_REASONS / PRICE_REASONS without registration.
