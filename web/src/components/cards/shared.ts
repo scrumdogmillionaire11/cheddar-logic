@@ -3,7 +3,6 @@
 import { getFilterDebugFlags } from '@/lib/game-card/filters';
 import { getPlayDisplayAction } from '@/lib/game-card/decision';
 import { classifyPassHeaderBucket } from '@/lib/game-card/pass-classification';
-import { DIAGNOSTIC_BUCKET_LABELS } from '@/lib/game-card/pass-classification';
 import type { GameFilters, ViewMode } from '@/lib/game-card/filters';
 import { GAME_TAGS } from '@/lib/types';
 import { isNflSeason } from '@/lib/game-card/season-gates';
@@ -50,8 +49,6 @@ export const CLIENT_DEFAULT_BACKOFF_MS = 30_000;
 export const LIFECYCLE_SESSION_KEY = 'cheddar_cards_lifecycle_mode';
 export const CHUNK_ERROR_LOG_CODE = 'CARDS_CHUNK_LOAD_FAILED';
 export const FETCH_ERROR_LOG_CODE = 'CARDS_FETCH_FAILED';
-
-export const BUCKET_LABELS = DIAGNOSTIC_BUCKET_LABELS;
 
 function normalizeMissingInputs(values: unknown): string[] {
   if (!Array.isArray(values)) return [];

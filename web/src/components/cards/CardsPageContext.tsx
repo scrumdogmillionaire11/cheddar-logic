@@ -41,7 +41,6 @@ import type {
   GuardrailBreakdownEntry,
 } from './types';
 import {
-  BUCKET_LABELS,
   CHUNK_ERROR_LOG_CODE,
   CLIENT_DEFAULT_BACKOFF_MS,
   CLIENT_FETCH_TIMEOUT_MS,
@@ -347,9 +346,7 @@ export function CardsPageProvider({
       if (
         reasonCodes.has('LINE_NOT_CONFIRMED') ||
         reasonCodes.has('EDGE_RECHECK_PENDING') ||
-        reasonCodes.has('PRICE_SYNC_PENDING') ||
-        reasonCodes.has('EDGE_VERIFICATION_REQUIRED') ||
-        reasonCodes.has('PASS_EDGE_VERIFICATION_REQUIRED')
+        reasonCodes.has('PRICE_SYNC_PENDING')
       ) {
         triggered.high_edge_non_total_blocked += 1;
         bucket.triggered.high_edge_non_total_blocked += 1;
@@ -1170,4 +1167,4 @@ export function useCardsPageActions() {
   return useCardsPageContext().actions;
 }
 
-export { BUCKET_LABELS, formatSportCounts, resolvePrimaryTotalProjectionPlay, deriveOnePModelCallFromReasons, hasProjectedTotal, isFullGameTotalsCallPlay };
+export { formatSportCounts, resolvePrimaryTotalProjectionPlay, deriveOnePModelCallFromReasons, hasProjectedTotal, isFullGameTotalsCallPlay };

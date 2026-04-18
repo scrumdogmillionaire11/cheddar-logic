@@ -22,8 +22,9 @@ WI-0901 standardizes how suppression, downgrade, and hidden-output paths expose 
 
 ### Verification blocker migration
 
-`EDGE_VERIFICATION_REQUIRED` is treated as a legacy alias. New canonical reasons for
-verification/integrity holds are:
+`EDGE_VERIFICATION_REQUIRED` is a **sunset** legacy code. It must not be emitted by any current pipeline or model.
+Old DB records may contain it; the read layer renders it as `'Line not confirmed'` for backward compat.
+New canonical reasons for verification/integrity holds are:
 
 - `LINE_NOT_CONFIRMED`
 - `EDGE_RECHECK_PENDING`

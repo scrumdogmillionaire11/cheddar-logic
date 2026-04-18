@@ -72,8 +72,7 @@ function deriveTerminalReasonFamilyForPayload({
   if (
     reasonCodes.includes('LINE_NOT_CONFIRMED') ||
     reasonCodes.includes('EDGE_RECHECK_PENDING') ||
-    reasonCodes.includes('PRICE_SYNC_PENDING') ||
-    reasonCodes.includes('EDGE_VERIFICATION_REQUIRED')
+    reasonCodes.includes('PRICE_SYNC_PENDING')
   ) {
     return 'LINE_NOT_CONFIRMED';
   }

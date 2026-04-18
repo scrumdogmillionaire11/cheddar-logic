@@ -38,8 +38,9 @@ Canonical blocker reasons:
 - `MARKET_DATA_STALE` → market snapshot stale
 - `PRICE_SYNC_PENDING` → line and price not yet synchronized
 
-Legacy `EDGE_VERIFICATION_REQUIRED` may appear only as a backward-compatibility alias
-in ingestion/normalization paths; it should not be the primary user-facing reason.
+Legacy `EDGE_VERIFICATION_REQUIRED` is sunset and must not be emitted by any pipeline or model path.
+It may appear in stored DB records predating this migration and is recognized only for backward-compatible
+rendering of persisted cards; it is not accepted as a new emission value.
 
 ---
 

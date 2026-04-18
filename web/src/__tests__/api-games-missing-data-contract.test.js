@@ -75,6 +75,14 @@ assert(
   'cards diagnostics buckets should recognize mapping and projection-input failures explicitly',
 );
 
+assert(
+  passClassificationSource.includes('DIAGNOSTIC_BUCKET_ORDER') &&
+    passClassificationSource.includes("'projectionOnly'") &&
+    passClassificationSource.includes('countBlockedDiagnostics') &&
+    passClassificationSource.includes('reduce((sum, bucket) => sum + buckets[bucket], 0)'),
+  'blocked diagnostics counting should include projectionOnly via shared canonical bucket order',
+);
+
 // Duplicate-game dedup contract
 assert(
   gamesRouteHandlerSource.includes('deduplicatedRows') &&

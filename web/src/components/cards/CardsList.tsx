@@ -2,8 +2,11 @@
 
 import ProjectionCard from '@/components/projection-card';
 import PropGameCard from '@/components/prop-game-card';
-import { countBlockedDiagnostics } from '@/lib/game-card/pass-classification';
-import { useCardsPageActions, useCardsPageState, BUCKET_LABELS } from './CardsPageContext';
+import {
+  countBlockedDiagnostics,
+  DIAGNOSTIC_BUCKET_LABELS,
+} from '@/lib/game-card/pass-classification';
+import { useCardsPageActions, useCardsPageState } from './CardsPageContext';
 import GameCardItem from './GameCardItem';
 import SportDiagnosticsPanel from './SportDiagnosticsPanel';
 
@@ -62,7 +65,7 @@ export default function CardsList() {
             Debug diagnostics filter: {diagnosticCards.length} blocked{' '}
             {diagnosticFilter.sport} games
             {' — '}
-            {BUCKET_LABELS[diagnosticFilter.bucket]}
+            {DIAGNOSTIC_BUCKET_LABELS[diagnosticFilter.bucket]}
           </span>
           <button
             onClick={() => onDiagnosticFilterChange(null)}
@@ -181,7 +184,7 @@ export default function CardsList() {
         diagnosticCards.length > 0 && (
           <div className="mt-6 space-y-2">
             <div className="text-xs text-cloud/40 border-t border-white/10 pt-3 mb-2">
-              Blocked games — {BUCKET_LABELS[diagnosticFilter.bucket]}
+              Blocked games — {DIAGNOSTIC_BUCKET_LABELS[diagnosticFilter.bucket]}
             </div>
             {diagnosticCards.map((card) => {
               const codes = card.play?.reason_codes ?? [];

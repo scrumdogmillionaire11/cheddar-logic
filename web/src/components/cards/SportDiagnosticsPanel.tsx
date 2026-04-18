@@ -1,8 +1,8 @@
 'use client';
 
-import { BUCKET_LABELS } from './CardsPageContext';
 import {
   countBlockedDiagnostics,
+  DIAGNOSTIC_BUCKET_LABELS,
   DIAGNOSTIC_BUCKET_ORDER,
 } from '@/lib/game-card/pass-classification';
 import type { DiagnosticBucket, SportDiagnosticsMap } from './types';
@@ -51,7 +51,7 @@ export default function SportDiagnosticsPanel({
                       <button
                         onClick={() => onBucketClick(sport, bucket)}
                         className="underline decoration-dotted hover:text-cloud/80 tabular-nums"
-                        title={`Show ${buckets[bucket]} blocked ${sport} — ${BUCKET_LABELS[bucket]}`}
+                        title={`Show ${buckets[bucket]} blocked ${sport} — ${DIAGNOSTIC_BUCKET_LABELS[bucket]}`}
                       >
                         {buckets[bucket]}
                       </button>
