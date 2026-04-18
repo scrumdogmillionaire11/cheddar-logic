@@ -1986,6 +1986,10 @@ function projectFullGameML(homePitcher, awayPitcher, mlHome, mlAway, context = {
     edge = awayEdge;
   }
 
+  const rawBestEdge = Math.max(homeEdge, awayEdge);
+  const rawEdgeCleared = rawBestEdge >= LEAN_EDGE_MIN;
+  const confidenceGateBlocked = rawEdgeCleared && confidence < CONFIDENCE_MIN;
+
   const softReasons = [];
   let softPenaltyPoints = 0;
   if (!MLB_PURE_SIGNAL_MODE) {
@@ -2021,7 +2025,11 @@ function projectFullGameML(homePitcher, awayPitcher, mlHome, mlAway, context = {
     ...(MLB_PURE_SIGNAL_MODE ? ['PURE_SIGNAL_MODE'] : []),
     ...(isDegraded ? ['FULL_GAME_ML_DEGRADED'] : []),
     ...softReasons,
-    ...(side === 'PASS' ? ['PASS_NO_EDGE'] : []),
+    ...(confidenceGateBlocked ? ['PASS_CONFIDENCE_GATE'] : []),
+    ...(side === 'PASS' && !confidenceGateBlocked && isDegraded && rawEdgeCleared
+      ? ['PASS_MODEL_DEGRADED']
+      : []),
+    ...(side === 'PASS' && !confidenceGateBlocked && !rawEdgeCleared ? ['PASS_NO_EDGE'] : []),
   ];
 
   return {
@@ -2063,6 +2071,17 @@ function projectFullGameML(homePitcher, awayPitcher, mlHome, mlAway, context = {
     degraded_inputs: proj.degraded_inputs,
     missing_inputs: proj.missing_inputs,
     ev_threshold_passed: side !== 'PASS',
+    pass_reason_code:
+      side !== 'PASS'
+        ? null
+        : confidenceGateBlocked
+          ? 'PASS_CONFIDENCE_GATE'
+          : isDegraded && rawEdgeCleared
+            ? 'PASS_MODEL_DEGRADED'
+            : 'PASS_NO_EDGE',
+    raw_edge_value: rawBestEdge,
+    threshold_required: LEAN_EDGE_MIN,
+    threshold_passed: rawEdgeCleared,
     reasoning: `FullGameML: homeProj=${homeProj.toFixed(2)} awayProj=${awayProj.toFixed(2)} runDiff=${runDiff >= 0 ? '+' : ''}${runDiff.toFixed(2)} var=${variance.run_diff_variance.toFixed(2)} pWin(H)=${(winProbHome * 100).toFixed(1)}% implH=${(impliedHome * 100).toFixed(1)}% implA=${(impliedAway * 100).toFixed(1)}% edgeH=${homeEdge >= 0 ? '+' : ''}${(homeEdge * 100).toFixed(1)}pp edgeA=${awayEdge >= 0 ? '+' : ''}${(awayEdge * 100).toFixed(1)}pp support=${supportCount} conf=${confidence}/10`,
   };
 }

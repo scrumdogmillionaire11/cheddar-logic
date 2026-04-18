@@ -706,8 +706,9 @@ describe('projectFullGameML (WI-0873)', () => {
   // ── PRI-MLB-01/02/03: pass_reason_code truth chain (Scenarios A, C, D) ──────
 
   test('Scenario A: low raw edge (< LEAN_EDGE_MIN) + OK confidence → PASS_NO_EDGE, no PASS_CONFIDENCE_GATE', () => {
-    // Symmetric pitchers + -110/-110 → rawBestEdge < 0.025 (home field tilt is small)
-    const result = projectFullGameML(avgPitcher, avgPitcher, -110, -110, cleanContext);
+    // Symmetric pitchers with odds calibrated so that market implies ≈ model win prob → rawBestEdge < 0.025
+    // -137/+113 sets impliedHome ≈ 0.54 which matches model's symmetric-pitcher win prob
+    const result = projectFullGameML(avgPitcher, avgPitcher, -137, +113, cleanContext);
     expect(result).not.toBeNull();
     expect(result.side).toBe('PASS');
     expect(result.reason_codes).toContain('PASS_NO_EDGE');
