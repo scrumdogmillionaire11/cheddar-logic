@@ -169,7 +169,7 @@ Humanized pass or block reasons used by Discord:
 
 | Internal code | Discord phrase |
 | --- | --- |
-| `EDGE_VERIFICATION_REQUIRED` | `Line unstable — waiting for confirmation` |
+| `LINE_NOT_CONFIRMED` | `Line not confirmed` |
 | `MODEL_PROB_MISSING` | `Model incomplete — no play` |
 | `PASS_NO_EDGE` | `No edge` |
 | `NO_EDGE_AT_PRICE` | `Price too sharp` |
@@ -178,7 +178,7 @@ Humanized pass or block reasons used by Discord:
 | `GATE_GOALIE_UNCONFIRMED` | `Goalie not confirmed` |
 | `GATE_LINE_MOVEMENT` | `Line moved — re-evaluating` |
 | `BLOCK_INJURY_RISK` | `Injury risk flag` |
-| `BLOCK_STALE_DATA` | `Data stale — no play` |
+| `MARKET_DATA_STALE` | `Market data stale` |
 
 If a code is not mapped, Discord falls back to `No edge`.
 
@@ -186,7 +186,7 @@ If a code is not mapped, Discord falls back to `No edge`.
 
 These should be treated as bugs if they appear in a Discord post:
 
-- raw tokens like `PASS_NO_EDGE` or `EDGE_VERIFICATION_REQUIRED`
+- raw tokens like `PASS_NO_EDGE` or `LINE_NOT_CONFIRMED`
 - incomplete rows like `1P | 1.5`
 - price junk like `(@ null)`
 - projection-only cards shown as actionable plays

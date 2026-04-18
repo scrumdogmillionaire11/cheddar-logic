@@ -329,6 +329,13 @@ function buildCardPayloadData(candidate, { nowIso, wagerAmount, bankrollAtPost, 
     status: 'FIRE',
     classification: 'BASE',
     decision_v2: { official_status: 'PLAY' },
+    // Canonical play-state: POTD only fires for candidates that cleared the
+    // positive-edge and confidence gates in gatherBestCandidate(). Stamp
+    // final_play_state explicitly so all downstream surfaces (Discord, /wedge)
+    // read the authoritative state rather than re-deriving it.
+    final_play_state: 'OFFICIAL_PLAY',
+    official_eligible: true,
+    potd_eligible: true,
     prediction: candidate.selection,
     confidence: candidate.totalScore,
     confidence_pct: Math.round(candidate.totalScore * 100),
@@ -468,16 +475,21 @@ async function gatherBestCandidate({
     maxNominees: POTD_MAX_NOMINEES,
     requirePositiveEdge: true,
   });
+  // diagnosticNominees are for no-pick diagnostics only — they include
+  // sub-threshold and negative-edge candidates and must never select a POTD.
   const diagnosticNominees = selectTopPlaysFn(scoredCandidates, {
     minConfidence: POTD_MIN_TOTAL_SCORE,
     maxNominees: POTD_MAX_NOMINEES,
     requirePositiveEdge: false,
   });
-  const rankedNominees = fireableNominees.length > 0 ? fireableNominees : diagnosticNominees;
+  // rankedNominees = only fireable (positive-edge, above threshold) candidates.
+  // When fireableNominees is empty, rankedNominees is empty — POTD must return NO_PICK.
+  const rankedNominees = fireableNominees;
 
   return {
     bestCandidate: fireableNominees[0] || null,
     rankedNominees,
+    diagnosticNominees, // non-play diagnostics — labeled non-play, never nominated
     allScoredCandidates: scoredCandidates,
     fetchErrors,
     activeSports: sports,
@@ -545,7 +557,16 @@ async function runPotdEngine({
         };
       }
 
-      const { bestCandidate, rankedNominees, allScoredCandidates, fetchErrors, activeSports, candidatesCount, viableCount } = await gatherBestCandidate({
+      const {
+        bestCandidate,
+        rankedNominees,
+        diagnosticNominees,
+        allScoredCandidates,
+        fetchErrors,
+        activeSports,
+        candidatesCount,
+        viableCount,
+      } = await gatherBestCandidate({
         fetchOddsFn,
         buildCandidatesFn,
         scoreCandidateFn,
@@ -564,7 +585,12 @@ async function runPotdEngine({
           .filter(c => typeof c.edgePct === 'number' && isFinite(c.edgePct) && typeof c.totalScore === 'number' && isFinite(c.totalScore))
           .sort((a, b) => b.edgePct - a.edgePct)[0] || null;
         writeShadowCandidates(db, { playDate, capturedAt: nowIso, minEdgePct: POTD_MIN_EDGE, candidates: allScoredCandidates });
-        writeNominees(db, { playDate, capturedAt: nowIso, winnerStatus: 'NO_PICK', nominees: rankedNominees });
+        writeNominees(db, {
+          playDate,
+          capturedAt: nowIso,
+          winnerStatus: 'NO_PICK',
+          nominees: diagnosticNominees,
+        });
         writeDailyStats(db, {
           playDate,
           potdFired: false,

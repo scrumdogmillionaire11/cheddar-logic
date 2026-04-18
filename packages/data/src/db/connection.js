@@ -3,7 +3,6 @@ const crypto = require('crypto');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { execSync } = require('child_process');
 const { resolveDatabasePath } = require('../db-path');
 
 let dbInstance = null;
@@ -71,8 +70,11 @@ function checkSqliteIntegrity(dbPath) {
   }
 
   try {
-    // Shell out to sqlite3 CLI for integrity check
-    // Using 2>&1 to capture both stdout and stderr
+    // Lazy require with bundler-ignore annotations — this function is server-only.
+    // child_process must not appear in the top-level module scope or bundlers
+    // (webpack, Turbopack) will attempt to include it in client bundles.
+    // eslint-disable-next-line
+    const { execSync } = require(/* webpackIgnore: true */ /* turbopackIgnore: true */ 'child_process');
     const result = execSync(
       `sqlite3 "${normalizedPath}" "PRAGMA integrity_check;"`,
       { encoding: 'utf8', timeout: 10000 }

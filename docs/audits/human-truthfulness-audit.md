@@ -26,7 +26,7 @@ Reason-code wording is mapped in Discord output and must never leak internal tok
 
 | Internal code(s) | Human label |
 | --- | --- |
-| EDGE_VERIFICATION_REQUIRED | Line unstable - waiting for confirmation |
+| LINE_NOT_CONFIRMED | Line not confirmed |
 | MODEL_PROB_MISSING | Model incomplete - no play |
 | PASS_NO_EDGE | No edge |
 | NO_EDGE_AT_PRICE | Price too sharp |
@@ -35,7 +35,7 @@ Reason-code wording is mapped in Discord output and must never leak internal tok
 | GATE_GOALIE_UNCONFIRMED | Goalie not confirmed |
 | GATE_LINE_MOVEMENT | Line moved - re-evaluating |
 | BLOCK_INJURY_RISK | Injury risk flag |
-| BLOCK_STALE_DATA | Data stale - no play |
+| MARKET_DATA_STALE | Market data stale |
 
 Source logic:
 
@@ -51,9 +51,9 @@ The canonical web surface is determined by `buildFinalMarketDecision` in
 | --- | --- | --- |
 | verification FAILED | codes include PASS_DATA_ERROR or MISSING_DATA_NO_ODDS | forced PASS |
 | certainty UNCONFIRMED | any goalie status is UNKNOWN or CONFLICTING | forced PASS |
-| verification PENDING | sharp_price_status=PENDING_VERIFICATION or EDGE_VERIFICATION_REQUIRED in codes | PLAY → SLIGHT EDGE |
+| verification PENDING | sharp_price_status=PENDING_VERIFICATION or LINE_NOT_CONFIRMED in codes | PLAY → SLIGHT EDGE |
 | certainty PARTIAL | one goalie EXPECTED/missing, other CONFIRMED | PLAY → SLIGHT EDGE |
-| market unstable | codes include EDGE_VERIFICATION_REQUIRED, BLOCKED_BET_VERIFICATION_REQUIRED, or GATE_LINE_MOVEMENT | PLAY → SLIGHT EDGE |
+| market unstable | codes include LINE_NOT_CONFIRMED, BLOCKED_BET_VERIFICATION_REQUIRED, or GATE_LINE_MOVEMENT | PLAY → SLIGHT EDGE |
 | official LEAN | official_status=LEAN and no gate triggered | SLIGHT EDGE |
 | official PLAY and all gates pass | | PLAY |
 | official anything else | | PASS |
@@ -71,7 +71,7 @@ substitution is used (raw `replace(/_/g, ' ')` fallback was removed in WI-0905).
 
 | Internal code | Human phrase (web) |
 | --- | --- |
-| EDGE_VERIFICATION_REQUIRED | Waiting on line verification |
+| LINE_NOT_CONFIRMED | Line not confirmed |
 | BLOCKED_BET_VERIFICATION_REQUIRED | Waiting on line verification |
 | GATE_LINE_MOVEMENT | Line moved - re-evaluating |
 | GATE_GOALIE_UNCONFIRMED / *GOALIE* | Waiting on goalie confirmation |
@@ -82,7 +82,7 @@ substitution is used (raw `replace(/_/g, ' ')` fallback was removed in WI-0905).
 | MODEL_PROB_MISSING | Model incomplete |
 | MARKET_PRICE_MISSING | Market price unavailable |
 | BLOCK_INJURY_RISK | Injury risk flag |
-| BLOCK_STALE_DATA | Data stale |
+| MARKET_DATA_STALE | Market data stale |
 | EXACT_WAGER_MISMATCH | Line mismatch |
 | HEAVY_FAVORITE_PRICE_CAP | High price cap |
 | PROXY_EDGE_CAPPED | Edge capped by proxy |
@@ -114,10 +114,10 @@ Both surfaces share semantics for the same decision state after WI-0935:
 | official_status=LEAN | Lean section | SLIGHT EDGE | ✅ |
 | blocked high-signal pass with gate reason | Watch (Would be PLAY) | PASS with surfaced_reason | ✅ improved |
 | PASS_NO_EDGE | "No edge" (REASON_CODE_LABELS) | "No edge" (SURFACED_REASON_LABELS) | ✅ |
-| EDGE_VERIFICATION_REQUIRED | "Line unstable - waiting for confirmation" | "Waiting on line verification" | ⚠️ minor wording variant |
+| LINE_NOT_CONFIRMED | "Line not confirmed" | "Line not confirmed" | ✅ |
 | GATE_GOALIE_UNCONFIRMED | "Goalie not confirmed" | "Waiting on goalie confirmation" | ⚠️ minor wording variant |
 | GATE_LINE_MOVEMENT | "Line moved - re-evaluating" | "Line moved - re-evaluating" | ✅ |
-| BLOCK_STALE_DATA | "Data stale - no play" | "Data stale" | ⚠️ minor wording variant |
+| MARKET_DATA_STALE | "Market data stale" | "Market data stale" | ✅ |
 
 Minor wording variants (⚠️) are acceptable — they reflect different surface contexts
 (Discord prose vs web label) and carry the same meaning. WI-0905 now surfaces

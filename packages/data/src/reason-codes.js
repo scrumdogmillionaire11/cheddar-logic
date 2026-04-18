@@ -1,8 +1,23 @@
-// Canonical source: packages/data/src/reason-codes.js
-// Inlined here to avoid pulling the server-only @cheddar-logic/data package
-// (which depends on better-sqlite3) into the client bundle.
+const BLOCKER_REASON_CODES = Object.freeze([
+  'LINE_NOT_CONFIRMED',
+  'EDGE_RECHECK_PENDING',
+  'EDGE_NO_LONGER_CONFIRMED',
+  'MARKET_DATA_STALE',
+  'PRICE_SYNC_PENDING',
+  'BLOCKED_BET_VERIFICATION_REQUIRED',
+  'SUPPORT_BELOW_LEAN_THRESHOLD',
+  'SUPPORT_BELOW_PLAY_THRESHOLD',
+  'EXACT_WAGER_MISMATCH',
+  'MARKET_PRICE_MISSING',
+  'MODEL_PROB_MISSING',
+  'MARKET_EDGE_UNAVAILABLE',
+  'NO_EDGE_AT_PRICE',
+  'NO_PRIMARY_SUPPORT',
+  'HEAVY_FAVORITE_PRICE_CAP',
+  'FIRST_PERIOD_NO_PROJECTION',
+]);
 
-export const REASON_CODE_LABELS: Record<string, string> = Object.freeze({
+const REASON_CODE_LABELS = Object.freeze({
   LINE_NOT_CONFIRMED: 'Line not confirmed',
   EDGE_RECHECK_PENDING: 'Edge needs recheck before action',
   EDGE_NO_LONGER_CONFIRMED: 'Edge no longer clears threshold',
@@ -41,7 +56,18 @@ export const REASON_CODE_LABELS: Record<string, string> = Object.freeze({
   FIRST_PERIOD_NO_PROJECTION: 'No 1P projection available',
 });
 
-export function getReasonCodeLabel(code?: string | null): string | null {
+const MARKET_UNVERIFIED_CODES = Object.freeze(new Set([
+  'LINE_NOT_CONFIRMED',
+  'EDGE_RECHECK_PENDING',
+  'PRICE_SYNC_PENDING',
+  'MARKET_DATA_STALE',
+  'BLOCKED_BET_VERIFICATION_REQUIRED',
+  'GATE_LINE_MOVEMENT',
+  'MISSING_DATA_NO_ODDS',
+  'MARKET_PRICE_MISSING',
+]));
+
+function getReasonCodeLabel(code) {
   if (!code) return null;
   const token = String(code).trim().toUpperCase();
   if (!token) return null;
@@ -49,3 +75,10 @@ export function getReasonCodeLabel(code?: string | null): string | null {
   if (token.includes('GOALIE')) return 'Waiting on goalie confirmation';
   return null;
 }
+
+module.exports = {
+  BLOCKER_REASON_CODES,
+  REASON_CODE_LABELS,
+  MARKET_UNVERIFIED_CODES,
+  getReasonCodeLabel,
+};

@@ -16,6 +16,7 @@ const {
   deriveVolEnv,
   finalizeDecisionFields,
   publishDecisionForCard,
+  deriveTerminalReasonFamilyForPayload,
 } = require('../decision-publisher.js');
 const {
   computeCandidateHash,
@@ -1739,5 +1740,44 @@ describe('computeWebhookFields', () => {
   it('no-op for null or undefined payload', () => {
     expect(() => computeWebhookFields(null)).not.toThrow();
     expect(() => computeWebhookFields(undefined)).not.toThrow();
+  });
+});
+
+describe('deriveTerminalReasonFamilyForPayload — granular buckets (WI-1002)', () => {
+  const base = { officialStatus: 'PASS', watchdogStatus: 'OK' };
+
+  it('returns LINE_NOT_CONFIRMED for LINE_NOT_CONFIRMED reason code', () => {
+    expect(deriveTerminalReasonFamilyForPayload({ ...base, reasonCodes: ['LINE_NOT_CONFIRMED'] }))
+      .toBe('LINE_NOT_CONFIRMED');
+  });
+
+  it('returns MARKET_STALE_RECHECK for PRICE_SYNC_PENDING reason code', () => {
+    expect(deriveTerminalReasonFamilyForPayload({ ...base, reasonCodes: ['PRICE_SYNC_PENDING'] }))
+      .toBe('MARKET_STALE_RECHECK');
+  });
+
+  it('returns MARKET_STALE_RECHECK for MARKET_DATA_STALE reason code', () => {
+    expect(deriveTerminalReasonFamilyForPayload({ ...base, reasonCodes: ['MARKET_DATA_STALE'] }))
+      .toBe('MARKET_STALE_RECHECK');
+  });
+
+  it('returns EDGE_MOVED for EDGE_RECHECK_PENDING reason code', () => {
+    expect(deriveTerminalReasonFamilyForPayload({ ...base, reasonCodes: ['EDGE_RECHECK_PENDING'] }))
+      .toBe('EDGE_MOVED');
+  });
+
+  it('returns EDGE_MOVED for EDGE_NO_LONGER_CONFIRMED reason code', () => {
+    expect(deriveTerminalReasonFamilyForPayload({ ...base, reasonCodes: ['EDGE_NO_LONGER_CONFIRMED'] }))
+      .toBe('EDGE_MOVED');
+  });
+
+  it('LINE_NOT_CONFIRMED takes precedence over EDGE_RECHECK_PENDING when both present', () => {
+    expect(deriveTerminalReasonFamilyForPayload({ ...base, reasonCodes: ['LINE_NOT_CONFIRMED', 'EDGE_RECHECK_PENDING'] }))
+      .toBe('LINE_NOT_CONFIRMED');
+  });
+
+  it('returns PLAY_ELIGIBLE when officialStatus is PLAY regardless of reason codes', () => {
+    expect(deriveTerminalReasonFamilyForPayload({ officialStatus: 'PLAY', watchdogStatus: 'OK', reasonCodes: ['LINE_NOT_CONFIRMED'] }))
+      .toBe('PLAY_ELIGIBLE');
   });
 });

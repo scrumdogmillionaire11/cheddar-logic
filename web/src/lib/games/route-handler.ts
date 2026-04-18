@@ -172,8 +172,10 @@ const DEV_GAMES_LOOKBACK_HOURS = Number.parseInt(
 
 const API_GAMES_MAX_CARD_ROWS = Math.max(
   100,
-  Number.parseInt(process.env.API_GAMES_MAX_CARD_ROWS || '1500', 10) || 1500,
+  Number.parseInt(process.env.API_GAMES_MAX_CARD_ROWS || '5000', 10) || 5000,
 );
+const API_GAMES_PROP_PRIORITY_SQL =
+  "(LOWER(card_type) LIKE '%player%' OR LOWER(card_type) = 'mlb-pitcher-k')";
 const MLB_GAME_LINE_FALLBACK_CARD_TYPES = ['mlb-full-game', 'mlb-full-game-ml'] as const;
 const MLB_GAME_LINE_PRIMARY_CARD_TYPE = 'mlb-f5';
 const RAW_API_GAMES_MLB_FALLBACK_MAX_AGE_MINUTES = Number.parseInt(
@@ -2360,7 +2362,10 @@ export async function GET(request: NextRequest) {
         WHERE game_id IN (${queryPlaceholders})
           ${runClause}
           ${ENABLE_WELCOME_HOME ? '' : "AND card_type NOT IN ('welcome-home', 'welcome-home-v2')"}
-        ORDER BY created_at DESC, id DESC
+        ORDER BY
+          CASE WHEN ${API_GAMES_PROP_PRIORITY_SQL} THEN 0 ELSE 1 END,
+          created_at DESC,
+          id DESC
         LIMIT ${API_GAMES_MAX_CARD_ROWS}
       `;
       };

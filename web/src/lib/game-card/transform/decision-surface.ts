@@ -1,6 +1,20 @@
 import type { DecisionV2, FinalMarketDecision } from '../../types';
 import { getReasonCodeLabel } from '../reason-labels';
 
+// Canonical source: packages/data/src/reason-codes.js — MARKET_UNVERIFIED_CODES
+// Inlined here to avoid pulling the server-only @cheddar-logic/data package
+// (which depends on better-sqlite3) into the client bundle.
+const MARKET_UNVERIFIED_CODES: ReadonlySet<string> = Object.freeze(new Set([
+  'LINE_NOT_CONFIRMED',
+  'EDGE_RECHECK_PENDING',
+  'PRICE_SYNC_PENDING',
+  'MARKET_DATA_STALE',
+  'BLOCKED_BET_VERIFICATION_REQUIRED',
+  'GATE_LINE_MOVEMENT',
+  'MISSING_DATA_NO_ODDS',
+  'MARKET_PRICE_MISSING',
+]));
+
 type GoalieStatus = 'CONFIRMED' | 'EXPECTED' | 'UNKNOWN' | null | undefined;
 
 interface BuildFinalMarketDecisionInput {
@@ -29,16 +43,7 @@ const PROJECTION_STALE_CODES = new Set([
   'TEAM_METRICS_FALLBACK_PREV_DAY',
 ]);
 
-const MARKET_UNVERIFIED_CODES = new Set([
-  'LINE_NOT_CONFIRMED',
-  'EDGE_RECHECK_PENDING',
-  'PRICE_SYNC_PENDING',
-  'MARKET_DATA_STALE',
-  'BLOCKED_BET_VERIFICATION_REQUIRED',
-  'GATE_LINE_MOVEMENT',
-  'MISSING_DATA_NO_ODDS',
-  'MARKET_PRICE_MISSING',
-]);
+// MARKET_UNVERIFIED_CODES imported from @cheddar-logic/data (canonical source)
 
 const PRIMARY_REASON_PRECEDENCE = [
   // Projection/input truth must win when missing core dependencies.
@@ -114,15 +119,8 @@ function resolveMarketVerificationStatus(
 }
 
 function resolveMarketStable(codes?: string[]): boolean {
-  const allCodes = new Set((codes || []).map((code) => toToken(code)));
-  return !(
-    allCodes.has('LINE_NOT_CONFIRMED') ||
-    allCodes.has('EDGE_RECHECK_PENDING') ||
-    allCodes.has('PRICE_SYNC_PENDING') ||
-    allCodes.has('MARKET_DATA_STALE') ||
-    allCodes.has('BLOCKED_BET_VERIFICATION_REQUIRED') ||
-    allCodes.has('GATE_LINE_MOVEMENT')
-  );
+  const allCodes = (codes || []).map((code) => toToken(code));
+  return !allCodes.some((code) => MARKET_UNVERIFIED_CODES.has(code));
 }
 
 function mapModelStrength(playTier?: string | null): FinalMarketDecision['model_strength'] {
