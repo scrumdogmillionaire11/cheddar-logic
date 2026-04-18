@@ -30,10 +30,11 @@ const nextConfig: NextConfig = {
         ? [...prev, "better-sqlite3"]
         : [prev as never, "better-sqlite3"];
     } else {
-      // Client bundles must never receive better-sqlite3; return an empty module.
+      // Client bundles must never receive native Node modules; return empty modules.
       config.resolve.fallback = {
         ...config.resolve.fallback,
         "better-sqlite3": false,
+        "child_process": false,
       };
     }
     return config;
