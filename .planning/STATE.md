@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Model Integrity & Betting Execution Hardening
 status: active
-last_updated: "2026-04-18T19:28:00Z"
-last_activity: "2026-04-18 - Completed pass-reason-integrity-03: Card builder propagation (mlResult.pass_reason_code), projection-floor PASS_NO_EDGE scrub, decisionReason() null fallback — PASS_NO_EDGE truth chain fully closed"
+last_updated: "2026-04-18T19:55:00Z"
+last_activity: "2026-04-18 - Adversarial follow-up completed for pass-reason-integrity: stored payload truth surface, market-eval pass_reason_code enforcement, ADR-0016, and re-verification (321 tests)"
 ---
 
 # Project State

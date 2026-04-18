@@ -237,9 +237,10 @@ Plans:
 
 **Requirements:** [PRI-CONTRACT-01, PRI-CONTRACT-02, PRI-CONTRACT-03, PRI-MLB-01, PRI-MLB-02, PRI-MLB-03, PRI-RUNNER-01, PRI-RUNNER-02, PRI-DISPLAY-01]
 
-**Plans:** 3 plans in 2 waves
+**Plans:** 4 plans in 3 waves
 
 Plans:
-- [ ] pass-reason-integrity-01-PLAN.md — market-eval.js extended contract + assertLegalPassNoEdge hard-throw + SKIP_GAME_MIXED_FAILURES (Wave 1)
-- [ ] pass-reason-integrity-02-PLAN.md — mlb-model.js projectFullGameML confidence gate fix + selectPassReasonCode helper (Wave 1)
-- [ ] pass-reason-integrity-03-PLAN.md — run_mlb_model.js card builder propagation + post_discord_cards.js display cleanup (Wave 2)
+- [x] pass-reason-integrity-01-PLAN.md — market-eval.js extended contract + assertLegalPassNoEdge hard-throw + SKIP_GAME_MIXED_FAILURES (Wave 1)
+- [x] pass-reason-integrity-02-PLAN.md — mlb-model.js projectFullGameML confidence gate fix + selectPassReasonCode helper (Wave 1)
+- [x] pass-reason-integrity-03-PLAN.md — run_mlb_model.js card builder propagation + post_discord_cards.js display cleanup (Wave 2)
+- [x] pass-reason-integrity-04-SUMMARY.md — adversarial follow-up: stored payload truth surface, ADR-0016, re-verification (Wave 3)
