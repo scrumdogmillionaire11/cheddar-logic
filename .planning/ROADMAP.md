@@ -226,3 +226,20 @@ Plans:
 - [ ] nhl-odds-backed-01-01-PLAN.md — Totals execution status contamination fix (goalie guard + canonical status sync) (Wave 1)
 - [ ] nhl-odds-backed-01-02-PLAN.md — Moneyline decision_v2 pricing completeness + model_prob fallback hardening (Wave 1)
 - [ ] nhl-odds-backed-01-03-PLAN.md — Gamelines regression coverage + pipeline health NHL ML counters + registry updates (Wave 2)
+
+---
+
+### Phase: pass-reason-integrity — PASS Reason Code Truth Chain
+
+**Goal**: Eliminate all illegal `PASS_NO_EDGE` emissions across the MLB pipeline. Make `PASS_NO_EDGE` a _derived_ conclusion (edge was computed, inputs were complete, threshold failed) rather than an assigned label. Install a hard-throw enforcer in the market-eval contract layer, fix the confidence-gate attribution bug in `projectFullGameML`, propagate reason codes through the card builder, and remove the fabricated `PASS_NO_EDGE` default from the display layer.
+
+**Audit source**: User audit identifying three illegal emission paths: confidence gate conflation, card builder re-derivation from `ev_threshold_passed`, projection-floor driver carrying PASS_NO_EDGE when no evaluation ever ran.
+
+**Requirements:** [PRI-CONTRACT-01, PRI-CONTRACT-02, PRI-CONTRACT-03, PRI-MLB-01, PRI-MLB-02, PRI-MLB-03, PRI-RUNNER-01, PRI-RUNNER-02, PRI-DISPLAY-01]
+
+**Plans:** 3 plans in 2 waves
+
+Plans:
+- [ ] pass-reason-integrity-01-PLAN.md — market-eval.js extended contract + assertLegalPassNoEdge hard-throw + SKIP_GAME_MIXED_FAILURES (Wave 1)
+- [ ] pass-reason-integrity-02-PLAN.md — mlb-model.js projectFullGameML confidence gate fix + selectPassReasonCode helper (Wave 1)
+- [ ] pass-reason-integrity-03-PLAN.md — run_mlb_model.js card builder propagation + post_discord_cards.js display cleanup (Wave 2)
