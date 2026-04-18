@@ -116,6 +116,19 @@ assert(
   '/api/games should use the same authority selector in active-run and no-active-run coverage paths',
 );
 
+assert(
+  gamesRouteHandlerSource.includes('API_GAMES_PROP_PRIORITY_SQL') &&
+    gamesRouteHandlerSource.includes("LOWER(card_type) LIKE '%player%'") &&
+    gamesRouteHandlerSource.includes('ORDER BY') &&
+    gamesRouteHandlerSource.includes('CASE WHEN ${API_GAMES_PROP_PRIORITY_SQL} THEN 0 ELSE 1 END'),
+  '/api/games should prioritize player-prop card families before applying global card row limits',
+);
+
+assert(
+  gamesRouteHandlerSource.includes("process.env.API_GAMES_MAX_CARD_ROWS || '5000'"),
+  '/api/games should default to a higher card row cap to reduce prop starvation under production volume spikes',
+);
+
 // ── Behavioral: fixture-level authority determinism ──────────────────────────
 
 function makePlay(id, officialStatus, edgeDeltaPct, supportScore = 0.5, createdAt = '2026-04-11T14:00:00.000Z') {

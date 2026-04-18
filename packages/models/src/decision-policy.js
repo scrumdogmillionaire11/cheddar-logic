@@ -3,6 +3,57 @@ function toUpperToken(value) {
   return String(value).trim().toUpperCase();
 }
 
+// ---------------------------------------------------------------------------
+// Canonical play-state contract
+// ---------------------------------------------------------------------------
+
+const CANONICAL_PLAY_STATES = Object.freeze({
+  OFFICIAL_PLAY: 'OFFICIAL_PLAY',
+  LEAN: 'LEAN',
+  WATCH: 'WATCH',
+  NO_PLAY: 'NO_PLAY',
+  BLOCKED: 'BLOCKED',
+});
+
+// Reason codes indicating the market is in a waiting/unavailable state.
+// A candidate with positive edge (PLAY or LEAN) AND any of these codes → WATCH.
+// WATCH is not actionable until the condition resolves; it must never be
+// treated as LEAN or shown as "Slight Edge".
+const WATCH_REASON_CODES = Object.freeze(new Set([
+  'LINE_NOT_CONFIRMED',
+  'EDGE_RECHECK_PENDING',
+  'PRICE_SYNC_PENDING',
+  'MARKET_DATA_STALE',
+  'BLOCKED_BET_VERIFICATION_REQUIRED',
+  'GATE_LINE_MOVEMENT',
+  'MISSING_DATA_NO_ODDS',
+  'MARKET_PRICE_MISSING',
+  'MARKET_EDGE_UNAVAILABLE',
+  'GOALIE_UNCONFIRMED',
+  'GOALIE_CONFLICTING',
+  'INJURY_UNCERTAIN',
+  'WATCHDOG_STALE_SNAPSHOT',
+  'STALE_MARKET_INPUT',
+  'PROJECTION_INPUTS_STALE_FALLBACK',
+  'TEAM_METRICS_FALLBACK_PREV_DAY',
+  'MISSING_DATA_PROJECTION_INPUTS',
+  'MISSING_DATA_DRIVERS',
+  'MISSING_DATA_TEAM_MAPPING',
+  'PASS_MISSING_DRIVER_INPUTS',
+  'PASS_DATA_ERROR',
+]));
+
+// Reason codes indicating a hard gate or policy block — candidate is BLOCKED.
+// BLOCKED is terminal; no downstream surface may upgrade it.
+const HARD_GATE_CODES = Object.freeze(new Set([
+  'HEAVY_FAVORITE_PRICE_CAP',
+  'FIRST_PERIOD_NO_PROJECTION',
+  'EXACT_WAGER_MISMATCH',
+  'NO_PRIMARY_SUPPORT',
+  'MODEL_PROB_MISSING',
+  'PROXY_EDGE_BLOCKED',
+]));
+
 const WEBHOOK_REASON_LABELS = Object.freeze({
   LINE_NOT_CONFIRMED: 'Line not confirmed',
   EDGE_RECHECK_PENDING: 'Edge needs recheck before action',
@@ -293,6 +344,51 @@ function describeWebhookReason(payload, bucket = 'pass_blocked') {
   return WEBHOOK_REASON_LABELS[reasonCode] || 'No edge';
 }
 
+/**
+ * Canonical play-state resolver — the single upstream source of truth.
+ *
+ * Must run after model classification, guardrails, and watchdog.
+ * Must run before Discord rendering, /wedge rendering, POTD selection,
+ * and any final card formatting.
+ *
+ * Invariants:
+ *   - OFFICIAL_PLAY is the only state that counts as a play.
+ *   - LEAN is never an official play; POTD must not select LEAN.
+ *   - WATCH is not actionable (market waiting state).
+ *   - BLOCKED is terminal — no downstream surface may upgrade it.
+ *   - NO_PLAY means evaluated but insufficient edge.
+ */
+function resolveCanonicalPlayState(payload) {
+  if (!payload || typeof payload !== 'object') return 'NO_PLAY';
+
+  const decisionV2 =
+    payload.decision_v2 && typeof payload.decision_v2 === 'object'
+      ? payload.decision_v2
+      : {};
+
+  const reasonCodes = collectReasonCodes(payload);
+
+  // BLOCKED: watchdog veto or official_eligible gate — terminal, no override.
+  if (toUpperToken(decisionV2.watchdog_status) === 'BLOCKED') return 'BLOCKED';
+  if (payload.official_eligible === false) return 'BLOCKED';
+  if (reasonCodes.some((code) => HARD_GATE_CODES.has(code))) return 'BLOCKED';
+
+  const officialStatus = normalizeOfficialStatus(decisionV2.official_status);
+
+  // WATCH: positive signal (PLAY or LEAN) but market is in a waiting state.
+  // Positive edge + unavailable market ≠ LEAN; it is not actionable until resolved.
+  if (officialStatus === 'PLAY' || officialStatus === 'LEAN') {
+    if (toUpperToken(decisionV2.sharp_price_status) === 'PENDING_VERIFICATION') {
+      return 'WATCH';
+    }
+    if (reasonCodes.some((code) => WATCH_REASON_CODES.has(code))) return 'WATCH';
+  }
+
+  if (officialStatus === 'PLAY') return 'OFFICIAL_PLAY';
+  if (officialStatus === 'LEAN') return 'LEAN';
+  return 'NO_PLAY';
+}
+
 function normalizeOfficialStatus(value) {
   const token = toUpperToken(value);
   if (token === 'PLAY' || token === 'LEAN' || token === 'PASS') {
@@ -377,7 +473,6 @@ function deriveWebhookBucket(payload, context = {}) {
   const is1P = context?.is1P === true;
 
   // EVIDENCE cards are context drivers — never standalone bet rows.
-  // Non-1P EVIDENCE cards are always pass_blocked regardless of action/classification.
   if (payload?.kind === 'EVIDENCE' && !is1P) return 'pass_blocked';
 
   let bucket;
@@ -398,24 +493,35 @@ function deriveWebhookBucket(payload, context = {}) {
           ? 'lean'
           : 'pass_blocked';
   } else {
-    const officialStatus = normalizeOfficialStatus(payload?.decision_v2?.official_status);
-    const rootAction = toUpperToken(
-      payload?.action || payload?.play?.action || payload?.status,
-    );
-    const rootClass = toUpperToken(
-      payload?.classification || payload?.play?.classification,
-    );
-
-    if (officialStatus === 'PLAY' || rootAction === 'FIRE' || rootClass === 'BASE') {
+    // Prefer pre-resolved canonical state (set by the publish boundary).
+    // This is the authoritative path; the legacy fallback below is for old
+    // payloads that pre-date final_play_state.
+    const finalPlayState = toUpperToken(payload?.final_play_state);
+    if (finalPlayState === 'OFFICIAL_PLAY') {
       bucket = 'official';
-    } else if (
-      officialStatus === 'LEAN' ||
-      ['HOLD', 'WATCH', 'LEAN', 'EVIDENCE'].includes(rootAction) ||
-      rootClass === 'LEAN'
-    ) {
+    } else if (finalPlayState === 'LEAN') {
       bucket = 'lean';
-    } else {
+    } else if (finalPlayState) {
+      // WATCH, NO_PLAY, BLOCKED → pass_blocked in Discord.
+      // WATCH is not "Slight Edge"; it is blocked until condition resolves.
       bucket = 'pass_blocked';
+    } else {
+      // Legacy fallback for payloads that pre-date final_play_state.
+      const officialStatus = normalizeOfficialStatus(payload?.decision_v2?.official_status);
+      const rootAction = toUpperToken(payload?.action || payload?.play?.action || payload?.status);
+      const rootClass = toUpperToken(payload?.classification || payload?.play?.classification);
+
+      if (officialStatus === 'PLAY' || rootAction === 'FIRE' || rootClass === 'BASE') {
+        bucket = 'official';
+      } else if (
+        officialStatus === 'LEAN' ||
+        ['HOLD', 'WATCH', 'LEAN', 'EVIDENCE'].includes(rootAction) ||
+        rootClass === 'LEAN'
+      ) {
+        bucket = 'lean';
+      } else {
+        bucket = 'pass_blocked';
+      }
     }
   }
 
@@ -453,6 +559,12 @@ function isWebhookLeanEligible(payload, minEdge = 0.15) {
 }
 
 module.exports = {
+  // Canonical play-state contract
+  CANONICAL_PLAY_STATES,
+  WATCH_REASON_CODES,
+  HARD_GATE_CODES,
+  resolveCanonicalPlayState,
+  // Webhook / Discord surface helpers
   deriveWebhookBucket,
   collectReasonCodes,
   describeWebhookReason,
@@ -460,6 +572,7 @@ module.exports = {
   deriveWebhookWouldBecomePlay,
   deriveWebhookDropToPass,
   deriveWebhookReasonCode,
+  // Decision envelope helpers
   deriveLegacyDecisionEnvelope,
   deriveUiDisplayStatus,
   isWebhookLeanEligible,

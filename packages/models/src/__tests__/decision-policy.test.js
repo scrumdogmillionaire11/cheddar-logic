@@ -15,6 +15,7 @@ const {
   mapActionToClassification,
   normalizeOfficialStatus,
   rankOfficialStatus,
+  resolveCanonicalPlayState,
   resolveWebhookDisplaySide,
 } = require('../decision-policy');
 
@@ -194,5 +195,235 @@ describe('decision-policy helpers', () => {
     expect(isWebhookLeanEligible({}, 0.15)).toBe(true);
     expect(isWebhookLeanEligible({ edge_pct: null }, 0.15)).toBe(true);
     expect(isWebhookLeanEligible({ edge_over_pp: 'abc' }, 0.15)).toBe(true);
+  });
+});
+
+describe('resolveCanonicalPlayState — canonical play-state contract', () => {
+  // ── Invariant checks ──────────────────────────────────────────────────────
+
+  test('null/undefined payload → NO_PLAY (safe default)', () => {
+    expect(resolveCanonicalPlayState(null)).toBe('NO_PLAY');
+    expect(resolveCanonicalPlayState(undefined)).toBe('NO_PLAY');
+    expect(resolveCanonicalPlayState({})).toBe('NO_PLAY');
+  });
+
+  // ── Test 1: positive edge + hard gate failure → BLOCKED ───────────────────
+
+  test('1: PLAY status + HEAVY_FAVORITE_PRICE_CAP → BLOCKED', () => {
+    const payload = {
+      decision_v2: { official_status: 'PLAY' },
+      reason_codes: ['HEAVY_FAVORITE_PRICE_CAP'],
+    };
+    expect(resolveCanonicalPlayState(payload)).toBe('BLOCKED');
+  });
+
+  test('1b: LEAN status + NO_PRIMARY_SUPPORT → BLOCKED', () => {
+    const payload = {
+      decision_v2: { official_status: 'LEAN' },
+      reason_codes: ['NO_PRIMARY_SUPPORT'],
+    };
+    expect(resolveCanonicalPlayState(payload)).toBe('BLOCKED');
+  });
+
+  // ── Test 2: positive edge + market unavailable → WATCH ───────────────────
+
+  test('2: LEAN + LINE_NOT_CONFIRMED → WATCH (not Slight Edge)', () => {
+    const payload = {
+      decision_v2: { official_status: 'LEAN' },
+      reason_codes: ['LINE_NOT_CONFIRMED'],
+    };
+    expect(resolveCanonicalPlayState(payload)).toBe('WATCH');
+  });
+
+  test('2b: PLAY + EDGE_RECHECK_PENDING → WATCH', () => {
+    const payload = {
+      decision_v2: { official_status: 'PLAY' },
+      reason_codes: ['EDGE_RECHECK_PENDING'],
+    };
+    expect(resolveCanonicalPlayState(payload)).toBe('WATCH');
+  });
+
+  test('2c: LEAN + GOALIE_UNCONFIRMED → WATCH', () => {
+    const payload = {
+      decision_v2: { official_status: 'LEAN' },
+      reason_codes: ['GOALIE_UNCONFIRMED'],
+    };
+    expect(resolveCanonicalPlayState(payload)).toBe('WATCH');
+  });
+
+  test('2d: PLAY + sharp_price_status PENDING_VERIFICATION → WATCH', () => {
+    const payload = {
+      decision_v2: {
+        official_status: 'PLAY',
+        sharp_price_status: 'PENDING_VERIFICATION',
+      },
+    };
+    expect(resolveCanonicalPlayState(payload)).toBe('WATCH');
+  });
+
+  // ── Test 3: positive edge below official threshold → LEAN ─────────────────
+
+  test('3: LEAN status, clean reason codes → LEAN', () => {
+    const payload = {
+      decision_v2: { official_status: 'LEAN' },
+      reason_codes: [],
+    };
+    expect(resolveCanonicalPlayState(payload)).toBe('LEAN');
+  });
+
+  test('3b: LEAN with no reason_codes at all → LEAN', () => {
+    const payload = {
+      decision_v2: { official_status: 'LEAN' },
+    };
+    expect(resolveCanonicalPlayState(payload)).toBe('LEAN');
+  });
+
+  // ── Test 4: official candidate passes all gates → OFFICIAL_PLAY ──────────
+
+  test('4: PLAY status, no blocking or watch codes → OFFICIAL_PLAY', () => {
+    const payload = {
+      decision_v2: { official_status: 'PLAY' },
+      reason_codes: [],
+    };
+    expect(resolveCanonicalPlayState(payload)).toBe('OFFICIAL_PLAY');
+  });
+
+  // ── Test 5: no OFFICIAL_PLAY candidates → LEAN state, not OFFICIAL_PLAY ──
+
+  test('5: LEAN never maps to OFFICIAL_PLAY', () => {
+    const payload = { decision_v2: { official_status: 'LEAN' } };
+    // Invariant: official=[] in the router, POTD must return NO_PICK
+    expect(resolveCanonicalPlayState(payload)).toBe('LEAN');
+    expect(resolveCanonicalPlayState(payload)).not.toBe('OFFICIAL_PLAY');
+  });
+
+  // ── Test 6: negative-edge top-ranked raw candidate → NO_PLAY ─────────────
+
+  test('6: PASS status → NO_PLAY (cannot be POTD eligible)', () => {
+    const payload = {
+      decision_v2: { official_status: 'PASS' },
+      reason_codes: ['NO_EDGE_AT_PRICE'],
+    };
+    expect(resolveCanonicalPlayState(payload)).toBe('NO_PLAY');
+  });
+
+  test('6b: missing official_status → NO_PLAY', () => {
+    const payload = { decision_v2: {} };
+    expect(resolveCanonicalPlayState(payload)).toBe('NO_PLAY');
+  });
+
+  // ── Test 7: Discord renders strictly from final_play_state ────────────────
+
+  test('7: deriveWebhookBucket — OFFICIAL_PLAY → official bucket', () => {
+    const payload = { final_play_state: 'OFFICIAL_PLAY', action: 'FIRE', classification: 'BASE' };
+    expect(deriveWebhookBucket(payload)).toBe('official');
+  });
+
+  test('7b: deriveWebhookBucket — LEAN → lean bucket (Slight Edge)', () => {
+    const payload = { final_play_state: 'LEAN', action: 'HOLD', classification: 'LEAN' };
+    expect(deriveWebhookBucket(payload)).toBe('lean');
+  });
+
+  test('7c: deriveWebhookBucket — WATCH → pass_blocked (NOT lean / NOT Slight Edge)', () => {
+    // This is the core cross-surface bug: a verification-pending LEAN must not
+    // be shown as "Slight Edge" on Discord. With final_play_state it won't be.
+    const payload = { final_play_state: 'WATCH', action: 'HOLD', classification: 'LEAN' };
+    expect(deriveWebhookBucket(payload)).toBe('pass_blocked');
+  });
+
+  test('7d: deriveWebhookBucket — BLOCKED → pass_blocked', () => {
+    const payload = { final_play_state: 'BLOCKED', action: 'HOLD', classification: 'LEAN' };
+    expect(deriveWebhookBucket(payload)).toBe('pass_blocked');
+  });
+
+  test('7e: deriveWebhookBucket — NO_PLAY → pass_blocked', () => {
+    const payload = { final_play_state: 'NO_PLAY', action: 'PASS', classification: 'PASS' };
+    expect(deriveWebhookBucket(payload)).toBe('pass_blocked');
+  });
+
+  // ── Test 8: /wedge payload equals canonical resolver output ───────────────
+
+  test('8: LEAN + blocking reason codes → WATCH, not LEAN', () => {
+    const payload = {
+      decision_v2: { official_status: 'LEAN' },
+      reason_codes: ['PRICE_SYNC_PENDING'],
+    };
+    expect(resolveCanonicalPlayState(payload)).toBe('WATCH');
+  });
+
+  test('8b: PLAY + MARKET_DATA_STALE → WATCH', () => {
+    const payload = {
+      decision_v2: { official_status: 'PLAY' },
+      reason_codes: ['MARKET_DATA_STALE'],
+    };
+    expect(resolveCanonicalPlayState(payload)).toBe('WATCH');
+  });
+
+  // ── Test 9: watchdog veto is terminal — cannot be overridden ─────────────
+
+  test('9: watchdog_status BLOCKED + PLAY official_status → BLOCKED', () => {
+    const payload = {
+      decision_v2: {
+        official_status: 'PLAY',
+        watchdog_status: 'BLOCKED',
+      },
+    };
+    expect(resolveCanonicalPlayState(payload)).toBe('BLOCKED');
+  });
+
+  test('9b: watchdog BLOCKED overrides even clean reason codes', () => {
+    const payload = {
+      decision_v2: {
+        official_status: 'PLAY',
+        watchdog_status: 'BLOCKED',
+      },
+      reason_codes: [],
+    };
+    expect(resolveCanonicalPlayState(payload)).toBe('BLOCKED');
+  });
+
+  // ── Test 10: no downstream surface can manufacture a play from NO_QUALIFIED_PROPS
+
+  test('10: PASS official_status, no reason codes → NO_PLAY', () => {
+    const payload = {
+      decision_v2: { official_status: 'PASS' },
+      reason_codes: [],
+    };
+    expect(resolveCanonicalPlayState(payload)).toBe('NO_PLAY');
+  });
+
+  test('10b: official_eligible=false overrides PLAY status → BLOCKED', () => {
+    const payload = {
+      decision_v2: { official_status: 'PLAY' },
+      official_eligible: false,
+      reason_codes: [],
+    };
+    expect(resolveCanonicalPlayState(payload)).toBe('BLOCKED');
+  });
+
+  test('10c: final_play_state WATCH cannot be selected as POTD (bucket is pass_blocked)', () => {
+    const payload = { final_play_state: 'WATCH' };
+    expect(deriveWebhookBucket(payload)).toBe('pass_blocked');
+  });
+
+  // ── Reason code precedence: BLOCKED beats WATCH beats positive status ──────
+
+  test('HARD_GATE beats WATCH_REASON in the same payload', () => {
+    const payload = {
+      decision_v2: { official_status: 'PLAY' },
+      reason_codes: ['LINE_NOT_CONFIRMED', 'HEAVY_FAVORITE_PRICE_CAP'],
+    };
+    expect(resolveCanonicalPlayState(payload)).toBe('BLOCKED');
+  });
+
+  // ── forcePass override in deriveWebhookBucket still applies ───────────────
+
+  test('forcePass action overrides final_play_state=OFFICIAL_PLAY → pass_blocked', () => {
+    const payload = {
+      final_play_state: 'OFFICIAL_PLAY',
+      action: 'PASS',
+      classification: 'BASE',
+    };
+    expect(deriveWebhookBucket(payload)).toBe('pass_blocked');
   });
 });

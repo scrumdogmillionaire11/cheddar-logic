@@ -329,6 +329,13 @@ function buildCardPayloadData(candidate, { nowIso, wagerAmount, bankrollAtPost, 
     status: 'FIRE',
     classification: 'BASE',
     decision_v2: { official_status: 'PLAY' },
+    // Canonical play-state: POTD only fires for candidates that cleared the
+    // positive-edge and confidence gates in gatherBestCandidate(). Stamp
+    // final_play_state explicitly so all downstream surfaces (Discord, /wedge)
+    // read the authoritative state rather than re-deriving it.
+    final_play_state: 'OFFICIAL_PLAY',
+    official_eligible: true,
+    potd_eligible: true,
     prediction: candidate.selection,
     confidence: candidate.totalScore,
     confidence_pct: Math.round(candidate.totalScore * 100),
@@ -468,16 +475,22 @@ async function gatherBestCandidate({
     maxNominees: POTD_MAX_NOMINEES,
     requirePositiveEdge: true,
   });
+  // diagnosticNominees are for internal diagnostics only — they include sub-threshold
+  // and negative-edge candidates and must NEVER be treated as POTD nominees.
+  // They must not be written to potd_nominees or used to select bestCandidate.
   const diagnosticNominees = selectTopPlaysFn(scoredCandidates, {
     minConfidence: POTD_MIN_TOTAL_SCORE,
     maxNominees: POTD_MAX_NOMINEES,
     requirePositiveEdge: false,
   });
-  const rankedNominees = fireableNominees.length > 0 ? fireableNominees : diagnosticNominees;
+  // rankedNominees = only fireable (positive-edge, above threshold) candidates.
+  // When fireableNominees is empty, rankedNominees is empty — POTD must return NO_PICK.
+  const rankedNominees = fireableNominees;
 
   return {
     bestCandidate: fireableNominees[0] || null,
     rankedNominees,
+    diagnosticNominees, // non-play diagnostics — labeled non-play, never nominated
     allScoredCandidates: scoredCandidates,
     fetchErrors,
     activeSports: sports,

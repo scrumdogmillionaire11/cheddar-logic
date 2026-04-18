@@ -16,6 +16,7 @@ const {
   isRecommendationPayload,
   normalizeMarketType,
   normalizePeriod,
+  resolveCanonicalPlayState,
   resolveWebhookDisplaySide,
   shouldFlip,
 } = require('@cheddar-logic/models');
@@ -44,14 +45,11 @@ const POLICY_BLOCK_CODES = new Set([
 
 const WEBHOOK_MIN_LEAN_EDGE = Number(process.env.DISCORD_MIN_LEAN_EDGE ?? 0.15);
 
-/**
- * Derive UI action from tier
- * Maps model tier to display action for UI filtering
- */
+// Legacy tier → action mapping. Used only for non-Wave1 payloads that do not
+// go through buildDecisionV2(). All new payloads use decision_v2.official_status
+// as the authoritative source; final_play_state is derived from that.
 function deriveAction({ tier }) {
   const t = String(tier || '').toUpperCase();
-
-  // Simple tier-based mapping ensures UI sees plays immediately
   if (t === 'SUPER') return 'FIRE';
   if (t === 'BEST') return 'HOLD';
   if (t === 'GOOD') return 'HOLD';
@@ -253,6 +251,10 @@ function applyDecisionVeto(cardOrDecision, vetoReason) {
     execution_status: 'BLOCKED',
     publish_ready: false,
   });
+
+  // Veto is terminal — stamp BLOCKED unconditionally so no downstream surface
+  // can re-classify this candidate as a play.
+  cardOrDecision.final_play_state = 'BLOCKED';
 
   return cardOrDecision;
 }
@@ -480,6 +482,7 @@ function finalizeDecisionFields(payload, context = {}) {
     payload.execution_status = resolveExecutionStatus(payload);
     syncCanonicalDecisionEnvelope(payload);
     syncSelectionCompatibilityFields(payload);
+    payload.final_play_state = resolveCanonicalPlayState(payload);
     return payload;
   }
 
@@ -504,6 +507,7 @@ function finalizeDecisionFields(payload, context = {}) {
     ]);
     payload.execution_status = resolveExecutionStatus(payload);
     syncCanonicalDecisionEnvelope(payload, { publish_ready: false });
+    payload.final_play_state = 'BLOCKED';
     return payload;
   }
 
@@ -528,6 +532,7 @@ function finalizeDecisionFields(payload, context = {}) {
       payload.execution_status = resolveExecutionStatus(payload);
       syncCanonicalDecisionEnvelope(payload);
       syncSelectionCompatibilityFields(payload);
+      payload.final_play_state = resolveCanonicalPlayState(payload);
       return payload;
     }
   }
@@ -539,16 +544,15 @@ function finalizeDecisionFields(payload, context = {}) {
   });
 
   payload.action = action;
-  // Legacy fallback for getPlayDisplayAction() backward compatibility
   payload.status =
     action === 'FIRE' ? 'FIRE' : action === 'HOLD' ? 'WATCH' : 'PASS';
   payload.classification = mapActionToClassification(action);
   payload.execution_status = resolveExecutionStatus(payload);
-  // Only sync canonical envelope if decision_v2 already exists
   if (payload.decision_v2) {
     syncCanonicalDecisionEnvelope(payload);
   }
   syncSelectionCompatibilityFields(payload);
+  payload.final_play_state = resolveCanonicalPlayState(payload);
 
   return payload;
 }
