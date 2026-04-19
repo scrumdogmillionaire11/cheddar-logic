@@ -1685,8 +1685,8 @@ describe('WI-0720 MLB execution envelope', () => {
     expect(payload.classification).toBe('LEAN');
   });
 
-  test('non-full-game-ml card with conf=0.50 still gets blocked (override is type-specific)', () => {
-    // Gate relaxation must not apply to pitcher-K or other card types.
+  test('non-full-game-ml card with conf=0.50 keeps running (confidence is advisory-only)', () => {
+    // Confidence signals are advisory; non-full-game-ml rows only block on hard gate reasons.
     const payload = {
       card_type: 'mlb-pitcher-k',
       execution_status: 'EXECUTABLE',
@@ -1707,9 +1707,10 @@ describe('WI-0720 MLB execution envelope', () => {
 
     const result = applyExecutionGateToMlbPayload(payload, { oddsSnapshot, nowMs });
 
-    expect(result).toEqual({ evaluated: true, blocked: true });
-    expect(payload.status).toBe('PASS');
-    expect(payload.execution_gate.blocked_by).toContain(
+    expect(result).toEqual({ evaluated: true, blocked: false });
+    expect(payload.status).toBe('FIRE');
+    expect(payload.execution_gate.blocked_by).toEqual([]);
+    expect(payload.execution_gate.advisory_by).toContain(
       'CONFIDENCE_BELOW_THRESHOLD:0.500',
     );
   });
