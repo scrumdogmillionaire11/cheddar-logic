@@ -172,6 +172,7 @@ Notable: WI-0797 (pipeline health Discord watchdog), WI-0798 (NHL season key fix
 
 | # | Description | Date | Commit | Directory |
 |---|-------------|------|--------|-----------|
+| 162 | Dead code removal sweep — deprecated exports and leftover shims | 2026-04-19 | 4b936849 | [162-dead-code-removal-sweep-deprecated-expor](./quick/162-dead-code-removal-sweep-deprecated-expor/) |
 | 161 | WI-0982: MLB full-game WATCH/HOLD auto-close pipeline integration tests | 2026-04-17 | 8c9ecd0b | [161-mlb-full-game-settlement-display-log-eli](./quick/161-mlb-full-game-settlement-display-log-eli/) |
 | 160 | WI-0951: MLB T-Minus Freshness Override Schedule | 2026-04-16 | 8f8356a9 | [160-wi-0951-mlb-t-minus-freshness-override-s](./quick/160-wi-0951-mlb-t-minus-freshness-override-s/) |
 | 159 | WI-0911 NHL Player Blocks Projection Settlement Policy | 2026-04-13 | ed879b5 | [159-wi-0911-nhl-player-blocks-projection-set](./quick/159-wi-0911-nhl-player-blocks-projection-set/) |
