@@ -16,7 +16,7 @@ import {
   getDefaultFilters,
   resetFilters,
 } from '@/lib/game-card/filters';
-import { transformGames, transformPropGames } from '@/lib/game-card/transform';
+import { transformGames, transformPropGames } from '@/lib/game-card/transform/index';
 import {
   enrichCards,
   hasEdgeVerification,

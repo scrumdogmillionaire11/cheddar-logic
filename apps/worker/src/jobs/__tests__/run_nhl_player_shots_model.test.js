@@ -3317,7 +3317,7 @@ describe('run_nhl_player_shots_model', () => {
         opponent_attempt_factor: 1.03,
         defensive_zone_factor: 1.05,
         underdog_script_factor: 1.08,
-        playoff_tightening_factor: 1.0,
+        playoff_tightening_factor: 1.06,
       }),
     );
 
@@ -3326,7 +3326,7 @@ describe('run_nhl_player_shots_model', () => {
       opponent_attempt_factor: 1.03,
       defensive_zone_factor: 1.05,
       underdog_script_factor: 1.08,
-      playoff_tightening_factor: 1,
+      playoff_tightening_factor: 1.06,
     });
     expect(blkCard.payloadData.drivers.blk_factor_source).toEqual({
       opponent_attempt_factor: 'computed',
@@ -3395,7 +3395,7 @@ describe('run_nhl_player_shots_model', () => {
       opponent_attempt_factor: 1,
       defensive_zone_factor: 1,
       underdog_script_factor: 1,
-      playoff_tightening_factor: 1,
+      playoff_tightening_factor: 1.06,
     });
   });
 

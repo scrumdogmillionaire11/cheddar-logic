@@ -150,7 +150,7 @@ interface ApiPropDecision {
 }
 
 // API types from cards page
-interface ApiPlay {
+export interface ApiPlay {
   source_card_id?: string;
   cardType: string;
   cardTitle: string;
