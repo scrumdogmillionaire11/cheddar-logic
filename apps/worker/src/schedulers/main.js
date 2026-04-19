@@ -44,7 +44,7 @@ const {
 
 const {
   getCurrentQuotaTier, logQuotaDailySummary,
-  hasFreshInputsForModels, hasFreshOddsForModels,
+  hasFreshInputsForModels,
   hasFreshTeamMetricsCache, checkOddsFreshnessHealth,
 } = require('./quota');
 

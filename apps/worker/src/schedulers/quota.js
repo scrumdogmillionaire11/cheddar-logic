@@ -128,11 +128,6 @@ function hasFreshInputsForModels(opts = {}) {
   return wasJobRecentlySuccessful('pull_odds_hourly', maxAgeMinutes);
 }
 
-/** @deprecated Use hasFreshInputsForModels. */
-function hasFreshOddsForModels() {
-  return hasFreshInputsForModels();
-}
-
 const REQUIRE_FRESH_TEAM_METRICS =
   process.env.REQUIRE_FRESH_TEAM_METRICS_FOR_PROJECTION_MODELS !== 'false';
 const TEAM_METRICS_MAX_AGE_MINUTES =
@@ -170,7 +165,6 @@ module.exports = {
   getCurrentQuotaTier,
   logQuotaDailySummary,
   hasFreshInputsForModels,
-  hasFreshOddsForModels,
   hasFreshTeamMetricsCache,
   checkOddsFreshnessHealth,
 };

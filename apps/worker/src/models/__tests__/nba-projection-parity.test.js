@@ -52,9 +52,9 @@ describe('NBA projection parity', () => {
     expect(Math.abs(driverProjectedTotal - canonical.projectedTotal)).toBeLessThanOrEqual(3);
   });
 
-  test('projectNBA remains deprecated but available for legacy callers', () => {
-    const { projectNBA } = require('../projections');
+  test('projectNBA has been deleted and is no longer exported', () => {
+    const projections = require('../projections');
 
-    expect(typeof projectNBA).toBe('function');
+    expect(projections.projectNBA).toBeUndefined();
   });
 });
