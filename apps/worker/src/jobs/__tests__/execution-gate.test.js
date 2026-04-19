@@ -59,7 +59,7 @@ describe('evaluateExecution', () => {
     expect(result.blocked_by).toContain('STALE_SNAPSHOT:360s');
   });
 
-  test('blocks when confidence is below 0.55 threshold', () => {
+  test('records low confidence as advisory and does not hard-block by itself', () => {
     const result = evaluateExecution({
       modelStatus: 'MODEL_OK',
       rawEdge: 0.1,
@@ -67,8 +67,10 @@ describe('evaluateExecution', () => {
       snapshotAgeMs: 30_000,
     });
 
-    expect(result.shouldBet).toBe(false);
-    expect(result.blocked_by).toContain('CONFIDENCE_BELOW_THRESHOLD:0.549');
+    expect(result.shouldBet).toBe(true);
+    expect(result.blocked_by).toEqual([]);
+    expect(result.hard_blocked_by).toEqual([]);
+    expect(result.advisory_by).toContain('CONFIDENCE_BELOW_THRESHOLD:0.549');
   });
 
   // DEGRADED coupling test: input-gate caps DEGRADED confidence at 0.55.
@@ -87,8 +89,9 @@ describe('evaluateExecution', () => {
     // add a CONFIDENCE_BELOW_THRESHOLD block, so the only blocker is the model
     // status. Callers that allow DEGRADED plays through model-status gating
     // will not be double-blocked on confidence.
-    expect(result.blocked_by).not.toContain('CONFIDENCE_BELOW_THRESHOLD:0.550');
+    expect(result.advisory_by).not.toContain('CONFIDENCE_BELOW_THRESHOLD:0.550');
     expect(result.blocked_by).toContain('MODEL_STATUS_DEGRADED');
+    expect(result.hard_blocked_by).toContain('MODEL_STATUS_DEGRADED');
   });
 
   test('blocks mixed-book line/price source mismatches before executable status', () => {
@@ -240,7 +243,7 @@ describe('evaluateMlbExecution', () => {
     expect(result.downgradeHighEdgeToLean).toBe(true);
   });
 
-  test('centralized MLB policy can override soft confidence/net-edge blockers for large-edge full-game ML rows', () => {
+  test('centralized MLB policy does not require override when confidence-only signal is advisory', () => {
     const payload = {
       sport: 'MLB',
       card_type: 'mlb-full-game-ml',
@@ -263,10 +266,11 @@ describe('evaluateMlbExecution', () => {
       cardType: payload.card_type,
     });
 
-    expect(result.gateResult.shouldBet).toBe(false);
-    expect(result.applyHighEdgeOverride).toBe(true);
+    expect(result.gateResult.shouldBet).toBe(true);
+    expect(result.applyHighEdgeOverride).toBe(false);
     expect(result.gateShouldBet).toBe(true);
     expect(result.gateBlockedBy).toEqual([]);
+    expect(result.gateResult.advisory_by).toContain('CONFIDENCE_BELOW_THRESHOLD:0.400');
   });
 
   // ADR-0017: vigCost/slippageCost are no longer deducted. The override guard
@@ -328,8 +332,9 @@ describe('evaluateMlbExecution', () => {
 
     expect(result.applyHighEdgeOverride).toBe(false);
     expect(result.downgradeHighEdgeToLean).toBe(false);
-    expect(result.gateShouldBet).toBe(false);
-    expect(result.gateBlockedBy).toContain('CONFIDENCE_BELOW_THRESHOLD:0.400');
+    expect(result.gateShouldBet).toBe(true);
+    expect(result.gateBlockedBy).toEqual([]);
+    expect(result.gateResult.advisory_by).toContain('CONFIDENCE_BELOW_THRESHOLD:0.400');
   });
 });
 

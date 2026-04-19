@@ -774,6 +774,10 @@ function applyExecutionGateToNbaCard(card, { oddsSnapshot, nowMs = Date.now() } 
     should_bet: gateResult.shouldBet,
     net_edge: gateResult.netEdge,
     blocked_by: gateResult.blocked_by,
+    hard_blocked_by: Array.isArray(gateResult.hard_blocked_by)
+      ? gateResult.hard_blocked_by
+      : gateResult.blocked_by,
+    advisory_by: Array.isArray(gateResult.advisory_by) ? gateResult.advisory_by : [],
     model_status: resolvedModelStatus,
     snapshot_age_ms: snapshotAgeMs,
     evaluated_at: new Date(nowMs).toISOString(),

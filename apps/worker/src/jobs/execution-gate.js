@@ -27,6 +27,18 @@ function mapBlockedByToDropReasonCode(blocked_by) {
   return 'UNKNOWN_GATE';
 }
 
+function isHardExecutionBlock(reason) {
+  const token = String(reason || '');
+  return (
+    token.startsWith('MODEL_STATUS_') ||
+    token.startsWith('NO_EDGE_COMPUTED') ||
+    token.startsWith('NET_EDGE_INSUFFICIENT') ||
+    token.startsWith('STALE_SNAPSHOT') ||
+    token.startsWith('MIXED_BOOK_SOURCE_MISMATCH') ||
+    token === 'CALIBRATION_KILL_SWITCH'
+  );
+}
+
 // DEPRECATED (ADR-0017): these constants are no longer deducted from netEdge.
 // Edge is computed against the vig-removed fair market probability in edge-calculator.js,
 // making edge = modelProb − fairProb = the bettor's true net EV. Subtracting vigCost
@@ -132,7 +144,7 @@ function evaluateFreshnessTier(snapshotAgeMs, contract) {
  * @param {number} [params.slippageCost]
  * @param {number} [params.minNetEdge]
  * @param {number} [params.minConfidence]
- * @returns {{ shouldBet: boolean, should_bet: boolean, reason: string, block_reason: string|null, netEdge: number|null, blocked_by: string[], freshness_decision: object }}
+ * @returns {{ shouldBet: boolean, should_bet: boolean, reason: string, block_reason: string|null, netEdge: number|null, blocked_by: string[], hard_blocked_by: string[], advisory_by: string[], freshness_decision: object }}
  */
 function evaluateExecution(params) {
   const {
@@ -155,6 +167,7 @@ function evaluateExecution(params) {
   } = params;
 
   const blocked_by = [];
+  const advisory_by = [];
   const hasRawEdge = rawEdge !== null && rawEdge !== undefined && Number.isFinite(rawEdge);
   const hasConfidence = confidence !== null && confidence !== undefined && Number.isFinite(confidence);
   const hasSnapshotAge = snapshotAgeMs !== null && snapshotAgeMs !== undefined && Number.isFinite(snapshotAgeMs);
@@ -186,7 +199,7 @@ function evaluateExecution(params) {
   }
 
   if (hasConfidence && confidence < minConfidence) {
-    blocked_by.push(`CONFIDENCE_BELOW_THRESHOLD:${confidence.toFixed(3)}`);
+    advisory_by.push(`CONFIDENCE_BELOW_THRESHOLD:${confidence.toFixed(3)}`);
   }
 
   // Freshness evaluation (three-tier logic per WI-0950)
@@ -248,9 +261,10 @@ function evaluateExecution(params) {
     blocked_by.push('CALIBRATION_KILL_SWITCH');
   }
 
-  const shouldBet = blocked_by.length === 0;
-  const reason = shouldBet ? 'ALL_GATES_PASSED' : blocked_by[0];
-  const block_reason = shouldBet ? null : blocked_by[0];
+  const hard_blocked_by = blocked_by.filter(isHardExecutionBlock);
+  const shouldBet = hard_blocked_by.length === 0;
+  const reason = shouldBet ? 'ALL_GATES_PASSED' : hard_blocked_by[0];
+  const block_reason = shouldBet ? null : hard_blocked_by[0];
 
   return {
     shouldBet,
@@ -259,6 +273,8 @@ function evaluateExecution(params) {
     block_reason,
     netEdge,
     blocked_by,
+    hard_blocked_by,
+    advisory_by,
     freshness_decision,
     drop_reason: shouldBet
       ? null

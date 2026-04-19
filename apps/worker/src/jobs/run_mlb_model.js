@@ -2198,6 +2198,10 @@ function applyExecutionGateToMlbPayload(payload, { oddsSnapshot, nowMs = Date.no
     should_bet: gateShouldBet,
     net_edge: gateResult.netEdge,
     blocked_by: gateBlockedBy,
+    hard_blocked_by: Array.isArray(gateResult.hard_blocked_by)
+      ? gateResult.hard_blocked_by
+      : gateBlockedBy,
+    advisory_by: Array.isArray(gateResult.advisory_by) ? gateResult.advisory_by : [],
     model_status: resolvedModelStatus,
     snapshot_age_ms: snapshotAgeMs,
     freshness_decision: gateResult.freshness_decision || null,
@@ -4438,6 +4442,8 @@ async function runMLBModel({
                 should_bet: null,
                 net_edge: null,
                 blocked_by: ['PROJECTION_ONLY_MARKET'],
+                hard_blocked_by: ['PROJECTION_ONLY_MARKET'],
+                advisory_by: [],
                 model_status: String(payloadData.model_status || 'MODEL_OK').toUpperCase(),
                 snapshot_age_ms: projectionOnlySnapshotMeta.resolution?.resolved_age_ms ?? null,
                 freshness_decision: null,
