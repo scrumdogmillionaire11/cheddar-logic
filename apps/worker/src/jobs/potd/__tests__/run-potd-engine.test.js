@@ -264,13 +264,48 @@ describe('runPotdEngine', () => {
       `SELECT selection, game_time_utc, candidate_identity_key
        FROM potd_shadow_candidates`,
     );
-    expect(shadowRows).toHaveLength(1);
-    expect(shadowRows[0].selection).toBe('OVER');
-    expect(shadowRows[0].game_time_utc).toBe(candidate.commence_time);
-    expect(shadowRows[0].candidate_identity_key).toEqual(expect.any(String));
+    expect(shadowRows).toHaveLength(0);
   });
 
-  test('no-best-candidate path captures shadow candidates with canonical selection', async () => {
+  test('fired path captures top three near-miss nominees and excludes official winner', async () => {
+    const { runPotdEngine } = require('../run_potd_engine');
+    const winner = buildSelectedCandidate({ gameId: 'potd-near-miss-winner', selectionLabel: 'OVER 5.5' });
+    const miss1 = buildSelectedCandidate({ gameId: 'potd-near-miss-1', selectionLabel: 'UNDER 6.5', selection: 'UNDER', edgePct: 0.024 });
+    const miss2 = buildSelectedCandidate({ gameId: 'potd-near-miss-2', selectionLabel: 'OVER 4.5', edgePct: 0.023 });
+    const miss3 = buildSelectedCandidate({ gameId: 'potd-near-miss-3', selectionLabel: 'OVER 7.5', edgePct: 0.022 });
+    const miss4 = buildSelectedCandidate({ gameId: 'potd-near-miss-4', selectionLabel: 'OVER 8.5', edgePct: 0.021 });
+    const ranked = [winner, miss1, miss2, miss3, miss4];
+
+    const result = await runPotdEngine({
+      jobKey: 'potd|near-miss-fired-selection',
+      force: true,
+      fetchOddsFn: async () => ({
+        games: ranked.map((candidate) => ({ gameId: candidate.gameId })),
+        errors: [],
+      }),
+      buildCandidatesFn: (game) =>
+        ranked.filter((candidate) => candidate.gameId === game.gameId),
+      scoreCandidateFn: (value) => value,
+      selectTopPlaysFn: () => ranked,
+      kellySizeFn: () => 2.0,
+      sendDiscordMessagesFn: async () => 1,
+    });
+
+    expect(result.success).toBe(true);
+
+    const shadowRows = readRows(
+      `SELECT game_id, selection
+       FROM potd_shadow_candidates
+       ORDER BY id ASC`,
+    );
+    expect(shadowRows).toEqual([
+      { game_id: miss1.gameId, selection: 'UNDER' },
+      { game_id: miss2.gameId, selection: 'OVER' },
+      { game_id: miss3.gameId, selection: 'OVER' },
+    ]);
+  });
+
+  test('no-best-candidate path records no shadow rows when no fireable nominees remain', async () => {
     const { runPotdEngine } = require('../run_potd_engine');
     const candidate = buildSelectedCandidate({
       gameId: 'potd-negative-edge-shadow-001',
@@ -300,10 +335,7 @@ describe('runPotdEngine', () => {
       `SELECT selection, game_time_utc, candidate_identity_key
        FROM potd_shadow_candidates`,
     );
-    expect(shadowRows).toHaveLength(1);
-    expect(shadowRows[0].selection).toBe('AWAY');
-    expect(shadowRows[0].game_time_utc).toBe(candidate.commence_time);
-    expect(shadowRows[0].candidate_identity_key).toEqual(expect.any(String));
+    expect(shadowRows).toHaveLength(0);
   });
 
   test('zero-wager path captures shadow candidates', async () => {
@@ -364,11 +396,11 @@ describe('runPotdEngine', () => {
     expect(shadowRows[0].candidate_identity_key).toEqual(expect.any(String));
   });
 
-  test('same-day rerun upserts shadow candidates by identity key', async () => {
+  test('same-day rerun upserts near-miss shadow candidates by identity key', async () => {
     const { runPotdEngine } = require('../run_potd_engine');
     const candidate = buildSelectedCandidate({
       gameId: 'potd-shadow-upsert-001',
-      edgePct: -0.001,
+      edgePct: 0.025,
       totalScore: 0.72,
     });
 
@@ -377,8 +409,8 @@ describe('runPotdEngine', () => {
       fetchOddsFn: async () => ({ games: [{ gameId: candidate.gameId }], errors: [] }),
       buildCandidatesFn: () => [candidate],
       scoreCandidateFn: (v) => v,
-      selectTopPlaysFn: () => [],
-      kellySizeFn: () => 1,
+      selectTopPlaysFn: (values) => (values.length > 0 ? [values[0]] : []),
+      kellySizeFn: () => 0,
       sendDiscordMessagesFn: async () => 1,
     };
 

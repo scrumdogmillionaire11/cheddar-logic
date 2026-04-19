@@ -338,6 +338,14 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
         args: { jobKey: mirrorJobKey, dryRun },
         reason: 'potd settlement mirror after canonical settlement jobs',
       });
+      const shadowSettlementJobKey = `potd-shadow-settlement|${nowEt.toISODate()}|${String(nowEt.hour).padStart(2, '0')}`;
+      jobs.push({
+        jobName: 'settle_potd_shadow_candidates',
+        jobKey: shadowSettlementJobKey,
+        execute: (args) => require('../jobs/potd/settle-shadow-candidates').settleShadowCandidates(args),
+        args: { jobKey: shadowSettlementJobKey, dryRun },
+        reason: 'potd near-miss shadow settlement after canonical settlement jobs',
+      });
     }
   }
 

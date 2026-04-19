@@ -8,8 +8,6 @@ import {
 
 // WI-0967: Query projection_proxy_evals table for graded projection results.
 // These rows come from settle_projections.js which calls buildProjectionProxyMarketRows().
-const CARD_FAMILIES = ['NHL_1P_TOTAL'] as const;
-
 type DbProxyEvalRow = {
   id: number;
   card_id: string;
@@ -29,13 +27,7 @@ type DbProxyEvalRow = {
   hit_flag: number;
   tier_score: number;
   consensus_bonus: number;
-};
-
-type DbCardRow = {
   card_title: string | null;
-};
-
-type DbGameRow = {
   home_team: string | null;
   away_team: string | null;
 };
@@ -90,15 +82,12 @@ export async function GET(
 
     // WI-0967: Query projection_proxy_evals directly.
     // Every settled projection card has a corresponding row in this table.
-    const familyPlaceholders = CARD_FAMILIES.map(() => '?').join(',');
-
     const countRow = db
       .prepare(
         `SELECT COUNT(*) AS cnt
-         FROM projection_proxy_evals
-         WHERE card_family IN (${familyPlaceholders})`,
+         FROM projection_proxy_evals`,
       )
-      .get(...CARD_FAMILIES) as { cnt: number };
+      .get() as { cnt: number };
 
     const proxyRows = db
       .prepare(
@@ -120,41 +109,19 @@ export async function GET(
            ppe.graded_result,
            ppe.hit_flag,
            ppe.tier_score,
-           ppe.consensus_bonus
+           ppe.consensus_bonus,
+           cp.card_title,
+           g.home_team,
+           g.away_team
          FROM projection_proxy_evals ppe
-         WHERE ppe.card_family IN (${familyPlaceholders})
+         LEFT JOIN card_payloads cp ON cp.id = ppe.card_id
+         LEFT JOIN games g ON g.game_id = ppe.game_id
          ORDER BY ppe.game_date DESC, ppe.id DESC
          LIMIT 200`,
       )
-      .all(...CARD_FAMILIES) as DbProxyEvalRow[];
+      .all() as DbProxyEvalRow[];
 
-    // Enrich with card title and game teams
     const enrichedRows = proxyRows.map((row) => {
-      let cardTitle: string | null = null;
-      let homeTeam: string | null = null;
-      let awayTeam: string | null = null;
-
-      try {
-        const cardRow = db
-          ?.prepare(`SELECT card_title FROM card_payloads WHERE id = ? LIMIT 1`)
-          .get(row.card_id) as DbCardRow | undefined;
-        if (cardRow) cardTitle = cardRow.card_title;
-      } catch {
-        // card_title lookup failed, use null
-      }
-
-      try {
-        const gameRow = db
-          ?.prepare(`SELECT home_team, away_team FROM games WHERE game_id = ? LIMIT 1`)
-          .get(row.game_id) as DbGameRow | undefined;
-        if (gameRow) {
-          homeTeam = gameRow.home_team;
-          awayTeam = gameRow.away_team;
-        }
-      } catch {
-        // game lookup failed, use nulls
-      }
-
       return {
         id: row.id,
         cardId: row.card_id,
@@ -174,9 +141,9 @@ export async function GET(
         hitFlag: row.hit_flag,
         tierScore: row.tier_score,
         consensusBonus: row.consensus_bonus,
-        cardTitle,
-        homeTeam,
-        awayTeam,
+        cardTitle: row.card_title,
+        homeTeam: row.home_team,
+        awayTeam: row.away_team,
       };
     });
 

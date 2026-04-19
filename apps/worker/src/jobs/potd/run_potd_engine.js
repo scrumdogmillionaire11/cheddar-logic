@@ -68,6 +68,24 @@ function buildShadowCandidateIdentity(candidate, canonicalSelection) {
   return `${sport}|${gameRef}|${marketType}|${canonicalSelection}|${normalizeShadowLine(candidate?.line)}`;
 }
 
+function shadowCandidateIdentity(candidate) {
+  const canonicalSelection = canonicalizeShadowSelection(candidate);
+  if (!canonicalSelection) return null;
+  return buildShadowCandidateIdentity(candidate, canonicalSelection);
+}
+
+function selectNearMissShadowCandidates({ winnerStatus, rankedNominees, winnerCandidate }) {
+  if (!Array.isArray(rankedNominees) || rankedNominees.length === 0) return [];
+  const winnerIdentity =
+    winnerStatus === 'FIRED' && winnerCandidate
+      ? shadowCandidateIdentity(winnerCandidate)
+      : null;
+
+  return rankedNominees
+    .filter((candidate) => !winnerIdentity || shadowCandidateIdentity(candidate) !== winnerIdentity)
+    .slice(0, POTD_MAX_NEAR_MISS_SHADOW_CANDIDATES);
+}
+
 function writeDailyStats(db, {
   playDate,
   potdFired,
@@ -239,6 +257,7 @@ const POTD_MIN_TOTAL_SCORE = Number(process.env.POTD_MIN_TOTAL_SCORE || 0.30);  
 // Maximum number of nominees (sport winners) to store and display per day.
 // With 4 active sports the effective ceiling is 4.
 const POTD_MAX_NOMINEES = Number(process.env.POTD_MAX_NOMINEES || 5);
+const POTD_MAX_NEAR_MISS_SHADOW_CANDIDATES = 3;
 // Set POTD_AUDIT_LOG_ENABLED=false to suppress per-candidate audit lines in production logs.
 const POTD_AUDIT_LOG_ENABLED = process.env.POTD_AUDIT_LOG_ENABLED !== 'false';
 
@@ -687,7 +706,16 @@ async function runPotdEngine({
         const topByEdge = allScoredCandidates
           .filter(c => typeof c.edgePct === 'number' && isFinite(c.edgePct) && typeof c.totalScore === 'number' && isFinite(c.totalScore))
           .sort((a, b) => b.edgePct - a.edgePct)[0] || null;
-        writeShadowCandidates(db, { playDate, capturedAt: nowIso, minEdgePct: POTD_MIN_EDGE, candidates: allScoredCandidates });
+        writeShadowCandidates(db, {
+          playDate,
+          capturedAt: nowIso,
+          minEdgePct: POTD_MIN_EDGE,
+          candidates: selectNearMissShadowCandidates({
+            winnerStatus: 'NO_PICK',
+            rankedNominees,
+            winnerCandidate: null,
+          }),
+        });
         writeNominees(db, {
           playDate,
           capturedAt: nowIso,
@@ -732,7 +760,16 @@ async function runPotdEngine({
         bestLabel === 'LOW';
 
       if (lowConfidenceCandidate) {
-        writeShadowCandidates(db, { playDate, capturedAt: nowIso, minEdgePct: POTD_MIN_EDGE, candidates: allScoredCandidates });
+        writeShadowCandidates(db, {
+          playDate,
+          capturedAt: nowIso,
+          minEdgePct: POTD_MIN_EDGE,
+          candidates: selectNearMissShadowCandidates({
+            winnerStatus: 'NO_PICK',
+            rankedNominees,
+            winnerCandidate: null,
+          }),
+        });
         writeNominees(db, { playDate, capturedAt: nowIso, winnerStatus: 'NO_PICK', nominees: rankedNominees });
         writeDailyStats(db, {
           playDate,
@@ -771,7 +808,16 @@ async function runPotdEngine({
       });
 
       if (!Number.isFinite(rawWager) || rawWager <= 0) {
-        writeShadowCandidates(db, { playDate, capturedAt: nowIso, minEdgePct: POTD_MIN_EDGE, candidates: allScoredCandidates });
+        writeShadowCandidates(db, {
+          playDate,
+          capturedAt: nowIso,
+          minEdgePct: POTD_MIN_EDGE,
+          candidates: selectNearMissShadowCandidates({
+            winnerStatus: 'NO_PICK',
+            rankedNominees,
+            winnerCandidate: null,
+          }),
+        });
         writeNominees(db, { playDate, capturedAt: nowIso, winnerStatus: 'NO_PICK', nominees: rankedNominees });
         writeDailyStats(db, {
           playDate,
@@ -801,7 +847,16 @@ async function runPotdEngine({
       // Minimum-stake gate: if Kelly says bet less than 0.5 % of bankroll the
       // play is not worth featuring — reject rather than post dust.
       if (rawWager / bankrollAtPost < POTD_MIN_STAKE_PCT) {
-        writeShadowCandidates(db, { playDate, capturedAt: nowIso, minEdgePct: POTD_MIN_EDGE, candidates: allScoredCandidates });
+        writeShadowCandidates(db, {
+          playDate,
+          capturedAt: nowIso,
+          minEdgePct: POTD_MIN_EDGE,
+          candidates: selectNearMissShadowCandidates({
+            winnerStatus: 'NO_PICK',
+            rankedNominees,
+            winnerCandidate: null,
+          }),
+        });
         writeNominees(db, { playDate, capturedAt: nowIso, winnerStatus: 'NO_PICK', nominees: rankedNominees });
         writeDailyStats(db, {
           playDate,
@@ -897,7 +952,16 @@ async function runPotdEngine({
       transaction();
 
       writeNominees(db, { playDate, capturedAt: nowIso, winnerStatus: 'FIRED', nominees: rankedNominees });
-      writeShadowCandidates(db, { playDate, capturedAt: nowIso, minEdgePct: POTD_MIN_EDGE, candidates: allScoredCandidates });
+      writeShadowCandidates(db, {
+        playDate,
+        capturedAt: nowIso,
+        minEdgePct: POTD_MIN_EDGE,
+        candidates: selectNearMissShadowCandidates({
+          winnerStatus: 'FIRED',
+          rankedNominees,
+          winnerCandidate: bestCandidate,
+        }),
+      });
 
       writeDailyStats(db, {
         playDate,
@@ -969,5 +1033,6 @@ module.exports = {
     buildPotdPlayRow,
     buildPotdCard,
     getActivePotdSports,
+    selectNearMissShadowCandidates,
   },
 };

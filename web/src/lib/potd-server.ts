@@ -135,6 +135,16 @@ type BankrollAggRow = {
   total_wagered: number | null;
 };
 
+type NearMissAggRow = {
+  sample_size: number;
+  settled_count: number;
+  wins: number;
+  losses: number;
+  pushes: number;
+  pending: number;
+  non_gradeable: number;
+};
+
 type GameRow = {
   game_id: string;
   sport: string;
@@ -194,6 +204,17 @@ export type PotdBankrollSummary = {
   roi: number | null;
 };
 
+export type PotdNearMissSummary = {
+  sampleSize: number;
+  settledCount: number;
+  wins: number;
+  losses: number;
+  pushes: number;
+  pending: number;
+  nonGradeable: number;
+  winRate: number | null;
+};
+
 export type PotdSchedule = {
   playDate: string;
   published: boolean;
@@ -215,6 +236,7 @@ export type PotdResponseData = {
   schedule: PotdSchedule | null;
   nominees: PotdNominee[];
   diagnosticNominees: PotdNominee[];
+  nearMissSummary: PotdNearMissSummary;
   winnerStatus: 'FIRED' | 'NO_PICK' | null;
 };
 
@@ -407,6 +429,23 @@ function buildBankrollSummary(
   };
 }
 
+function buildNearMissSummary(row: NearMissAggRow): PotdNearMissSummary {
+  const sampleSize = Number(row.sample_size || 0);
+  const settledCount = Number(row.settled_count || 0);
+  const wins = Number(row.wins || 0);
+
+  return {
+    sampleSize,
+    settledCount,
+    wins,
+    losses: Number(row.losses || 0),
+    pushes: Number(row.pushes || 0),
+    pending: Number(row.pending || 0),
+    nonGradeable: Number(row.non_gradeable || 0),
+    winRate: settledCount > 0 ? wins / settledCount : null,
+  };
+}
+
 function buildSchedule(
   todayPlay: PotdApiPlay | null,
   todayGames: GameRow[],
@@ -532,6 +571,32 @@ export async function getPotdResponseData(now = new Date()): Promise<PotdRespons
         total_wagered: 0,
       };
 
+    const nearMissAggregateRow =
+      (db
+        .prepare(
+          `SELECT
+             COUNT(sc.id) AS sample_size,
+             SUM(CASE WHEN sr.status = 'settled' THEN 1 ELSE 0 END) AS settled_count,
+             SUM(CASE WHEN sr.status = 'settled' AND LOWER(COALESCE(sr.result, '')) = 'win' THEN 1 ELSE 0 END) AS wins,
+             SUM(CASE WHEN sr.status = 'settled' AND LOWER(COALESCE(sr.result, '')) = 'loss' THEN 1 ELSE 0 END) AS losses,
+             SUM(CASE WHEN sr.status = 'settled' AND LOWER(COALESCE(sr.result, '')) = 'push' THEN 1 ELSE 0 END) AS pushes,
+             SUM(CASE WHEN sr.id IS NULL OR sr.status = 'pending' THEN 1 ELSE 0 END) AS pending,
+             SUM(CASE WHEN sr.status = 'non_gradeable' THEN 1 ELSE 0 END) AS non_gradeable
+           FROM potd_shadow_candidates sc
+           LEFT JOIN potd_shadow_results sr
+             ON sr.play_date = sc.play_date
+            AND sr.candidate_identity_key = sc.candidate_identity_key`,
+        )
+        .get() as NearMissAggRow | undefined) ?? {
+        sample_size: 0,
+        settled_count: 0,
+        wins: 0,
+        losses: 0,
+        pushes: 0,
+        pending: 0,
+        non_gradeable: 0,
+      };
+
     const statusPlaceholders = EXCLUDED_GAME_STATUSES.map(() => '?').join(', ');
     const todayGames = db
       .prepare(
@@ -580,6 +645,7 @@ export async function getPotdResponseData(now = new Date()): Promise<PotdRespons
       Number(startingLedgerRow?.amount_after || 0),
       aggregateRow,
     );
+    const nearMissSummary = buildNearMissSummary(nearMissAggregateRow);
     const schedule = buildSchedule(todayPlay, todayGames, now);
 
     return {
@@ -590,6 +656,7 @@ export async function getPotdResponseData(now = new Date()): Promise<PotdRespons
       schedule,
       nominees: nomineeBuckets.nominees,
       diagnosticNominees: nomineeBuckets.diagnosticNominees,
+      nearMissSummary,
       winnerStatus,
     };
   } finally {

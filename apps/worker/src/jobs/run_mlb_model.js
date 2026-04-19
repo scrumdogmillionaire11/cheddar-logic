@@ -461,7 +461,16 @@ function getProbableStarterMapRow(db, oddsSnapshot) {
                updated_at DESC
     `).all(gameDate, homeTeamAbbr, awayTeamAbbr, scheduledStartUtc);
 
-    return rows[0] ?? null;
+    const row = rows[0] ?? null;
+    if (row && scheduledStartUtc) {
+      const rowMs = Date.parse(row.scheduled_start_utc);
+      const snapshotMs = Date.parse(scheduledStartUtc);
+      if (Number.isFinite(rowMs) && Number.isFinite(snapshotMs)) {
+        const deltaHours = Math.abs(rowMs - snapshotMs) / 3_600_000;
+        if (deltaHours > 4) return null;
+      }
+    }
+    return row;
   } catch (_) {
     return null;
   }

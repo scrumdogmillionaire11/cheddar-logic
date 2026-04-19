@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Model Integrity & Betting Execution Hardening
 status: active
-last_updated: "2026-04-18T19:55:00Z"
-last_activity: "2026-04-19 - Completed quick task 163: Fix duplicate ApiPlay interface in legacy-repair.ts"
+last_updated: "2026-04-19T20:15:00Z"
+last_activity: "2026-04-19 - WI-1035: Fixed doubleheader starter-map misbinding with 4-hour proximity guard (commit 99f6fa2b)"
 ---
 
 # Project State

@@ -49,6 +49,17 @@ type PotdBankrollSummary = {
   roi: number | null;
 };
 
+type PotdNearMissSummary = {
+  sampleSize: number;
+  settledCount: number;
+  wins: number;
+  losses: number;
+  pushes: number;
+  pending: number;
+  nonGradeable: number;
+  winRate: number | null;
+};
+
 type PotdSchedule = {
   playDate: string;
   published: boolean;
@@ -89,6 +100,7 @@ type PotdResponseData = {
   schedule: PotdSchedule | null;
   nominees: PotdNominee[];
   diagnosticNominees: PotdNominee[];
+  nearMissSummary: PotdNearMissSummary;
   winnerStatus: 'FIRED' | 'NO_PICK' | null;
 };
 
@@ -476,6 +488,62 @@ function renderDiagnosticNominees(
   );
 }
 
+function renderNearMissSummary(summary: PotdNearMissSummary) {
+  return (
+    <section className="rounded-[28px] border border-white/10 bg-surface/80 p-6">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <p className="text-[11px] uppercase tracking-[0.26em] text-cloud/55">
+            Near-Miss Tracking
+          </p>
+          <p className="mt-1 text-sm text-cloud/50">
+            Top non-winning POTD nominees settled with virtual 1u grading.
+          </p>
+        </div>
+        <span className="rounded-full border border-white/15 bg-white/5 px-3 py-1 text-xs font-semibold tracking-[0.22em] text-cloud/55">
+          {summary.sampleSize} tracked
+        </span>
+      </div>
+
+      <div className="mt-5 grid gap-3 sm:grid-cols-4">
+        <div className="rounded-2xl border border-white/10 bg-night/40 p-4">
+          <div className="text-[11px] uppercase tracking-[0.22em] text-cloud/50">
+            Record
+          </div>
+          <div className="mt-2 text-xl font-semibold text-cloud">
+            {summary.wins}-{summary.losses}
+            {summary.pushes > 0 ? `-${summary.pushes}` : ''}
+          </div>
+        </div>
+        <div className="rounded-2xl border border-white/10 bg-night/40 p-4">
+          <div className="text-[11px] uppercase tracking-[0.22em] text-cloud/50">
+            Win Rate
+          </div>
+          <div className="mt-2 text-xl font-semibold text-cloud">
+            {summary.winRate === null ? 'N/A' : formatPercent(summary.winRate)}
+          </div>
+        </div>
+        <div className="rounded-2xl border border-white/10 bg-night/40 p-4">
+          <div className="text-[11px] uppercase tracking-[0.22em] text-cloud/50">
+            Settled
+          </div>
+          <div className="mt-2 text-xl font-semibold text-cloud">
+            {summary.settledCount}
+          </div>
+        </div>
+        <div className="rounded-2xl border border-white/10 bg-night/40 p-4">
+          <div className="text-[11px] uppercase tracking-[0.22em] text-cloud/50">
+            Open
+          </div>
+          <div className="mt-2 text-xl font-semibold text-cloud">
+            {summary.pending + summary.nonGradeable}
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
 export default function PlayOfTheDayClient({
   initialData,
 }: PlayOfTheDayClientProps) {
@@ -487,6 +555,7 @@ export default function PlayOfTheDayClient({
     schedule,
     nominees,
     diagnosticNominees,
+    nearMissSummary,
     winnerStatus,
   } = initialData;
   const activePick = featuredPick ?? today;
@@ -507,7 +576,7 @@ export default function PlayOfTheDayClient({
           </div>
           <div className="flex items-center gap-3">
             <Link
-              href="/wedge"
+              href="/cards"
               className="rounded-full border border-white/15 px-4 py-2 text-sm font-medium text-cloud/80 transition hover:border-white/30 hover:text-cloud"
             >
               View Cards
@@ -525,6 +594,18 @@ export default function PlayOfTheDayClient({
 
         {renderNominees(nominees ?? [], winnerStatus ?? null)}
         {renderDiagnosticNominees(diagnosticNominees ?? [], winnerStatus ?? null)}
+        {renderNearMissSummary(
+          nearMissSummary ?? {
+            sampleSize: 0,
+            settledCount: 0,
+            wins: 0,
+            losses: 0,
+            pushes: 0,
+            pending: 0,
+            nonGradeable: 0,
+            winRate: null,
+          },
+        )}
 
         <section className="grid gap-4 lg:grid-cols-3">
           {bankrollStat('Current Bankroll', formatCurrency(bankroll.current), metricTone(bankroll.netProfit))}
