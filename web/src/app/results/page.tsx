@@ -857,13 +857,9 @@ export default function ResultsPage() {
               </div>
               <div className="mt-3 flex flex-wrap gap-4 text-xs text-cloud/50">
                 <span>
-                  <span className="font-semibold text-cloud/70">NHL 1P Total</span>
-                  {' '}— Projected total vs fixed line 1.5. HIT = model direction correct.
+                  Results are grouped by projection family as actuals arrive.
                 </span>
-                <span>
-                  <span className="font-semibold text-cloud/70">MLB F5</span>
-                  {' '}— Projected F5 runs vs actual. Error = |projected − actual|.
-                </span>
+                <span>HIT = model direction correct. Error = |projected − actual|.</span>
               </div>
             </div>
             <ProjectionResultsTable rows={projectionSettledRows} />

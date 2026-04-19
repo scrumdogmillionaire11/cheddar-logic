@@ -56,15 +56,15 @@ function outcomeBadgeClass(outcome: 'WIN' | 'LOSS' | 'NO_BET'): string {
 
 // ── row renderers ────────────────────────────────────────────────────────────
 
-interface NhlRowProps {
+interface ProjectionRowProps {
   row: ProjectionProxyRow;
 }
 
-function NhlPaceRow({ row }: NhlRowProps) {
+function ProjectionRow({ row }: ProjectionRowProps) {
   const date = fmtDate(row.gameDateUtc);
   const projected = fmtNum(row.projValue, 3);
   const edge = (row.edgeVsLine >= 0 ? '+' : '') + fmtNum(row.edgeVsLine, 2);
-  const actual = row.actualValue.toString();
+  const actual = fmtNum(row.actualValue, 3);
   const direction = row.recommendedSide;
   const tier = row.tier;
   const outcome = row.gradedResult;
@@ -152,11 +152,25 @@ function NhlPaceRow({ row }: NhlRowProps) {
 // ── per-card-family table section ────────────────────────────────────────────
 
 interface CardFamilySectionProps {
+  cardFamily: string;
   rows: ProjectionProxyRow[];
 }
 
-function CardFamilySection({ rows }: CardFamilySectionProps) {
-  const nhlHeaders = (
+function familyLabel(cardFamily: string): string {
+  const labels: Record<string, string> = {
+    NHL_1P_TOTAL: 'NHL 1P Total Projections',
+    MLB_F5_TOTAL: 'MLB F5 Total Projections',
+    MLB_PITCHER_K: 'MLB Pitcher K Projections',
+    NHL_PLAYER_SHOTS: 'NHL Player Shots Projections',
+    NHL_PLAYER_SHOTS_1P: 'NHL 1P Player Shots Projections',
+    NHL_PLAYER_BLOCKS: 'NHL Player Blocks Projections',
+  };
+  if (labels[cardFamily]) return labels[cardFamily];
+  return `${cardFamily.replaceAll('_', ' ')} Projections`;
+}
+
+function CardFamilySection({ cardFamily, rows }: CardFamilySectionProps) {
+  const headers = (
     <div className="grid grid-cols-9 gap-3 bg-night/70 px-4 py-3 text-xs font-semibold uppercase tracking-[0.2em] text-cloud/60">
       <span>Date</span>
       <span className="col-span-2">Matchup</span>
@@ -172,7 +186,7 @@ function CardFamilySection({ rows }: CardFamilySectionProps) {
   return (
     <div>
       <div className="mb-3 flex items-center justify-between gap-3">
-        <h3 className="text-lg font-semibold text-cloud">NHL 1P Total Projections</h3>
+        <h3 className="text-lg font-semibold text-cloud">{familyLabel(cardFamily)}</h3>
         <span className="text-xs uppercase tracking-[0.2em] text-cloud/50">
           {rows.length} settled
         </span>
@@ -181,7 +195,7 @@ function CardFamilySection({ rows }: CardFamilySectionProps) {
       <div className="overflow-hidden rounded-xl border border-white/10">
         {/* headers — desktop only */}
         <div className="hidden md:block">
-          {nhlHeaders}
+          {headers}
         </div>
 
         {rows.length === 0 ? (
@@ -192,7 +206,7 @@ function CardFamilySection({ rows }: CardFamilySectionProps) {
         ) : (
           <div className="divide-y divide-white/10 md:divide-y-0">
             {rows.map((row) => (
-              <NhlPaceRow key={row.id} row={row} />
+              <ProjectionRow key={row.id} row={row} />
             ))}
           </div>
         )}
@@ -217,9 +231,26 @@ export function ProjectionResultsTable({ rows }: ProjectionResultsTableProps) {
     );
   }
 
+  const groupedRows = rows.reduce<Map<string, ProjectionProxyRow[]>>((groups, row) => {
+    const key = row.cardFamily || 'UNKNOWN';
+    const group = groups.get(key);
+    if (group) {
+      group.push(row);
+    } else {
+      groups.set(key, [row]);
+    }
+    return groups;
+  }, new Map());
+
   return (
     <div className="mt-6 space-y-8">
-      <CardFamilySection rows={rows} />
+      {Array.from(groupedRows.entries()).map(([cardFamily, familyRows]) => (
+        <CardFamilySection
+          key={cardFamily}
+          cardFamily={cardFamily}
+          rows={familyRows}
+        />
+      ))}
     </div>
   );
 }
