@@ -237,21 +237,40 @@ export function CardsPageProvider({
     const f = effectiveFilters;
     if ('propStatGroups' in f) return [];
 
-    return games.flatMap((game) => {
+    const seenProjectionKeys = new Set<string>();
+    const dedupedItems: Array<{ game: GameData; play: GameData['plays'][number] }> = [];
+
+    for (const game of games) {
       const projectionPlays = game.plays.filter(
         (p) =>
           p.cardType === 'nhl-pace-1p' ||
           p.cardType === 'mlb-f5' ||
           p.cardType === 'mlb-f5-ml',
       );
-      if (projectionPlays.length === 0) return [];
+      if (projectionPlays.length === 0) continue;
 
       const anchorPlay = projectionPlays[0];
       const filterCard = createProjectionFilterCard(game, anchorPlay);
-      if (!evaluateCardFilter(filterCard, f, 'projections').passes) return [];
+      if (!evaluateCardFilter(filterCard, f, 'projections').passes) continue;
 
-      return projectionPlays.map((play) => ({ game, play }));
-    });
+      for (const play of projectionPlays) {
+        const projectionKey = [
+          String(game.sport || '').toUpperCase(),
+          String(game.awayTeam || '').trim().toUpperCase(),
+          String(game.homeTeam || '').trim().toUpperCase(),
+          String(game.gameTimeUtc || ''),
+          String(play.cardType || '').trim().toLowerCase(),
+        ].join('|');
+
+        // Guard against intermittent duplicate payload variants for the same
+        // matchup/time/card type reaching the projection surface.
+        if (seenProjectionKeys.has(projectionKey)) continue;
+        seenProjectionKeys.add(projectionKey);
+        dedupedItems.push({ game, play });
+      }
+    }
+
+    return dedupedItems;
   }, [effectiveFilters, games, uiState.viewMode]);
 
   const displayedCardsInView =
