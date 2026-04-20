@@ -4,7 +4,6 @@
  */
 
 import type { ApiPlay } from './index';
-import type { ExpressionStatus } from '../../types';
 import { resolvePlayDisplayDecision } from '../decision';
 import { getSportCardTypeContract as getSharedSportCardTypeContract } from '../../games/market-inference';
 import { isWelcomeHomeCardType } from '../welcome-home';
@@ -55,30 +54,20 @@ export function getSourcePlayAction(
   play?: ApiPlay,
 ): 'FIRE' | 'HOLD' | 'PASS' | undefined {
   if (!play) return undefined;
-  const legacyStatus = String(play.status ?? '').toUpperCase();
   const hasExplicitAction =
     play.action === 'FIRE' || play.action === 'HOLD' || play.action === 'PASS';
   const hasClassification =
     play.classification === 'BASE' ||
     play.classification === 'LEAN' ||
     play.classification === 'PASS';
-  const normalizedLegacyStatus: ExpressionStatus | undefined =
-    legacyStatus === 'FIRE'
-      ? 'FIRE'
-      : legacyStatus === 'PASS'
-        ? 'PASS'
-        : legacyStatus === 'WATCH' || legacyStatus === 'HOLD'
-          ? 'WATCH'
-          : undefined;
 
-  if (!hasExplicitAction && !hasClassification && !normalizedLegacyStatus) {
+  if (!hasExplicitAction && !hasClassification) {
     return undefined;
   }
 
   return resolvePlayDisplayDecision({
     action: hasExplicitAction ? play.action : undefined,
     classification: hasClassification ? play.classification : undefined,
-    status: normalizedLegacyStatus,
   }).action;
 }
 
