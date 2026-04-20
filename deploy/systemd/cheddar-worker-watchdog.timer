@@ -1,0 +1,11 @@
+[Unit]
+Description=Run Cheddar Worker Scheduler Watchdog Every 5 Minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+Unit=cheddar-worker-watchdog.service
+Persistent=true
+
+[Install]
+WantedBy=timers.target

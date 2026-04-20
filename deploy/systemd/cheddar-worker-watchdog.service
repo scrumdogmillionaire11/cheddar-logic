@@ -1,0 +1,14 @@
+[Unit]
+Description=Cheddar Worker Scheduler Watchdog
+After=network.target
+
+[Service]
+Type=oneshot
+User=babycheeses11
+WorkingDirectory=/opt/cheddar-logic
+Environment="NODE_ENV=production"
+EnvironmentFile=/opt/cheddar-logic/.env.production
+ExecStart=/opt/cheddar-logic/scripts/check-scheduler-running.sh
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=cheddar-worker-watchdog

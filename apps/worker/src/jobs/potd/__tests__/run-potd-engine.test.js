@@ -18,6 +18,7 @@ function removeIfExists(filePath) {
 function resetTables() {
   const db = new Database(TEST_DB_PATH);
   db.exec(`
+    DROP TABLE IF EXISTS run_state;
     DELETE FROM potd_bankroll;
     DELETE FROM potd_plays;
     DELETE FROM potd_daily_stats;
@@ -1020,6 +1021,10 @@ describe('WI-1039-B: POTD timing state machine and heartbeat', () => {
   let resolvePotdTimingState;
   let sendPotdNopickAlert;
 
+  beforeEach(() => {
+    resetTables();
+  });
+
   beforeAll(() => {
     // Ensure bankroll env is set correctly before requiring the module
     process.env.POTD_STARTING_BANKROLL = '10';
@@ -1158,6 +1163,91 @@ describe('WI-1039-B: POTD timing state machine and heartbeat', () => {
 
     if (origUrl !== undefined) process.env.DISCORD_ALERT_WEBHOOK_URL = origUrl;
     else delete process.env.DISCORD_ALERT_WEBHOOK_URL;
+  });
+
+  test('no-pick alert is deduped to once per day and includes near-miss candidates', async () => {
+    const { runPotdEngine } = require('../run_potd_engine');
+    const origUrl = process.env.DISCORD_ALERT_WEBHOOK_URL;
+    process.env.DISCORD_ALERT_WEBHOOK_URL = 'https://discord.com/api/webhooks/alert';
+
+    const alertFn = jest.fn(async () => 1);
+    const nearMissA = buildSelectedCandidate({ gameId: 'near-miss-1', selection: 'OVER', selectionLabel: 'OVER 5.5', edgePct: 0.018, totalScore: 0.34 });
+    const nearMissB = buildSelectedCandidate({ gameId: 'near-miss-2', selection: 'UNDER', selectionLabel: 'UNDER 6.0', edgePct: 0.017, totalScore: 0.33 });
+    const selectTopPlaysForNoPick = (candidates, options = {}) => (
+      options.requirePositiveEdge === false ? candidates : []
+    );
+    const nowFn = () => makeEtDateTime(16, 5);
+
+    await runPotdEngine({
+      jobKey: 'potd|no-pick-dedupe-1',
+      force: true,
+      fetchOddsFn: async () => ({ games: [{ gameId: nearMissA.gameId }, { gameId: nearMissB.gameId }], errors: [] }),
+      buildCandidatesFn: () => [nearMissA, nearMissB],
+      scoreCandidateFn: (v) => v,
+      selectTopPlaysFn: selectTopPlaysForNoPick,
+      kellySizeFn: () => 0,
+      sendDiscordMessagesFn: alertFn,
+      nowFn,
+    });
+
+    await runPotdEngine({
+      jobKey: 'potd|no-pick-dedupe-2',
+      force: true,
+      fetchOddsFn: async () => ({ games: [{ gameId: nearMissA.gameId }, { gameId: nearMissB.gameId }], errors: [] }),
+      buildCandidatesFn: () => [nearMissA, nearMissB],
+      scoreCandidateFn: (v) => v,
+      selectTopPlaysFn: selectTopPlaysForNoPick,
+      kellySizeFn: () => 0,
+      sendDiscordMessagesFn: alertFn,
+      nowFn,
+    });
+
+    const alertCalls = alertFn.mock.calls.filter(
+      (c) => c[0]?.webhookUrl === 'https://discord.com/api/webhooks/alert',
+    );
+    expect(alertCalls).toHaveLength(1);
+
+    const message = alertCalls[0][0].messages[0];
+    expect(message).toContain('Near misses:');
+    expect(message).toContain('OVER 5.5');
+    expect(message).toContain('UNDER 6.0');
+
+    if (origUrl !== undefined) process.env.DISCORD_ALERT_WEBHOOK_URL = origUrl;
+    else delete process.env.DISCORD_ALERT_WEBHOOK_URL;
+  });
+
+  test('no-pick alert is disabled when ENABLE_POTD_NOPICK_ALERTS=false', async () => {
+    const { runPotdEngine } = require('../run_potd_engine');
+    const origUrl = process.env.DISCORD_ALERT_WEBHOOK_URL;
+    const origToggle = process.env.ENABLE_POTD_NOPICK_ALERTS;
+    process.env.DISCORD_ALERT_WEBHOOK_URL = 'https://discord.com/api/webhooks/alert';
+    process.env.ENABLE_POTD_NOPICK_ALERTS = 'false';
+
+    const alertFn = jest.fn(async () => 1);
+    const candidate = buildSelectedCandidate({ edgePct: 0.01, totalScore: 0.29 });
+    const nowFn = () => makeEtDateTime(16, 5);
+
+    await runPotdEngine({
+      jobKey: 'potd|no-pick-alert-disabled',
+      force: true,
+      fetchOddsFn: async () => ({ games: [{ gameId: candidate.gameId }], errors: [] }),
+      buildCandidatesFn: () => [candidate],
+      scoreCandidateFn: (v) => v,
+      selectTopPlaysFn: () => [],
+      kellySizeFn: () => 0,
+      sendDiscordMessagesFn: alertFn,
+      nowFn,
+    });
+
+    const alertCalls = alertFn.mock.calls.filter(
+      (c) => c[0]?.webhookUrl === 'https://discord.com/api/webhooks/alert',
+    );
+    expect(alertCalls).toHaveLength(0);
+
+    if (origUrl !== undefined) process.env.DISCORD_ALERT_WEBHOOK_URL = origUrl;
+    else delete process.env.DISCORD_ALERT_WEBHOOK_URL;
+    if (origToggle !== undefined) process.env.ENABLE_POTD_NOPICK_ALERTS = origToggle;
+    else delete process.env.ENABLE_POTD_NOPICK_ALERTS;
   });
 
   test('no-pick alert NOT fired during PENDING_WINDOW (hour < 16, no play)', async () => {

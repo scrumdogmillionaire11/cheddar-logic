@@ -26,12 +26,43 @@ fi
 if [ ! -f "$ENV_FILE" ] && [ -f "$ROOT_DIR/.env.production" ]; then
     ENV_FILE="$ROOT_DIR/.env.production"
 fi
-if [ -f "$ENV_FILE" ]; then
-    set -a
-    # shellcheck disable=SC1090
-    source "$ENV_FILE"
-    set +a
-fi
+
+load_env_file() {
+        local file="$1"
+        [ -f "$file" ] || return 0
+        if ! command -v node >/dev/null 2>&1; then
+                echo "[ERROR] node is required to parse env file: $file" >&2
+                return 1
+        fi
+
+        local export_script
+        export_script=$(mktemp)
+
+        if ! node -e '
+            const fs = require("fs");
+            const dotenv = require("dotenv");
+            const file = process.argv[1];
+            const parsed = dotenv.parse(fs.readFileSync(file));
+            for (const [key, raw] of Object.entries(parsed)) {
+                const value = String(raw)
+                    .replace(/\\/g, "\\\\")
+                    .replace(/"/g, "\\\"")
+                    .replace(/\$/g, "\\$")
+                    .replace(/`/g, "\\`");
+                process.stdout.write(`export ${key}="${value}"\n`);
+            }
+        ' "$file" > "$export_script"; then
+                rm -f "$export_script"
+                echo "[ERROR] Failed to parse env file: $file" >&2
+                return 1
+        fi
+
+        # shellcheck disable=SC1090
+        source "$export_script"
+        rm -f "$export_script"
+}
+
+load_env_file "$ENV_FILE"
 
 # Clear legacy DB vars to enforce CHEDDAR_DB_PATH as the single source of truth
 unset DATABASE_PATH

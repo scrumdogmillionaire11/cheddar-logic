@@ -143,11 +143,15 @@ jobs:
             fi
             # Ensure deploy scripts are executable (git preserves the bit, but belt-and-suspenders).
             chmod +x /opt/cheddar-logic/deploy/restart-cloudflared-when-ready.sh
+            chmod +x /opt/cheddar-logic/scripts/check-scheduler-running.sh
             sudo cp /opt/cheddar-logic/deploy/systemd/cheddar-worker.service /etc/systemd/system/cheddar-worker.service
             sudo cp /opt/cheddar-logic/deploy/systemd/cheddar-web.service /etc/systemd/system/cheddar-web.service
             sudo cp /opt/cheddar-logic/deploy/systemd/cheddar-fpl-sage.service /etc/systemd/system/cheddar-fpl-sage.service
+            sudo cp /opt/cheddar-logic/deploy/systemd/cheddar-worker-watchdog.service /etc/systemd/system/cheddar-worker-watchdog.service
+            sudo cp /opt/cheddar-logic/deploy/systemd/cheddar-worker-watchdog.timer /etc/systemd/system/cheddar-worker-watchdog.timer
             sudo systemctl daemon-reload
-            sudo systemctl enable cheddar-worker cheddar-web cheddar-fpl-sage
+            sudo systemctl enable cheddar-worker cheddar-web cheddar-fpl-sage cheddar-worker-watchdog.timer
+            sudo systemctl restart cheddar-worker-watchdog.timer || sudo systemctl start cheddar-worker-watchdog.timer
             # ── Disk hygiene before installs ───────────────────────────────────
             # Abort early with a clear message if available disk is critically low.
             AVAIL_KB=$(df /opt --output=avail | tail -1)
@@ -403,6 +407,26 @@ jobs:
             sudo systemctl restart cheddar-web
             sudo systemctl restart cheddar-fpl-sage || { echo "WARNING: cheddar-fpl-sage failed to restart — continuing deploy (web/worker unaffected)"; true; }
             sleep 5
+            if ! sudo systemctl is-active --quiet cheddar-worker; then
+              echo "ERROR [worker-smoke-1]: cheddar-worker is not active after restart"
+              sudo journalctl -u cheddar-worker -n 60 --no-pager || true
+              exit 1
+            fi
+            echo "worker-smoke-1 passed: cheddar-worker is active"
+            SCHEDULER_READY=0
+            for attempt in $(seq 1 15); do
+              if sudo journalctl -u cheddar-worker --since "2 minutes ago" --no-pager -q | grep -q "\[SCHEDULER\] Database ready"; then
+                SCHEDULER_READY=1
+                break
+              fi
+              sleep 1
+            done
+            if [ "$SCHEDULER_READY" -ne 1 ]; then
+              echo "ERROR [worker-smoke-2]: scheduler did not reach 'Database ready' after restart"
+              sudo journalctl -u cheddar-worker -n 80 --no-pager || true
+              exit 1
+            fi
+            echo "worker-smoke-2 passed: scheduler reached Database ready"
             restore_previous_next() {
               if [ "$ROLLBACK_READY" != "1" ] || [ ! -d "$PREV_NEXT_ROLLBACK" ]; then
                 echo "Rollback snapshot unavailable; skipping .next restore"

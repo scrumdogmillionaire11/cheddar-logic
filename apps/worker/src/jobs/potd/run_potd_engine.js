@@ -162,10 +162,103 @@ async function sendPotdNopickAlert({ sendDiscordMessagesFn, webhookUrl, message 
   await sendDiscordMessagesFn({ webhookUrl, messages: [message] });
 }
 
+const POTD_NOPICK_ALERT_STATE_PREFIX = 'potd_nopick_alert';
+
+function potdNopickAlertStateKey(playDate) {
+  return `${POTD_NOPICK_ALERT_STATE_PREFIX}|${playDate}`;
+}
+
+function ensureRunStateTable(db) {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS run_state (
+      id TEXT PRIMARY KEY,
+      current_run_id TEXT,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
+}
+
+function hasSentPotdNopickAlert(db, playDate) {
+  ensureRunStateTable(db);
+  const stateKey = potdNopickAlertStateKey(playDate);
+  const row = db
+    .prepare(`SELECT current_run_id FROM run_state WHERE id = ? LIMIT 1`)
+    .get(stateKey);
+  return Boolean(row && row.current_run_id);
+}
+
+function claimPotdNopickAlertSend(db, playDate, runId) {
+  ensureRunStateTable(db);
+  const stateKey = potdNopickAlertStateKey(playDate);
+  const result = db.prepare(`
+    INSERT INTO run_state (id, current_run_id, updated_at)
+    VALUES (?, ?, CURRENT_TIMESTAMP)
+    ON CONFLICT(id) DO UPDATE SET
+      current_run_id = excluded.current_run_id,
+      updated_at = CURRENT_TIMESTAMP
+    WHERE run_state.current_run_id IS NULL
+  `).run(stateKey, runId);
+  return result.changes === 1;
+}
+
+function releasePotdNopickAlertClaim(db, playDate, runId) {
+  ensureRunStateTable(db);
+  const stateKey = potdNopickAlertStateKey(playDate);
+  db.prepare(`DELETE FROM run_state WHERE id = ? AND current_run_id = ?`).run(stateKey, runId);
+}
+
+function markPotdNopickAlertSent(db, playDate, runId) {
+  ensureRunStateTable(db);
+  const stateKey = potdNopickAlertStateKey(playDate);
+  db.prepare(`
+    INSERT INTO run_state (id, current_run_id, updated_at)
+    VALUES (?, ?, CURRENT_TIMESTAMP)
+    ON CONFLICT(id) DO UPDATE SET
+      current_run_id = excluded.current_run_id,
+      updated_at = CURRENT_TIMESTAMP
+  `).run(stateKey, runId);
+}
+
+async function sendPotdNopickAlertOncePerDay({
+  db,
+  playDate,
+  runId,
+  sendDiscordMessagesFn,
+  webhookUrl,
+  message,
+}) {
+  if (process.env.ENABLE_POTD_NOPICK_ALERTS === 'false') {
+    console.log('[POTD] No-pick alerts disabled via ENABLE_POTD_NOPICK_ALERTS=false');
+    return { sent: false, reason: 'disabled' };
+  }
+  if (!webhookUrl) return { sent: false, reason: 'missing_webhook' };
+  if (!claimPotdNopickAlertSend(db, playDate, runId)) {
+    console.log(`[POTD] No-pick alert already claimed for ${playDate} — suppressing duplicate`);
+    return { sent: false, reason: 'already_sent' };
+  }
+
+  try {
+    await sendPotdNopickAlert({ sendDiscordMessagesFn, webhookUrl, message });
+    markPotdNopickAlertSent(db, playDate, runId);
+    return { sent: true, reason: 'sent' };
+  } catch (error) {
+    // Release claim so a later retry can attempt delivery if Discord send fails.
+    releasePotdNopickAlertClaim(db, playDate, runId);
+    throw error;
+  }
+}
+
 /**
  * Build the no-pick alert message text.
  */
-function buildNopickAlertMessage({ alertCandidate, topByEdge, reason, candidatesCount, viableCount, nowEt }) {
+function formatNopickNearMiss(candidate) {
+  if (!candidate) return null;
+  const edgeLabel = isFiniteNumber(candidate.edgePct) ? `${(candidate.edgePct * 100).toFixed(2)}%` : 'n/a';
+  const scoreLabel = isFiniteNumber(candidate.totalScore) ? candidate.totalScore.toFixed(3) : 'n/a';
+  return `${candidate.sport || 'UNK'} | ${candidate.selectionLabel || '—'} | Edge ${edgeLabel} | Score ${scoreLabel}`;
+}
+
+function buildNopickAlertMessage({ alertCandidate, topByEdge, reason, candidatesCount, viableCount, nowEt, nearMissCandidates = [] }) {
   const candidate = alertCandidate || topByEdge;
   const dateLabel = nowEt ? nowEt.toFormat('MMM dd') : 'today';
   const reasonLabel = POTD_NOPICK_REASONS[reason] || reason;
@@ -178,6 +271,12 @@ function buildNopickAlertMessage({ alertCandidate, topByEdge, reason, candidates
   const candidateLabel = candidate
     ? `${candidate.sport} | ${candidate.selectionLabel || '—'} | Score: ${isFiniteNumber(candidate.totalScore) ? candidate.totalScore.toFixed(3) : 'n/a'}`
     : 'None available';
+  const nearMissLines = Array.isArray(nearMissCandidates)
+    ? nearMissCandidates
+      .map(formatNopickNearMiss)
+      .filter(Boolean)
+      .slice(0, POTD_MAX_NEAR_MISS_SHADOW_CANDIDATES)
+    : [];
 
   return [
     `⚠️ POTD — No Pick (${dateLabel})`,
@@ -187,6 +286,7 @@ function buildNopickAlertMessage({ alertCandidate, topByEdge, reason, candidates
     `Required minimum edge: ${(requiredEdge * 100).toFixed(2)}%`,
     `Candidates scored: ${candidatesCount}`,
     `Viable: ${viableCount}`,
+    `Near misses: ${nearMissLines.length ? nearMissLines.join(' || ') : 'None available'}`,
   ].join('\n');
 }
 
@@ -791,15 +891,16 @@ async function runPotdEngine({
         const topByEdge = allScoredCandidates
           .filter(c => typeof c.edgePct === 'number' && isFinite(c.edgePct) && typeof c.totalScore === 'number' && isFinite(c.totalScore))
           .sort((a, b) => b.edgePct - a.edgePct)[0] || null;
+        const nearMissCandidates = selectNearMissShadowCandidates({
+          winnerStatus: 'NO_PICK',
+          rankedNominees: diagnosticNominees,
+          winnerCandidate: null,
+        });
         writeShadowCandidates(db, {
           playDate,
           capturedAt: nowIso,
           minEdgePct: POTD_MIN_EDGE,
-          candidates: selectNearMissShadowCandidates({
-            winnerStatus: 'NO_PICK',
-            rankedNominees,
-            winnerCandidate: null,
-          }),
+          candidates: nearMissCandidates,
         });
         writeNominees(db, {
           playDate,
@@ -834,8 +935,16 @@ async function runPotdEngine({
             candidatesCount,
             viableCount,
             nowEt,
+            nearMissCandidates,
           });
-          await sendPotdNopickAlert({ sendDiscordMessagesFn, webhookUrl: alertWebhookUrl, message: alertMsg });
+          await sendPotdNopickAlertOncePerDay({
+            db,
+            playDate,
+            runId: jobRunId,
+            sendDiscordMessagesFn,
+            webhookUrl: alertWebhookUrl,
+            message: alertMsg,
+          });
         }
         return {
           success: true,
@@ -858,15 +967,16 @@ async function runPotdEngine({
         bestLabel === 'LOW';
 
       if (lowConfidenceCandidate) {
+        const nearMissCandidates = selectNearMissShadowCandidates({
+          winnerStatus: 'NO_PICK',
+          rankedNominees,
+          winnerCandidate: null,
+        });
         writeShadowCandidates(db, {
           playDate,
           capturedAt: nowIso,
           minEdgePct: POTD_MIN_EDGE,
-          candidates: selectNearMissShadowCandidates({
-            winnerStatus: 'NO_PICK',
-            rankedNominees,
-            winnerCandidate: null,
-          }),
+          candidates: nearMissCandidates,
         });
         writeNominees(db, { playDate, capturedAt: nowIso, winnerStatus: 'NO_PICK', nominees: rankedNominees });
         writeDailyStats(db, {
@@ -898,8 +1008,16 @@ async function runPotdEngine({
             candidatesCount,
             viableCount,
             nowEt,
+            nearMissCandidates,
           });
-          await sendPotdNopickAlert({ sendDiscordMessagesFn, webhookUrl: alertWebhookUrl, message: alertMsg });
+          await sendPotdNopickAlertOncePerDay({
+            db,
+            playDate,
+            runId: jobRunId,
+            sendDiscordMessagesFn,
+            webhookUrl: alertWebhookUrl,
+            message: alertMsg,
+          });
         }
         return {
           success: true,
@@ -919,15 +1037,16 @@ async function runPotdEngine({
       });
 
       if (!Number.isFinite(rawWager) || rawWager <= 0) {
+        const nearMissCandidates = selectNearMissShadowCandidates({
+          winnerStatus: 'NO_PICK',
+          rankedNominees,
+          winnerCandidate: null,
+        });
         writeShadowCandidates(db, {
           playDate,
           capturedAt: nowIso,
           minEdgePct: POTD_MIN_EDGE,
-          candidates: selectNearMissShadowCandidates({
-            winnerStatus: 'NO_PICK',
-            rankedNominees,
-            winnerCandidate: null,
-          }),
+          candidates: nearMissCandidates,
         });
         writeNominees(db, { playDate, capturedAt: nowIso, winnerStatus: 'NO_PICK', nominees: rankedNominees });
         writeDailyStats(db, {
@@ -956,8 +1075,16 @@ async function runPotdEngine({
             candidatesCount,
             viableCount,
             nowEt,
+            nearMissCandidates,
           });
-          await sendPotdNopickAlert({ sendDiscordMessagesFn, webhookUrl: alertWebhookUrl, message: alertMsg });
+          await sendPotdNopickAlertOncePerDay({
+            db,
+            playDate,
+            runId: jobRunId,
+            sendDiscordMessagesFn,
+            webhookUrl: alertWebhookUrl,
+            message: alertMsg,
+          });
         }
         return {
           success: true,
@@ -971,15 +1098,16 @@ async function runPotdEngine({
       // Minimum-stake gate: if Kelly says bet less than 0.5 % of bankroll the
       // play is not worth featuring — reject rather than post dust.
       if (rawWager / bankrollAtPost < POTD_MIN_STAKE_PCT) {
+        const nearMissCandidates = selectNearMissShadowCandidates({
+          winnerStatus: 'NO_PICK',
+          rankedNominees,
+          winnerCandidate: null,
+        });
         writeShadowCandidates(db, {
           playDate,
           capturedAt: nowIso,
           minEdgePct: POTD_MIN_EDGE,
-          candidates: selectNearMissShadowCandidates({
-            winnerStatus: 'NO_PICK',
-            rankedNominees,
-            winnerCandidate: null,
-          }),
+          candidates: nearMissCandidates,
         });
         writeNominees(db, { playDate, capturedAt: nowIso, winnerStatus: 'NO_PICK', nominees: rankedNominees });
         writeDailyStats(db, {
@@ -1012,8 +1140,16 @@ async function runPotdEngine({
             candidatesCount,
             viableCount,
             nowEt,
+            nearMissCandidates,
           });
-          await sendPotdNopickAlert({ sendDiscordMessagesFn, webhookUrl: alertWebhookUrl, message: alertMsg });
+          await sendPotdNopickAlertOncePerDay({
+            db,
+            playDate,
+            runId: jobRunId,
+            sendDiscordMessagesFn,
+            webhookUrl: alertWebhookUrl,
+            message: alertMsg,
+          });
         }
         return {
           success: true,

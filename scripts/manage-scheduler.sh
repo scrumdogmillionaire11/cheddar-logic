@@ -23,12 +23,43 @@ fi
 if [ ! -f "$ENV_FILE" ] && [ -f "$ROOT_DIR/.env.production" ]; then
     ENV_FILE="$ROOT_DIR/.env.production"
 fi
-if [ -f "$ENV_FILE" ]; then
-    set -a
-    # shellcheck disable=SC1090
-    source "$ENV_FILE"
-    set +a
-fi
+
+load_env_file() {
+        local file="$1"
+        [ -f "$file" ] || return 0
+        if ! command -v node >/dev/null 2>&1; then
+                echo "[ERROR] node is required to parse env file: $file" >&2
+                return 1
+        fi
+
+        local export_script
+        export_script=$(mktemp)
+
+        if ! node -e '
+            const fs = require("fs");
+            const dotenv = require("dotenv");
+            const file = process.argv[1];
+            const parsed = dotenv.parse(fs.readFileSync(file));
+            for (const [key, raw] of Object.entries(parsed)) {
+                const value = String(raw)
+                    .replace(/\\/g, "\\\\")
+                    .replace(/"/g, "\\\"")
+                    .replace(/\$/g, "\\$")
+                    .replace(/`/g, "\\`");
+                process.stdout.write(`export ${key}="${value}"\n`);
+            }
+        ' "$file" > "$export_script"; then
+                rm -f "$export_script"
+                echo "[ERROR] Failed to parse env file: $file" >&2
+                return 1
+        fi
+
+        # shellcheck disable=SC1090
+        source "$export_script"
+        rm -f "$export_script"
+}
+
+load_env_file "$ENV_FILE"
 
 if [ "$IS_PRODUCTION_HOST" = true ]; then
     if [ -z "${CHEDDAR_DB_PATH:-}" ]; then
@@ -79,6 +110,19 @@ function scheduler_running() {
 
 function get_scheduler_pid() {
     pgrep -f "node.*schedulers/main.js" | head -1
+}
+
+function wait_for_scheduler_stop() {
+    local attempts="${1:-5}"
+    local delay="${2:-1}"
+    local i
+    for i in $(seq 1 "$attempts"); do
+        if ! scheduler_running; then
+            return 0
+        fi
+        sleep "$delay"
+    done
+    return 1
 }
 
 function get_scheduler_open_db() {
@@ -135,8 +179,7 @@ case "$COMMAND" in
         if scheduler_running; then
             echo -e "${BLUE}Stopping scheduler...${NC}"
             pkill -f "node.*schedulers/main.js"
-            sleep 1
-            if ! scheduler_running; then
+            if wait_for_scheduler_stop 8 1; then
                 echo -e "${GREEN}✓ Scheduler stopped${NC}"
             else
                 echo -e "${RED}✗ Failed to stop scheduler${NC}"
@@ -151,7 +194,10 @@ case "$COMMAND" in
         if scheduler_running; then
             echo -e "${BLUE}Restarting scheduler...${NC}"
             pkill -f "node.*schedulers/main.js"
-            sleep 2
+            if ! wait_for_scheduler_stop 8 1; then
+                echo -e "${RED}✗ Failed to stop existing scheduler before restart${NC}"
+                exit 1
+            fi
         fi
         ./scripts/start-scheduler.sh
         ;;
