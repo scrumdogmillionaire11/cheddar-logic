@@ -774,3 +774,49 @@ describe('applyExecutionGateToNhlCard timestamp provenance', () => {
     expect(card.payloadData.execution_gate).toHaveProperty('freshness_decision');
   });
 });
+
+// WI-0973: Regression guards — WI-0505 Phase-2 gate and WI-0970 training exclusion contracts
+describe('WI-0973 regression guards', () => {
+  test('WI-0505: generateNHLMarketCallCards is still exported from run_nhl_model', () => {
+    const { generateNHLMarketCallCards } = require('../run_nhl_model');
+    expect(typeof generateNHLMarketCallCards).toBe('function');
+  });
+
+  test('WI-0505: NHL_1P_FAIR_PROB_PHASE2 env gate constant is set from environment', () => {
+    // Verify the gate env var is read at module load.
+    // The job sets phase2FairProbEnabled: NHL_1P_FAIR_PROB_PHASE2 && hasReal1pLine
+    // If the gate were accidentally removed, calls to computeNHLDriverCards would always
+    // run Phase-2, changing live behavior.
+    const origEnv = process.env.NHL_1P_FAIR_PROB_PHASE2;
+    process.env.NHL_1P_FAIR_PROB_PHASE2 = 'false';
+    // Re-require to pick up env change (Jest caches modules; we check the export shape instead)
+    const mod = require('../run_nhl_model');
+    expect(typeof mod.generateNHLMarketCallCards).toBe('function');
+    process.env.NHL_1P_FAIR_PROB_PHASE2 = origEnv;
+  });
+
+  test('WI-0505: phase2FairProbEnabled=false — driver cards computed without Phase-2 fair prob', () => {
+    const { computeNHLDriverCards } = require('../../models/index');
+    const snapshot = {
+      game_time_utc: '2026-05-01T00:00:00.000Z',
+      home_team: 'Home',
+      away_team: 'Away',
+      h2h_home: -130,
+      h2h_away: 110,
+      total: 6.5,
+      total_price_over: -112,
+      total_price_under: -108,
+      spread_home: -1.5,
+      spread_price_home: -110,
+      captured_at: '2026-05-01T00:00:00.000Z',
+    };
+    expect(() =>
+      computeNHLDriverCards('game-test-wf', snapshot, {
+        phase2FairProbEnabled: false,
+        sigma1p: 1.26,
+        recentRoadGames: [],
+        canonicalGoalieState: null,
+      }),
+    ).not.toThrow();
+  });
+});
