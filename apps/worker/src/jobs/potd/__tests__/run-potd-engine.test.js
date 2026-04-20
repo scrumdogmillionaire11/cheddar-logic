@@ -1043,10 +1043,10 @@ describe('WI-1039-B: POTD timing state machine and heartbeat', () => {
     expect(POTD_TIMING_STATES.NO_PICK_FINAL).toBe('NO_PICK_FINAL');
   });
 
-  test('POTD_WINDOW_ET exports OPENS_HOUR=12 and CLOSES_HOUR=16', () => {
+  test('POTD_WINDOW_ET exports OPENS_HOUR=12 and CLOSES_HOUR=17', () => {
     expect(Object.isFrozen(POTD_WINDOW_ET)).toBe(true);
     expect(POTD_WINDOW_ET.OPENS_HOUR).toBe(12);
-    expect(POTD_WINDOW_ET.CLOSES_HOUR).toBe(16);
+    expect(POTD_WINDOW_ET.CLOSES_HOUR).toBe(17);
   });
 
   test('POTD_NOPICK_REASONS exports all 5 reason keys', () => {
@@ -1079,13 +1079,23 @@ describe('WI-1039-B: POTD timing state machine and heartbeat', () => {
     expect(resolvePotdTimingState(nowEt, true)).toBe('OFFICIAL_PLAY');
   });
 
-  test('resolvePotdTimingState at 16:00 with no official play → NO_PICK_FINAL', () => {
+  test('resolvePotdTimingState at 16:00 with no official play → PENDING_WINDOW (still inside window)', () => {
     const nowEt = makeEtDateTime(16, 0);
-    expect(resolvePotdTimingState(nowEt, false)).toBe('NO_PICK_FINAL');
+    expect(resolvePotdTimingState(nowEt, false)).toBe('PENDING_WINDOW');
   });
 
   test('resolvePotdTimingState at 16:00 with official play → OFFICIAL_PLAY', () => {
     const nowEt = makeEtDateTime(16, 0);
+    expect(resolvePotdTimingState(nowEt, true)).toBe('OFFICIAL_PLAY');
+  });
+
+  test('resolvePotdTimingState at 17:00 with no official play → NO_PICK_FINAL', () => {
+    const nowEt = makeEtDateTime(17, 0);
+    expect(resolvePotdTimingState(nowEt, false)).toBe('NO_PICK_FINAL');
+  });
+
+  test('resolvePotdTimingState at 17:00 with official play → OFFICIAL_PLAY', () => {
+    const nowEt = makeEtDateTime(17, 0);
     expect(resolvePotdTimingState(nowEt, true)).toBe('OFFICIAL_PLAY');
   });
 
@@ -1133,7 +1143,7 @@ describe('WI-1039-B: POTD timing state machine and heartbeat', () => {
     }
   });
 
-  test('no-pick alert fires only in NO_PICK_FINAL state (hour >= 16, no play)', async () => {
+  test('no-pick alert fires only in NO_PICK_FINAL state (hour >= 17, no play)', async () => {
     const { runPotdEngine } = require('../run_potd_engine');
     const origUrl = process.env.DISCORD_ALERT_WEBHOOK_URL;
     process.env.DISCORD_ALERT_WEBHOOK_URL = 'https://discord.com/api/webhooks/alert';
@@ -1141,8 +1151,8 @@ describe('WI-1039-B: POTD timing state machine and heartbeat', () => {
     const alertFn = jest.fn(async () => 1);
     const candidate = buildSelectedCandidate({ edgePct: 0.01, totalScore: 0.29 });
 
-    // 16:00 ET = NO_PICK_FINAL when no play
-    const nowFn = () => makeEtDateTime(16, 0);
+    // 17:00 ET = NO_PICK_FINAL when no play (CLOSES_HOUR=17)
+    const nowFn = () => makeEtDateTime(17, 0);
 
     await runPotdEngine({
       jobKey: 'potd|no-pick-final-alert',
@@ -1176,7 +1186,7 @@ describe('WI-1039-B: POTD timing state machine and heartbeat', () => {
     const selectTopPlaysForNoPick = (candidates, options = {}) => (
       options.requirePositiveEdge === false ? candidates : []
     );
-    const nowFn = () => makeEtDateTime(16, 5);
+    const nowFn = () => makeEtDateTime(17, 5);
 
     await runPotdEngine({
       jobKey: 'potd|no-pick-dedupe-1',
@@ -1225,7 +1235,7 @@ describe('WI-1039-B: POTD timing state machine and heartbeat', () => {
 
     const alertFn = jest.fn(async () => 1);
     const candidate = buildSelectedCandidate({ edgePct: 0.01, totalScore: 0.29 });
-    const nowFn = () => makeEtDateTime(16, 5);
+    const nowFn = () => makeEtDateTime(17, 5);
 
     await runPotdEngine({
       jobKey: 'potd|no-pick-alert-disabled',
@@ -1250,7 +1260,7 @@ describe('WI-1039-B: POTD timing state machine and heartbeat', () => {
     else delete process.env.ENABLE_POTD_NOPICK_ALERTS;
   });
 
-  test('no-pick alert NOT fired during PENDING_WINDOW (hour < 16, no play)', async () => {
+  test('no-pick alert NOT fired during PENDING_WINDOW (hour < 17, no play)', async () => {
     const { runPotdEngine } = require('../run_potd_engine');
     const origUrl = process.env.DISCORD_ALERT_WEBHOOK_URL;
     process.env.DISCORD_ALERT_WEBHOOK_URL = 'https://discord.com/api/webhooks/alert';

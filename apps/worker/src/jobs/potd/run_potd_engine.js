@@ -405,8 +405,11 @@ const POTD_TIMING_STATES = Object.freeze({
   NO_PICK_FINAL: 'NO_PICK_FINAL',
 });
 
-// Publish window bounds in ET hours
-const POTD_WINDOW_ET = Object.freeze({ OPENS_HOUR: 12, CLOSES_HOUR: 16 });
+// Publish window bounds in ET hours.
+// CLOSES_HOUR=17 (5 PM ET) gives the engine breathing room past the scheduler's
+// fallback deadline of 4:15 PM ET and prevents manual runs at 4:xx PM from
+// being rejected by the window guard before any candidates are evaluated.
+const POTD_WINDOW_ET = Object.freeze({ OPENS_HOUR: 12, CLOSES_HOUR: 17 });
 
 // Human-readable reason strings for no-pick alerts
 const POTD_NOPICK_REASONS = Object.freeze({
