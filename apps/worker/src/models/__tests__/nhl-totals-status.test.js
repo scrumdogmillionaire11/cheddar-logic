@@ -1,4 +1,4 @@
-const { classifyNhlTotalsStatus } = require('../nhl-totals-status');
+const { classifyNhlTotalsStatus, computeNhl1pForecast } = require('../nhl-totals-status');
 
 describe('classifyNhlTotalsStatus', () => {
   const baseInput = {
@@ -114,5 +114,64 @@ describe('classifyNhlTotalsStatus', () => {
     } else {
       expect(result.status).toBe('PLAY');
     }
+  });
+});
+
+describe('computeNhl1pForecast', () => {
+  test('valid inputs return correct delta, absDelta, forecastValid=true', () => {
+    const result = computeNhl1pForecast({ modelTotal: 6.5, marketTotal: 5.5 });
+    expect(result.delta).toBeCloseTo(1.0);
+    expect(result.absDelta).toBeCloseTo(1.0);
+    expect(result.forecastValid).toBe(true);
+    expect(result.modelTotal).toBeCloseTo(6.5);
+    expect(result.marketTotal).toBeCloseTo(5.5);
+  });
+
+  test('hasRequiredInputs=false returns forecastValid=false', () => {
+    const result = computeNhl1pForecast({ modelTotal: 5.0, marketTotal: 5.5, hasRequiredInputs: false });
+    expect(result.forecastValid).toBe(false);
+  });
+
+  test('NaN modelTotal returns forecastValid=false, NaN delta and absDelta', () => {
+    const result = computeNhl1pForecast({ modelTotal: NaN, marketTotal: 5.5 });
+    expect(result.forecastValid).toBe(false);
+    expect(Number.isFinite(result.delta)).toBe(false);
+    expect(Number.isFinite(result.absDelta)).toBe(false);
+  });
+});
+
+describe('classifyNhlTotalsStatus — independent thresholds', () => {
+  test('OVER: tightened play threshold promotes absDelta=0.8 to PLAY (default would be SLIGHT EDGE)', () => {
+    const result = classifyNhlTotalsStatus({
+      side: 'OVER',
+      modelTotal: 6.3,
+      marketTotal: 5.5,
+      integrityOk: true,
+      goaliesConfirmedHome: true,
+      goaliesConfirmedAway: true,
+      majorInjuryUncertainty: false,
+      thresholds: {
+        over:  { play: 0.7, slightEdge: 0.4 },
+        under: { play: 1.0, slightEdge: 0.5 },
+      },
+    });
+    expect(result.status).toBe('PLAY');
+  });
+
+  test('UNDER: raised play threshold demotes absDelta=1.0 from PLAY to SLIGHT EDGE', () => {
+    const result = classifyNhlTotalsStatus({
+      side: 'UNDER',
+      modelTotal: 4.0,
+      marketTotal: 5.0,
+      integrityOk: true,
+      goaliesConfirmedHome: true,
+      goaliesConfirmedAway: true,
+      majorInjuryUncertainty: false,
+      thresholds: {
+        over:  { play: 1.0, slightEdge: 0.5 },
+        under: { play: 1.5, slightEdge: 0.5 },
+      },
+    });
+    expect(result.status).toBe('SLIGHT EDGE');
   });
 });

@@ -20,6 +20,7 @@ const {
   recordEspnNullTeams,
   sendEspnNullDiscordAlert,
   applyExecutionGateToNhlCard,
+  stampTrainingRowExclusion,
 } = require('../run_nhl_model');
 const { computeNHLDriverCards } = require('../../models/index');
 

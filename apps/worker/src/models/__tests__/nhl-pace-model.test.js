@@ -4,6 +4,7 @@ const {
   predictNHLGame,
   resolveGoalieComposite,
   NHL_PACE_AUDIT_RULES,
+  extractPlayoffRegimeFeatures,
 } = require('../nhl-pace-model');
 const { makeCanonicalGoalieState } = require('../nhl-goalie-state');
 
@@ -430,5 +431,119 @@ describe('predictNHLGame — defense-side skater injury (WI-0465-C)', () => {
     // Just verify the adjustments were recorded
     expect(combined.adjustments.home.skater_injury).toBe(0.93);
     expect(combined.adjustments.away.skater_def_injury).toBe(0.95);
+  });
+});
+
+describe('extractPlayoffRegimeFeatures (WI-0970)', () => {
+  function buildPlayoffSnapshot(seriesStatus = null) {
+    return {
+      raw_data: seriesStatus ? { seriesStatus } : {},
+    };
+  }
+
+  test('non-playoff game: series fields are null, rest_compression derived from rest days', () => {
+    const result = extractPlayoffRegimeFeatures({
+      isPlayoff: false,
+      oddsSnapshot: buildPlayoffSnapshot(),
+      restDaysHome: 2,
+      restDaysAway: 3,
+      homeAdjustmentTrust: 'FULL',
+      awayAdjustmentTrust: 'FULL',
+    });
+
+    expect(result.playoff_series_game_num).toBeNull();
+    expect(result.playoff_elimination_pressure).toBeNull();
+    expect(result.playoff_goalie_stability).toBeNull();
+    expect(result.playoff_rest_compression).toBe(false);
+  });
+
+  test('non-playoff game with rest compression (home team on short rest)', () => {
+    const result = extractPlayoffRegimeFeatures({
+      isPlayoff: false,
+      oddsSnapshot: buildPlayoffSnapshot(),
+      restDaysHome: 1,
+      restDaysAway: 3,
+    });
+
+    expect(result.playoff_rest_compression).toBe(true);
+  });
+
+  test('playoff game without seriesStatus: series fields null, rest and goalie populated', () => {
+    const result = extractPlayoffRegimeFeatures({
+      isPlayoff: true,
+      oddsSnapshot: buildPlayoffSnapshot(null),
+      restDaysHome: 2,
+      restDaysAway: 2,
+      homeAdjustmentTrust: 'FULL',
+      awayAdjustmentTrust: 'DEGRADED',
+    });
+
+    expect(result.playoff_series_game_num).toBeNull();
+    expect(result.playoff_elimination_pressure).toBeNull();
+    expect(result.playoff_rest_compression).toBe(false);
+    expect(result.playoff_goalie_stability).toBe('FULL'); // home preferred
+  });
+
+  test('playoff game with seriesStatus homeWins/awayWins: elimination_pressure when one team has 3 wins', () => {
+    const result = extractPlayoffRegimeFeatures({
+      isPlayoff: true,
+      oddsSnapshot: buildPlayoffSnapshot({ seriesGameNumber: 6, homeWins: 3, awayWins: 2 }),
+      restDaysHome: 2,
+      restDaysAway: 2,
+      homeAdjustmentTrust: 'DEGRADED',
+      awayAdjustmentTrust: 'FULL',
+    });
+
+    expect(result.playoff_series_game_num).toBe(6);
+    expect(result.playoff_elimination_pressure).toBe(true);
+    expect(result.playoff_goalie_stability).toBe('DEGRADED'); // home preferred
+  });
+
+  test('playoff game: elimination_pressure false when no team has 3 wins', () => {
+    const result = extractPlayoffRegimeFeatures({
+      isPlayoff: true,
+      oddsSnapshot: buildPlayoffSnapshot({ seriesGameNumber: 2, homeWins: 1, awayWins: 1 }),
+      restDaysHome: 3,
+      restDaysAway: 3,
+    });
+
+    expect(result.playoff_elimination_pressure).toBe(false);
+    expect(result.playoff_series_game_num).toBe(2);
+  });
+
+  test('playoff game: rest_compression true when away team on 1-day rest', () => {
+    const result = extractPlayoffRegimeFeatures({
+      isPlayoff: true,
+      oddsSnapshot: buildPlayoffSnapshot(),
+      restDaysHome: 3,
+      restDaysAway: 1,
+      homeAdjustmentTrust: 'FULL',
+    });
+
+    expect(result.playoff_rest_compression).toBe(true);
+  });
+
+  test('playoff goalie stability falls back to away when home trust is null', () => {
+    const result = extractPlayoffRegimeFeatures({
+      isPlayoff: true,
+      oddsSnapshot: buildPlayoffSnapshot(),
+      restDaysHome: 2,
+      restDaysAway: 2,
+      homeAdjustmentTrust: null,
+      awayAdjustmentTrust: 'NEUTRALIZED',
+    });
+
+    expect(result.playoff_goalie_stability).toBe('NEUTRALIZED');
+  });
+
+  test('rest_compression false when rest days unavailable (null)', () => {
+    const result = extractPlayoffRegimeFeatures({
+      isPlayoff: false,
+      oddsSnapshot: buildPlayoffSnapshot(),
+      restDaysHome: null,
+      restDaysAway: null,
+    });
+
+    expect(result.playoff_rest_compression).toBe(false);
   });
 });
