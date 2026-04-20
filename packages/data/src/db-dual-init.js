@@ -1,3 +1,10 @@
+/*
+ * NOT currently activated in production.
+ * Single-DB path via resolveDatabasePath is the active runtime path.
+ * This module is retained for future dual-DB deployment and is safe to call
+ * only after `initDualDb()` is invoked in the entry point.
+ */
+
 /**
  * Dual-Database Initialization Module
  *
