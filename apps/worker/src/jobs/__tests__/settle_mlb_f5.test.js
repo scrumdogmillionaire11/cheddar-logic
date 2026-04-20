@@ -839,7 +839,7 @@ describe('settleMlbF5 integration', () => {
   });
 
   test('resolves same-team doubleheaders by scheduled start instead of date matchup fallback', async () => {
-    const gameDate = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    const gameDate = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString().slice(0, 10);
     const earlyStart = `${gameDate}T17:05:00.000Z`;
     const lateStart = `${gameDate}T23:05:00.000Z`;
     const { getDatabase, closeDatabase } = require('@cheddar-logic/data');

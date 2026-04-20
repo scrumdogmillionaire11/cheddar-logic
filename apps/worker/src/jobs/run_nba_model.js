@@ -87,6 +87,10 @@ const {
 const { computeRestDays } = require('../utils/rest-days');
 const { sendDiscordMessages } = require('./post_discord_cards');
 const { applyCalibration } = require('../utils/calibration');
+const {
+  assertFeatureTimeliness,
+  applyFeatureTimelinessEnforcement,
+} = require('../models/feature-time-guard');
 
 const ENABLE_WELCOME_HOME = process.env.ENABLE_WELCOME_HOME === 'true';
 
@@ -95,6 +99,48 @@ const TEAM_CONTEXT_WEIGHT = 0.25;
 const ESPN_NULL_ALERT_WINDOW_MINUTES = 60;
 const ESPN_NULL_ALERT_THRESHOLD_DEFAULT = 2;
 const ESPN_NULL_NO_GAMES_PERSIST_WINDOW_MINUTES_DEFAULT = 20;
+
+function stampNbaFeatureTimestamps(rawData, capturedAt) {
+  if (!capturedAt || !rawData || typeof rawData !== 'object') return;
+  if (!rawData.feature_timestamps || typeof rawData.feature_timestamps !== 'object') {
+    rawData.feature_timestamps = {};
+  }
+
+  for (const field of ['pace_anchor_total', 'blended_total', 'rest_days_home', 'rest_days_away', 'availability_flags']) {
+    if (rawData.feature_timestamps[field] != null) continue;
+    if (rawData[field] !== null && rawData[field] !== undefined && rawData[field] !== '') {
+      rawData.feature_timestamps[field] = capturedAt;
+    }
+  }
+}
+
+function applyNbaFeatureTimelinessGuardToCards(cards, { rawData, betPlacedAt, gameId } = {}) {
+  const cardList = Array.isArray(cards) ? cards : cards ? [cards] : [];
+  if (cardList.length === 0 || !betPlacedAt) {
+    return { evaluated: false, blockedCount: 0, timeliness: null };
+  }
+
+  const sourceRawData = rawData && typeof rawData === 'object' ? rawData : {};
+  stampNbaFeatureTimestamps(sourceRawData, betPlacedAt);
+  const timeliness = assertFeatureTimeliness(sourceRawData, betPlacedAt);
+  if (!timeliness.ok) {
+    console.warn(
+      `[FeatureGuard] ${gameId || 'unknown-game'}: ${timeliness.violations.length} violation(s): ` +
+        timeliness.violations.map((v) => v.field).join(', '),
+    );
+  }
+
+  let blockedCount = 0;
+  for (const card of cardList) {
+    if (!card?.payloadData || typeof card.payloadData !== 'object') continue;
+    card.payloadData.feature_timeliness = timeliness;
+    if (applyFeatureTimelinessEnforcement(card.payloadData, timeliness)) {
+      blockedCount++;
+    }
+  }
+
+  return { evaluated: true, blockedCount, timeliness };
+}
 
 function normalizeEspnNullReason(reason) {
   return (
@@ -2053,6 +2099,19 @@ async function runNBAModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
             });
           }
 
+          const featureTimelinessOutcome = applyNbaFeatureTimelinessGuardToCards(
+            pendingCards.map((entry) => entry.card),
+            {
+              rawData: oddsSnapshot.raw_data ?? {},
+              betPlacedAt: oddsSnapshot.captured_at ?? null,
+              gameId,
+            },
+          );
+          if (featureTimelinessOutcome.evaluated) {
+            for (const entry of pendingCards) {
+              entry.strictDecisionSnapshot = capturePublishedDecisionState(entry.card.payloadData);
+            }
+          }
           const pricingReady = pendingCards.some((entry) =>
             canPriceCard(entry.card),
           );
@@ -2236,4 +2295,5 @@ module.exports = {
   deriveExecutionStatusForCard,
   applyExecutionGateToNbaCard,
   applyPlayoffSigmaMultiplier,
+  applyNbaFeatureTimelinessGuardToCards,
 };

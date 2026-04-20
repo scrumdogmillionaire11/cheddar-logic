@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Model Integrity & Betting Execution Hardening
 status: active
-last_updated: "2026-04-19T20:15:00Z"
-last_activity: "2026-04-19 - WI-1035: Fixed doubleheader starter-map misbinding with 4-hour proximity guard (commit 99f6fa2b)"
+last_updated: "2026-04-20T00:05:16Z"
+last_activity: "2026-04-20 - WI-1038: Enforced feature timestamp hard block for MLB/NHL/NBA tracked high-risk fields"
 ---
 
 # Project State
@@ -130,7 +130,7 @@ Pre-requisites for all model math corrections. Non-breaking, additive.
 
 | WI | Title | Priority | Deps |
 |----|-------|----------|------|
-| **WI-0827** | Feature timestamp audit — block any feature with `available_at > bet_placed_at` | High | none |
+| ~~**WI-0827**~~ | ~~Feature timestamp audit — block any feature with `available_at > bet_placed_at`~~ | ~~High~~ COMPLETE via WI-1038 (2026-04-20) | none |
 | **WI-0828** | CI ablation tests + standardized model output interface | Medium | none |
 | **WI-0833** | Feature correlation cluster detection in CI — fail on |r| >= 0.80 | Medium | WI-0823 |
 | **WI-0834** | Risk recalibration — re-run Monte Carlo notebook with empirical edge distribution | Medium | WI-0825, WI-0831 |

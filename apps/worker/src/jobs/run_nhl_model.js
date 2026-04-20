@@ -104,7 +104,10 @@ const {
 const { computeRestDays } = require('../utils/rest-days');
 const { sendDiscordMessages } = require('./post_discord_cards');
 const { applyCalibration } = require('../utils/calibration');
-const { assertFeatureTimeliness } = require('../models/feature-time-guard');
+const {
+  assertFeatureTimeliness,
+  applyFeatureTimelinessEnforcement,
+} = require('../models/feature-time-guard');
 const { classifyNhlTotalsStatus } = require('../models/nhl-totals-status');
 
 const ENABLE_WELCOME_HOME = process.env.ENABLE_WELCOME_HOME === 'true';
@@ -1767,6 +1770,35 @@ function stampNhlEspnFeatureTimestamps(rawData, availableAt) {
     if (rawData.awayGoalsAgainstL5 == null) rawData.awayGoalsAgainstL5 = awayGoalsAgainst;
     stampFeatureTimestamp(rawData, 'awayGoalsAgainstL5', availableAt);
   }
+}
+
+function applyNhlFeatureTimelinessGuardToCards(cards, { rawData, betPlacedAt, gameId } = {}) {
+  const cardList = Array.isArray(cards) ? cards : cards ? [cards] : [];
+  if (cardList.length === 0 || !betPlacedAt) {
+    return { evaluated: false, blockedCount: 0, timeliness: null };
+  }
+
+  const timeliness = assertFeatureTimeliness(
+    rawData && typeof rawData === 'object' ? rawData : {},
+    betPlacedAt,
+  );
+  if (!timeliness.ok) {
+    console.warn(
+      `[FeatureGuard] ${gameId || 'unknown-game'}: ${timeliness.violations.length} violation(s): ` +
+        timeliness.violations.map((v) => v.field).join(', '),
+    );
+  }
+
+  let blockedCount = 0;
+  for (const card of cardList) {
+    if (!card?.payloadData || typeof card.payloadData !== 'object') continue;
+    card.payloadData.feature_timeliness = timeliness;
+    if (applyFeatureTimelinessEnforcement(card.payloadData, timeliness)) {
+      blockedCount++;
+    }
+  }
+
+  return { evaluated: true, blockedCount, timeliness };
 }
 
 function attachNhlDriverContextToRawData(rawData) {
@@ -3585,6 +3617,15 @@ async function runNHLModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
             });
           }
 
+          applyNhlFeatureTimelinessGuardToCards(
+            pendingCards.map((entry) => entry.card),
+            {
+              rawData: oddsSnapshot.raw_data ?? {},
+              betPlacedAt: oddsSnapshot.captured_at ?? null,
+              gameId,
+            },
+          );
+
           const pricingReady = pendingCards.some((entry) =>
             canPriceCard(entry.card),
           );
@@ -3650,23 +3691,6 @@ async function runNHLModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
             } else {
               pd.kelly_fraction = null;
               pd.kelly_units = null;
-            }
-          }
-
-          // WI-0827: feature timeliness audit — warn on future-leakage violations (Phase 1).
-          {
-            const _betPlacedAt = oddsSnapshot.captured_at ?? null;
-            if (_betPlacedAt) {
-              const _timeliness = assertFeatureTimeliness(oddsSnapshot.raw_data ?? {}, _betPlacedAt);
-              if (!_timeliness.ok) {
-                console.warn(
-                  `[FeatureGuard] ${gameId}: ${_timeliness.violations.length} violation(s): ` +
-                    _timeliness.violations.map((v) => v.field).join(', '),
-                );
-              }
-              for (const entry of pendingCards) {
-                entry.card.payloadData.feature_timeliness = _timeliness;
-              }
             }
           }
 
@@ -3860,5 +3884,6 @@ module.exports = {
   applyNhlUncertaintyHold,
   applyNoBetGuard,
   applyPlayoffSigmaMultiplier,
+  applyNhlFeatureTimelinessGuardToCards,
   isHardProjectionInputBlock,
 };
