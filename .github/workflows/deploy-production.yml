@@ -403,9 +403,16 @@ jobs:
             echo "Selected sample CSS: /_next/static/$SAMPLE_CSS_REL"
             echo "Build verification passed: BUILD_ID exists, static dir exists, $CHUNK_COUNT JS chunks, $CSS_COUNT CSS chunks found"
             echo "=== Post-build disk / memory ===" && df -h /opt && free -h || true
-            WORKER_RESTART_MARK="$(date -u +"%Y-%m-%d %H:%M:%S")"
+            # Use local time — journalctl --since interprets timestamps as local time, not UTC.
+            # date -u would produce a UTC time that journald treats as local, shifting the window
+            # by the UTC offset (e.g. EDT=UTC-4 → 4-hour future window → no entries found).
+            WORKER_RESTART_MARK="$(date +"%Y-%m-%d %H:%M:%S")"
             worker_recent_logs() {
               sudo journalctl -u cheddar-worker --since "$WORKER_RESTART_MARK" --no-pager || true
+            }
+            worker_logs_fallback() {
+              # Unconditional last-N dump when --since query returns nothing (clock skew guard)
+              sudo journalctl -u cheddar-worker -n 80 --no-pager || true
             }
             extract_worker_lock_owner_pid() {
               worker_recent_logs | sed -n 's/.*pid=\([0-9][0-9]*\).*/\1/p' | tail -n 1
@@ -428,13 +435,22 @@ jobs:
               message="$2"
               echo "ERROR [$code_label]: $message"
               sudo systemctl status cheddar-worker --no-pager || true
-              worker_recent_logs | tail -n 120 || true
-              if worker_recent_logs | grep -q "another process holds the lock"; then
+              RECENT_LOGS="$(worker_recent_logs)"
+              if [ -z "$RECENT_LOGS" ]; then
+                echo "[warn] No logs found via --since window; falling back to last-80 journal dump"
+                worker_logs_fallback
+              else
+                printf '%s\n' "$RECENT_LOGS" | tail -n 120
+              fi
+              if worker_recent_logs | grep -q "another process holds the lock" || worker_logs_fallback | grep -q "another process holds the lock"; then
                 echo "Detected second-writer DB lock contention during worker startup"
                 dump_worker_lock_owner_diagnostics
               fi
               exit 1
             }
+            # Belt-and-suspenders: remove any lock file that may have re-appeared since
+            # the earlier cleanup (e.g. from a migration run or a crash-loop restart).
+            rm -f "${CANONICAL_DB_PATH}.lock" || true
             sudo systemctl restart cheddar-worker
             sudo systemctl restart cheddar-web
             sudo systemctl restart cheddar-fpl-sage || { echo "WARNING: cheddar-fpl-sage failed to restart — continuing deploy (web/worker unaffected)"; true; }
