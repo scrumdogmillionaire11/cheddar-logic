@@ -2979,8 +2979,6 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
       goalieHomeStatus: sourcePlay?.goalie_home_status,
       goalieAwayStatus: sourcePlay?.goalie_away_status,
     }),
-    // Legacy compatibility (keep until UI migration complete)
-    status: hardPass ? 'PASS' : resolvedDisplayDecision.status,
     market,
     pick,
     lean:
