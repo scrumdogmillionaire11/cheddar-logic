@@ -403,30 +403,72 @@ jobs:
             echo "Selected sample CSS: /_next/static/$SAMPLE_CSS_REL"
             echo "Build verification passed: BUILD_ID exists, static dir exists, $CHUNK_COUNT JS chunks, $CSS_COUNT CSS chunks found"
             echo "=== Post-build disk / memory ===" && df -h /opt && free -h || true
+            WORKER_RESTART_MARK="$(date -u +"%Y-%m-%d %H:%M:%S")"
+            worker_recent_logs() {
+              sudo journalctl -u cheddar-worker --since "$WORKER_RESTART_MARK" --no-pager || true
+            }
+            extract_worker_lock_owner_pid() {
+              worker_recent_logs | sed -n 's/.*pid=\([0-9][0-9]*\).*/\1/p' | tail -n 1
+            }
+            dump_worker_lock_owner_diagnostics() {
+              owner_pid="$(extract_worker_lock_owner_pid)"
+              if [ -z "$owner_pid" ]; then
+                echo "No lock-owner PID found in cheddar-worker journal since restart"
+                return
+              fi
+              echo "Detected competing DB lock owner PID: $owner_pid"
+              ps -fp "$owner_pid" || true
+              sudo cat "/proc/$owner_pid/cmdline" 2>/dev/null | tr '\000' ' ' | sed 's/^/cmdline: /' || true
+              echo
+              echo "=== Recent cheddar-web logs ==="
+              sudo journalctl -u cheddar-web --since "$WORKER_RESTART_MARK" --no-pager | tail -n 40 || true
+            }
+            fail_worker_smoke() {
+              code_label="$1"
+              message="$2"
+              echo "ERROR [$code_label]: $message"
+              sudo systemctl status cheddar-worker --no-pager || true
+              worker_recent_logs | tail -n 120 || true
+              if worker_recent_logs | grep -q "another process holds the lock"; then
+                echo "Detected second-writer DB lock contention during worker startup"
+                dump_worker_lock_owner_diagnostics
+              fi
+              exit 1
+            }
             sudo systemctl restart cheddar-worker
             sudo systemctl restart cheddar-web
             sudo systemctl restart cheddar-fpl-sage || { echo "WARNING: cheddar-fpl-sage failed to restart — continuing deploy (web/worker unaffected)"; true; }
             sleep 5
             if ! sudo systemctl is-active --quiet cheddar-worker; then
-              echo "ERROR [worker-smoke-1]: cheddar-worker is not active after restart"
-              sudo journalctl -u cheddar-worker -n 60 --no-pager || true
-              exit 1
+              fail_worker_smoke "worker-smoke-1" "cheddar-worker is not active after restart"
             fi
             echo "worker-smoke-1 passed: cheddar-worker is active"
             SCHEDULER_READY=0
-            for attempt in $(seq 1 15); do
-              if sudo journalctl -u cheddar-worker --since "2 minutes ago" --no-pager -q | grep -q "\[SCHEDULER\] Database ready"; then
+            for attempt in $(seq 1 20); do
+              if ! sudo systemctl is-active --quiet cheddar-worker; then
+                fail_worker_smoke "worker-smoke-2" "cheddar-worker exited during initial startup window"
+              fi
+              if worker_recent_logs | grep -q "\[SCHEDULER\] Database ready"; then
                 SCHEDULER_READY=1
                 break
               fi
               sleep 1
             done
             if [ "$SCHEDULER_READY" -ne 1 ]; then
-              echo "ERROR [worker-smoke-2]: scheduler did not reach 'Database ready' after restart"
-              sudo journalctl -u cheddar-worker -n 80 --no-pager || true
-              exit 1
+              fail_worker_smoke "worker-smoke-3" "scheduler did not reach 'Database ready' after restart"
             fi
             echo "worker-smoke-2 passed: scheduler reached Database ready"
+            POST_READY_HOLD_SEC=20
+            for attempt in $(seq 1 "$POST_READY_HOLD_SEC"); do
+              if ! sudo systemctl is-active --quiet cheddar-worker; then
+                fail_worker_smoke "worker-smoke-4" "cheddar-worker failed within ${POST_READY_HOLD_SEC}s of reporting 'Database ready'"
+              fi
+              sleep 1
+            done
+            if worker_recent_logs | grep -q "another process holds the lock"; then
+              fail_worker_smoke "worker-smoke-5" "second writer detected after restart; cheddar-worker hit DB lock contention"
+            fi
+            echo "worker-smoke-3 passed: cheddar-worker remained active for ${POST_READY_HOLD_SEC}s after startup"
             restore_previous_next() {
               if [ "$ROLLBACK_READY" != "1" ] || [ ! -d "$PREV_NEXT_ROLLBACK" ]; then
                 echo "Rollback snapshot unavailable; skipping .next restore"

@@ -48,6 +48,44 @@ function isProcessAlive(pid) {
   }
 }
 
+function readProcText(procPath) {
+  try {
+    return fs.readFileSync(procPath, 'utf8');
+  } catch {
+    return '';
+  }
+}
+
+function getDbLockOwnerDetails(lockInfo) {
+  const details = [];
+
+  if (lockInfo && typeof lockInfo.startedAt === 'string' && lockInfo.startedAt.trim()) {
+    details.push(`lock_started_at=${lockInfo.startedAt.trim()}`);
+  }
+
+  const pid = Number(lockInfo && lockInfo.pid);
+  if (!Number.isFinite(pid) || pid <= 0) {
+    return details.length > 0 ? details.join(', ') : null;
+  }
+
+  if (process.platform === 'linux') {
+    const ownerComm = readProcText(`/proc/${pid}/comm`).trim();
+    if (ownerComm) {
+      details.push(`owner_comm=${ownerComm.replace(/\s+/g, ' ')}`);
+    }
+
+    const ownerCmd = readProcText(`/proc/${pid}/cmdline`)
+      .replace(/\u0000+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (ownerCmd) {
+      details.push(`owner_cmd="${ownerCmd.replace(/"/g, "'")}"`);
+    }
+  }
+
+  return details.length > 0 ? details.join(', ') : null;
+}
+
 /**
  * Check native SQLite database integrity using sqlite3 CLI.
  * This is for detecting corruption in native SQLite files (e.g., FPL Sage DB),
@@ -337,8 +375,11 @@ function acquireDbFileLock(dbFile) {
   }
 
   const ownerPid = lockInfo && Number.isFinite(Number(lockInfo.pid)) ? lockInfo.pid : 'unknown';
+  const ownerDetails = getDbLockOwnerDetails(lockInfo);
+  const ownerSuffix = ownerDetails ? `, ${ownerDetails}` : '';
   const message =
-    `[DB] Refusing to open ${dbFile} because another process holds the lock (${lockPath}, pid=${ownerPid}). ` +
+    `[DB] Refusing to open ${dbFile} because another process holds the lock (${lockPath}, pid=${ownerPid}${ownerSuffix}). ` +
+    'Second writer detected. Stop the competing writer before restarting cheddar-worker. ' +
     'Set CHEDDAR_DB_ALLOW_MULTI_PROCESS=true to bypass.';
   if (process.env.NODE_ENV === 'production') {
     throw new Error(message);
