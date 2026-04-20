@@ -10,6 +10,7 @@ const {
   applyNhlGoalieExecutionStatusGuard,
   deriveNhlUncertaintyHoldReasonCodes,
   applyNhlUncertaintyHold,
+  applyNhlFeatureTimelinessGuardToCards,
   isHardProjectionInputBlock,
 } = require('../run_nhl_model');
 const { finalizeDecisionFields } = require('../../utils/decision-publisher');
@@ -131,6 +132,111 @@ function buildPaceResult(overrides = {}) {
     ...overrides,
   };
 }
+
+function buildExecutableNhlCard() {
+  return {
+    cardType: 'nhl-moneyline-call',
+    payloadData: {
+      status: 'FIRE',
+      action: 'FIRE',
+      classification: 'BASE',
+      execution_status: 'EXECUTABLE',
+      ev_passed: true,
+      actionable: true,
+      publish_ready: true,
+      reason_codes: ['EDGE_FOUND'],
+      decision_v2: {
+        official_status: 'PLAY',
+        primary_reason_code: 'EDGE_FOUND',
+      },
+      _publish_state: {
+        publish_ready: true,
+        emit_allowed: true,
+        execution_status: 'EXECUTABLE',
+      },
+    },
+  };
+}
+
+describe('NHL feature timeliness guard', () => {
+  const betPlacedAt = '2026-04-06T17:00:00Z';
+
+  test('future-dated tracked feature timestamp blocks actionable output', () => {
+    const card = buildExecutableNhlCard();
+    const outcome = applyNhlFeatureTimelinessGuardToCards([card], {
+      gameId: 'nhl-feature-leak',
+      betPlacedAt,
+      rawData: {
+        feature_timestamps: {
+          homeGoalieCertainty: '2026-04-06T19:00:00Z',
+        },
+      },
+    });
+
+    expect(outcome).toMatchObject({ evaluated: true, blockedCount: 1 });
+    expect(card.payloadData).toMatchObject({
+      execution_status: 'BLOCKED',
+      status: 'PASS',
+      action: 'PASS',
+      classification: 'PASS',
+      pass_reason_code: 'PASS_FEATURE_TIMESTAMP_LEAK',
+      decision_v2: {
+        official_status: 'PASS',
+        primary_reason_code: 'PASS_EXECUTION_GATE_BLOCKED',
+      },
+    });
+    expect(card.payloadData.feature_timeliness.violations).toEqual([
+      {
+        field: 'homeGoalieCertainty',
+        available_at: '2026-04-06T19:00:00Z',
+        bet_placed_at: betPlacedAt,
+      },
+    ]);
+  });
+
+  test('clean tracked feature timestamp preserves executable state', () => {
+    const card = buildExecutableNhlCard();
+    const outcome = applyNhlFeatureTimelinessGuardToCards([card], {
+      gameId: 'nhl-clean',
+      betPlacedAt,
+      rawData: {
+        feature_timestamps: {
+          homeGoalieCertainty: '2026-04-06T16:59:00Z',
+        },
+      },
+    });
+
+    expect(outcome).toMatchObject({ evaluated: true, blockedCount: 0 });
+    expect(card.payloadData).toMatchObject({
+      execution_status: 'EXECUTABLE',
+      status: 'FIRE',
+      action: 'FIRE',
+      classification: 'BASE',
+    });
+    expect(card.payloadData.feature_timeliness.ok).toBe(true);
+  });
+
+  test('null tracked timestamp remains fail-open and is represented in diagnostics', () => {
+    const card = buildExecutableNhlCard();
+    const outcome = applyNhlFeatureTimelinessGuardToCards([card], {
+      gameId: 'nhl-null',
+      betPlacedAt,
+      rawData: {
+        feature_timestamps: {
+          homeGoalieCertainty: null,
+        },
+      },
+    });
+
+    expect(outcome).toMatchObject({ evaluated: true, blockedCount: 0 });
+    expect(card.payloadData.execution_status).toBe('EXECUTABLE');
+    expect(card.payloadData.feature_timeliness.missing).toContainEqual({
+      field: 'homeGoalieCertainty',
+      available_at: null,
+      bet_placed_at: betPlacedAt,
+    });
+  });
+});
 
 describe('run_nhl_model market call generation', () => {
   afterEach(() => {

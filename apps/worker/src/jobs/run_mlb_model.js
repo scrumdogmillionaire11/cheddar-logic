@@ -80,7 +80,10 @@ const {
   getEffectiveContract,
 } = require('./execution-gate-freshness-contract');
 const { applyCalibration } = require('../utils/calibration');
-const { assertFeatureTimeliness } = require('../models/feature-time-guard');
+const {
+  assertFeatureTimeliness,
+  applyFeatureTimelinessEnforcement,
+} = require('../models/feature-time-guard');
 const { pullMlbStatcast } = require('./pull_mlb_statcast');
 const {
   MLB_TEAM_ABBREVIATIONS,
@@ -183,6 +186,35 @@ function stampMlbFeatureTimestamps(rawData, capturedAt) {
       rawData.feature_timestamps[field] = capturedAt;
     }
   }
+}
+
+function applyMlbFeatureTimelinessGuardToPayload(payload, { rawData, betPlacedAt, gameId } = {}) {
+  if (!payload || typeof payload !== 'object' || !betPlacedAt) {
+    return { evaluated: false, blocked: false, timeliness: null };
+  }
+
+  const sourceRawData = rawData && typeof rawData === 'object' ? rawData : {};
+  stampMlbFeatureTimestamps(sourceRawData, betPlacedAt);
+  const timeliness = assertFeatureTimeliness(sourceRawData, betPlacedAt);
+  payload.feature_timeliness = timeliness;
+
+  if (!timeliness.ok) {
+    console.warn(
+      `[FeatureGuard] ${gameId || payload.game_id || 'unknown-game'}: ${timeliness.violations.length} violation(s): ` +
+        timeliness.violations.map((v) => v.field).join(', '),
+    );
+  }
+
+  const blocked =
+    !timeliness.ok && typeof applyFeatureTimelinessEnforcement === 'function'
+      ? applyFeatureTimelinessEnforcement(payload, timeliness)
+      : false;
+
+  return {
+    evaluated: true,
+    blocked,
+    timeliness: payload.feature_timeliness,
+  };
 }
 
 function extractSameBookOddsContext(oddsSnapshot) {
@@ -2427,6 +2459,7 @@ function assertMlbExecutionInvariant(payload) {
   const publishReady = payload?._publish_state?.publish_ready === true;
   const actionable = payload.actionable === true;
   const projectionFloor = payload.projection_floor === true;
+  const featureTimestampBlocked = payload.pass_reason_code === 'PASS_FEATURE_TIMESTAMP_LEAK';
   const failures = [];
 
   if (executionStatus === 'EXECUTABLE' && pricingStatus !== 'FRESH') {
@@ -2440,7 +2473,7 @@ function assertMlbExecutionInvariant(payload) {
   if (executionStatus === 'PROJECTION_ONLY' && actionable) {
     failures.push('execution_status=PROJECTION_ONLY requires actionable=false');
   }
-  if (projectionFloor && executionStatus !== 'PROJECTION_ONLY') {
+  if (projectionFloor && executionStatus !== 'PROJECTION_ONLY' && !featureTimestampBlocked) {
     failures.push(
       `projection_floor=true requires execution_status=PROJECTION_ONLY (actual=${executionStatus || 'MISSING'})`,
     );
@@ -4459,6 +4492,14 @@ async function runMLBModel({
                 freshness_decision: null,
               };
             }
+            applyMlbFeatureTimelinessGuardToPayload(payloadData, {
+              rawData:
+                (typeof baseOddsSnapshot?.raw_data === 'object'
+                  ? baseOddsSnapshot.raw_data
+                  : {}) ?? {},
+              betPlacedAt: baseOddsSnapshot?.captured_at ?? null,
+              gameId,
+            });
             assertMlbExecutionInvariant(payloadData);
 
             const cardTitle = isF5
@@ -4558,28 +4599,6 @@ async function runMLBModel({
               }
             }
             card.payloadData.pipeline_state = pipelineState;
-            // WI-0827: feature timeliness audit — warn on future-leakage violations (Phase 1).
-            {
-              const _betPlacedAt = baseOddsSnapshot?.captured_at ?? null;
-              if (_betPlacedAt) {
-                const _rawData =
-                  (typeof baseOddsSnapshot?.raw_data === 'object'
-                    ? baseOddsSnapshot.raw_data
-                    : {}) ?? {};
-                stampMlbFeatureTimestamps(_rawData, _betPlacedAt);
-                const _timeliness = assertFeatureTimeliness(
-                  _rawData,
-                  _betPlacedAt,
-                );
-                if (!_timeliness.ok) {
-                  console.warn(
-                    `[FeatureGuard] ${gameId}: ${_timeliness.violations.length} violation(s): ` +
-                      _timeliness.violations.map((v) => v.field).join(', '),
-                  );
-                }
-                card.payloadData.feature_timeliness = _timeliness;
-              }
-            }
             insertCardPayload(card);
 
             if (isFullGameTotal && payloadData?.projection?.component_breakdown) {
@@ -4764,6 +4783,7 @@ module.exports = {
   assertMlbExecutionInvariant,
   applyExecutionGateToMlbPayload,
   applyExecutionGateWithStaleRecoveryToMlbPayload,
+  applyMlbFeatureTimelinessGuardToPayload,
   shouldAttemptStaleRecoveryFromGate,
   buildStaleRecoveryKey,
   claimStaleRecoveryKey,

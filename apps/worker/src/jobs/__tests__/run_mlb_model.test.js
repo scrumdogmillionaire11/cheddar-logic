@@ -60,6 +60,7 @@ const {
   computeSyntheticLineF5Driver,
   resolveMlbTotalExecutionInputs,
   resolveMlbMoneylineExecutionInputs,
+  applyMlbFeatureTimelinessGuardToPayload,
 } = require('../run_mlb_model');
 
 // ---------------------------------------------------------------------------
@@ -105,6 +106,112 @@ const neutralMatchup = {
 };
 
 const PROJECTION_ONLY_OPTS = { mode: 'PROJECTION_ONLY', side: 'over' };
+
+function buildExecutableMlbPayload() {
+  return {
+    game_id: 'mlb-feature-test',
+    status: 'FIRE',
+    action: 'FIRE',
+    classification: 'BASE',
+    execution_status: 'EXECUTABLE',
+    ev_passed: true,
+    actionable: true,
+    publish_ready: true,
+    reason_codes: ['EDGE_FOUND'],
+    decision_v2: {
+      official_status: 'PLAY',
+      primary_reason_code: 'EDGE_FOUND',
+    },
+    _publish_state: {
+      publish_ready: true,
+      emit_allowed: true,
+      execution_status: 'EXECUTABLE',
+    },
+  };
+}
+
+describe('MLB feature timeliness guard', () => {
+  const betPlacedAt = '2026-04-06T17:00:00Z';
+
+  test('future-dated tracked feature timestamp blocks actionable output', () => {
+    const payload = buildExecutableMlbPayload();
+    const outcome = applyMlbFeatureTimelinessGuardToPayload(payload, {
+      gameId: 'mlb-feature-leak',
+      betPlacedAt,
+      rawData: {
+        feature_timestamps: {
+          umpire_factor: '2026-04-06T19:00:00Z',
+        },
+      },
+    });
+
+    expect(outcome).toMatchObject({ evaluated: true, blocked: true });
+    expect(payload).toMatchObject({
+      execution_status: 'BLOCKED',
+      status: 'PASS',
+      action: 'PASS',
+      classification: 'PASS',
+      pass_reason_code: 'PASS_FEATURE_TIMESTAMP_LEAK',
+      ev_passed: false,
+      actionable: false,
+      publish_ready: false,
+      decision_v2: {
+        official_status: 'PASS',
+        primary_reason_code: 'PASS_EXECUTION_GATE_BLOCKED',
+      },
+    });
+    expect(payload.feature_timeliness.violations).toEqual([
+      {
+        field: 'umpire_factor',
+        available_at: '2026-04-06T19:00:00Z',
+        bet_placed_at: betPlacedAt,
+      },
+    ]);
+  });
+
+  test('clean tracked feature timestamp preserves executable state', () => {
+    const payload = buildExecutableMlbPayload();
+    const outcome = applyMlbFeatureTimelinessGuardToPayload(payload, {
+      gameId: 'mlb-clean',
+      betPlacedAt,
+      rawData: {
+        feature_timestamps: {
+          umpire_factor: '2026-04-06T16:59:00Z',
+        },
+      },
+    });
+
+    expect(outcome).toMatchObject({ evaluated: true, blocked: false });
+    expect(payload).toMatchObject({
+      execution_status: 'EXECUTABLE',
+      status: 'FIRE',
+      action: 'FIRE',
+      classification: 'BASE',
+    });
+    expect(payload.feature_timeliness.ok).toBe(true);
+  });
+
+  test('null tracked timestamp remains fail-open and is represented in diagnostics', () => {
+    const payload = buildExecutableMlbPayload();
+    const outcome = applyMlbFeatureTimelinessGuardToPayload(payload, {
+      gameId: 'mlb-null',
+      betPlacedAt,
+      rawData: {
+        feature_timestamps: {
+          umpire_factor: null,
+        },
+      },
+    });
+
+    expect(outcome).toMatchObject({ evaluated: true, blocked: false });
+    expect(payload.execution_status).toBe('EXECUTABLE');
+    expect(payload.feature_timeliness.missing).toContainEqual({
+      field: 'umpire_factor',
+      available_at: null,
+      bet_placed_at: betPlacedAt,
+    });
+  });
+});
 
 const f5HomePitcher = {
   era: 3.5,
