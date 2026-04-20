@@ -1,8 +1,3 @@
-// ─── Aliases ────────────────────────────────────────────────────────────────
-// Legacy export retained for callers that import the symbol. New producers and
-// validators must use canonical reason codes directly.
-const REASON_CODE_ALIASES = Object.freeze({});
-
 // ─── Exclusive bucket sets ───────────────────────────────────────────────────
 // Every reason code belongs to exactly ONE bucket.
 // assertExclusiveBuckets() enforces this at module-load time.
@@ -319,7 +314,6 @@ if (process.env.NODE_ENV !== 'production') {
 
 module.exports = {
   // Taxonomy
-  REASON_CODE_ALIASES,
   MODEL_REASON_CODES,
   DATA_REASON_CODES,
   DATA_BLOCKER_CODES,

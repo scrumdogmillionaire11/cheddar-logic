@@ -223,7 +223,11 @@ module.exports = {
   isTokenRevoked: db.isTokenRevoked,
   pruneExpiredRevokedTokens: db.pruneExpiredRevokedTokens,
 
-  // Dual-database mode (recommended for production)
+  /**
+   * Initialize dual-database mode.
+   * Currently unused in production entry points.
+   * Single-DB path via resolveDatabasePath is the active runtime path.
+   */
   initDualDb: dbDualInit.initDualDb,
   closeDualDb: dbDualInit.closeDualDb,
   isDualModeActive: dbDualInit.isDualModeActive,
@@ -258,7 +262,6 @@ module.exports = {
   BLOCKER_REASON_CODES:        reasonCodes.BLOCKER_REASON_CODES,
   REASON_CODE_LABELS:          reasonCodes.REASON_CODE_LABELS,
   MARKET_UNVERIFIED_CODES:     reasonCodes.MARKET_UNVERIFIED_CODES,
-  REASON_CODE_ALIASES:         reasonCodes.REASON_CODE_ALIASES,
   MODEL_REASON_CODES:          reasonCodes.MODEL_REASON_CODES,
   DATA_REASON_CODES:           reasonCodes.DATA_REASON_CODES,
   DATA_BLOCKER_CODES:          reasonCodes.DATA_BLOCKER_CODES,

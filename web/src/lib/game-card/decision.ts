@@ -106,14 +106,6 @@ function isValidAction(value: unknown): value is PlayDisplayAction {
   return value === 'FIRE' || value === 'HOLD' || value === 'PASS';
 }
 
-function actionFromLegacyStatus(value: unknown): PlayDisplayAction | undefined {
-  const status = String(value ?? '').toUpperCase();
-  if (status.includes('FIRE')) return 'FIRE';
-  if (status.includes('WATCH') || status.includes('HOLD')) return 'HOLD';
-  if (status.includes('PASS')) return 'PASS';
-  return undefined;
-}
-
 function actionFromClassificationValue(
   value: unknown,
 ): PlayDisplayAction | undefined {
@@ -152,7 +144,6 @@ export function resolvePlayDisplayDecision(
   play?:
     | {
         action?: Play['action'];
-        status?: Play['status'];
         classification?: Play['classification'];
         final_market_decision?: Play['final_market_decision'];
         decision_v2?: { official_status?: 'PLAY' | 'LEAN' | 'PASS' } | null;
@@ -171,20 +162,12 @@ export function resolvePlayDisplayDecision(
   const decisionV2Action = actionFromOfficialStatus(
     play?.decision_v2?.official_status,
   );
-  const legacyAction = actionFromLegacyStatus(play?.status);
-
-  const hasCanonicalDecisionFields =
-    surfacedAction !== undefined ||
-    explicitAction !== undefined ||
-    classificationAction !== undefined ||
-    decisionV2Action !== undefined;
 
   const action =
     surfacedAction ??
     explicitAction ??
     classificationAction ??
     decisionV2Action ??
-    (hasCanonicalDecisionFields ? undefined : legacyAction) ??
     'PASS';
 
   return {
@@ -1002,10 +985,10 @@ export function getCardDecisionModel(
 }
 
 /**
- * Get display action from play object, respecting canonical fields with fallback to legacy
+ * Get display action from play object.
  *
  * This is the single source of truth for UI filtering and display.
- * Uses the new canonical 'action' field if available, falls back to legacy 'status' field.
+ * Reads the canonical `action` field; `play.status` is no longer consulted (removed in WI-1015).
  *
  * @param play - Play object from GameCard
  * @returns 'FIRE' | 'HOLD' | 'PASS'

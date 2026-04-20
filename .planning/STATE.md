@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Model Integrity & Betting Execution Hardening
 status: active
-last_updated: "2026-04-20T20:32:32Z"
-last_activity: "2026-04-20 - Completed quick task 165: WI-1013: Resolve stale reason code alias confusion"
+last_updated: "2026-04-20T23:05:00Z"
+last_activity: "2026-04-20 - Completed quick task 168: Document and gate initDualDb activation path"
 ---
 
 # Project State
@@ -44,8 +44,6 @@ This snapshot reflects the current remaining work list provided by the operator 
 - WI-0972
 - WI-0973
 - WI-1013
-- WI-1014
-- WI-1015
 - WI-1016
 - WI-1018
 - WI-1019
@@ -217,6 +215,9 @@ Notable: WI-0797 (pipeline health Discord watchdog), WI-0798 (NHL season key fix
 
 | # | Description | Date | Commit | Directory |
 |---|-------------|------|--------|-----------|
+| 168 | Document and gate initDualDb activation path | 2026-04-20 | cc9b8167 | [168-document-and-gate-initdualdb-activation-](./quick/168-document-and-gate-initdualdb-activation-/) |
+| 167 | WI-1015: Complete status→action migration in card transform | 2026-04-20 | 3b62cb2d | [167-wi-1015](./quick/167-wi-1015/) |
+| 166 | WI-1014: Delete orphaned canonical-decision.ts (deletion path) | 2026-04-20 | d506ce23 | [166-wi-1014](./quick/166-wi-1014/) |
 | 165 | WI-1013: Resolve stale reason code alias confusion | 2026-04-20 | 4616cc1b | [165-wi-1013-resolve-stale-reason-code-alias-](./quick/165-wi-1013-resolve-stale-reason-code-alias-/) |
 | 164 | WI-1039: Discord Webhook Optimization — Market Filtering, POTD Integration, Rate-Limit Retry | 2026-04-20 | 091b593f | [164-wi-1039-discord-webhook-optimization-mar](./quick/164-wi-1039-discord-webhook-optimization-mar/) |
 | 163 | Fix duplicate ApiPlay interface in legacy-repair.ts | 2026-04-19 | 32ad847d | [163-fix-duplicate-apiplay-interface-in-legac](./quick/163-fix-duplicate-apiplay-interface-in-legac/) |

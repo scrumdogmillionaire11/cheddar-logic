@@ -487,7 +487,7 @@ async function run() {
   console.log('✅ SpreadCompare derivation tests passed');
 
   // ── WI-0398: JS/TS resolvePlayDisplayDecision parity ─────────────────────
-  // precedence: action > classification > status > PASS
+  // precedence: action > classification > PASS (status field removed as decision input in WI-1015)
   // Both JS file (decision.js) and TS source must produce identical outputs.
 
   console.log('🧪 WI-0398 JS/TS parity tests');
@@ -516,11 +516,12 @@ async function run() {
   assertParity({ classification: 'LEAN' }, 'HOLD', 'WATCH', 'LEAN', '{classification:LEAN}');
   assertParity({ classification: 'PLAY' }, 'FIRE', 'FIRE', 'BASE', '{classification:PLAY}');
 
-  // status fallback cases (no action, no classification)
-  assertParity({ status: 'WATCH' }, 'HOLD', 'WATCH', 'LEAN', '{status:WATCH}');
-  assertParity({ status: 'FIRE' }, 'FIRE', 'FIRE', 'BASE', '{status:FIRE}');
+  // status fallback cases removed — play.status is no longer a decision input.
+  // Without action or classification, the function returns PASS (canonical default).
+  assertParity({ status: 'WATCH' }, 'PASS', 'PASS', 'PASS', '{status:WATCH — ignored, returns PASS}');
+  assertParity({ status: 'FIRE' }, 'PASS', 'PASS', 'PASS', '{status:FIRE — ignored, returns PASS}');
 
-  // action wins over status
+  // action is unaffected by status (status is silently ignored)
   const actionWinsStatus = resolveJS({ action: 'FIRE', status: 'PASS' });
   assert.strictEqual(actionWinsStatus.action, 'FIRE', '[parity] action wins over conflicting status: action');
   assert.strictEqual(actionWinsStatus.status, 'FIRE', '[parity] action wins over conflicting status: status');

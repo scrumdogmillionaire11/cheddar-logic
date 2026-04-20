@@ -547,20 +547,17 @@ export function applyWave1DecisionFields(play: PlayMutable): void {
   if (decisionV2.official_status === 'PLAY') {
     play.action = 'FIRE';
     play.classification = 'BASE';
-    play.status = 'FIRE';
     play.pass_reason_code = null;
     return;
   }
   if (decisionV2.official_status === 'LEAN') {
     play.action = 'HOLD';
     play.classification = 'LEAN';
-    play.status = 'WATCH';
     play.pass_reason_code = null;
     return;
   }
   play.action = 'PASS';
   play.classification = 'PASS';
-  play.status = 'PASS';
   play.pass_reason_code = decisionV2.primary_reason_code;
 }
 

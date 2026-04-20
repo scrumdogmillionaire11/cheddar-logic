@@ -436,7 +436,6 @@ export function isActionableProjectionPlay(
         }
       ).decision_v2?.official_status,
     ),
-    toToken(play.status),
     toToken((play as { action?: string | null }).action),
   ];
 
