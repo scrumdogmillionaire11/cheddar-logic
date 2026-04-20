@@ -22,6 +22,11 @@ const {
   runAuditCli,
   writeJsonOutput,
 } = require('./run_model_audit');
+const {
+  buildNhl1pBaselineScorecard,
+  buildNhl1pWalkForwardReport,
+  evaluateNhl1pShadowGate,
+} = require('../jobs/report_telemetry_calibration');
 
 const TREND_DELTA_THRESHOLD = 0.02;
 
@@ -162,9 +167,13 @@ function loadPerformanceContext(parsedArgs, paths) {
       db,
       sport: parsedArgs.all ? null : parsedArgs.sport,
     });
+    const nhl1pBaseline = buildNhl1pBaselineScorecard(db);
+    const nhl1pWalkForward = buildNhl1pWalkForwardReport(db);
+    const nhl1pShadowGate = evaluateNhl1pShadowGate(nhl1pWalkForward, nhl1pBaseline);
     writeJsonOutput(report, paths.performance_report_path);
     return {
       error: null,
+      nhl1pShadowGate,
       report,
       rows,
     };
@@ -173,6 +182,7 @@ function loadPerformanceContext(parsedArgs, paths) {
     writeJsonOutput(emptyReport, paths.performance_report_path);
     return {
       error: error.message,
+      nhl1pShadowGate: null,
       report: emptyReport,
       rows: [],
     };
@@ -436,6 +446,7 @@ function buildScorecard({ auditReport, generatedAt, performanceContext, runScope
     },
     families,
     generated_at: generatedAt,
+    nhl_1p_shadow_gate: performanceContext.nhl1pShadowGate || null,
     performance: {
       alert_count: (performanceReport.alerts || []).length,
       unavailable_reason: performanceContext.error,
@@ -473,6 +484,27 @@ function formatScorecardMarkdown(scorecard) {
         `- ${key}: risk=${family.risk}${decay}; trend(executable=${family.trend.executable_rate}, pass=${family.trend.pass_rate}, calibration=${family.trend.calibration}); reasons=${reasons}`,
       );
     });
+
+  if (scorecard.nhl_1p_shadow_gate) {
+    const gate = scorecard.nhl_1p_shadow_gate;
+    lines.push('', '## NHL 1P Shadow Gate');
+    lines.push(`Verdict: ${gate.verdict}`);
+    lines.push(`Rationale: ${gate.rationale}`);
+    if (gate.promoteGateBuckets) {
+      for (const b of gate.promoteGateBuckets) {
+        const status = b.thinSample
+          ? 'THIN_SAMPLE'
+          : b.meetsTarget === true
+            ? 'MEETS_TARGET'
+            : b.meetsTarget === false
+              ? 'REGRESSION'
+              : 'UNKNOWN';
+        lines.push(
+          `- ${b.bucketRangeLabel}: status=${status}; wf_over_hit_rate=${b.walkForwardOverHitRate ?? 'n/a'}; baseline=${b.baselineOverHitRate ?? 'n/a'}`,
+        );
+      }
+    }
+  }
 
   return `${lines.join('\n')}\n`;
 }

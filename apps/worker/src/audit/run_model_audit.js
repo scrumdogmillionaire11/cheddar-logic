@@ -3,6 +3,7 @@
 const fs = require('fs');
 const path = require('path');
 
+const { closeReadOnlyInstance, getDatabaseReadOnly } = require('@cheddar-logic/data');
 const { buildAuditSnapshot, deepClone } = require('./build_audit_snapshot');
 const { compareSnapshots } = require('./compare_audit_snapshot');
 const { normalizeReasonCodes } = require('./audit_rules_config');
@@ -14,6 +15,11 @@ const {
   normalizeSport,
   resolveFixturePath,
 } = require('./fixture_loader');
+const {
+  buildNhl1pBaselineScorecard,
+  buildNhl1pWalkForwardReport,
+  evaluateNhl1pShadowGate,
+} = require('../jobs/report_telemetry_calibration');
 
 const SPORTS = Object.freeze(['NBA', 'NHL', 'MLB']);
 const OUTPUT_ROOT = path.resolve(__dirname, '..', '..', 'audit-output');
@@ -573,6 +579,11 @@ function formatHumanSummary(report) {
     lines.push(`Drift categories: ${report.drift_categories.join(', ')}`);
   }
 
+  if (report.nhl_1p_shadow_gate) {
+    const gate = report.nhl_1p_shadow_gate;
+    lines.push(`NHL 1P shadow gate: verdict=${gate.verdict} | windows=${gate.eligibleWindowCount} | ${gate.rationale}`);
+  }
+
   report.gate_failures.forEach((failure) => {
     lines.push(`- gate: ${failure.drift_type} ${failure.fixture_path || failure.fixture_id} ${failure.error}`);
   });
@@ -609,6 +620,24 @@ function shouldFailGate(report) {
   return report.failed > 0 || report.gate_failure_count > 0;
 }
 
+function loadNhl1pShadowGate() {
+  let db;
+  try {
+    db = getDatabaseReadOnly();
+    const baseline = buildNhl1pBaselineScorecard(db);
+    const walkForward = buildNhl1pWalkForwardReport(db);
+    return evaluateNhl1pShadowGate(walkForward, baseline);
+  } catch {
+    return null;
+  } finally {
+    if (db) closeReadOnlyInstance(db);
+  }
+}
+
+function nhlInScope(parsedArgs) {
+  return parsedArgs.all || (parsedArgs.sport && parsedArgs.sport.toUpperCase() === 'NHL');
+}
+
 function runAuditCli(argv = process.argv.slice(2), options = {}) {
   const parsedArgs = parseCliArgs(argv);
   const artifactPaths = resolveArtifactPaths(parsedArgs, options);
@@ -626,6 +655,11 @@ function runAuditCli(argv = process.argv.slice(2), options = {}) {
   report.output_dir = artifactPaths.output_dir;
   report.report_path = artifactPaths.report_path;
   report.summary_path = artifactPaths.summary_path;
+
+  // NHL 1P shadow gate — surfaced when NHL is in audit scope
+  if (nhlInScope(parsedArgs)) {
+    report.nhl_1p_shadow_gate = loadNhl1pShadowGate();
+  }
 
   stdout.write(`${formatHumanSummary(report)}\n`);
 
@@ -662,6 +696,7 @@ module.exports = {
   defaultRunScope,
   formatHumanSummary,
   loadFixturesFromParsedArgs,
+  loadNhl1pShadowGate,
   main,
   parseCliArgs,
   resolveArtifactPaths,

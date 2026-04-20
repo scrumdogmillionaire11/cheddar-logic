@@ -41,6 +41,10 @@ const NHL_1P_BASELINE_BUCKETS = Object.freeze([
   { min: 2.2, max: 10, label: '2.20+' },
 ]);
 const NHL_1P_BASELINE_CARD_TYPES = Object.freeze(['nhl-pace-1p', 'nhl-1p-call']);
+const WALK_FORWARD_WINDOW_DAYS = 14;
+const WALK_FORWARD_MIN_SAMPLES_PER_WINDOW = 10;
+const WALK_FORWARD_MIN_WINDOWS_FOR_VERDICT = 3;
+const WALK_FORWARD_PROMOTE_GATE_BUCKETS = Object.freeze(['2.0-2.19', '2.20+']);
 
 function parseArgs(argv = process.argv.slice(2)) {
   const options = {
@@ -610,6 +614,281 @@ function buildNhlShotsBreakoutCalibrationReport(db, windowDays, generatedAtIso) 
     ...baseReport,
     status: sampleSize > 0 ? 'OK' : 'INSUFFICIENT_DATA',
     buckets: finalizedBuckets,
+  };
+}
+
+function buildNhl1pWalkForwardReport(db) {
+  const DAY_MS = 24 * 60 * 60 * 1000;
+  const baseReport = {
+    status: 'INSUFFICIENT_DATA',
+    windowDays: WALK_FORWARD_WINDOW_DAYS,
+    minSamplesPerWindow: WALK_FORWARD_MIN_SAMPLES_PER_WINDOW,
+    minWindowsForVerdict: WALK_FORWARD_MIN_WINDOWS_FOR_VERDICT,
+    eligibleWindowCount: 0,
+    windows: [],
+    aggregatedBuckets: NHL_1P_BASELINE_BUCKETS.map((b) => ({
+      bucketRangeLabel: b.label,
+      overWins: 0,
+      overLosses: 0,
+      underWins: 0,
+      underLosses: 0,
+      overHitRate: null,
+      underHitRate: null,
+      thinSample: true,
+    })),
+  };
+
+  const hasCardResults = tableExists(db, 'card_results');
+  const hasCardPayloads = tableExists(db, 'card_payloads');
+  const hasGameResults = tableExists(db, 'game_results');
+  if (!hasCardResults || !hasCardPayloads || !hasGameResults) return baseReport;
+
+  const actualResultSelect = tableColumnExists(db, 'card_payloads', 'actual_result')
+    ? 'cp.actual_result AS actual_result'
+    : 'NULL AS actual_result';
+  const placeholders = NHL_1P_BASELINE_CARD_TYPES.map(() => '?').join(', ');
+
+  const rows = db
+    .prepare(
+      `
+      SELECT
+        cp.payload_data,
+        ${actualResultSelect},
+        gr.metadata AS game_result_metadata,
+        cr.settled_at
+      FROM card_results cr
+      INNER JOIN card_payloads cp ON cp.id = cr.card_id
+      INNER JOIN game_results gr ON gr.game_id = cr.game_id
+      WHERE LOWER(COALESCE(cr.sport, '')) = 'nhl'
+        AND LOWER(COALESCE(cr.card_type, '')) IN (${placeholders})
+        AND LOWER(COALESCE(gr.status, '')) = 'final'
+        AND cr.settled_at IS NOT NULL
+      ORDER BY cr.settled_at ASC
+    `,
+    )
+    .all(...NHL_1P_BASELINE_CARD_TYPES);
+
+  if (rows.length === 0) return baseReport;
+
+  // Build usable rows (same resolution logic as baseline scorecard)
+  const usableRows = [];
+  for (const row of rows) {
+    const payloadData = parseJsonObject(row.payload_data);
+    if (!payloadData) continue;
+    const projection = resolveNhl1pProjectionValue(payloadData);
+    const bucketDef = resolveNhl1pBaselineBucket(projection);
+    if (!bucketDef) continue;
+    const gameResultMetadata = parseJsonObject(row.game_result_metadata);
+    const actualResult = parseJsonObject(row.actual_result);
+    const actual = resolveNhl1pActualValue(gameResultMetadata, actualResult);
+    if (!Number.isFinite(actual)) continue;
+    if (!isActionableNhl1pProjection(payloadData)) continue;
+    const direction = resolveNhl1pDirection(payloadData);
+    if (!direction) continue;
+    const settledAtMs = Date.parse(row.settled_at);
+    if (!Number.isFinite(settledAtMs)) continue;
+    const isCorrect =
+      (direction === 'OVER' && actual >= projection) ||
+      (direction === 'UNDER' && actual <= projection);
+    usableRows.push({ settledAtMs, bucketLabel: bucketDef.label, direction, isCorrect });
+  }
+
+  if (usableRows.length === 0) return baseReport;
+
+  // Build non-overlapping 14-day windows from earliest to latest settled_at
+  const windowMs = WALK_FORWARD_WINDOW_DAYS * DAY_MS;
+  const firstMs = usableRows[0].settledAtMs;
+  const lastMs = usableRows[usableRows.length - 1].settledAtMs;
+
+  const windows = [];
+  let windowStart = firstMs;
+  while (windowStart <= lastMs) {
+    const windowEnd = windowStart + windowMs;
+    const windowRows = usableRows.filter(
+      (r) => r.settledAtMs >= windowStart && r.settledAtMs < windowEnd,
+    );
+
+    const bucketStats = new Map(
+      NHL_1P_BASELINE_BUCKETS.map((b) => [
+        b.label,
+        { overWins: 0, overLosses: 0, underWins: 0, underLosses: 0 },
+      ]),
+    );
+
+    let windowSampleSize = 0;
+    for (const r of windowRows) {
+      const stats = bucketStats.get(r.bucketLabel);
+      if (!stats) continue;
+      windowSampleSize += 1;
+      if (r.direction === 'OVER') {
+        if (r.isCorrect) stats.overWins += 1;
+        else stats.overLosses += 1;
+      } else {
+        if (r.isCorrect) stats.underWins += 1;
+        else stats.underLosses += 1;
+      }
+    }
+
+    const eligible = windowSampleSize >= WALK_FORWARD_MIN_SAMPLES_PER_WINDOW;
+    const buckets = NHL_1P_BASELINE_BUCKETS.map((b) => {
+      const stats = bucketStats.get(b.label);
+      const overDecisions = stats.overWins + stats.overLosses;
+      const underDecisions = stats.underWins + stats.underLosses;
+      return {
+        bucketRangeLabel: b.label,
+        sampleSize: overDecisions + underDecisions,
+        overWins: stats.overWins,
+        overLosses: stats.overLosses,
+        underWins: stats.underWins,
+        underLosses: stats.underLosses,
+        overHitRate: overDecisions > 0 ? toRounded(stats.overWins / overDecisions) : null,
+        underHitRate: underDecisions > 0 ? toRounded(stats.underWins / underDecisions) : null,
+      };
+    });
+
+    windows.push({
+      windowIndex: windows.length,
+      startUtc: new Date(windowStart).toISOString(),
+      endUtc: new Date(windowEnd).toISOString(),
+      sampleSize: windowSampleSize,
+      eligible,
+      buckets,
+    });
+
+    windowStart = windowEnd;
+  }
+
+  const eligibleWindowCount = windows.filter((w) => w.eligible).length;
+
+  // Aggregate OVER/UNDER stats across eligible windows per bucket
+  const aggByLabel = new Map(
+    NHL_1P_BASELINE_BUCKETS.map((b) => [
+      b.label,
+      { overWins: 0, overLosses: 0, underWins: 0, underLosses: 0 },
+    ]),
+  );
+  for (const win of windows) {
+    if (!win.eligible) continue;
+    for (const b of win.buckets) {
+      const agg = aggByLabel.get(b.bucketRangeLabel);
+      if (!agg) continue;
+      agg.overWins += b.overWins;
+      agg.overLosses += b.overLosses;
+      agg.underWins += b.underWins;
+      agg.underLosses += b.underLosses;
+    }
+  }
+
+  const aggregatedBuckets = NHL_1P_BASELINE_BUCKETS.map((b) => {
+    const agg = aggByLabel.get(b.label);
+    const overDecisions = agg.overWins + agg.overLosses;
+    const underDecisions = agg.underWins + agg.underLosses;
+    return {
+      bucketRangeLabel: b.label,
+      overWins: agg.overWins,
+      overLosses: agg.overLosses,
+      underWins: agg.underWins,
+      underLosses: agg.underLosses,
+      overHitRate: overDecisions > 0 ? toRounded(agg.overWins / overDecisions) : null,
+      underHitRate: underDecisions > 0 ? toRounded(agg.underWins / underDecisions) : null,
+      thinSample: overDecisions < WALK_FORWARD_MIN_SAMPLES_PER_WINDOW,
+    };
+  });
+
+  return {
+    ...baseReport,
+    status: eligibleWindowCount > 0 ? 'OK' : 'INSUFFICIENT_DATA',
+    eligibleWindowCount,
+    windows,
+    aggregatedBuckets,
+  };
+}
+
+function evaluateNhl1pShadowGate(walkForwardReport, baselineScorecard) {
+  const eligibleWindowCount = walkForwardReport?.eligibleWindowCount ?? 0;
+
+  if (
+    !walkForwardReport ||
+    walkForwardReport.status === 'INSUFFICIENT_DATA' ||
+    eligibleWindowCount < WALK_FORWARD_MIN_WINDOWS_FOR_VERDICT
+  ) {
+    return {
+      verdict: 'INSUFFICIENT_DATA',
+      rationale: `Walk-forward has ${eligibleWindowCount} eligible window(s); ${WALK_FORWARD_MIN_WINDOWS_FOR_VERDICT} required for a verdict.`,
+      eligibleWindowCount,
+      promoteGateBuckets: null,
+    };
+  }
+
+  const baselineBucketMap = new Map(
+    (baselineScorecard?.buckets || []).map((b) => [b.bucketRangeLabel, b]),
+  );
+  const wfAggMap = new Map(
+    (walkForwardReport.aggregatedBuckets || []).map((b) => [b.bucketRangeLabel, b]),
+  );
+
+  const promoteGateBuckets = WALK_FORWARD_PROMOTE_GATE_BUCKETS.map((label) => {
+    const baseline = baselineBucketMap.get(label);
+    const wf = wfAggMap.get(label);
+    const baselineOverDecisions = (baseline?.overWins ?? 0) + (baseline?.overLosses ?? 0);
+    const baselineOverHitRate =
+      baselineOverDecisions > 0
+        ? toRounded(baseline.overWins / baselineOverDecisions)
+        : null;
+    const wfOverHitRate = wf?.overHitRate ?? null;
+    const thinSample = wf?.thinSample ?? true;
+
+    // Thin-sample buckets are flagged but do not block promote
+    let meetsTarget = null;
+    if (!thinSample && Number.isFinite(wfOverHitRate) && Number.isFinite(baselineOverHitRate)) {
+      meetsTarget = wfOverHitRate >= baselineOverHitRate;
+    } else if (!thinSample && Number.isFinite(wfOverHitRate) && baselineOverHitRate === null) {
+      // No baseline data → anything ≥ 0 meets target
+      meetsTarget = true;
+    }
+
+    return {
+      bucketRangeLabel: label,
+      walkForwardOverHitRate: wfOverHitRate,
+      baselineOverHitRate,
+      meetsTarget,
+      thinSample,
+    };
+  });
+
+  const hasDefiniteFailure = promoteGateBuckets.some((b) => b.meetsTarget === false);
+  const hasUnresolvable = promoteGateBuckets.some(
+    (b) => b.meetsTarget === null && !b.thinSample,
+  );
+
+  let verdict;
+  let rationale;
+
+  if (hasDefiniteFailure) {
+    const failingLabels = promoteGateBuckets
+      .filter((b) => b.meetsTarget === false)
+      .map((b) => b.bucketRangeLabel);
+    verdict = 'HOLD';
+    rationale = `OVER hit-rate below baseline in gate bucket(s): ${failingLabels.join(', ')}.`;
+  } else if (hasUnresolvable) {
+    verdict = 'INSUFFICIENT_DATA';
+    rationale = 'One or more gate buckets lack sufficient data for a definite verdict.';
+  } else {
+    verdict = 'PROMOTE';
+    rationale =
+      'OVER hit-rate meets or exceeds baseline in both gate buckets (2.0-2.19 and 2.20+).';
+  }
+
+  const thinLabels = promoteGateBuckets.filter((b) => b.thinSample).map((b) => b.bucketRangeLabel);
+  if (thinLabels.length > 0) {
+    rationale += ` Thin-sample flag (not blocking): ${thinLabels.join(', ')}.`;
+  }
+
+  return {
+    verdict,
+    rationale,
+    eligibleWindowCount,
+    promoteGateBuckets,
   };
 }
 
@@ -1225,6 +1504,8 @@ async function generateTelemetryCalibrationReport({
       generatedAt,
     );
     const nhl1pBaselineScorecard = buildNhl1pBaselineScorecard(reader);
+    const nhl1pWalkForward = buildNhl1pWalkForwardReport(reader);
+    const nhl1pShadowGate = evaluateNhl1pShadowGate(nhl1pWalkForward, nhl1pBaselineScorecard);
     const decisionTierAudit = buildDecisionTierAuditWindows(reader);
     const edgeVerification = buildEdgeVerificationReport(reader);
     const checks = collectChecks(clv);
@@ -1250,6 +1531,8 @@ async function generateTelemetryCalibrationReport({
       nhlMoneylineCalibration,
       nhlShotsBreakoutCalibration,
       nhl1pBaselineScorecard,
+      nhl1pWalkForward,
+      nhl1pShadowGate,
       decisionTierAudit,
       edgeVerification,
       checks,
@@ -1338,6 +1621,40 @@ function formatTelemetryCalibrationReport(report, { enforce = false } = {}) {
     lines.push(
       `- ${bucket.label} | ${bucket.wins}W-${bucket.losses}L-${bucket.pushes}P (${bucket.sampleSize}) | hit_rate ${formatPct(bucket.hitRate)} | total_pnl ${Number.isFinite(bucket.totalPnlUnits) ? bucket.totalPnlUnits.toFixed(3) : 'n/a'} | roi ${formatPct(bucket.roi)} | clv_n ${bucket.clvSampleSize} | mean_clv ${Number.isFinite(bucket.meanClv) ? bucket.meanClv.toFixed(4) : 'n/a'} | p25_clv ${Number.isFinite(bucket.p25Clv) ? bucket.p25Clv.toFixed(4) : 'n/a'}`,
     );
+  }
+  lines.push('');
+
+  lines.push('nhl_1p_walk_forward');
+  const wf = report.nhl1pWalkForward;
+  lines.push(
+    `- status: ${wf.status} | eligible_windows: ${wf.eligibleWindowCount}/${wf.minWindowsForVerdict} required | total_windows: ${wf.windows.length} | window_days: ${wf.windowDays}`,
+  );
+  if (wf.status === 'OK') {
+    for (const agg of wf.aggregatedBuckets) {
+      lines.push(
+        `- agg ${agg.bucketRangeLabel} | OVER ${agg.overWins}-${agg.overLosses} (${formatPct(agg.overHitRate)}) | UNDER ${agg.underWins}-${agg.underLosses} (${formatPct(agg.underHitRate)}) | thin=${agg.thinSample}`,
+      );
+    }
+  }
+  lines.push('');
+
+  lines.push('nhl_1p_shadow_gate');
+  const gate = report.nhl1pShadowGate;
+  lines.push(`- verdict: ${gate.verdict}`);
+  lines.push(`- rationale: ${gate.rationale}`);
+  if (gate.promoteGateBuckets) {
+    for (const b of gate.promoteGateBuckets) {
+      const status = b.thinSample
+        ? 'THIN_SAMPLE'
+        : b.meetsTarget === true
+          ? 'MEETS_TARGET'
+          : b.meetsTarget === false
+            ? 'REGRESSION'
+            : 'UNKNOWN';
+      lines.push(
+        `- ${b.bucketRangeLabel}: status=${status} | wf_over_hit_rate=${b.walkForwardOverHitRate ?? 'n/a'} | baseline=${b.baselineOverHitRate ?? 'n/a'}`,
+      );
+    }
   }
   lines.push('');
 
@@ -1434,7 +1751,10 @@ if (require.main === module) {
 
 module.exports = {
   DEFAULT_WINDOW_DAYS,
+  buildNhl1pBaselineScorecard,
+  buildNhl1pWalkForwardReport,
   determineExitCode,
+  evaluateNhl1pShadowGate,
   formatTelemetryCalibrationReport,
   generateTelemetryCalibrationReport,
   parseArgs,

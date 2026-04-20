@@ -5,7 +5,9 @@ const {
   runMigrations,
 } = require('@cheddar-logic/data');
 const {
+  buildNhl1pWalkForwardReport,
   determineExitCode,
+  evaluateNhl1pShadowGate,
   formatTelemetryCalibrationReport,
   generateTelemetryCalibrationReport,
   parseArgs,
@@ -58,12 +60,14 @@ function ensureTelemetryTables(db) {
 
 function clearTelemetryTables(db) {
   db.exec(`
+    PRAGMA foreign_keys = OFF;
     DELETE FROM card_results;
     DELETE FROM card_payloads;
     DELETE FROM game_results;
     DELETE FROM games;
     DELETE FROM clv_ledger;
     DELETE FROM odds_snapshots;
+    PRAGMA foreign_keys = ON;
   `);
 }
 
@@ -1060,5 +1064,170 @@ describe('telemetry calibration report', () => {
       days: 14,
       enforce: false,
     });
+  });
+
+  test('walk-forward report groups NHL 1P cards into 14-day windows with bucket/side metrics', () => {
+    const db = getDatabase();
+    clearTelemetryTables(db);
+
+    const daysAgo = (n) => new Date(Date.now() - n * 24 * 60 * 60 * 1000).toISOString();
+
+    // Seed 10 cards per window across 3 non-overlapping windows (~42d ago, ~28d ago, ~14d ago)
+    // Each window's cards have timestamps within a 1-hour spread inside the window
+    const windowAnchors = [40, 26, 12]; // days ago; each is well within a 14-day window
+    windowAnchors.forEach((anchor, winIdx) => {
+      for (let i = 0; i < 10; i += 1) {
+        const ts = new Date(Date.parse(daysAgo(anchor)) + i * 60 * 1000).toISOString();
+        // All OVER with projection=2.1 (2.0-2.19 bucket); actual=3 (OVER win)
+        insertSettledNhl1pProjectionCard(db, {
+          id: `wf-basic-w${winIdx}-c${i}`,
+          gameId: `wf-basic-w${winIdx}-g${i}`,
+          projection: 2.1,
+          direction: 'OVER',
+          firstPeriodHome: 2,
+          firstPeriodAway: 1,
+          timestamp: ts,
+        });
+      }
+    });
+
+    const report = buildNhl1pWalkForwardReport(db);
+
+    expect(report.status).toBe('OK');
+    expect(report.windowDays).toBe(14);
+    expect(report.eligibleWindowCount).toBeGreaterThanOrEqual(3);
+    expect(report.windows.length).toBeGreaterThanOrEqual(3);
+
+    // Every eligible window must have sampleSize >= 10
+    for (const win of report.windows.filter((w) => w.eligible)) {
+      expect(win.sampleSize).toBeGreaterThanOrEqual(10);
+    }
+
+    // Aggregated 2.0-2.19 bucket: all 30 cards are OVER wins → hit rate = 1.0
+    const agg219 = report.aggregatedBuckets.find((b) => b.bucketRangeLabel === '2.0-2.19');
+    expect(agg219.overWins).toBe(30);
+    expect(agg219.overLosses).toBe(0);
+    expect(agg219.overHitRate).toBe(1);
+    expect(agg219.thinSample).toBe(false);
+  });
+
+  test('shadow gate returns PROMOTE when walk-forward OVER hit-rate meets baseline in both gate buckets', () => {
+    // Build mock walk-forward and baseline objects directly — no DB needed
+    const mockWalkForward = {
+      status: 'OK',
+      eligibleWindowCount: 3,
+      aggregatedBuckets: [
+        { bucketRangeLabel: '1.0-1.4', overWins: 5, overLosses: 5, overHitRate: 0.5, thinSample: false },
+        { bucketRangeLabel: '1.5-1.9', overWins: 5, overLosses: 5, overHitRate: 0.5, thinSample: false },
+        { bucketRangeLabel: '2.0-2.19', overWins: 8, overLosses: 2, overHitRate: 0.8, thinSample: false },
+        { bucketRangeLabel: '2.20+', overWins: 9, overLosses: 1, overHitRate: 0.9, thinSample: false },
+      ],
+    };
+    const mockBaseline = {
+      buckets: [
+        { bucketRangeLabel: '1.0-1.4', overWins: 3, overLosses: 7 },
+        { bucketRangeLabel: '1.5-1.9', overWins: 4, overLosses: 6 },
+        { bucketRangeLabel: '2.0-2.19', overWins: 6, overLosses: 4 }, // baseline = 0.6
+        { bucketRangeLabel: '2.20+', overWins: 7, overLosses: 3 },    // baseline = 0.7
+      ],
+    };
+
+    const gate = evaluateNhl1pShadowGate(mockWalkForward, mockBaseline);
+
+    expect(gate.verdict).toBe('PROMOTE');
+    expect(gate.eligibleWindowCount).toBe(3);
+    expect(gate.promoteGateBuckets).toHaveLength(2);
+    expect(gate.promoteGateBuckets.find((b) => b.bucketRangeLabel === '2.0-2.19').meetsTarget).toBe(true);
+    expect(gate.promoteGateBuckets.find((b) => b.bucketRangeLabel === '2.20+').meetsTarget).toBe(true);
+  });
+
+  test('shadow gate returns HOLD when walk-forward OVER hit-rate fails baseline in a gate bucket', () => {
+    const mockWalkForward = {
+      status: 'OK',
+      eligibleWindowCount: 3,
+      aggregatedBuckets: [
+        { bucketRangeLabel: '1.0-1.4', overWins: 5, overLosses: 5, overHitRate: 0.5, thinSample: false },
+        { bucketRangeLabel: '1.5-1.9', overWins: 5, overLosses: 5, overHitRate: 0.5, thinSample: false },
+        { bucketRangeLabel: '2.0-2.19', overWins: 4, overLosses: 6, overHitRate: 0.4, thinSample: false }, // 0.4 < baseline 0.6 → FAIL
+        { bucketRangeLabel: '2.20+', overWins: 9, overLosses: 1, overHitRate: 0.9, thinSample: false },
+      ],
+    };
+    const mockBaseline = {
+      buckets: [
+        { bucketRangeLabel: '1.0-1.4', overWins: 3, overLosses: 7 },
+        { bucketRangeLabel: '1.5-1.9', overWins: 4, overLosses: 6 },
+        { bucketRangeLabel: '2.0-2.19', overWins: 6, overLosses: 4 }, // baseline = 0.6
+        { bucketRangeLabel: '2.20+', overWins: 7, overLosses: 3 },    // baseline = 0.7
+      ],
+    };
+
+    const gate = evaluateNhl1pShadowGate(mockWalkForward, mockBaseline);
+
+    expect(gate.verdict).toBe('HOLD');
+    expect(gate.promoteGateBuckets.find((b) => b.bucketRangeLabel === '2.0-2.19').meetsTarget).toBe(false);
+    expect(gate.promoteGateBuckets.find((b) => b.bucketRangeLabel === '2.20+').meetsTarget).toBe(true);
+    expect(gate.rationale).toContain('2.0-2.19');
+  });
+
+  test('shadow gate returns INSUFFICIENT_DATA when fewer than 3 eligible windows', () => {
+    const mockWalkForward = {
+      status: 'OK',
+      eligibleWindowCount: 2, // only 2 eligible windows — not enough
+      aggregatedBuckets: [
+        { bucketRangeLabel: '2.0-2.19', overWins: 8, overLosses: 2, overHitRate: 0.8, thinSample: false },
+        { bucketRangeLabel: '2.20+', overWins: 9, overLosses: 1, overHitRate: 0.9, thinSample: false },
+      ],
+    };
+    const mockBaseline = { buckets: [] };
+
+    const gate = evaluateNhl1pShadowGate(mockWalkForward, mockBaseline);
+
+    expect(gate.verdict).toBe('INSUFFICIENT_DATA');
+    expect(gate.eligibleWindowCount).toBe(2);
+    expect(gate.promoteGateBuckets).toBeNull();
+  });
+
+  test('shadow gate flags thin-sample buckets but does not block PROMOTE', () => {
+    const mockWalkForward = {
+      status: 'OK',
+      eligibleWindowCount: 3,
+      aggregatedBuckets: [
+        { bucketRangeLabel: '1.0-1.4', overWins: 2, overLosses: 2, overHitRate: 0.5, thinSample: true },
+        { bucketRangeLabel: '1.5-1.9', overWins: 2, overLosses: 2, overHitRate: 0.5, thinSample: true },
+        { bucketRangeLabel: '2.0-2.19', overWins: 8, overLosses: 2, overHitRate: 0.8, thinSample: false },
+        { bucketRangeLabel: '2.20+', overWins: 2, overLosses: 1, overHitRate: 0.67, thinSample: true }, // thin — flagged, not blocking
+      ],
+    };
+    const mockBaseline = {
+      buckets: [
+        { bucketRangeLabel: '2.0-2.19', overWins: 6, overLosses: 4 }, // baseline = 0.6
+        { bucketRangeLabel: '2.20+', overWins: 7, overLosses: 3 },    // baseline = 0.7 (thin, not checked)
+      ],
+    };
+
+    const gate = evaluateNhl1pShadowGate(mockWalkForward, mockBaseline);
+
+    expect(gate.verdict).toBe('PROMOTE');
+    expect(gate.promoteGateBuckets.find((b) => b.bucketRangeLabel === '2.20+').thinSample).toBe(true);
+    expect(gate.rationale).toContain('2.20+'); // flagged in rationale
+  });
+
+  test('generateTelemetryCalibrationReport includes nhl1pWalkForward and nhl1pShadowGate', async () => {
+    const db = getDatabase();
+    clearTelemetryTables(db);
+    // No NHL 1P data → both should be INSUFFICIENT_DATA
+
+    const report = await generateTelemetryCalibrationReport({ db, days: 14 });
+
+    expect(report).toHaveProperty('nhl1pWalkForward');
+    expect(report).toHaveProperty('nhl1pShadowGate');
+    expect(report.nhl1pWalkForward.status).toBe('INSUFFICIENT_DATA');
+    expect(report.nhl1pShadowGate.verdict).toBe('INSUFFICIENT_DATA');
+    expect(report.nhl1pShadowGate.promoteGateBuckets).toBeNull();
+
+    const text = formatTelemetryCalibrationReport(report, { enforce: false });
+    expect(text).toContain('nhl_1p_walk_forward');
+    expect(text).toContain('nhl_1p_shadow_gate');
+    expect(text).toContain('verdict: INSUFFICIENT_DATA');
   });
 });
