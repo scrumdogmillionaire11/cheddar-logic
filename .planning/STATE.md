@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Model Integrity & Betting Execution Hardening
 status: active
-last_updated: "2026-04-20T20:32:32Z"
-last_activity: "2026-04-20 - Completed quick task 165: WI-1013: Resolve stale reason code alias confusion"
+last_updated: "2026-04-20T21:13:41Z"
+last_activity: "2026-04-20 - Completed quick task 166: WI-1014: Delete orphaned canonical-decision.ts (deletion path)"
 ---
 
 # Project State
@@ -217,6 +217,7 @@ Notable: WI-0797 (pipeline health Discord watchdog), WI-0798 (NHL season key fix
 
 | # | Description | Date | Commit | Directory |
 |---|-------------|------|--------|-----------|
+| 166 | WI-1014: Delete orphaned canonical-decision.ts (deletion path) | 2026-04-20 | d506ce23 | [166-wi-1014](./quick/166-wi-1014/) |
 | 165 | WI-1013: Resolve stale reason code alias confusion | 2026-04-20 | 4616cc1b | [165-wi-1013-resolve-stale-reason-code-alias-](./quick/165-wi-1013-resolve-stale-reason-code-alias-/) |
 | 164 | WI-1039: Discord Webhook Optimization — Market Filtering, POTD Integration, Rate-Limit Retry | 2026-04-20 | 091b593f | [164-wi-1039-discord-webhook-optimization-mar](./quick/164-wi-1039-discord-webhook-optimization-mar/) |
 | 163 | Fix duplicate ApiPlay interface in legacy-repair.ts | 2026-04-19 | 32ad847d | [163-fix-duplicate-apiplay-interface-in-legac](./quick/163-fix-duplicate-apiplay-interface-in-legac/) |
