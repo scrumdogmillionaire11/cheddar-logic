@@ -172,9 +172,11 @@ async function settleShadowCandidates({ jobKey = null, dryRun = false } = {}) {
             continue;
           }
 
+          const resolvedCandidateIdentity = row.candidate_identity_key || `missing:${row.shadow_candidate_id}`;
+
           const basePayload = {
             play_date: row.play_date,
-            candidate_identity_key: row.candidate_identity_key,
+            candidate_identity_key: resolvedCandidateIdentity,
             shadow_candidate_id: row.shadow_candidate_id,
             game_id: row.game_id,
             sport: row.sport,
@@ -188,14 +190,14 @@ async function settleShadowCandidates({ jobKey = null, dryRun = false } = {}) {
             updated_at: nowIso,
           };
 
-          if (!row.candidate_identity_key || !row.game_id) {
+          if (!row.game_id) {
             upsertShadowResult(db, {
               ...basePayload,
               status: 'non_gradeable',
               result: null,
               pnl_units: null,
               settled_at: null,
-              grading_metadata: buildMetadata({ reason: 'missing_candidate_identity_or_game_id' }),
+              grading_metadata: buildMetadata({ reason: 'missing_game_id' }),
             });
             summary.non_gradeable += 1;
             continue;
@@ -228,14 +230,13 @@ async function settleShadowCandidates({ jobKey = null, dryRun = false } = {}) {
             continue;
           }
 
-          const selection = normalizeSelectionForMarket({
-            marketType,
-            selection: row.selection,
-            homeTeam: row.home_team,
-            awayTeam: row.away_team,
-          });
-
           try {
+            const selection = normalizeSelectionForMarket({
+              marketType,
+              selection: row.selection,
+              homeTeam: row.home_team,
+              awayTeam: row.away_team,
+            });
             const line = parseLine(row.line);
             const result = gradeLockedMarket({
               marketType,

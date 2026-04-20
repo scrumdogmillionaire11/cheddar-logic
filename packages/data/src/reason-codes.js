@@ -1,11 +1,7 @@
 // ─── Aliases ────────────────────────────────────────────────────────────────
-// Deprecated names that map to canonical codes. Applied before dedup so both
-// the old and new name collapse to a single entry.
-const REASON_CODE_ALIASES = Object.freeze({
-  STALE_MARKET_INPUT: 'STALE_MARKET',
-  MARKET_DATA_STALE: 'STALE_MARKET',
-  WATCHDOG_STALE_SNAPSHOT: 'STALE_SNAPSHOT',
-});
+// Legacy export retained for callers that import the symbol. New producers and
+// validators must use canonical reason codes directly.
+const REASON_CODE_ALIASES = Object.freeze({});
 
 // ─── Exclusive bucket sets ───────────────────────────────────────────────────
 // Every reason code belongs to exactly ONE bucket.
@@ -90,7 +86,7 @@ const MARKET_REASON_CODES = Object.freeze(new Set([
   'LINE_NOT_CONFIRMED',
   'EDGE_RECHECK_PENDING',
   'EDGE_NO_LONGER_CONFIRMED',
-  'STALE_MARKET',                  // canonical (STALE_MARKET_INPUT / MARKET_DATA_STALE alias here)
+  'STALE_MARKET',
   'PRICE_SYNC_PENDING',
   'BLOCKED_BET_VERIFICATION_REQUIRED',
   'GATE_LINE_MOVEMENT',
@@ -265,9 +261,8 @@ const MARKET_UNVERIFIED_CODES = Object.freeze(new Set([
 
 function getReasonCodeLabel(code) {
   if (!code) return null;
-  let token = String(code).trim().toUpperCase();
+  const token = String(code).trim().toUpperCase();
   if (!token) return null;
-  token = REASON_CODE_ALIASES[token] || token;
   if (REASON_CODE_LABELS[token]) return REASON_CODE_LABELS[token];
   if (token.includes('GOALIE')) return 'Waiting on goalie confirmation';
   return null;

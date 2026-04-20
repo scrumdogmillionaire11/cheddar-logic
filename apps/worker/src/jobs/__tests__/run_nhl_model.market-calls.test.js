@@ -769,8 +769,8 @@ describe('run_nhl_model market call generation', () => {
     expect(mlCard.payloadData.classification).toBe('PASS');
     expect(mlCard.payloadData.execution_status).toBe('BLOCKED');
     expect(mlCard.payloadData.pass_reason_code).toBe('PASS_EXECUTION_GATE_STALE_SNAPSHOT');
-    expect(mlCard.payloadData.blocked_reason_code).toBe('MARKET_DATA_STALE');
-    expect(mlCard.payloadData.reason_codes).toContain('MARKET_DATA_STALE');
+    expect(mlCard.payloadData.blocked_reason_code).toBe('STALE_MARKET');
+    expect(mlCard.payloadData.reason_codes).toContain('STALE_MARKET');
     expect(mlCard.payloadData.decision_v2?.official_status).toBe('PASS');
   });
 

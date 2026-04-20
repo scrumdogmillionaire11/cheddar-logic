@@ -85,12 +85,9 @@ export const REASON_CODE_LABELS: Record<string, string> = Object.freeze({
   PASS_EXECUTION_GATE_NO_EDGE: 'No edge at execution',
   PASS_EXECUTION_GATE_STALE_SNAPSHOT: 'Stale snapshot at execution',
   PASS_EXECUTION_GATE_MIXED_BOOK_SOURCE_MISMATCH: 'Book source mismatch',
-  // Legacy aliases — kept for stored data backward compat
   EDGE_CLEAR: 'Edge clear',
   EDGE_FOUND_SIDE: 'Edge found',
   EDGE_FOUND: 'Edge found',
-  MARKET_DATA_STALE: 'Market data stale',
-  STALE_MARKET_INPUT: 'Market data stale',
 });
 
 export function getReasonCodeLabel(code?: string | null): string | null {

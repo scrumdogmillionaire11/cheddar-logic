@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Model Integrity & Betting Execution Hardening
 status: active
-last_updated: "2026-04-20T00:53:30Z"
-last_activity: "2026-04-20 - Completed quick task 164: WI-1039: Discord Webhook Optimization — Market Filtering, POTD Integration, Rate-Limit Retry"
+last_updated: "2026-04-20T20:32:32Z"
+last_activity: "2026-04-20 - Completed quick task 165: WI-1013: Resolve stale reason code alias confusion"
 ---
 
 # Project State
@@ -217,6 +217,7 @@ Notable: WI-0797 (pipeline health Discord watchdog), WI-0798 (NHL season key fix
 
 | # | Description | Date | Commit | Directory |
 |---|-------------|------|--------|-----------|
+| 165 | WI-1013: Resolve stale reason code alias confusion | 2026-04-20 | 4616cc1b | [165-wi-1013-resolve-stale-reason-code-alias-](./quick/165-wi-1013-resolve-stale-reason-code-alias-/) |
 | 164 | WI-1039: Discord Webhook Optimization — Market Filtering, POTD Integration, Rate-Limit Retry | 2026-04-20 | 091b593f | [164-wi-1039-discord-webhook-optimization-mar](./quick/164-wi-1039-discord-webhook-optimization-mar/) |
 | 163 | Fix duplicate ApiPlay interface in legacy-repair.ts | 2026-04-19 | 32ad847d | [163-fix-duplicate-apiplay-interface-in-legac](./quick/163-fix-duplicate-apiplay-interface-in-legac/) |
 | 162 | Dead code removal sweep — deprecated exports and leftover shims | 2026-04-19 | 4b936849 | [162-dead-code-removal-sweep-deprecated-expor](./quick/162-dead-code-removal-sweep-deprecated-expor/) |

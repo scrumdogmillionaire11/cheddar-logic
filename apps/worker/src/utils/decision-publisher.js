@@ -82,7 +82,7 @@ function deriveTerminalReasonFamilyForPayload({
   if (reasonCodes.includes('EXACT_WAGER_MISMATCH')) return 'EXACT_WAGER_FAIL';
   if (reasonCodes.includes('LINE_NOT_CONFIRMED')) return 'LINE_NOT_CONFIRMED';
   if (
-    reasonCodes.includes('MARKET_DATA_STALE') ||
+    reasonCodes.includes('STALE_MARKET') ||
     reasonCodes.includes('PRICE_SYNC_PENDING')
   ) {
     return 'MARKET_STALE_RECHECK';

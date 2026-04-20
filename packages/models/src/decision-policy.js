@@ -1,7 +1,6 @@
 // Import reason-code constants directly from source to avoid disruption when
 // tests mock the full @cheddar-logic/data package (which mocks the DB layer).
 const {
-  REASON_CODE_ALIASES,
   MODEL_REASON_CODES,
   DATA_REASON_CODES,
   DATA_BLOCKER_CODES,
@@ -40,7 +39,7 @@ const WATCH_REASON_CODES = Object.freeze(new Set([
   'LINE_NOT_CONFIRMED',
   'EDGE_RECHECK_PENDING',
   'PRICE_SYNC_PENDING',
-  'MARKET_DATA_STALE',
+  'STALE_MARKET',
   'BLOCKED_BET_VERIFICATION_REQUIRED',
   'GATE_LINE_MOVEMENT',
   'MISSING_DATA_NO_ODDS',
@@ -49,8 +48,7 @@ const WATCH_REASON_CODES = Object.freeze(new Set([
   'GOALIE_UNCONFIRMED',
   'GOALIE_CONFLICTING',
   'INJURY_UNCERTAIN',
-  'WATCHDOG_STALE_SNAPSHOT',
-  'STALE_MARKET_INPUT',
+  'STALE_SNAPSHOT',
   'PROJECTION_INPUTS_STALE_FALLBACK',
   'TEAM_METRICS_FALLBACK_PREV_DAY',
   'MISSING_DATA_PROJECTION_INPUTS',
@@ -75,7 +73,7 @@ const WEBHOOK_REASON_LABELS = Object.freeze({
   LINE_NOT_CONFIRMED: 'Line not confirmed',
   EDGE_RECHECK_PENDING: 'Edge needs recheck before action',
   EDGE_NO_LONGER_CONFIRMED: 'Edge no longer clears threshold',
-  MARKET_DATA_STALE: 'Market data stale',
+  STALE_MARKET: 'Market data stale',
   PRICE_SYNC_PENDING: 'Book price still syncing',
   EDGE_SANITY_NON_TOTAL: 'Verification required — edge sanity check pending',
   BLOCKED_BET_VERIFICATION_REQUIRED: 'Verification required — bet blocked pending recheck',
@@ -93,21 +91,12 @@ const WEBHOOK_REASON_LABELS = Object.freeze({
   GOALIE_UNCONFIRMED: 'Goalie not confirmed',
   GOALIE_CONFLICTING: 'Conflicting goalie reports',
   INJURY_UNCERTAIN: 'Injury status uncertain',
-  WATCHDOG_STALE_SNAPSHOT: 'Snapshot stale — refresh required',
-  STALE_MARKET_INPUT: 'Market input stale — refresh required',
+  STALE_SNAPSHOT: 'Snapshot stale — refresh required',
 });
 
 function canonicalizeReasonCode(value) {
   if (!value) return '';
-  let token = toUpperToken(value);
-  if (!token) return '';
-  // Idempotently resolve aliases (do-while guards against future alias chains)
-  let prev;
-  do {
-    prev = token;
-    token = REASON_CODE_ALIASES[token] || token;
-  } while (token !== prev);
-  return token;
+  return toUpperToken(value);
 }
 
 function collectReasonCodes(payload) {
@@ -136,7 +125,8 @@ function collectReasonCodes(payload) {
     payload?.nhl_1p_decision?.surfaced_reason_code,
   ];
 
-  // Dedup AFTER aliasing so STALE_MARKET_INPUT + MARKET_DATA_STALE collapse to one STALE_MARKET
+  // New decision sources are canonical-only. Historical DB row compatibility is
+  // handled by web read-side normalizers before display.
   return [...new Set(ordered.map(canonicalizeReasonCode).filter(Boolean))];
 }
 
@@ -211,10 +201,9 @@ function deriveWebhookWatchState(payload) {
 
   if (
     hasCode((code) =>
-      code === 'MARKET_DATA_STALE' ||
+      code === 'STALE_MARKET' ||
       code === 'EDGE_RECHECK_PENDING' ||
-      code === 'STALE_MARKET_INPUT' ||
-      code === 'WATCHDOG_STALE_SNAPSHOT',
+      code === 'STALE_SNAPSHOT',
     )
   ) {
     return 'market stale / recheck pending';
@@ -590,7 +579,7 @@ const ALL_REASON_CODES_SET = new Set(ALL_REASON_CODES);
 // Throws in ALL environments — decision-critical producers must only emit valid codes.
 function assertValidReasonCodeStrict(code) {
   const token = toUpperToken(code);
-  if (!ALL_REASON_CODES_SET.has(token) && !REASON_CODE_ALIASES[token]) {
+  if (!ALL_REASON_CODES_SET.has(token)) {
     throw new Error(`[reason-codes] Invalid reason code at decision source: ${token}`);
   }
 }
@@ -598,7 +587,7 @@ function assertValidReasonCodeStrict(code) {
 // Logs + metrics only — for non-critical/collection contexts (already-persisted legacy data).
 function assertValidReasonCodeSoft(code) {
   const token = toUpperToken(code);
-  if (!ALL_REASON_CODES_SET.has(token) && !REASON_CODE_ALIASES[token]) {
+  if (!ALL_REASON_CODES_SET.has(token)) {
     console.error(`[reason-codes] INVALID_REASON_CODE_AT_SOURCE: ${token}`);
   }
 }

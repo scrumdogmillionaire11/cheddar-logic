@@ -15,7 +15,7 @@ describe('reason-codes canonical registry', () => {
 
   test('getReasonCodeLabel returns label for known code', () => {
     expect(getReasonCodeLabel('LINE_NOT_CONFIRMED')).toBe('Line not confirmed');
-    expect(getReasonCodeLabel('MARKET_DATA_STALE')).toBe('Market data stale');
+    expect(getReasonCodeLabel('STALE_MARKET')).toBe('Market data stale');
   });
 
   test('getReasonCodeLabel returns goalie label for GOALIE-prefixed codes', () => {
