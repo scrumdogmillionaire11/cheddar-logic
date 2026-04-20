@@ -109,7 +109,7 @@ const {
   assertFeatureTimeliness,
   applyFeatureTimelinessEnforcement,
 } = require('../models/feature-time-guard');
-const { classifyNhlTotalsStatus } = require('../models/nhl-totals-status');
+const { classifyNhlTotalsStatus, computeNhl1pForecast } = require('../models/nhl-totals-status');
 
 const ENABLE_WELCOME_HOME = process.env.ENABLE_WELCOME_HOME === 'true';
 const USE_ORCHESTRATED_MARKET =
@@ -1542,6 +1542,19 @@ function applyCanonicalNhlTotalsStatus(card, context = {}) {
     Array.isArray(context.uncertaintyHoldReasonCodes) &&
     context.uncertaintyHoldReasonCodes.includes('BLOCK_INJURY_RISK');
 
+  const hasRequiredInputs1p =
+    (selectionSide === 'OVER' || selectionSide === 'UNDER') &&
+    Number.isFinite(modelTotal) &&
+    Number.isFinite(marketTotal);
+  const _1pForecast = computeNhl1pForecast({ modelTotal, marketTotal, hasRequiredInputs: hasRequiredInputs1p });
+  if (payload.raw_data && typeof payload.raw_data === 'object') {
+    payload.raw_data.nhl_1p_stage_a = {
+      delta: _1pForecast.delta,
+      absDelta: _1pForecast.absDelta,
+      modelTotal: _1pForecast.modelTotal,
+    };
+  }
+
   const result = classifyNhlTotalsStatus({
     side: selectionSide,
     modelTotal,
@@ -1551,10 +1564,8 @@ function applyCanonicalNhlTotalsStatus(card, context = {}) {
     goaliesConfirmedAway,
     majorInjuryUncertainty,
     accelerantScore: payload.accelerant_score ?? null,
-    hasRequiredInputs:
-      (selectionSide === 'OVER' || selectionSide === 'UNDER') &&
-      Number.isFinite(modelTotal) &&
-      Number.isFinite(marketTotal),
+    hasRequiredInputs: hasRequiredInputs1p,
+    forecast: _1pForecast,
   });
 
   const mapped = mapCanonicalNhlTotalsToInternalStatus(result.status);
@@ -2399,6 +2410,13 @@ function generateNHLMarketCallCards(
     // In Without Odds Mode there is no market line — fall back to projection.
     const projectedTotal = totalDecision.projection?.projected_total ?? null;
     const line = withoutOddsMode ? (projectedTotal ?? marketLine) : marketLine;
+    const hasRequiredInputsTotals =
+      (side === 'OVER' || side === 'UNDER') && Number.isFinite(projectedTotal) && Number.isFinite(line);
+    const _totalsForecast = computeNhl1pForecast({
+      modelTotal: projectedTotal,
+      marketTotal: line,
+      hasRequiredInputs: hasRequiredInputsTotals,
+    });
     const canonicalTotalsStatus = classifyNhlTotalsStatus({
       side,
       modelTotal: projectedTotal,
@@ -2408,7 +2426,8 @@ function generateNHLMarketCallCards(
       goaliesConfirmedAway: String(awayGoalieState?.starter_state || '').toUpperCase() === 'CONFIRMED',
       majorInjuryUncertainty: uncertaintyHoldReasonCodes.includes('BLOCK_INJURY_RISK'),
       accelerantScore: totalDecision?.projection?.accelerant_score ?? null,
-      hasRequiredInputs: (side === 'OVER' || side === 'UNDER') && Number.isFinite(projectedTotal) && Number.isFinite(line),
+      hasRequiredInputs: hasRequiredInputsTotals,
+      forecast: _totalsForecast,
     });
     const canonicalMapped = mapCanonicalNhlTotalsToInternalStatus(canonicalTotalsStatus.status);
     const status = canonicalMapped.officialStatus;
@@ -2583,6 +2602,11 @@ function generateNHLMarketCallCards(
       payloadData.classification = canonicalMapped.classification;
       payloadData.pass_reason_code =
         canonicalMapped.passReasonCode || payloadData.pass_reason_code || null;
+      payloadData.nhl_1p_stage_a = {
+        delta: _totalsForecast.delta,
+        absDelta: _totalsForecast.absDelta,
+        modelTotal: _totalsForecast.modelTotal,
+      };
       payloadData.decision_v2 = {
         ...(payloadData.decision_v2 && typeof payloadData.decision_v2 === 'object'
           ? payloadData.decision_v2
