@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Model Integrity & Betting Execution Hardening
 status: active
-last_updated: "2026-04-20T21:13:41Z"
-last_activity: "2026-04-20 - Completed quick task 166: WI-1014: Delete orphaned canonical-decision.ts (deletion path)"
+last_updated: "2026-04-20T23:05:00Z"
+last_activity: "2026-04-20 - Completed quick task 167: WI-1015: Complete status→action migration in card transform"
 ---
 
 # Project State
@@ -44,7 +44,6 @@ This snapshot reflects the current remaining work list provided by the operator 
 - WI-0972
 - WI-0973
 - WI-1013
-- WI-1015
 - WI-1016
 - WI-1018
 - WI-1019
@@ -216,6 +215,7 @@ Notable: WI-0797 (pipeline health Discord watchdog), WI-0798 (NHL season key fix
 
 | # | Description | Date | Commit | Directory |
 |---|-------------|------|--------|-----------|
+| 167 | WI-1015: Complete status→action migration in card transform | 2026-04-20 | 3b62cb2d | [167-wi-1015](./quick/167-wi-1015/) |
 | 166 | WI-1014: Delete orphaned canonical-decision.ts (deletion path) | 2026-04-20 | d506ce23 | [166-wi-1014](./quick/166-wi-1014/) |
 | 165 | WI-1013: Resolve stale reason code alias confusion | 2026-04-20 | 4616cc1b | [165-wi-1013-resolve-stale-reason-code-alias-](./quick/165-wi-1013-resolve-stale-reason-code-alias-/) |
 | 164 | WI-1039: Discord Webhook Optimization — Market Filtering, POTD Integration, Rate-Limit Retry | 2026-04-20 | 091b593f | [164-wi-1039-discord-webhook-optimization-mar](./quick/164-wi-1039-discord-webhook-optimization-mar/) |
