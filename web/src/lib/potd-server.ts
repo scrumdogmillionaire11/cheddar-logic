@@ -571,8 +571,20 @@ export async function getPotdResponseData(now = new Date()): Promise<PotdRespons
         total_wagered: 0,
       };
 
-    const nearMissAggregateRow =
-      (db
+    let nearMissAggregateRow: NearMissAggRow = {
+      sample_size: 0,
+      settled_count: 0,
+      wins: 0,
+      losses: 0,
+      pushes: 0,
+      pending: 0,
+      non_gradeable: 0,
+    };
+
+    // Defensive: nearMissAggregateRow query requires tables added in WI-1037.
+    // If tables don't exist (e.g., production DB not yet migrated), use fallback.
+    try {
+      const result = db
         .prepare(
           `SELECT
              COUNT(sc.id) AS sample_size,
@@ -587,15 +599,17 @@ export async function getPotdResponseData(now = new Date()): Promise<PotdRespons
              ON sr.play_date = sc.play_date
             AND sr.candidate_identity_key = sc.candidate_identity_key`,
         )
-        .get() as NearMissAggRow | undefined) ?? {
-        sample_size: 0,
-        settled_count: 0,
-        wins: 0,
-        losses: 0,
-        pushes: 0,
-        pending: 0,
-        non_gradeable: 0,
-      };
+        .get() as NearMissAggRow | undefined;
+      if (result) {
+        nearMissAggregateRow = result;
+      }
+    } catch (error) {
+      // Tables don't exist yet; use fallback (0 data)
+      console.warn(
+        '[potd-server] nearMissAggregateRow query failed, using fallback: ',
+        error instanceof Error ? error.message : String(error),
+      );
+    }
 
     const statusPlaceholders = EXCLUDED_GAME_STATUSES.map(() => '?').join(', ');
     const todayGames = db

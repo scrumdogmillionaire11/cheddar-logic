@@ -2,7 +2,7 @@
  * GET /api/market-pulse
  *
  * Returns market line and odds discrepancies for the Market Pulse dashboard.
- * Server-side in-memory cache with 4.5-minute TTL prevents per-request DB reads.
+ * Scans the latest snapshot per game on each request to keep displayed prices current.
  *
  * Query params:
  *   sport        - optional; one of NBA, MLB, NHL (default: ALL)
@@ -37,21 +37,33 @@ interface OddsSnapshot {
 interface LineGap {
   gameId: string;
   sport: string;
+  homeTeam: string | null;
+  awayTeam: string | null;
   market: string;
   outlierBook: string;
+  outlierLine: number | null;
+  consensusLine: number | null;
   delta: number;
+  direction: 'home' | 'away' | 'over' | 'under';
   tier: 'TRIGGER' | 'WATCH';
-  [key: string]: unknown;
+  capturedAt: string;
 }
 
 interface OddsGap {
   gameId: string;
   sport: string;
+  homeTeam: string | null;
+  awayTeam: string | null;
   market: string;
-  outlierBook: string;
+  line: number | null;
+  side: 'home' | 'away' | 'over' | 'under';
+  bestBook: string;
+  bestPrice: number;
+  worstBook: string;
+  worstPrice: number;
   impliedEdgePct: number;
   tier: 'TRIGGER' | 'WATCH';
-  [key: string]: unknown;
+  capturedAt: string;
 }
 
 interface MarketPulseResponse {
@@ -98,7 +110,7 @@ const { scanLineDiscrepancies, scanOddsDiscrepancies } = require(
 // Module-level server-side cache (survives across requests in the same process)
 // ---------------------------------------------------------------------------
 
-const CACHE_TTL_MS = 4.5 * 60 * 1000; // 4 minutes 30 seconds
+const CACHE_TTL_MS = 0; // Disabled to ensure each request reflects latest odds snapshots
 const LOOKBACK_MS  = 30 * 60 * 1000;  // 30-minute snapshot window
 
 const VALID_SPORTS = ['ALL', 'NBA', 'MLB', 'NHL'] as const;
@@ -181,6 +193,34 @@ function loadSnapshots(sport: ValidSport, sinceUtc: string): OddsSnapshot[] {
   return getOddsSnapshots(sport, sinceUtc);
 }
 
+/**
+ * Keep only the newest snapshot per sport/game pair so scan output reflects
+ * current market state rather than stale rows in the lookback window.
+ */
+function keepLatestSnapshotPerGame(snapshots: OddsSnapshot[]): OddsSnapshot[] {
+  const latestByGame = new Map<string, OddsSnapshot>();
+
+  for (const snapshot of snapshots) {
+    const key = `${snapshot.sport}:${snapshot.game_id}`;
+    const existing = latestByGame.get(key);
+    if (existing == null) {
+      latestByGame.set(key, snapshot);
+      continue;
+    }
+
+    const existingCapturedMs = new Date(existing.captured_at).getTime();
+    const incomingCapturedMs = new Date(snapshot.captured_at).getTime();
+    if (!Number.isFinite(incomingCapturedMs)) {
+      continue;
+    }
+    if (!Number.isFinite(existingCapturedMs) || incomingCapturedMs > existingCapturedMs) {
+      latestByGame.set(key, snapshot);
+    }
+  }
+
+  return Array.from(latestByGame.values());
+}
+
 // ---------------------------------------------------------------------------
 // Route handler
 // ---------------------------------------------------------------------------
@@ -199,13 +239,13 @@ export async function GET(request: Request): Promise<Response> {
 
     // Serve from cache when the entry is still fresh
     const cached = cache.get(sport);
-    if (cached && cached.expiresAt > Date.now()) {
+    if (CACHE_TTL_MS > 0 && cached && cached.expiresAt > Date.now()) {
       return serveResponse(cached.payload, includeWatch);
     }
 
     // Load snapshots for the 30-minute lookback window (SELECT only, no writes)
     const sinceUtc  = new Date(Date.now() - LOOKBACK_MS).toISOString();
-    const snapshots = loadSnapshots(sport, sinceUtc);
+    const snapshots = keepLatestSnapshotPerGame(loadSnapshots(sport, sinceUtc));
 
     // First pass -- scan for line discrepancies across all snapshots
     const allLineGaps: LineGap[] = scanLineDiscrepancies(snapshots);
@@ -240,7 +280,9 @@ export async function GET(request: Request): Promise<Response> {
       },
     };
 
-    cache.set(sport, { payload, expiresAt: Date.now() + CACHE_TTL_MS });
+    if (CACHE_TTL_MS > 0) {
+      cache.set(sport, { payload, expiresAt: Date.now() + CACHE_TTL_MS });
+    }
     return serveResponse(payload, includeWatch);
   } catch (error) {
     console.error('[API] market-pulse error:', error);

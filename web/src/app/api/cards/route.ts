@@ -15,6 +15,7 @@
  * - sport: optional sport filter (case-insensitive)
  * - card_type: optional card type filter
  * - game_id: optional game ID filter
+ * - date: optional UTC game date filter (default today, use all for full horizon)
  * - dedupe: optional (default latest_per_game_type, use none for raw history)
  * - limit: optional (default 20, max 100)
  * - offset: optional (default 0, max 1000)
@@ -340,6 +341,7 @@ export async function GET(request: NextRequest) {
     const sport = sportParam ? sportParam.toLowerCase() : null;
     const cardType = searchParams.get('card_type');
     const gameId = searchParams.get('game_id');
+    const dateParam = searchParams.get('date') ?? null;
     const dedupe = searchParams.get('dedupe');
     const limit = clampNumber(searchParams.get('limit'), 20, 1, 100);
     const offset = clampNumber(searchParams.get('offset'), 0, 0, 1000);
@@ -392,6 +394,19 @@ export async function GET(request: NextRequest) {
     if (gameId) {
       baseWhere.push('cp.game_id = ?');
       baseParams.push(gameId);
+    }
+
+    const showAllDates = dateParam === 'all';
+    const gameDateFilter =
+      !showAllDates && dateParam && /^\d{4}-\d{2}-\d{2}$/.test(dateParam)
+        ? dateParam
+        : !showAllDates
+          ? new Date().toISOString().slice(0, 10)
+          : null;
+
+    if (gameDateFilter) {
+      baseWhere.push('DATE(g.game_time_utc) = ?');
+      baseParams.push(gameDateFilter);
     }
 
     // Exclude FPL and NCAAM cards
