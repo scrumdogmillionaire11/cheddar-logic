@@ -21,6 +21,51 @@ Historical quick-task completions: [COMPLETED_SPRINT_LOG.md](./COMPLETED_SPRINT_
 
 ---
 
+## Remaining WORK_QUEUE Snapshot (Authoritative as of 2026-04-19)
+
+This snapshot reflects the current remaining work list provided by the operator and should be treated as the active priority pool for planning and claims.
+
+### Frozen (Do Not Claim)
+
+- FPL: WI-0662, WI-0705, WI-0706, WI-0708, WI-0709, WI-0710
+- NFL: WI-0766
+- Auth: WI-0794, WI-0795, WI-0796
+
+### Non-Frozen Remaining WIs
+
+- WI-0834
+- WI-0895
+- WI-0896
+- WI-0904
+- WI-0938
+- WI-0969
+- WI-0970
+- WI-0971
+- WI-0972
+- WI-0973
+- WI-1013
+- WI-1014
+- WI-1015
+- WI-1016
+- WI-1018
+- WI-1019
+- WI-1020
+- WI-1021
+- WI-1022
+- WI-1023
+- WI-1024
+- WI-1025
+- WI-1026
+- WI-1027
+- WI-1028
+- WI-1029
+- WI-1034
+- WI-1034-a
+- WI-1034-b
+- WI-1034-c
+
+---
+
 ## FROZEN DOMAINS (as of 2026-04-06)
 
 Agents must not claim, modify, or execute work items in these areas until the freeze is lifted:
