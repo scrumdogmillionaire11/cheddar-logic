@@ -441,41 +441,61 @@ const POTD_MAX_NEAR_MISS_SHADOW_CANDIDATES = 3;
 const POTD_AUDIT_LOG_ENABLED = process.env.POTD_AUDIT_LOG_ENABLED !== 'false';
 
 /**
+ * Pure function — builds a structured audit entry for a scored candidate.
+ * No side effects; exported for direct unit testing.
+ */
+function buildCandidateAuditEntry(candidate, noiseFloor, minScore) {
+  const edge = candidate.edgePct;
+  const totalScore = candidate.totalScore;
+  const confidenceLabel = String(candidate.confidenceLabel || '').toUpperCase();
+  const passesPositive = isFiniteNumber(edge) && edge > 0;
+  const passesNoise = isFiniteNumber(edge) && edge > noiseFloor;
+  const passesScore = isFiniteNumber(totalScore) && totalScore >= minScore;
+  const passesConfidence = confidenceLabel !== 'LOW';
+
+  let rejectedReason = 'VIABLE';
+  if (!isFiniteNumber(edge)) {
+    rejectedReason = 'NO_EDGE_COMPUTED';
+  } else if (!passesPositive) {
+    rejectedReason = 'NEGATIVE_EDGE';
+  } else if (!passesNoise) {
+    rejectedReason = 'BELOW_NOISE_FLOOR';
+  } else if (!passesScore) {
+    rejectedReason = 'BELOW_MIN_SCORE';
+  } else if (!passesConfidence) {
+    rejectedReason = 'BELOW_CONFIDENCE_LABEL';
+  }
+
+  return {
+    potd_audit: true,
+    sport: candidate.sport ?? null,
+    marketType: candidate.marketType ?? null,
+    selectionLabel: candidate.selectionLabel ?? null,
+    price: candidate.price ?? null,
+    gameId: candidate.gameId ?? null,
+    edgePct: isFiniteNumber(edge) ? edge : null,
+    noiseFloor,
+    passesNoise,
+    totalScore: isFiniteNumber(totalScore) ? totalScore : null,
+    minScore,
+    passesScore,
+    passesConfidence,
+    edgeSourceTag: candidate.edgeSourceTag ?? null,
+    edgeSourceMeta: candidate.edgeSourceMeta ?? null,
+    confidenceLabel: candidate.confidenceLabel ?? null,
+    rejectedReason,
+  };
+}
+
+/**
  * Emit a structured audit log entry for a scored candidate.
  * Captures the noise floor used, whether it passed, score, and rejection reason.
  * Guarded by POTD_AUDIT_LOG_ENABLED env var.
  */
 function auditLogCandidate(candidate, noiseFloor) {
   if (!POTD_AUDIT_LOG_ENABLED) return;
-  const edge = candidate.edgePct;
-  const passesNoise = isFiniteNumber(edge) && edge > noiseFloor;
-  const passesScore = isFiniteNumber(candidate.totalScore) && candidate.totalScore >= POTD_MIN_TOTAL_SCORE;
-  let rejectedReason = null;
-  if (!isFiniteNumber(edge)) {
-    rejectedReason = 'NO_EDGE_COMPUTED';
-  } else if (!passesNoise) {
-    rejectedReason = `BELOW_NOISE_FLOOR:${noiseFloor}`;
-  } else if (!passesScore) {
-    rejectedReason = `BELOW_MIN_SCORE:${POTD_MIN_TOTAL_SCORE}`;
-  }
-  console.log(
-    JSON.stringify({
-      type: 'POTD_AUDIT',
-      sport: candidate.sport ?? null,
-      marketType: candidate.marketType ?? null,
-      selectionLabel: candidate.selectionLabel ?? null,
-      price: candidate.price ?? null,
-      edgePct: isFiniteNumber(edge) ? edge : null,
-      noiseFloor,
-      passesNoise,
-      totalScore: isFiniteNumber(candidate.totalScore) ? candidate.totalScore : null,
-      passesScore,
-      edgeSourceTag: candidate.edgeSourceTag ?? null,
-      edgeSourceMeta: candidate.edgeSourceMeta ?? null,
-      confidenceLabel: candidate.confidenceLabel ?? null,
-      rejectedReason,
-    }),
-  );
+  const entry = buildCandidateAuditEntry(candidate, noiseFloor, POTD_MIN_TOTAL_SCORE);
+  console.log(JSON.stringify(entry));
 
   // Contract mismatch check: edgeSourceTag must agree with EDGE_SOURCE_CONTRACT.
   const contractExpected = resolveEdgeSourceContract(candidate.sport, candidate.marketType);
@@ -1321,5 +1341,6 @@ module.exports = {
     buildPotdCard,
     getActivePotdSports,
     selectNearMissShadowCandidates,
+    buildCandidateAuditEntry,
   },
 };

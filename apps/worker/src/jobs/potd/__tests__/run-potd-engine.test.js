@@ -1345,3 +1345,89 @@ describe('WI-1039-B: POTD timing state machine and heartbeat', () => {
     }
   });
 });
+
+// WI-1029: buildCandidateAuditEntry / auditLogCandidate audit log
+describe('buildCandidateAuditEntry', () => {
+  let buildCandidateAuditEntry;
+  beforeAll(() => {
+    // Require inside beforeAll so the module load happens after env vars are configured.
+    buildCandidateAuditEntry = require('../run_potd_engine').__private.buildCandidateAuditEntry;
+  });
+  const noiseFloor = 0.02;
+  const minScore = 0.3;
+
+  test('VIABLE — candidate passes all gates', () => {
+    const entry = buildCandidateAuditEntry(
+      { edgePct: 0.03, totalScore: 0.5, confidenceLabel: 'HIGH', sport: 'NHL', marketType: 'MONEYLINE' },
+      noiseFloor,
+      minScore,
+    );
+    expect(entry.potd_audit).toBe(true);
+    expect(entry.rejectedReason).toBe('VIABLE');
+    expect(entry.passesNoise).toBe(true);
+    expect(entry.passesScore).toBe(true);
+    expect(entry.passesConfidence).toBe(true);
+  });
+
+  test('NEGATIVE_EDGE — edgePct <= 0', () => {
+    const entry = buildCandidateAuditEntry(
+      { edgePct: -0.01, totalScore: 0.5, confidenceLabel: 'HIGH' },
+      noiseFloor,
+      minScore,
+    );
+    expect(entry.rejectedReason).toBe('NEGATIVE_EDGE');
+  });
+
+  test('BELOW_NOISE_FLOOR — edgePct positive but below floor', () => {
+    const entry = buildCandidateAuditEntry(
+      { edgePct: 0.005, totalScore: 0.5, confidenceLabel: 'HIGH' },
+      noiseFloor,
+      minScore,
+    );
+    expect(entry.rejectedReason).toBe('BELOW_NOISE_FLOOR');
+    expect(entry.noiseFloor).toBe(noiseFloor);
+  });
+
+  test('BELOW_MIN_SCORE — passes noise floor but score too low', () => {
+    const entry = buildCandidateAuditEntry(
+      { edgePct: 0.03, totalScore: 0.1, confidenceLabel: 'HIGH' },
+      noiseFloor,
+      minScore,
+    );
+    expect(entry.rejectedReason).toBe('BELOW_MIN_SCORE');
+    expect(entry.minScore).toBe(minScore);
+  });
+
+  test('BELOW_CONFIDENCE_LABEL — LOW confidence after passing noise+score gates', () => {
+    const entry = buildCandidateAuditEntry(
+      { edgePct: 0.03, totalScore: 0.5, confidenceLabel: 'LOW' },
+      noiseFloor,
+      minScore,
+    );
+    expect(entry.rejectedReason).toBe('BELOW_CONFIDENCE_LABEL');
+    expect(entry.passesConfidence).toBe(false);
+  });
+
+  test('NO_EDGE_COMPUTED — null edgePct', () => {
+    const entry = buildCandidateAuditEntry(
+      { edgePct: null, totalScore: 0.5, confidenceLabel: 'HIGH' },
+      noiseFloor,
+      minScore,
+    );
+    expect(entry.rejectedReason).toBe('NO_EDGE_COMPUTED');
+    expect(entry.edgePct).toBeNull();
+  });
+
+  test('potd_audit:true is set on all entries — field contract', () => {
+    const entry = buildCandidateAuditEntry(
+      { edgePct: 0.03, totalScore: 0.5, confidenceLabel: 'HIGH' },
+      noiseFloor,
+      minScore,
+    );
+    // WI-1029 acceptance: manual validation grep uses potd_audit field
+    expect(entry.potd_audit).toBe(true);
+    // minScore is included in the entry for downstream analysis
+    expect(entry.minScore).toBe(minScore);
+    expect(entry.noiseFloor).toBe(noiseFloor);
+  });
+});
