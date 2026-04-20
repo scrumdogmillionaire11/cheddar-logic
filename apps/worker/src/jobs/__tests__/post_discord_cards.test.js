@@ -19,6 +19,7 @@ const {
   RETRY_JITTER_MIN_MS,
   RETRY_JITTER_MAX_MS,
   MAX_RETRIES,
+  fetchCardsForSnapshot,
 } = require('../post_discord_cards');
 const { makeEtDateTime } = require('../../../tests/helpers/discord-timing');
 const { classifyNhlTotalsStatus } = require('../../models/nhl-totals-status');
@@ -1841,5 +1842,202 @@ describe('WI-1039-C: Discord 429 resilience and hard timeout', () => {
     expect(sent).toBe(2);
     expect(fakeFetch).toHaveBeenCalledTimes(2);
     expect(fakeSleep).not.toHaveBeenCalled();
+  });
+});
+
+// ── WI-1039-B2: POTD snapshot inclusion ──────────────────────────────────────
+
+describe('WI-1039-B2: POTD snapshot inclusion (DISCORD_INCLUDE_POTD_IN_SNAPSHOT)', () => {
+  const TEST_DB_PATH = '/tmp/cheddar-test-potd-snapshot.db';
+  const LOCK_PATH = `${TEST_DB_PATH}.lock`;
+  let dataModule;
+
+  function removeIfExists(filePath) {
+    try {
+      const fs2 = require('fs');
+      if (fs2.existsSync(filePath)) fs2.unlinkSync(filePath);
+    } catch {
+      // best effort
+    }
+  }
+
+  function resetTables() {
+    const db = new Database(TEST_DB_PATH);
+    db.exec(`
+      DELETE FROM card_results;
+      DELETE FROM card_payloads;
+      DELETE FROM games;
+      DELETE FROM job_runs;
+    `);
+    db.close();
+  }
+
+  beforeAll(async () => {
+    process.env.CHEDDAR_DB_PATH = TEST_DB_PATH;
+    process.env.CHEDDAR_DB_AUTODISCOVER = 'false';
+    process.env.CHEDDAR_DB_ALLOW_MULTI_PROCESS = 'false';
+    process.env.ENABLE_DISCORD_CARD_WEBHOOKS = 'true';
+    process.env.DISCORD_CARD_WEBHOOK_URL = 'https://discord.example/cards';
+
+    removeIfExists(TEST_DB_PATH);
+    removeIfExists(LOCK_PATH);
+
+    dataModule = require('@cheddar-logic/data');
+    await dataModule.runMigrations();
+    dataModule.closeDatabase();
+  });
+
+  beforeEach(() => {
+    dataModule.closeDatabase();
+    resetTables();
+    delete process.env.DISCORD_INCLUDE_POTD_IN_SNAPSHOT;
+  });
+
+  afterAll(() => {
+    try {
+      dataModule.closeDatabase();
+    } catch {
+      // best effort
+    }
+  });
+
+  function insertGame(db, gameId, gameTimeUtc = '2035-04-10T20:00:00.000Z') {
+    db.prepare(
+      `INSERT INTO games (id, sport, game_id, home_team, away_team, game_time_utc, status)
+       VALUES (?, 'nhl', ?, 'Home Team', 'Away Team', ?, 'scheduled')`,
+    ).run(gameId, gameId, gameTimeUtc);
+  }
+
+  function insertPotdCard(db, cardId, gameId, finalPlayState, gameTimeUtc = '2035-04-10T20:00:00.000Z') {
+    db.prepare(
+      `INSERT INTO card_payloads (id, game_id, sport, card_type, card_title, created_at, payload_data)
+       VALUES (?, ?, 'nhl', 'potd-call', 'POTD', '2035-04-10T18:00:00.000Z', ?)`,
+    ).run(
+      cardId,
+      gameId,
+      JSON.stringify({
+        action: 'FIRE',
+        kind: 'PLAY',
+        market_type: 'TOTAL',
+        selection: { side: 'OVER' },
+        selection_label: 'Over 5.5',
+        price: -110,
+        edge_pct: 0.035,
+        total_score: 0.72,
+        final_play_state: finalPlayState,
+      }),
+    );
+  }
+
+  test('includePotd=false excludes potd-call regardless of final_play_state', () => {
+    const db = new Database(TEST_DB_PATH);
+    insertGame(db, 'g1');
+    insertPotdCard(db, 'potd-1', 'g1', 'OFFICIAL_PLAY');
+    db.close();
+
+    const now = new Date('2035-04-10T12:00:00.000Z');
+    const rows = fetchCardsForSnapshot({ now, includePotd: false });
+    expect(rows.find((r) => r.cardType === 'potd-call')).toBeUndefined();
+  });
+
+  test('includePotd=true + OFFICIAL_PLAY includes potd-call in snapshot', () => {
+    const db = new Database(TEST_DB_PATH);
+    insertGame(db, 'g2');
+    insertPotdCard(db, 'potd-2', 'g2', 'OFFICIAL_PLAY');
+    db.close();
+
+    const now = new Date('2035-04-10T12:00:00.000Z');
+    const rows = fetchCardsForSnapshot({ now, includePotd: true });
+    const potd = rows.find((r) => r.cardType === 'potd-call');
+    expect(potd).toBeDefined();
+    expect(potd.id).toBe('potd-2');
+  });
+
+  test('includePotd=true + PENDING_WINDOW excludes potd-call from snapshot', () => {
+    const db = new Database(TEST_DB_PATH);
+    insertGame(db, 'g3');
+    insertPotdCard(db, 'potd-3', 'g3', 'PENDING_WINDOW');
+    db.close();
+
+    const now = new Date('2035-04-10T12:00:00.000Z');
+    const rows = fetchCardsForSnapshot({ now, includePotd: true });
+    expect(rows.find((r) => r.cardType === 'potd-call')).toBeUndefined();
+  });
+
+  test('includePotd=true + NO_PICK_FINAL excludes potd-call from snapshot', () => {
+    const db = new Database(TEST_DB_PATH);
+    insertGame(db, 'g4');
+    insertPotdCard(db, 'potd-4', 'g4', 'NO_PICK_FINAL');
+    db.close();
+
+    const now = new Date('2035-04-10T12:00:00.000Z');
+    const rows = fetchCardsForSnapshot({ now, includePotd: true });
+    expect(rows.find((r) => r.cardType === 'potd-call')).toBeUndefined();
+  });
+
+  test('buildDiscordSnapshot with includePotd renders POTD leading section', () => {
+    const potdCard = {
+      id: 'potd-snap-1',
+      gameId: 'g5',
+      sport: 'NHL',
+      cardType: 'potd-call',
+      cardTitle: 'POTD',
+      matchup: 'Away Team @ Home Team',
+      gameTimeUtc: '2035-04-10T20:00:00.000Z',
+      createdAt: '2035-04-10T18:00:00.000Z',
+      payloadData: {
+        action: 'FIRE',
+        kind: 'PLAY',
+        market_type: 'TOTAL',
+        selection: { side: 'OVER' },
+        selection_label: 'Over 5.5',
+        price: -110,
+        edge_pct: 0.035,
+        total_score: 0.72,
+        final_play_state: 'OFFICIAL_PLAY',
+      },
+    };
+
+    const snapshot = buildDiscordSnapshot({ cards: [potdCard], includePotd: true });
+    expect(snapshot.totalCards).toBe(0); // regular cards = 0
+    expect(snapshot.messages.length).toBeGreaterThanOrEqual(1);
+    const leadingText = snapshot.messages[0];
+    expect(leadingText).toContain('PLAY OF THE DAY');
+    expect(leadingText).toContain('Over 5.5');
+    expect(leadingText).toContain('3.5%'); // edge_pct * 100
+  });
+
+  test('POTD card bypasses market allow-list filter in snapshot', () => {
+    const potdCard = {
+      id: 'potd-snap-2',
+      gameId: 'g6',
+      sport: 'NHL',
+      cardType: 'potd-call',
+      cardTitle: 'POTD',
+      matchup: 'Away @ Home',
+      gameTimeUtc: '2035-04-10T20:00:00.000Z',
+      createdAt: '2035-04-10T18:00:00.000Z',
+      payloadData: {
+        action: 'FIRE',
+        kind: 'PLAY',
+        market_type: 'TOTAL',
+        selection_label: 'Over 5.5',
+        price: -110,
+        edge_pct: 0.04,
+        final_play_state: 'OFFICIAL_PLAY',
+      },
+    };
+
+    // Very restrictive filter — only ML allowed, should NOT hide POTD
+    const narrowFilters = {
+      allowedSports: null,
+      allowedMarkets: new Set(['ML']),
+      allowedBuckets: null,
+      denyMarkets: null,
+    };
+
+    const snapshot = buildDiscordSnapshot({ cards: [potdCard], filters: narrowFilters, includePotd: true });
+    expect(snapshot.messages.length).toBeGreaterThanOrEqual(1);
+    expect(snapshot.messages[0]).toContain('PLAY OF THE DAY');
   });
 });

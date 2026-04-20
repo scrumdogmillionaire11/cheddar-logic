@@ -33,6 +33,22 @@ function buildUrl(sport: SportFilter, includeWatch: boolean): string {
   return `/api/market-pulse${qs ? `?${qs}` : ''}`;
 }
 
+function formatAmerican(price: number): string {
+  if (!Number.isFinite(price)) return 'N/A';
+  return price > 0 ? `+${price}` : `${price}`;
+}
+
+function formatLine(line: number | null): string {
+  if (!Number.isFinite(line)) return 'N/A';
+  return Number(line).toFixed(1);
+}
+
+function matchupLabel(homeTeam: string | null, awayTeam: string | null): string {
+  const away = awayTeam?.trim() || 'Away';
+  const home = homeTeam?.trim() || 'Home';
+  return `${away} @ ${home}`;
+}
+
 // ---------------------------------------------------------------------------
 // Sub-components
 // ---------------------------------------------------------------------------
@@ -125,7 +141,7 @@ function LineDiscrepanciesSection({
           const isWatch = g.tier === 'WATCH';
           return (
             <li
-              key={`${g.gameId}-${g.market}-${g.outlierBook}`}
+              key={`${g.gameId}-${g.market}-${g.outlierBook}-${g.outlierLine}`}
               className={[
                 'rounded border border-zinc-200 bg-white px-4 py-3',
                 isWatch ? 'opacity-50' : '',
@@ -139,7 +155,7 @@ function LineDiscrepanciesSection({
               >
                 <div className="flex-1">
                   <span className="font-medium">
-                    {g.away} @ {g.home}
+                    {matchupLabel(g.homeTeam, g.awayTeam)}
                   </span>
                   <span className="ml-2 text-zinc-500">{g.market}</span>
                 </div>
@@ -148,9 +164,10 @@ function LineDiscrepanciesSection({
                 </span>
               </div>
               <p className="mt-1 text-sm text-zinc-600">
-                {g.outlierBook} · {g.delta.toFixed(1)} pt gap ·{' '}
+                {g.outlierBook} · outlier {formatLine(g.outlierLine)} vs consensus{' '}
+                {formatLine(g.consensusLine)} · {g.delta.toFixed(1)} pt gap ·{' '}
                 <span className="text-zinc-400">
-                  {minutesAgoFrom(g.capturedAt as string)} min ago
+                  {minutesAgoFrom(g.capturedAt)} min ago
                 </span>
               </p>
             </li>
@@ -183,9 +200,10 @@ function OddsDiscrepanciesSection({
       <ul className="space-y-3">
         {visible.map((g) => {
           const isWatch = g.tier === 'WATCH';
+          const lineText = g.line == null ? 'moneyline' : `line ${formatLine(g.line)}`;
           return (
             <li
-              key={`${g.gameId}-${g.market}-${g.outlierBook}`}
+              key={`${g.gameId}-${g.market}-${g.side}-${g.bestBook}-${g.worstBook}-${lineText}`}
               className={[
                 'rounded border border-zinc-200 bg-white px-4 py-3',
                 isWatch ? 'opacity-50' : '',
@@ -199,19 +217,22 @@ function OddsDiscrepanciesSection({
               >
                 <div className="flex-1">
                   <span className="font-medium">
-                    {g.away} @ {g.home}
+                    {matchupLabel(g.homeTeam, g.awayTeam)}
                   </span>
-                  <span className="ml-2 text-zinc-500">{g.market}</span>
+                  <span className="ml-2 text-zinc-500">
+                    {g.market} · {lineText} · {g.side}
+                  </span>
                 </div>
                 <span className="shrink-0 rounded bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-800">
-                  OUTLIER
+                  PRICE
                 </span>
               </div>
               <p className="mt-1 text-sm text-zinc-600">
-                {g.outlierBook} · {(g.impliedEdgePct * 100).toFixed(1)}% spread ·{' '}
-                price varies across books ·{' '}
+                {g.bestBook} {formatAmerican(g.bestPrice)} vs {g.worstBook}{' '}
+                {formatAmerican(g.worstPrice)} · {(g.impliedEdgePct * 100).toFixed(1)}%
+                implied spread ·{' '}
                 <span className="text-zinc-400">
-                  {minutesAgoFrom(g.capturedAt as string)} min ago
+                  {minutesAgoFrom(g.capturedAt)} min ago
                 </span>
               </p>
             </li>
@@ -336,7 +357,7 @@ export default function MarketPulseClient() {
       {!loading && !error && data && (
         <>
           {data.meta.gamesScanned === 0 ? (
-            // State 3 — outside scan window
+            // State 3 -- outside scan window
             <div className="mt-12 text-center text-zinc-500">
               <p className="text-base">No games in current scan window.</p>
               <p className="mt-1 text-sm">
@@ -344,7 +365,7 @@ export default function MarketPulseClient() {
               </p>
             </div>
           ) : data.lineGaps.length === 0 && data.oddsGaps.length === 0 ? (
-            // State 2 — market is tight
+            // State 2 -- market is tight
             <div className="mt-12 text-center text-zinc-500">
               <p className="text-base">Market is tight right now.</p>
               <p className="mt-1 text-sm">
@@ -353,7 +374,7 @@ export default function MarketPulseClient() {
               </p>
             </div>
           ) : (
-            // State 1 — discrepancies present
+            // State 1 -- discrepancies present
             <>
               <LineDiscrepanciesSection
                 gaps={data.lineGaps}

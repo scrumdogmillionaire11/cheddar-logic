@@ -1200,10 +1200,16 @@ async function sendDiscordMessages({
   return sentCount;
 }
 
-function fetchCardsForSnapshot({ maxRows = DEFAULT_MAX_ROWS, now = new Date() } = {}) {
+function fetchCardsForSnapshot({ maxRows = DEFAULT_MAX_ROWS, now = new Date(), includePotd = false } = {}) {
   const nowEt = DateTime.fromJSDate(now).setZone('America/New_York');
   const dayStartUtc = nowEt.startOf('day').toUTC().toISO();
   const dayEndUtc = nowEt.plus({ days: 1 }).startOf('day').toUTC().toISO();
+
+  // When includePotd is true, allow potd-call rows only if final_play_state = 'OFFICIAL_PLAY'.
+  // This prevents NO_PICK entries from ever appearing in the snapshot.
+  const potdFilter = includePotd
+    ? `AND (LOWER(cp.card_type) != 'potd-call' OR json_extract(cp.payload_data, '$.final_play_state') = 'OFFICIAL_PLAY')`
+    : `AND LOWER(cp.card_type) != 'potd-call'`;
 
   const db = getDatabase();
   const rows = db
@@ -1232,7 +1238,7 @@ function fetchCardsForSnapshot({ maxRows = DEFAULT_MAX_ROWS, now = new Date() } 
         FROM card_payloads cp
         LEFT JOIN games g ON g.game_id = cp.game_id
         WHERE LOWER(cp.sport) != 'fpl'
-          AND LOWER(cp.card_type) != 'potd-call'
+          ${potdFilter}
           AND g.game_time_utc IS NOT NULL
           AND datetime(g.game_time_utc) >= datetime(?)
           AND datetime(g.game_time_utc) < datetime(?)
@@ -1284,11 +1290,16 @@ function passesLeanThreshold(card) {
   return true; // no parseable edge → allow through (don't drop unknowns)
 }
 
-function buildDiscordSnapshot({ now = new Date(), cards = [], filters = null } = {}) {
+function buildDiscordSnapshot({ now = new Date(), cards = [], filters = null, includePotd = false } = {}) {
   // Parse filters once if not provided (backward compat / direct callers)
   const resolvedFilters = filters || parseFilters();
   const preFilterCount = cards.length;
-  const filtered = prioritizeClearPlays(cards.filter(isDisplayableWebhookCard));
+
+  // Separate POTD cards — they render in a distinct leading section and bypass market filters.
+  const potdCards = includePotd ? cards.filter((c) => String(c.cardType || '').toLowerCase() === 'potd-call') : [];
+  const regularCards = includePotd ? cards.filter((c) => String(c.cardType || '').toLowerCase() !== 'potd-call') : cards;
+
+  const filtered = prioritizeClearPlays(regularCards.filter(isDisplayableWebhookCard));
   const byGame = new Map();
 
   for (const card of filtered) {
@@ -1306,6 +1317,29 @@ function buildDiscordSnapshot({ now = new Date(), cards = [], filters = null } =
 
   const messages = [];
   const sectionCounts = { official: 0, lean: 0, passBlocked: 0 };
+
+  // Render POTD leading section — one block per POTD card, before all game entries.
+  // POTD rows bypass market filters (cardMatchesWebhookFilters already returns true for POTD).
+  for (const potdCard of potdCards) {
+    const payload = potdCard.payloadData || {};
+    const selLabel = payload.selection_label || selectionSummary(potdCard) || 'Pick TBD';
+    const priceStr = payload.price != null ? ` (${payload.price > 0 ? '+' : ''}${payload.price})` : '';
+    const edgePct = Number.isFinite(Number(payload.edge_pct)) ? `${(Number(payload.edge_pct) * 100).toFixed(1)}%` : null;
+    const scoreStr = Number.isFinite(Number(payload.total_score)) ? Number(payload.total_score).toFixed(3) : null;
+    const potdLines = [
+      '═════════════════',
+      `⭐ PLAY OF THE DAY | ${sportLabel(potdCard.sport)}`,
+      potdCard.matchup || potdCard.cardTitle || 'POTD',
+      `Game: ${formatEtTime(potdCard.gameTimeUtc)}`,
+      `As of: ${snapshotEt}`,
+      '',
+      `Pick: ${selLabel}${priceStr}`,
+    ];
+    if (edgePct) potdLines.push(`Edge: ${edgePct}${scoreStr ? ` | Score: ${scoreStr}` : ''}`);
+    potdLines.push('═════════════════');
+    messages.push({ sport: 'potd', text: potdLines.join('\n') });
+    sectionCounts.official += 1;
+  }
 
   for (const gameCards of gameEntries) {
     const seed        = gameCards[0] || {};
@@ -1442,8 +1476,9 @@ async function postDiscordCards({ jobKey = null, dryRun = false, now = new Date(
       return { success: true, skipped: true, reason: 'idempotent_skip', jobKey };
     }
 
-    const cards = fetchCardsForSnapshot({ maxRows, now });
-    const snapshot = buildDiscordSnapshot({ cards, now, filters });
+    const includePotd = process.env.DISCORD_INCLUDE_POTD_IN_SNAPSHOT === 'true';
+    const cards = fetchCardsForSnapshot({ maxRows, now, includePotd });
+    const snapshot = buildDiscordSnapshot({ cards, now, filters, includePotd });
 
     // Group chunks by sport so each sport can route to its own webhook channel.
     // Sports with no dedicated URL fall back to DISCORD_CARD_WEBHOOK_URL.
@@ -1559,6 +1594,8 @@ module.exports = {
   normalizeMarketTag,
   parseFilters,
   KNOWN_MARKET_TAGS,
+  // WI-1039-B2: snapshot POTD inclusion
+  fetchCardsForSnapshot,
   // WI-1039-C: retry/timeout constants
   DISCORD_RETRY_MAX_AFTER_MS,
   DISCORD_TOTAL_TIMEOUT_MS,

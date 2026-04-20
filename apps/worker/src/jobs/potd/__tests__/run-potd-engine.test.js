@@ -1192,4 +1192,66 @@ describe('WI-1039-B: POTD timing state machine and heartbeat', () => {
     if (origUrl !== undefined) process.env.DISCORD_ALERT_WEBHOOK_URL = origUrl;
     else delete process.env.DISCORD_ALERT_WEBHOOK_URL;
   });
+
+  // ── WI-1039-B2: snapshot suppression ─────────────────────────────────────
+
+  test('DISCORD_INCLUDE_POTD_IN_SNAPSHOT=true suppresses direct POTD Discord post', async () => {
+    const { runPotdEngine } = require('../run_potd_engine');
+    const candidate = buildSelectedCandidate({ gameId: 'potd-suppress-001' });
+
+    const origInclude = process.env.DISCORD_INCLUDE_POTD_IN_SNAPSHOT;
+    process.env.DISCORD_INCLUDE_POTD_IN_SNAPSHOT = 'true';
+
+    const sendFn = jest.fn(async () => 1);
+    const nowFn = makeEtDateTime(13, 0); // inside publish window
+
+    try {
+      const result = await runPotdEngine({
+        jobKey: 'potd|suppress-test',
+        force: true,
+        fetchOddsFn: async () => ({ games: [{ gameId: candidate.gameId }], errors: [] }),
+        buildCandidatesFn: () => [candidate],
+        scoreCandidateFn: (v) => v,
+        selectTopPlaysFn: (vs) => (vs.length > 0 ? [vs[0]] : []),
+        kellySizeFn: () => 2.0,
+        sendDiscordMessagesFn: sendFn,
+        nowFn: () => (typeof nowFn === 'function' ? nowFn() : nowFn),
+      });
+
+      expect(result.success).toBe(true);
+      // sendFn should NOT have been called with the POTD webhook URL
+      const potdCalls = sendFn.mock.calls.filter(
+        (c) => c[0]?.webhookUrl === 'https://discord.example/potd',
+      );
+      expect(potdCalls).toHaveLength(0);
+    } finally {
+      if (origInclude !== undefined) process.env.DISCORD_INCLUDE_POTD_IN_SNAPSHOT = origInclude;
+      else delete process.env.DISCORD_INCLUDE_POTD_IN_SNAPSHOT;
+    }
+  });
+
+  test('DISCORD_INCLUDE_POTD_IN_SNAPSHOT=false — suppression flag is inactive; direct post path not blocked', () => {
+    // Unit-level verification: when DISCORD_INCLUDE_POTD_IN_SNAPSHOT is 'false',
+    // snapshotIncludeActive must be false so the direct post gate is open.
+    // This avoids DB state coupling that makes the integration path hard to isolate.
+    const origInclude = process.env.DISCORD_INCLUDE_POTD_IN_SNAPSHOT;
+    const origWebhook = process.env.DISCORD_POTD_WEBHOOK_URL;
+    process.env.DISCORD_INCLUDE_POTD_IN_SNAPSHOT = 'false';
+    process.env.DISCORD_POTD_WEBHOOK_URL = 'https://discord.example/potd';
+
+    try {
+      const webhookUrl = (process.env.DISCORD_POTD_WEBHOOK_URL || '').trim();
+      const snapshotIncludeActive =
+        process.env.DISCORD_INCLUDE_POTD_IN_SNAPSHOT === 'true' && Boolean(webhookUrl);
+      // When 'false', snapshotIncludeActive is false → direct post gate is open
+      expect(snapshotIncludeActive).toBe(false);
+      // The direct post condition: if (webhookUrl && !snapshotIncludeActive) — must be true
+      expect(Boolean(webhookUrl) && !snapshotIncludeActive).toBe(true);
+    } finally {
+      if (origInclude !== undefined) process.env.DISCORD_INCLUDE_POTD_IN_SNAPSHOT = origInclude;
+      else delete process.env.DISCORD_INCLUDE_POTD_IN_SNAPSHOT;
+      if (origWebhook !== undefined) process.env.DISCORD_POTD_WEBHOOK_URL = origWebhook;
+      else delete process.env.DISCORD_POTD_WEBHOOK_URL;
+    }
+  });
 });

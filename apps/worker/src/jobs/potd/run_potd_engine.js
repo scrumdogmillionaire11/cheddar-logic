@@ -1114,7 +1114,11 @@ async function runPotdEngine({
 
       let discordPosted = false;
       let discordError = null;
-      if (webhookUrl) {
+      // Suppress direct post when snapshot inclusion is active — the card will appear in
+      // the snapshot feed instead, preventing duplicate Discord messages.
+      const snapshotIncludeActive =
+        process.env.DISCORD_INCLUDE_POTD_IN_SNAPSHOT === 'true' && Boolean(webhookUrl);
+      if (webhookUrl && !snapshotIncludeActive) {
         try {
           await sendDiscordMessagesFn({
             webhookUrl,
@@ -1130,6 +1134,8 @@ async function runPotdEngine({
           discordError = error.message;
           console.warn(`[POTD] Discord publish failed: ${error.message}`);
         }
+      } else if (snapshotIncludeActive) {
+        console.log(`[POTD] Direct Discord post suppressed — DISCORD_INCLUDE_POTD_IN_SNAPSHOT=true; play will appear in snapshot feed`);
       }
 
       markJobRunSuccess(jobRunId, {
