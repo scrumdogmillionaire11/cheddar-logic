@@ -249,11 +249,15 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
   }
 
   // ========== DISCORD SNAPSHOT (3) ==========
+  // Only push the latest due window to prevent catch-up storms sending duplicate snapshots.
+  // If multiple windows are past-due (e.g. worker was down since 10:30 and restarts at 14:26),
+  // only the most-recent window fires — the content would be identical for older windows anyway.
   if (process.env.ENABLE_DISCORD_CARD_WEBHOOKS === 'true' && String(process.env.DISCORD_CARD_WEBHOOK_URL || '').trim()) {
-    for (const t of ['10:30', '12:30', '18:00']) {
-      if (!isFixedDue(nowEt, t)) continue;
-      const jobKey = keyDiscordCardsSnapshot(nowEt, t);
-      jobs.push({ jobName: 'post_discord_cards', jobKey, execute: postDiscordCards, args: { jobKey, dryRun }, reason: `discord cards snapshot ${t} ET` });
+    const dueDiscordTimes = ['10:30', '12:30', '18:00'].filter((t) => isFixedDue(nowEt, t));
+    if (dueDiscordTimes.length > 0) {
+      const latestT = dueDiscordTimes[dueDiscordTimes.length - 1];
+      const jobKey = keyDiscordCardsSnapshot(nowEt, latestT);
+      jobs.push({ jobName: 'post_discord_cards', jobKey, execute: postDiscordCards, args: { jobKey, dryRun }, reason: `discord cards snapshot ${latestT} ET` });
     }
   }
 
