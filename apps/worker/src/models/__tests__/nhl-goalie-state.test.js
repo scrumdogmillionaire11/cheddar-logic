@@ -268,3 +268,54 @@ describe('resolveGoalieState', () => {
     expect(state.starter_state).toBe('EXPECTED');
   });
 });
+
+describe('adjustment_trust values used for training row exclusion (WI-0970)', () => {
+  // stampTrainingRowExclusion in run_nhl_model.js excludes cards when
+  // adjustment_trust is NEUTRALIZED or BLOCKED (reason tag: GOALIE_UNCERTAIN).
+  // These tests document that contract — the values come from makeCanonicalGoalieState.
+
+  test('UNKNOWN starter_state produces NEUTRALIZED adjustment_trust → triggers GOALIE_UNCERTAIN exclusion', () => {
+    const state = makeCanonicalGoalieState({
+      game_id: 'game-wi0970',
+      team_side: 'home',
+      starter_state: 'UNKNOWN',
+      starter_source: 'USER_INPUT',
+      goalie_name: null,
+      goalie_tier: 'UNKNOWN',
+      tier_confidence: 'NONE',
+      evidence_flags: [],
+    });
+
+    expect(state.adjustment_trust).toBe('NEUTRALIZED');
+  });
+
+  test('CONFIRMED + HIGH confidence produces FULL adjustment_trust → no GOALIE_UNCERTAIN exclusion', () => {
+    const state = makeCanonicalGoalieState({
+      game_id: 'game-wi0970',
+      team_side: 'home',
+      starter_state: 'CONFIRMED',
+      starter_source: 'USER_INPUT',
+      goalie_name: 'J. Smith',
+      goalie_tier: 'STRONG',
+      tier_confidence: 'HIGH',
+      evidence_flags: [],
+    });
+
+    expect(state.adjustment_trust).toBe('FULL');
+  });
+
+  test('CONFIRMED + LOW confidence produces DEGRADED adjustment_trust → no GOALIE_UNCERTAIN exclusion', () => {
+    const state = makeCanonicalGoalieState({
+      game_id: 'game-wi0970',
+      team_side: 'away',
+      starter_state: 'CONFIRMED',
+      starter_source: 'USER_INPUT',
+      goalie_name: 'A. Backup',
+      goalie_tier: 'WEAK',
+      tier_confidence: 'LOW',
+      evidence_flags: [],
+    });
+
+    expect(state.adjustment_trust).toBe('DEGRADED');
+  });
+});

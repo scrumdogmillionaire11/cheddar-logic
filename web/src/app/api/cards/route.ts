@@ -62,9 +62,9 @@ const ENABLE_WELCOME_HOME =
   process.env.ENABLE_WELCOME_HOME === 'true' ||
   process.env.NEXT_PUBLIC_ENABLE_WELCOME_HOME === 'true';
 
+// Server-only API route: do not read NEXT_PUBLIC_ prefix here.
 const ENABLE_CARDS_LIFECYCLE_PARITY =
-  process.env.ENABLE_CARDS_LIFECYCLE_PARITY === 'true' ||
-  process.env.NEXT_PUBLIC_ENABLE_CARDS_LIFECYCLE_PARITY === 'true';
+  process.env.ENABLE_CARDS_LIFECYCLE_PARITY === 'true';
 
 type LifecycleMode = 'pregame' | 'active';
 
@@ -176,16 +176,6 @@ function safeJsonParse(payload: string | null) {
 
 function normalizePayloadMeta(payload: Record<string, unknown> | null) {
   if (!payload || typeof payload !== 'object') return payload;
-  const meta =
-    payload.meta && typeof payload.meta === 'object'
-      ? (payload.meta as Record<string, unknown>)
-      : null;
-  if (!meta) return payload;
-  // Backward compatibility: older clients may still expect this field to exist.
-  // Current worker pipeline writes cards via DB, not legacy model endpoint routes.
-  if (!Object.prototype.hasOwnProperty.call(meta, 'model_endpoint')) {
-    meta.model_endpoint = null;
-  }
   return payload;
 }
 
@@ -405,7 +395,8 @@ export async function GET(request: NextRequest) {
           : null;
 
     if (gameDateFilter) {
-      baseWhere.push('DATE(g.game_time_utc) = ?');
+      // Cards with no game_id have no game_time_utc — include them regardless of date filter.
+      baseWhere.push('(DATE(g.game_time_utc) = ? OR cp.game_id IS NULL)');
       baseParams.push(gameDateFilter);
     }
 
@@ -527,6 +518,9 @@ export async function GET(request: NextRequest) {
           generated_at: new Date().toISOString(),
           run_status: runStatus,
           items_count: response.length,
+          has_more: rows.length === limit,
+          offset,
+          limit,
         },
       },
       { headers: { 'Content-Type': 'application/json' } },

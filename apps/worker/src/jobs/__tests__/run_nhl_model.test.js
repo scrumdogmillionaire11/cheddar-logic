@@ -20,6 +20,7 @@ const {
   recordEspnNullTeams,
   sendEspnNullDiscordAlert,
   applyExecutionGateToNhlCard,
+  stampTrainingRowExclusion,
 } = require('../run_nhl_model');
 const { computeNHLDriverCards } = require('../../models/index');
 
@@ -772,5 +773,167 @@ describe('applyExecutionGateToNhlCard timestamp provenance', () => {
     expect(card.payloadData.execution_envelope).toBeDefined();
     expect(card.payloadData.execution_envelope.snapshot_timestamp).toBeDefined();
     expect(card.payloadData.execution_gate).toHaveProperty('freshness_decision');
+  });
+});
+
+describe('stampTrainingRowExclusion (WI-0970)', () => {
+  function makeCard(rawDataOverrides = {}) {
+    return {
+      payloadData: {
+        status: 'FIRE',
+        officialStatus: 'FIRE',
+        raw_data: { sigma_games_sampled: 10, ...rawDataOverrides },
+      },
+    };
+  }
+
+  function makeGoalieState(adjustmentTrust) {
+    return { adjustment_trust: adjustmentTrust };
+  }
+
+  function validOdds(overrides = {}) {
+    return {
+      total: 6.5,
+      h2h_home: -130,
+      h2h_away: 115,
+      ...overrides,
+    };
+  }
+
+  test('eligible card: sets training_row_excluded=false and reason=null', () => {
+    const card = makeCard();
+    stampTrainingRowExclusion(card, {
+      oddsSnapshot: validOdds(),
+      homeGoalieState: makeGoalieState('FULL'),
+      awayGoalieState: makeGoalieState('DEGRADED'),
+      sigmaGamesSampled: 12,
+    });
+
+    expect(card.payloadData.raw_data.training_row_excluded).toBe(false);
+    expect(card.payloadData.raw_data.training_exclusion_reason).toBeNull();
+  });
+
+  test('MALFORMED_INPUT: null oddsSnapshot', () => {
+    const card = makeCard();
+    stampTrainingRowExclusion(card, { oddsSnapshot: null });
+
+    expect(card.payloadData.raw_data.training_row_excluded).toBe(true);
+    expect(card.payloadData.raw_data.training_exclusion_reason).toBe('MALFORMED_INPUT');
+  });
+
+  test('MALFORMED_INPUT: total is null', () => {
+    const card = makeCard();
+    stampTrainingRowExclusion(card, {
+      oddsSnapshot: validOdds({ total: null }),
+      homeGoalieState: makeGoalieState('FULL'),
+      awayGoalieState: makeGoalieState('FULL'),
+    });
+
+    expect(card.payloadData.raw_data.training_row_excluded).toBe(true);
+    expect(card.payloadData.raw_data.training_exclusion_reason).toBe('MALFORMED_INPUT');
+  });
+
+  test('MALFORMED_INPUT: h2h_home is NaN', () => {
+    const card = makeCard();
+    stampTrainingRowExclusion(card, {
+      oddsSnapshot: validOdds({ h2h_home: NaN }),
+      homeGoalieState: makeGoalieState('FULL'),
+      awayGoalieState: makeGoalieState('FULL'),
+    });
+
+    expect(card.payloadData.raw_data.training_row_excluded).toBe(true);
+    expect(card.payloadData.raw_data.training_exclusion_reason).toBe('MALFORMED_INPUT');
+  });
+
+  test('GOALIE_UNCERTAIN: home goalie NEUTRALIZED', () => {
+    const card = makeCard();
+    stampTrainingRowExclusion(card, {
+      oddsSnapshot: validOdds(),
+      homeGoalieState: makeGoalieState('NEUTRALIZED'),
+      awayGoalieState: makeGoalieState('FULL'),
+      sigmaGamesSampled: 10,
+    });
+
+    expect(card.payloadData.raw_data.training_row_excluded).toBe(true);
+    expect(card.payloadData.raw_data.training_exclusion_reason).toBe('GOALIE_UNCERTAIN');
+  });
+
+  test('GOALIE_UNCERTAIN: away goalie BLOCKED', () => {
+    const card = makeCard();
+    stampTrainingRowExclusion(card, {
+      oddsSnapshot: validOdds(),
+      homeGoalieState: makeGoalieState('DEGRADED'),
+      awayGoalieState: makeGoalieState('BLOCKED'),
+      sigmaGamesSampled: 10,
+    });
+
+    expect(card.payloadData.raw_data.training_row_excluded).toBe(true);
+    expect(card.payloadData.raw_data.training_exclusion_reason).toBe('GOALIE_UNCERTAIN');
+  });
+
+  test('INSUFFICIENT_DATA: sigma_games_sampled below 5', () => {
+    const card = makeCard();
+    stampTrainingRowExclusion(card, {
+      oddsSnapshot: validOdds(),
+      homeGoalieState: makeGoalieState('FULL'),
+      awayGoalieState: makeGoalieState('FULL'),
+      sigmaGamesSampled: 4,
+    });
+
+    expect(card.payloadData.raw_data.training_row_excluded).toBe(true);
+    expect(card.payloadData.raw_data.training_exclusion_reason).toBe('INSUFFICIENT_DATA');
+  });
+
+  test('INSUFFICIENT_DATA: uses raw_data.sigma_games_sampled when param not supplied', () => {
+    const card = makeCard({ sigma_games_sampled: 3 });
+    stampTrainingRowExclusion(card, {
+      oddsSnapshot: validOdds(),
+      homeGoalieState: makeGoalieState('FULL'),
+      awayGoalieState: makeGoalieState('FULL'),
+    });
+
+    expect(card.payloadData.raw_data.training_row_excluded).toBe(true);
+    expect(card.payloadData.raw_data.training_exclusion_reason).toBe('INSUFFICIENT_DATA');
+  });
+
+  test('PASS-status card is not auto-excluded by stampTrainingRowExclusion (caller must check status)', () => {
+    // Directional exclusion for PASS/HOLD/WATCH is the caller's responsibility —
+    // stampTrainingRowExclusion only checks data quality. A PASS card with good data
+    // will have training_row_excluded=false; caller filters it via officialStatus/status.
+    const card = makeCard();
+    card.payloadData.status = 'PASS';
+    card.payloadData.officialStatus = 'PASS';
+
+    stampTrainingRowExclusion(card, {
+      oddsSnapshot: validOdds(),
+      homeGoalieState: makeGoalieState('FULL'),
+      awayGoalieState: makeGoalieState('FULL'),
+      sigmaGamesSampled: 10,
+    });
+
+    expect(card.payloadData.raw_data.training_row_excluded).toBe(false);
+  });
+
+  test('PASS/HOLD/WATCH cards excluded from directional training target filter', () => {
+    const cards = [
+      { payloadData: { status: 'FIRE', officialStatus: 'FIRE' } },
+      { payloadData: { status: 'PASS', officialStatus: 'PASS' } },
+      { payloadData: { status: 'WATCH', officialStatus: 'WATCH' } },
+      { payloadData: { status: 'HOLD', officialStatus: 'HOLD' } },
+      { payloadData: { status: 'FIRE', officialStatus: 'FIRE' } },
+    ];
+
+    const directionalCandidates = cards.filter((c) => {
+      const status = (c.payloadData.officialStatus || c.payloadData.status || '').toUpperCase();
+      return status !== 'PASS' && status !== 'HOLD' && status !== 'WATCH';
+    });
+
+    expect(directionalCandidates).toHaveLength(2);
+    expect(directionalCandidates.every((c) => c.payloadData.status === 'FIRE')).toBe(true);
+  });
+
+  test('no-op when raw_data is not initialized', () => {
+    const card = { payloadData: {} };
+    expect(() => stampTrainingRowExclusion(card, { oddsSnapshot: validOdds() })).not.toThrow();
   });
 });

@@ -41,11 +41,9 @@ assert(
   '/api/games should map projection_final and classification from 1P driver inputs',
 );
 
-assert(
-  cardsRouteSource.includes('meta.model_endpoint = null;') &&
-    cardsByGameRouteSource.includes('meta.model_endpoint = null;'),
-  '/api/cards routes should preserve legacy model_endpoint metadata compatibility when absent',
-);
+// TD-4 resolved: model_endpoint backward-compat shim removed from both /api/cards routes.
+// The worker always writes meta.model_endpoint into every card payload before DB storage,
+// so no runtime injection is needed at the API layer.
 
 assert(
   cardsRouteSource.includes('/api/models/*') &&

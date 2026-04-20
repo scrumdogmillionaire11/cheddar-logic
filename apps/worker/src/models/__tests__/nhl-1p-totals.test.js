@@ -5,6 +5,7 @@ const { makeCanonicalGoalieState } = require('../nhl-goalie-state');
 const {
   applyNhlSettlementMarketContext,
 } = require('../../jobs/run_nhl_model.js');
+const { get1pBucketThresholds, classifyNhlTotalsStatus } = require('../nhl-totals-status');
 
 function buildNhlSnapshot(overrides = {}) {
   const raw = {
@@ -487,5 +488,58 @@ describe('applyNhlSettlementMarketContext — 1P market_context contract', () =>
     expect(card.payloadData.model_prob).toBeUndefined();
     expect(card.payloadData.p_fair).toBeUndefined();
     expect(card.payloadData.price).toBe(-125);
+  });
+});
+
+describe('NHL 1P OVER guardrails — bucket-aware calibration', () => {
+  describe('get1pBucketThresholds', () => {
+    test('bucket 1.0-1.4: over.play is 1.5', () => {
+      const t = get1pBucketThresholds(1.2);
+      expect(t.over.play).toBe(1.5);
+    });
+
+    test('bucket 1.5-1.9: over.play is 1.2', () => {
+      const t = get1pBucketThresholds(1.7);
+      expect(t.over.play).toBe(1.2);
+    });
+
+    test('returns null for non-finite input', () => {
+      expect(get1pBucketThresholds(NaN)).toBeNull();
+      expect(get1pBucketThresholds(null)).toBeNull();
+      expect(get1pBucketThresholds(undefined)).toBeNull();
+    });
+  });
+
+  function classifyWith(side, modelTotal, marketTotal) {
+    return classifyNhlTotalsStatus({
+      side,
+      modelTotal,
+      marketTotal,
+      integrityOk: true,
+      goaliesConfirmedHome: true,
+      goaliesConfirmedAway: true,
+      majorInjuryUncertainty: false,
+      hasRequiredInputs: true,
+      thresholds: get1pBucketThresholds(marketTotal),
+    });
+  }
+
+  test('OVER blocked in 1.0-1.4 bucket when absDelta < 1.5 (would be PLAY at defaults)', () => {
+    // marketTotal=1.2 → bucket 1.0-1.4 → over.play=1.5
+    // absDelta=1.2 is below 1.5, so must NOT be PLAY
+    const result = classifyWith('OVER', 2.4, 1.2);
+    expect(result.status).not.toBe('PLAY');
+  });
+
+  test('OVER allowed in 1.0-1.4 bucket when absDelta >= 1.5', () => {
+    // modelTotal=2.8, marketTotal=1.2 → absDelta=1.6 >= 1.5
+    const result = classifyWith('OVER', 2.8, 1.2);
+    expect(result.status).toBe('PLAY');
+  });
+
+  test('UNDER not suppressed in 1.0-1.4 bucket when absDelta=1.0', () => {
+    // UNDER thresholds in this bucket are default (play=1.0), so 1.0 → PLAY
+    const result = classifyWith('UNDER', 0.2, 1.2);
+    expect(result.status).toBe('PLAY');
   });
 });

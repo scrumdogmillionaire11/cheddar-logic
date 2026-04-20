@@ -168,16 +168,6 @@ function safeJsonParse(payload: string | null) {
 
 function normalizePayloadMeta(payload: Record<string, unknown> | null) {
   if (!payload || typeof payload !== 'object') return payload;
-  const meta =
-    payload.meta && typeof payload.meta === 'object'
-      ? (payload.meta as Record<string, unknown>)
-      : null;
-  if (!meta) return payload;
-  // Backward compatibility: older clients may still expect this field to exist.
-  // Current worker pipeline writes cards via DB, not legacy model endpoint routes.
-  if (!Object.prototype.hasOwnProperty.call(meta, 'model_endpoint')) {
-    meta.model_endpoint = null;
-  }
   return payload;
 }
 

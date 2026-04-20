@@ -97,6 +97,7 @@ const {
   normalizeRawDataPayload,
 } = require('../utils/normalize-raw-data-payload');
 const { resolveGoalieState } = require('../models/nhl-goalie-state');
+const { extractPlayoffRegimeFeatures } = require('../models/nhl-pace-model');
 const {
   isPlayoffGame,
   PLAYOFF_SIGMA_MULTIPLIER,
@@ -108,7 +109,7 @@ const {
   assertFeatureTimeliness,
   applyFeatureTimelinessEnforcement,
 } = require('../models/feature-time-guard');
-const { classifyNhlTotalsStatus } = require('../models/nhl-totals-status');
+const { classifyNhlTotalsStatus, computeNhl1pForecast, get1pBucketThresholds } = require('../models/nhl-totals-status');
 
 const ENABLE_WELCOME_HOME = process.env.ENABLE_WELCOME_HOME === 'true';
 const USE_ORCHESTRATED_MARKET =
@@ -436,6 +437,63 @@ function applyPlayoffSigmaMultiplier(sigma, multiplier) {
     adjusted_for_playoffs: true,
     playoff_sigma_multiplier: multiplier,
   };
+}
+
+/**
+ * Stamp training row exclusion fields onto card.payloadData.raw_data (WI-0970).
+ *
+ * Must be called after raw_data is initialized and sigma_games_sampled is stamped.
+ * Sets training_row_excluded=true + training_exclusion_reason=<tag> on ineligible cards.
+ *
+ * Exclusion does NOT prevent publishing — it marks the card ineligible for
+ * directional training datasets. PASS/HOLD/WATCH status is a separate check.
+ */
+function stampTrainingRowExclusion(card, {
+  oddsSnapshot = null,
+  homeGoalieState = null,
+  awayGoalieState = null,
+  sigmaGamesSampled = null,
+} = {}) {
+  const raw = card?.payloadData?.raw_data;
+  if (!raw) return;
+
+  // MALFORMED_INPUT: snapshot null or missing/non-finite required numeric fields
+  const total = oddsSnapshot?.total;
+  const h2hHome = oddsSnapshot?.h2h_home;
+  const h2hAway = oddsSnapshot?.h2h_away;
+  if (
+    oddsSnapshot == null ||
+    total == null || !Number.isFinite(total) ||
+    h2hHome == null || !Number.isFinite(h2hHome) ||
+    h2hAway == null || !Number.isFinite(h2hAway)
+  ) {
+    raw.training_row_excluded = true;
+    raw.training_exclusion_reason = 'MALFORMED_INPUT';
+    return;
+  }
+
+  // GOALIE_UNCERTAIN: either goalie has NEUTRALIZED or BLOCKED adjustment trust
+  const homeAdjTrust = homeGoalieState?.adjustment_trust;
+  const awayAdjTrust = awayGoalieState?.adjustment_trust;
+  if (
+    homeAdjTrust === 'NEUTRALIZED' || homeAdjTrust === 'BLOCKED' ||
+    awayAdjTrust === 'NEUTRALIZED' || awayAdjTrust === 'BLOCKED'
+  ) {
+    raw.training_row_excluded = true;
+    raw.training_exclusion_reason = 'GOALIE_UNCERTAIN';
+    return;
+  }
+
+  // INSUFFICIENT_DATA: sigma sample count below minimum threshold
+  const games = sigmaGamesSampled ?? raw.sigma_games_sampled;
+  if (games != null && Number.isFinite(games) && games < 5) {
+    raw.training_row_excluded = true;
+    raw.training_exclusion_reason = 'INSUFFICIENT_DATA';
+    return;
+  }
+
+  raw.training_row_excluded = false;
+  raw.training_exclusion_reason = null;
 }
 
 function attachRunId(card, runId) {
@@ -1484,6 +1542,19 @@ function applyCanonicalNhlTotalsStatus(card, context = {}) {
     Array.isArray(context.uncertaintyHoldReasonCodes) &&
     context.uncertaintyHoldReasonCodes.includes('BLOCK_INJURY_RISK');
 
+  const hasRequiredInputs1p =
+    (selectionSide === 'OVER' || selectionSide === 'UNDER') &&
+    Number.isFinite(modelTotal) &&
+    Number.isFinite(marketTotal);
+  const _1pForecast = computeNhl1pForecast({ modelTotal, marketTotal, hasRequiredInputs: hasRequiredInputs1p });
+  if (payload.raw_data && typeof payload.raw_data === 'object') {
+    payload.raw_data.nhl_1p_stage_a = {
+      delta: _1pForecast.delta,
+      absDelta: _1pForecast.absDelta,
+      modelTotal: _1pForecast.modelTotal,
+    };
+  }
+
   const result = classifyNhlTotalsStatus({
     side: selectionSide,
     modelTotal,
@@ -1493,10 +1564,9 @@ function applyCanonicalNhlTotalsStatus(card, context = {}) {
     goaliesConfirmedAway,
     majorInjuryUncertainty,
     accelerantScore: payload.accelerant_score ?? null,
-    hasRequiredInputs:
-      (selectionSide === 'OVER' || selectionSide === 'UNDER') &&
-      Number.isFinite(modelTotal) &&
-      Number.isFinite(marketTotal),
+    hasRequiredInputs: hasRequiredInputs1p,
+    forecast: _1pForecast,
+    thresholds: get1pBucketThresholds(marketTotal),
   });
 
   const mapped = mapCanonicalNhlTotalsToInternalStatus(result.status);
@@ -2341,6 +2411,13 @@ function generateNHLMarketCallCards(
     // In Without Odds Mode there is no market line — fall back to projection.
     const projectedTotal = totalDecision.projection?.projected_total ?? null;
     const line = withoutOddsMode ? (projectedTotal ?? marketLine) : marketLine;
+    const hasRequiredInputsTotals =
+      (side === 'OVER' || side === 'UNDER') && Number.isFinite(projectedTotal) && Number.isFinite(line);
+    const _totalsForecast = computeNhl1pForecast({
+      modelTotal: projectedTotal,
+      marketTotal: line,
+      hasRequiredInputs: hasRequiredInputsTotals,
+    });
     const canonicalTotalsStatus = classifyNhlTotalsStatus({
       side,
       modelTotal: projectedTotal,
@@ -2350,7 +2427,9 @@ function generateNHLMarketCallCards(
       goaliesConfirmedAway: String(awayGoalieState?.starter_state || '').toUpperCase() === 'CONFIRMED',
       majorInjuryUncertainty: uncertaintyHoldReasonCodes.includes('BLOCK_INJURY_RISK'),
       accelerantScore: totalDecision?.projection?.accelerant_score ?? null,
-      hasRequiredInputs: (side === 'OVER' || side === 'UNDER') && Number.isFinite(projectedTotal) && Number.isFinite(line),
+      hasRequiredInputs: hasRequiredInputsTotals,
+      forecast: _totalsForecast,
+      thresholds: get1pBucketThresholds(line),
     });
     const canonicalMapped = mapCanonicalNhlTotalsToInternalStatus(canonicalTotalsStatus.status);
     const status = canonicalMapped.officialStatus;
@@ -2525,6 +2604,11 @@ function generateNHLMarketCallCards(
       payloadData.classification = canonicalMapped.classification;
       payloadData.pass_reason_code =
         canonicalMapped.passReasonCode || payloadData.pass_reason_code || null;
+      payloadData.nhl_1p_stage_a = {
+        delta: _totalsForecast.delta,
+        absDelta: _totalsForecast.absDelta,
+        modelTotal: _totalsForecast.modelTotal,
+      };
       payloadData.decision_v2 = {
         ...(payloadData.decision_v2 && typeof payloadData.decision_v2 === 'object'
           ? payloadData.decision_v2
@@ -3489,6 +3573,25 @@ async function runNHLModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
             card.payloadData.raw_data.rest_days_away = _awayRestResult.restDays;
             card.payloadData.raw_data.rest_source_home = _homeRestResult.restSource;
             card.payloadData.raw_data.rest_source_away = _awayRestResult.restSource;
+            // WI-0970: playoff regime features + training row eligibility
+            const _driverRegimeFeatures = extractPlayoffRegimeFeatures({
+              isPlayoff,
+              oddsSnapshot,
+              restDaysHome: _homeRestResult.restDays,
+              restDaysAway: _awayRestResult.restDays,
+              homeAdjustmentTrust: canonicalGoalieState?.home?.adjustment_trust ?? null,
+              awayAdjustmentTrust: canonicalGoalieState?.away?.adjustment_trust ?? null,
+            });
+            card.payloadData.raw_data.playoff_series_game_num = _driverRegimeFeatures.playoff_series_game_num;
+            card.payloadData.raw_data.playoff_elimination_pressure = _driverRegimeFeatures.playoff_elimination_pressure;
+            card.payloadData.raw_data.playoff_rest_compression = _driverRegimeFeatures.playoff_rest_compression;
+            card.payloadData.raw_data.playoff_goalie_stability = _driverRegimeFeatures.playoff_goalie_stability;
+            stampTrainingRowExclusion(card, {
+              oddsSnapshot,
+              homeGoalieState: canonicalGoalieState?.home,
+              awayGoalieState: canonicalGoalieState?.away,
+              sigmaGamesSampled: _computedSigma.games_sampled ?? null,
+            });
             pendingCards.push({
               card,
               logLine: `  [ok] ${gameId} [${card.cardType}]: ${card.payloadData.prediction} (${(card.payloadData.confidence * 100).toFixed(0)}%)`,
@@ -3611,6 +3714,25 @@ async function runNHLModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
             card.payloadData.raw_data.rest_days_away = _awayRestResult.restDays;
             card.payloadData.raw_data.rest_source_home = _homeRestResult.restSource;
             card.payloadData.raw_data.rest_source_away = _awayRestResult.restSource;
+            // WI-0970: playoff regime features + training row eligibility
+            const _marketRegimeFeatures = extractPlayoffRegimeFeatures({
+              isPlayoff,
+              oddsSnapshot,
+              restDaysHome: _homeRestResult.restDays,
+              restDaysAway: _awayRestResult.restDays,
+              homeAdjustmentTrust: canonicalGoalieState?.home?.adjustment_trust ?? null,
+              awayAdjustmentTrust: canonicalGoalieState?.away?.adjustment_trust ?? null,
+            });
+            card.payloadData.raw_data.playoff_series_game_num = _marketRegimeFeatures.playoff_series_game_num;
+            card.payloadData.raw_data.playoff_elimination_pressure = _marketRegimeFeatures.playoff_elimination_pressure;
+            card.payloadData.raw_data.playoff_rest_compression = _marketRegimeFeatures.playoff_rest_compression;
+            card.payloadData.raw_data.playoff_goalie_stability = _marketRegimeFeatures.playoff_goalie_stability;
+            stampTrainingRowExclusion(card, {
+              oddsSnapshot,
+              homeGoalieState: canonicalGoalieState?.home,
+              awayGoalieState: canonicalGoalieState?.away,
+              sigmaGamesSampled: _computedSigma.games_sampled ?? null,
+            });
             pendingCards.push({
               card,
               logLine: `  [ok] ${gameId} [${card.cardType}]: ${card.payloadData.prediction} (${(card.payloadData.confidence * 100).toFixed(0)}%)`,
@@ -3886,4 +4008,5 @@ module.exports = {
   applyPlayoffSigmaMultiplier,
   applyNhlFeatureTimelinessGuardToCards,
   isHardProjectionInputBlock,
+  stampTrainingRowExclusion,
 };
