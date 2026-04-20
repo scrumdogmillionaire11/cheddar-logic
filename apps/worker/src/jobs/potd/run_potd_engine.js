@@ -130,6 +130,66 @@ function writeDailyStats(db, {
 }
 
 
+/**
+ * Resolve the POTD timing state based on current ET hour and whether an
+ * official play has been published for today.
+ */
+function resolvePotdTimingState(nowEt, hasOfficialPlay = false) {
+  const hour = nowEt.hour;
+  if (hour < POTD_WINDOW_ET.OPENS_HOUR) return POTD_TIMING_STATES.PENDING_WINDOW;
+  if (hour < POTD_WINDOW_ET.CLOSES_HOUR) {
+    return hasOfficialPlay ? POTD_TIMING_STATES.OFFICIAL_PLAY : POTD_TIMING_STATES.PENDING_WINDOW;
+  }
+  // hour >= CLOSES_HOUR
+  return hasOfficialPlay ? POTD_TIMING_STATES.OFFICIAL_PLAY : POTD_TIMING_STATES.NO_PICK_FINAL;
+}
+
+/**
+ * Emit the POTD engine heartbeat log line on every return path.
+ */
+function emitPotdHeartbeat(runId, nowEt, candidatesCount, viableCount, timingState, playLabel = null) {
+  const ts = nowEt ? nowEt.toUTC().toISO() : new Date().toISOString();
+  const playPart = playLabel ? ` play:${playLabel}` : '';
+  console.log(`[POTD] Engine run complete — ts:${ts} run:${runId} candidates:${candidatesCount} viable:${viableCount} status:${timingState}${playPart}`);
+}
+
+/**
+ * Send a no-pick alert to the alert webhook.
+ * Silent no-op when webhookUrl is falsy.
+ */
+async function sendPotdNopickAlert({ sendDiscordMessagesFn, webhookUrl, message }) {
+  if (!webhookUrl) return;
+  await sendDiscordMessagesFn({ webhookUrl, messages: [message] });
+}
+
+/**
+ * Build the no-pick alert message text.
+ */
+function buildNopickAlertMessage({ alertCandidate, topByEdge, reason, candidatesCount, viableCount, nowEt }) {
+  const candidate = alertCandidate || topByEdge;
+  const dateLabel = nowEt ? nowEt.toFormat('MMM dd') : 'today';
+  const reasonLabel = POTD_NOPICK_REASONS[reason] || reason;
+  const requiredEdge = candidate
+    ? resolveNoiseFloor(candidate.sport, candidate.marketType, POTD_MIN_EDGE)
+    : POTD_MIN_EDGE;
+  const observedEdge = candidate && isFiniteNumber(candidate.edgePct)
+    ? `${(candidate.edgePct * 100).toFixed(2)}%`
+    : 'n/a';
+  const candidateLabel = candidate
+    ? `${candidate.sport} | ${candidate.selectionLabel || '—'} | Score: ${isFiniteNumber(candidate.totalScore) ? candidate.totalScore.toFixed(3) : 'n/a'}`
+    : 'None available';
+
+  return [
+    `⚠️ POTD — No Pick (${dateLabel})`,
+    `Reason: ${reasonLabel}`,
+    `Top candidate: ${candidateLabel}`,
+    `Highest edge observed: ${observedEdge}`,
+    `Required minimum edge: ${(requiredEdge * 100).toFixed(2)}%`,
+    `Candidates scored: ${candidatesCount}`,
+    `Viable: ${viableCount}`,
+  ].join('\n');
+}
+
 function writeShadowCandidates(db, { playDate, capturedAt, minEdgePct, candidates }) {
   if (!Array.isArray(candidates) || candidates.length === 0) return;
   const stmt = db.prepare(`
@@ -237,10 +297,29 @@ function writeNominees(db, { playDate, capturedAt, winnerStatus, nominees }) {
 
 const JOB_NAME = 'run_potd_engine';
 const DEFAULT_TIMEZONE = 'America/New_York';
-// Publish window: 12:00 PM – 4:00 PM ET (scheduler enforces this too, but guard here
-// prevents accidental posts when the job is invoked manually outside the window)
-const PUBLISH_WINDOW_START_HOUR = 12; // noon ET (inclusive)
-const PUBLISH_WINDOW_END_HOUR = 16;   // 4 PM ET (exclusive)
+
+// Frozen timing-state tokens
+const POTD_TIMING_STATES = Object.freeze({
+  PENDING_WINDOW: 'PENDING_WINDOW',
+  OFFICIAL_PLAY: 'OFFICIAL_PLAY',
+  NO_PICK_FINAL: 'NO_PICK_FINAL',
+});
+
+// Publish window bounds in ET hours
+const POTD_WINDOW_ET = Object.freeze({ OPENS_HOUR: 12, CLOSES_HOUR: 16 });
+
+// Human-readable reason strings for no-pick alerts
+const POTD_NOPICK_REASONS = Object.freeze({
+  below_noise_floor: 'No candidate cleared the per-sport noise floor',
+  no_viable_candidates: 'No candidates scored above viability thresholds',
+  confidence_below_high_gate: 'Best candidate confidence is below HIGH gate',
+  zero_wager: 'Kelly sizing returned zero or non-finite wager',
+  min_stake_rejected: 'Kelly stake fell below minimum stake percentage',
+});
+
+// Legacy numeric constants (kept for inline documentation; logic now uses POTD_WINDOW_ET)
+const PUBLISH_WINDOW_START_HOUR = POTD_WINDOW_ET.OPENS_HOUR;
+const PUBLISH_WINDOW_END_HOUR   = POTD_WINDOW_ET.CLOSES_HOUR;
 const DEFAULT_BANKROLL = Number(process.env.POTD_STARTING_BANKROLL || 10);
 const DEFAULT_KELLY_FRACTION = Number(process.env.POTD_KELLY_FRACTION || 0.25);
 // Cap at 2 % of bankroll (was 20 % — much too loose for a featured single play).
@@ -638,6 +717,8 @@ async function runPotdEngine({
   // Enforce publish window: 12:00 PM – 4:00 PM ET
   // Pass force=true to override (manual testing / backfill only)
   if (!force && (nowEt.hour < PUBLISH_WINDOW_START_HOUR || nowEt.hour >= PUBLISH_WINDOW_END_HOUR)) {
+    const skippedRunId = `job-potd-${nowEt.toISODate()}-${uuidV4().slice(0, 8)}`;
+    emitPotdHeartbeat(skippedRunId, nowEt, 0, 0, 'SKIPPED');
     return {
       success: true,
       skipped: true,
@@ -652,13 +733,16 @@ async function runPotdEngine({
   const { playId, cardId, playLedgerId } = buildPotdIds(playDate);
   const jobRunId = `job-potd-${playDate}-${uuidV4().slice(0, 8)}`;
   const webhookUrl = String(process.env.DISCORD_POTD_WEBHOOK_URL || '').trim();
+  const alertWebhookUrl = String(process.env.DISCORD_ALERT_WEBHOOK_URL || '').trim();
 
   return withDb(async () => {
     if (jobKey && !shouldRunJobKey(jobKey)) {
+      emitPotdHeartbeat(jobRunId, nowEt, 0, 0, 'SKIPPED');
       return { success: true, skipped: true, jobKey };
     }
 
     if (dryRun) {
+      emitPotdHeartbeat(jobRunId, nowEt, 0, 0, 'SKIPPED');
       return { success: true, dryRun: true, jobKey, schedule };
     }
 
@@ -671,6 +755,7 @@ async function runPotdEngine({
         .get(playDate);
       if (existingPlay) {
         markJobRunSuccess(jobRunId, { already_published: true, play_date: playDate });
+        emitPotdHeartbeat(jobRunId, nowEt, 0, 0, POTD_TIMING_STATES.OFFICIAL_PLAY, existingPlay.selection_label || 'existing');
         return {
           success: true,
           jobRunId,
@@ -739,6 +824,19 @@ async function runPotdEngine({
           active_sports: activeSports.join(','),
           fetch_errors: fetchErrors.length,
         });
+        const timingStateNoPick = resolvePotdTimingState(nowEt, false);
+        emitPotdHeartbeat(jobRunId, nowEt, candidatesCount, viableCount, timingStateNoPick);
+        if (timingStateNoPick === POTD_TIMING_STATES.NO_PICK_FINAL) {
+          const alertMsg = buildNopickAlertMessage({
+            alertCandidate: topByEdge,
+            topByEdge,
+            reason: 'no_viable_candidates',
+            candidatesCount,
+            viableCount,
+            nowEt,
+          });
+          await sendPotdNopickAlert({ sendDiscordMessagesFn, webhookUrl: alertWebhookUrl, message: alertMsg });
+        }
         return {
           success: true,
           jobRunId,
@@ -790,6 +888,19 @@ async function runPotdEngine({
           min_total_score: minHighConfidenceScore,
           play_date: playDate,
         });
+        const timingStateLowConf = resolvePotdTimingState(nowEt, false);
+        emitPotdHeartbeat(jobRunId, nowEt, candidatesCount, viableCount, timingStateLowConf);
+        if (timingStateLowConf === POTD_TIMING_STATES.NO_PICK_FINAL) {
+          const alertMsg = buildNopickAlertMessage({
+            alertCandidate: bestCandidate,
+            topByEdge: bestCandidate,
+            reason: 'confidence_below_high_gate',
+            candidatesCount,
+            viableCount,
+            nowEt,
+          });
+          await sendPotdNopickAlert({ sendDiscordMessagesFn, webhookUrl: alertWebhookUrl, message: alertMsg });
+        }
         return {
           success: true,
           jobRunId,
@@ -835,6 +946,19 @@ async function runPotdEngine({
           reason: 'zero_wager',
           play_date: playDate,
         });
+        const timingStateZeroWager = resolvePotdTimingState(nowEt, false);
+        emitPotdHeartbeat(jobRunId, nowEt, candidatesCount, viableCount, timingStateZeroWager);
+        if (timingStateZeroWager === POTD_TIMING_STATES.NO_PICK_FINAL) {
+          const alertMsg = buildNopickAlertMessage({
+            alertCandidate: bestCandidate,
+            topByEdge: bestCandidate,
+            reason: 'zero_wager',
+            candidatesCount,
+            viableCount,
+            nowEt,
+          });
+          await sendPotdNopickAlert({ sendDiscordMessagesFn, webhookUrl: alertWebhookUrl, message: alertMsg });
+        }
         return {
           success: true,
           jobRunId,
@@ -878,6 +1002,19 @@ async function runPotdEngine({
           min_stake_pct: POTD_MIN_STAKE_PCT,
           play_date: playDate,
         });
+        const timingStateStake = resolvePotdTimingState(nowEt, false);
+        emitPotdHeartbeat(jobRunId, nowEt, candidatesCount, viableCount, timingStateStake);
+        if (timingStateStake === POTD_TIMING_STATES.NO_PICK_FINAL) {
+          const alertMsg = buildNopickAlertMessage({
+            alertCandidate: bestCandidate,
+            topByEdge: bestCandidate,
+            reason: 'min_stake_rejected',
+            candidatesCount,
+            viableCount,
+            nowEt,
+          });
+          await sendPotdNopickAlert({ sendDiscordMessagesFn, webhookUrl: alertWebhookUrl, message: alertMsg });
+        }
         return {
           success: true,
           jobRunId,
@@ -1001,6 +1138,8 @@ async function runPotdEngine({
         discord_posted: discordPosted,
       });
 
+      emitPotdHeartbeat(jobRunId, nowEt, candidatesCount, viableCount, POTD_TIMING_STATES.OFFICIAL_PLAY, bestCandidate.selectionLabel || cardId);
+
       return {
         success: true,
         jobRunId,
@@ -1028,6 +1167,12 @@ if (require.main === module) {
 
 module.exports = {
   runPotdEngine,
+  // WI-1039-B: timing state machine exports
+  POTD_TIMING_STATES,
+  POTD_WINDOW_ET,
+  POTD_NOPICK_REASONS,
+  resolvePotdTimingState,
+  sendPotdNopickAlert,
   __private: {
     buildCardPayloadData,
     buildPotdPlayRow,

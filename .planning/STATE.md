@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Model Integrity & Betting Execution Hardening
 status: active
-last_updated: "2026-04-20T00:05:16Z"
-last_activity: "2026-04-20 - WI-1038: Enforced feature timestamp hard block for MLB/NHL/NBA tracked high-risk fields"
+last_updated: "2026-04-20T00:53:30Z"
+last_activity: "2026-04-20 - WI-1036: Defaulted /api/cards to today's UTC games with date=all opt-out"
 ---
 
 # Project State

@@ -2,6 +2,7 @@
 
 const fs = require('fs');
 const Database = require('better-sqlite3');
+const { makeEtDateTime } = require('../../../../tests/helpers/discord-timing');
 
 const TEST_DB_PATH = '/tmp/cheddar-test-run-potd-engine.db';
 const LOCK_PATH = `${TEST_DB_PATH}.lock`;
@@ -1006,5 +1007,189 @@ describe('potd_nominees persistence', () => {
     });
 
     expect(readRows('SELECT * FROM potd_nominees')).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WI-1039-B: POTD timing state machine, heartbeat, no-pick alert
+// ---------------------------------------------------------------------------
+describe('WI-1039-B: POTD timing state machine and heartbeat', () => {
+  let POTD_TIMING_STATES;
+  let POTD_WINDOW_ET;
+  let POTD_NOPICK_REASONS;
+  let resolvePotdTimingState;
+  let sendPotdNopickAlert;
+
+  beforeAll(() => {
+    // Ensure bankroll env is set correctly before requiring the module
+    process.env.POTD_STARTING_BANKROLL = '10';
+    const engine = require('../run_potd_engine');
+    POTD_TIMING_STATES = engine.POTD_TIMING_STATES;
+    POTD_WINDOW_ET = engine.POTD_WINDOW_ET;
+    POTD_NOPICK_REASONS = engine.POTD_NOPICK_REASONS;
+    resolvePotdTimingState = engine.resolvePotdTimingState;
+    sendPotdNopickAlert = engine.sendPotdNopickAlert;
+  });
+
+  test('POTD_TIMING_STATES exports three frozen state tokens', () => {
+    expect(Object.isFrozen(POTD_TIMING_STATES)).toBe(true);
+    expect(POTD_TIMING_STATES.PENDING_WINDOW).toBe('PENDING_WINDOW');
+    expect(POTD_TIMING_STATES.OFFICIAL_PLAY).toBe('OFFICIAL_PLAY');
+    expect(POTD_TIMING_STATES.NO_PICK_FINAL).toBe('NO_PICK_FINAL');
+  });
+
+  test('POTD_WINDOW_ET exports OPENS_HOUR=12 and CLOSES_HOUR=16', () => {
+    expect(Object.isFrozen(POTD_WINDOW_ET)).toBe(true);
+    expect(POTD_WINDOW_ET.OPENS_HOUR).toBe(12);
+    expect(POTD_WINDOW_ET.CLOSES_HOUR).toBe(16);
+  });
+
+  test('POTD_NOPICK_REASONS exports all 5 reason keys', () => {
+    expect(Object.isFrozen(POTD_NOPICK_REASONS)).toBe(true);
+    expect(POTD_NOPICK_REASONS).toHaveProperty('below_noise_floor');
+    expect(POTD_NOPICK_REASONS).toHaveProperty('no_viable_candidates');
+    expect(POTD_NOPICK_REASONS).toHaveProperty('confidence_below_high_gate');
+    expect(POTD_NOPICK_REASONS).toHaveProperty('zero_wager');
+    expect(POTD_NOPICK_REASONS).toHaveProperty('min_stake_rejected');
+  });
+
+  test('resolvePotdTimingState at 11:59 → PENDING_WINDOW (before window)', () => {
+    const nowEt = makeEtDateTime(11, 59);
+    expect(resolvePotdTimingState(nowEt, false)).toBe('PENDING_WINDOW');
+    expect(resolvePotdTimingState(nowEt, true)).toBe('PENDING_WINDOW');
+  });
+
+  test('resolvePotdTimingState at 12:00 with no official play → PENDING_WINDOW', () => {
+    const nowEt = makeEtDateTime(12, 0);
+    expect(resolvePotdTimingState(nowEt, false)).toBe('PENDING_WINDOW');
+  });
+
+  test('resolvePotdTimingState at 12:00 with official play → OFFICIAL_PLAY', () => {
+    const nowEt = makeEtDateTime(12, 0);
+    expect(resolvePotdTimingState(nowEt, true)).toBe('OFFICIAL_PLAY');
+  });
+
+  test('resolvePotdTimingState at 15:59 with official play → OFFICIAL_PLAY', () => {
+    const nowEt = makeEtDateTime(15, 59);
+    expect(resolvePotdTimingState(nowEt, true)).toBe('OFFICIAL_PLAY');
+  });
+
+  test('resolvePotdTimingState at 16:00 with no official play → NO_PICK_FINAL', () => {
+    const nowEt = makeEtDateTime(16, 0);
+    expect(resolvePotdTimingState(nowEt, false)).toBe('NO_PICK_FINAL');
+  });
+
+  test('resolvePotdTimingState at 16:00 with official play → OFFICIAL_PLAY', () => {
+    const nowEt = makeEtDateTime(16, 0);
+    expect(resolvePotdTimingState(nowEt, true)).toBe('OFFICIAL_PLAY');
+  });
+
+  test('sendPotdNopickAlert is a silent no-op when webhookUrl is falsy', async () => {
+    const sendFn = jest.fn();
+    await sendPotdNopickAlert({ sendDiscordMessagesFn: sendFn, webhookUrl: '', message: 'test' });
+    expect(sendFn).not.toHaveBeenCalled();
+    await sendPotdNopickAlert({ sendDiscordMessagesFn: sendFn, webhookUrl: null, message: 'test' });
+    expect(sendFn).not.toHaveBeenCalled();
+  });
+
+  test('sendPotdNopickAlert calls sendDiscordMessagesFn when webhookUrl is set', async () => {
+    const sendFn = jest.fn(async () => 1);
+    await sendPotdNopickAlert({
+      sendDiscordMessagesFn: sendFn,
+      webhookUrl: 'https://discord.com/api/webhooks/test',
+      message: 'no pick today',
+    });
+    expect(sendFn).toHaveBeenCalledTimes(1);
+    expect(sendFn).toHaveBeenCalledWith({
+      webhookUrl: 'https://discord.com/api/webhooks/test',
+      messages: ['no pick today'],
+    });
+  });
+
+  test('heartbeat log emitted on every runPotdEngine return path', async () => {
+    const { runPotdEngine } = require('../run_potd_engine');
+    const logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      await runPotdEngine({
+        jobKey: 'potd|heartbeat-test',
+        force: true,
+        fetchOddsFn: async () => ({ games: [], errors: [] }),
+      });
+      const allLogs = logSpy.mock.calls.map((c) => c.join(' '));
+      const heartbeatLog = allLogs.find((l) => l.includes('[POTD] Engine run complete'));
+      expect(heartbeatLog).toBeDefined();
+      expect(heartbeatLog).toContain('ts:');
+      expect(heartbeatLog).toContain('run:');
+      expect(heartbeatLog).toContain('candidates:');
+      expect(heartbeatLog).toContain('viable:');
+      expect(heartbeatLog).toContain('status:');
+    } finally {
+      logSpy.mockRestore();
+    }
+  });
+
+  test('no-pick alert fires only in NO_PICK_FINAL state (hour >= 16, no play)', async () => {
+    const { runPotdEngine } = require('../run_potd_engine');
+    const origUrl = process.env.DISCORD_ALERT_WEBHOOK_URL;
+    process.env.DISCORD_ALERT_WEBHOOK_URL = 'https://discord.com/api/webhooks/alert';
+
+    const alertFn = jest.fn(async () => 1);
+    const candidate = buildSelectedCandidate({ edgePct: 0.01, totalScore: 0.29 });
+
+    // 16:00 ET = NO_PICK_FINAL when no play
+    const nowFn = () => makeEtDateTime(16, 0);
+
+    await runPotdEngine({
+      jobKey: 'potd|no-pick-final-alert',
+      force: true,
+      fetchOddsFn: async () => ({ games: [{ gameId: candidate.gameId }], errors: [] }),
+      buildCandidatesFn: () => [candidate],
+      scoreCandidateFn: (v) => v,
+      selectTopPlaysFn: () => [], // No viable candidates
+      kellySizeFn: () => 0,
+      sendDiscordMessagesFn: alertFn,
+      nowFn,
+    });
+
+    // Should have sent the no-pick alert
+    expect(alertFn).toHaveBeenCalledWith(expect.objectContaining({
+      webhookUrl: 'https://discord.com/api/webhooks/alert',
+    }));
+
+    if (origUrl !== undefined) process.env.DISCORD_ALERT_WEBHOOK_URL = origUrl;
+    else delete process.env.DISCORD_ALERT_WEBHOOK_URL;
+  });
+
+  test('no-pick alert NOT fired during PENDING_WINDOW (hour < 16, no play)', async () => {
+    const { runPotdEngine } = require('../run_potd_engine');
+    const origUrl = process.env.DISCORD_ALERT_WEBHOOK_URL;
+    process.env.DISCORD_ALERT_WEBHOOK_URL = 'https://discord.com/api/webhooks/alert';
+
+    const alertFn = jest.fn(async () => 1);
+    const candidate = buildSelectedCandidate({ edgePct: 0.01, totalScore: 0.29 });
+
+    // 13:00 ET = PENDING_WINDOW (no play exists)
+    const nowFn = () => makeEtDateTime(13, 0);
+
+    await runPotdEngine({
+      jobKey: 'potd|pending-window-no-alert',
+      force: true,
+      fetchOddsFn: async () => ({ games: [{ gameId: candidate.gameId }], errors: [] }),
+      buildCandidatesFn: () => [candidate],
+      scoreCandidateFn: (v) => v,
+      selectTopPlaysFn: () => [], // No viable candidates
+      kellySizeFn: () => 0,
+      sendDiscordMessagesFn: alertFn,
+      nowFn,
+    });
+
+    // Alert should NOT have been called with the alert webhook URL during PENDING_WINDOW
+    const alertCalls = alertFn.mock.calls.filter(
+      (c) => c[0]?.webhookUrl === 'https://discord.com/api/webhooks/alert',
+    );
+    expect(alertCalls).toHaveLength(0);
+
+    if (origUrl !== undefined) process.env.DISCORD_ALERT_WEBHOOK_URL = origUrl;
+    else delete process.env.DISCORD_ALERT_WEBHOOK_URL;
   });
 });
