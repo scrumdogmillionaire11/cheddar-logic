@@ -601,10 +601,11 @@ export function deriveModelVersion(
 
 export function buildProjectionSummaries(
   rows: Iterable<ProjectionMetricInputRow>,
-): ProjectionSummaryRow[] {
+): ProjectionSummaryWithSegments[] {
+  const materializedRows = Array.from(rows);
   const grouped = new Map<string, ProjectionAccumulator>();
 
-  for (const row of rows) {
+  for (const row of materializedRows) {
     const cardFamily = deriveProjectionCardFamily(row);
 
     // Use PROJECTION_FAMILY_LABELS as a strict allowlist.
@@ -672,6 +673,13 @@ export function buildProjectionSummaries(
   }
 
   // Return summaries sorted so families with actuals come first, then by label.
+  const segmentsByFamily = new Map(
+    buildProjectionValueSegments(materializedRows).map((summary) => [
+      summary.cardFamily,
+      summary.segments,
+    ]),
+  );
+
   return Array.from(grouped.values())
     .map((summary) => ({
       actualsAvailable: summary.sampleSize > 0,
@@ -700,6 +708,7 @@ export function buildProjectionSummaries(
           : null,
       rowsSeen: summary.rowsSeen,
       sampleSize: summary.sampleSize,
+      segments: segmentsByFamily.get(summary.cardFamily),
     }))
     .sort((left, right) => {
       if (left.actualsAvailable !== right.actualsAvailable) {

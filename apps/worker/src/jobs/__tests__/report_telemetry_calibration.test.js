@@ -60,6 +60,8 @@ function clearTelemetryTables(db) {
   db.exec(`
     DELETE FROM card_results;
     DELETE FROM card_payloads;
+    DELETE FROM game_results;
+    DELETE FROM games;
     DELETE FROM clv_ledger;
     DELETE FROM odds_snapshots;
   `);
@@ -573,6 +575,160 @@ function seedNhlShotsBreakoutFixture(db) {
   });
 }
 
+function insertSettledNhl1pProjectionCard(db, {
+  id,
+  gameId,
+  projection,
+  direction,
+  firstPeriodHome,
+  firstPeriodAway,
+  timestamp,
+}) {
+  runInsert(
+    db,
+    `
+    INSERT INTO games (id, sport, game_id, home_team, away_team, game_time_utc, status)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `,
+    `g-${gameId}`,
+    'nhl',
+    gameId,
+    `Home ${gameId}`,
+    `Away ${gameId}`,
+    timestamp,
+    'final',
+  );
+
+  runInsert(
+    db,
+    `
+    INSERT INTO game_results (
+      id, game_id, sport, final_score_home, final_score_away,
+      status, result_source, settled_at, metadata
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `,
+    `gr-${gameId}`,
+    gameId,
+    'nhl',
+    firstPeriodHome + 1,
+    firstPeriodAway + 2,
+    'final',
+    'manual',
+    timestamp,
+    JSON.stringify({
+      firstPeriodScores: {
+        home: firstPeriodHome,
+        away: firstPeriodAway,
+      },
+      firstPeriodVerification: {
+        isComplete: true,
+      },
+    }),
+  );
+
+  runInsert(
+    db,
+    `
+    INSERT INTO card_payloads (
+      id, game_id, sport, card_type, card_title, created_at, payload_data
+    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+  `,
+    id,
+    gameId,
+    'nhl',
+    'nhl-pace-1p',
+    `NHL 1P ${id}`,
+    timestamp,
+    JSON.stringify({
+      sport: 'NHL',
+      numeric_projection: projection,
+      recommended_direction: direction,
+      play: {
+        period: '1P',
+        decision_v2: {
+          official_status: 'PLAY',
+          direction,
+        },
+        selection: {
+          side: direction,
+        },
+      },
+      first_period_model: {
+        projection_final: projection,
+      },
+    }),
+  );
+
+  runInsert(
+    db,
+    `
+    INSERT INTO card_results (
+      id, card_id, game_id, sport, card_type, recommended_bet_type,
+      market_key, market_type, selection, line, locked_price,
+      status, result, settled_at, pnl_units, metadata
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `,
+    `result-${id}`,
+    id,
+    gameId,
+    'nhl',
+    'nhl-pace-1p',
+    'total',
+    `nhl|1p|${gameId}|${direction}`,
+    'TOTAL',
+    direction,
+    projection,
+    null,
+    'pending',
+    null,
+    timestamp,
+    null,
+    JSON.stringify({ source: 'nhl-1p-baseline-fixture' }),
+  );
+}
+
+function seedNhl1pBaselineFixture(db) {
+  const now = new Date().toISOString();
+  const rows = [
+    {
+      id: 'nhl-1p-low-over-win',
+      projection: 1.4,
+      direction: 'OVER',
+      firstPeriodHome: 1,
+      firstPeriodAway: 1,
+    },
+    {
+      id: 'nhl-1p-mid-under-win',
+      projection: 1.5,
+      direction: 'UNDER',
+      firstPeriodHome: 0,
+      firstPeriodAway: 1,
+    },
+    {
+      id: 'nhl-1p-high-over-loss',
+      projection: 2.19,
+      direction: 'OVER',
+      firstPeriodHome: 1,
+      firstPeriodAway: 0,
+    },
+    {
+      id: 'nhl-1p-top-under-loss',
+      projection: 2.2,
+      direction: 'UNDER',
+      firstPeriodHome: 2,
+      firstPeriodAway: 1,
+    },
+  ];
+
+  rows.forEach((row, index) => {
+    insertSettledNhl1pProjectionCard(db, {
+      ...row,
+      gameId: `${row.id}-game`,
+      timestamp: new Date(Date.parse(now) + index).toISOString(),
+    });
+  });
+}
+
 describe('telemetry calibration report', () => {
   beforeAll(async () => {
     process.env.CHEDDAR_DB_PATH = TEST_DB_PATH;
@@ -801,6 +957,62 @@ describe('telemetry calibration report', () => {
     expect(text).toContain('nhl_shots_breakout_calibration');
     expect(text).toContain('breakout_tagged | 1W-1L-0P (2)');
     expect(text).toContain('non_breakout_tagged | 1W-0L-1P (2)');
+  });
+
+  test('reports locked NHL 1P baseline buckets with side-specific directional records', async () => {
+    const db = getDatabase();
+    clearTelemetryTables(db);
+
+    const emptyReport = await generateTelemetryCalibrationReport({ db, days: 14 });
+    expect(emptyReport.nhl1pBaselineScorecard.status).toBe('INSUFFICIENT_DATA');
+    expect(emptyReport.nhl1pBaselineScorecard.buckets).toEqual(
+      ['1.0-1.4', '1.5-1.9', '2.0-2.19', '2.20+'].map((label) =>
+        expect.objectContaining({
+          bucketRangeLabel: label,
+          sampleSize: 0,
+          rowsSeen: 0,
+          overWins: 0,
+          underLosses: 0,
+        }),
+      ),
+    );
+
+    seedNhl1pBaselineFixture(db);
+
+    const report = await generateTelemetryCalibrationReport({ db, days: 14 });
+    expect(report.nhl1pBaselineScorecard).toMatchObject({
+      status: 'OK',
+      sampleSize: 4,
+      directionalWins: 2,
+      directionalLosses: 2,
+      directionalAccuracy: 0.5,
+      sampleScope: {
+        sport: 'NHL',
+        cardFamily: 'NHL_1P_TOTAL',
+        source: 'all_final_game_results',
+        buckets: ['1.0-1.4', '1.5-1.9', '2.0-2.19', '2.20+'],
+      },
+    });
+
+    expect(
+      report.nhl1pBaselineScorecard.buckets.map((bucket) => ({
+        label: bucket.bucketRangeLabel,
+        sampleSize: bucket.sampleSize,
+        record: `${bucket.directionalWins}-${bucket.directionalLosses}`,
+        over: `${bucket.overWins}-${bucket.overLosses}`,
+        under: `${bucket.underWins}-${bucket.underLosses}`,
+      })),
+    ).toEqual([
+      { label: '1.0-1.4', sampleSize: 1, record: '1-0', over: '1-0', under: '0-0' },
+      { label: '1.5-1.9', sampleSize: 1, record: '1-0', over: '0-0', under: '1-0' },
+      { label: '2.0-2.19', sampleSize: 1, record: '0-1', over: '0-1', under: '0-0' },
+      { label: '2.20+', sampleSize: 1, record: '0-1', over: '0-0', under: '0-1' },
+    ]);
+
+    const text = formatTelemetryCalibrationReport(report, { enforce: true });
+    expect(text).toContain('nhl_1p_baseline_scorecard');
+    expect(text).toContain('1.0-1.4 | sample 1');
+    expect(text).toContain('2.20+ | sample 1');
   });
 
   test('returns insufficient-data status with learning diagnostics and zero enforce exit', async () => {

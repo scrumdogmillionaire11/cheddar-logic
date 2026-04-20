@@ -34,6 +34,13 @@ const DECISION_TIER_AUDIT_MARKET_TYPES = Object.freeze([
 ]);
 const DECISION_TIER_AUDIT_STATUSES = Object.freeze(['PLAY', 'LEAN']);
 const DECISION_TIER_AUDIT_WINDOW_DAYS = Object.freeze([14, 30, 60, 90]);
+const NHL_1P_BASELINE_BUCKETS = Object.freeze([
+  { min: 1.0, max: 1.5, label: '1.0-1.4' },
+  { min: 1.5, max: 2.0, label: '1.5-1.9' },
+  { min: 2.0, max: 2.2, label: '2.0-2.19' },
+  { min: 2.2, max: 10, label: '2.20+' },
+]);
+const NHL_1P_BASELINE_CARD_TYPES = Object.freeze(['nhl-pace-1p', 'nhl-1p-call']);
 
 function parseArgs(argv = process.argv.slice(2)) {
   const options = {
@@ -93,6 +100,14 @@ function tableExists(db, tableName) {
   return Boolean(row?.name);
 }
 
+function tableColumnExists(db, tableName, columnName) {
+  if (!tableExists(db, tableName)) return false;
+  return db
+    .prepare(`PRAGMA table_info(${tableName})`)
+    .all()
+    .some((row) => String(row.name || '').toLowerCase() === String(columnName).toLowerCase());
+}
+
 function toNumber(value, fallback = null) {
   if (value === null || value === undefined || value === '') return fallback;
   const parsed = Number(value);
@@ -119,6 +134,15 @@ function parseJsonObject(value) {
   } catch {
     return null;
   }
+}
+
+function getNestedValue(source, path) {
+  let current = source;
+  for (const segment of path) {
+    if (!current || typeof current !== 'object') return null;
+    current = current[segment];
+  }
+  return current === undefined ? null : current;
 }
 
 function clampProbability(value) {
@@ -589,6 +613,240 @@ function buildNhlShotsBreakoutCalibrationReport(db, windowDays, generatedAtIso) 
   };
 }
 
+function buildEmptyNhl1pBaselineBucket({ min, max, label }) {
+  return {
+    bucketRangeLabel: label,
+    projectionMin: min,
+    projectionMax: max,
+    rowsSeen: 0,
+    sampleSize: 0,
+    directionalWins: 0,
+    directionalLosses: 0,
+    directionalAccuracy: null,
+    overWins: 0,
+    overLosses: 0,
+    underWins: 0,
+    underLosses: 0,
+  };
+}
+
+function resolveNhl1pBaselineBucket(value) {
+  if (!Number.isFinite(value)) return null;
+  if (value < 1.5) return NHL_1P_BASELINE_BUCKETS[0];
+  if (value < 2.0) return NHL_1P_BASELINE_BUCKETS[1];
+  if (value >= 2.2) return NHL_1P_BASELINE_BUCKETS[3];
+  return NHL_1P_BASELINE_BUCKETS[2];
+}
+
+function resolveNhl1pProjectionValue(payloadData) {
+  return toNumber(
+    payloadData?.numeric_projection ??
+      payloadData?.projection?.total ??
+      payloadData?.projection?.projected_total ??
+      payloadData?.decision?.model_projection ??
+      payloadData?.decision?.projection ??
+      payloadData?.model?.expected1pTotal ??
+      payloadData?.model?.expectedTotal ??
+      payloadData?.first_period_model?.projection_final ??
+      null,
+  );
+}
+
+function resolveNhl1pDirection(payloadData) {
+  const direction = toUpperToken(
+    payloadData?.recommended_direction ??
+      getNestedValue(payloadData, ['play', 'selection', 'side']) ??
+      getNestedValue(payloadData, ['selection', 'side']) ??
+      getNestedValue(payloadData, ['play', 'decision_v2', 'direction']) ??
+      getNestedValue(payloadData, ['decision_v2', 'direction']) ??
+      getNestedValue(payloadData, ['decision', 'direction']) ??
+      payloadData?.prediction,
+  );
+  return direction === 'OVER' || direction === 'UNDER' ? direction : null;
+}
+
+function isActionableNhl1pProjection(payloadData) {
+  const officialStatus = toUpperToken(
+    getNestedValue(payloadData, ['play', 'decision_v2', 'official_status']) ??
+      getNestedValue(payloadData, ['decision_v2', 'official_status']),
+  );
+  if (officialStatus === 'PASS') return false;
+  if (officialStatus === 'PLAY' || officialStatus === 'LEAN') return true;
+
+  const fallback = toUpperToken(
+    getNestedValue(payloadData, ['decision', 'status']) ??
+      payloadData?.status ??
+      getNestedValue(payloadData, ['play', 'status']) ??
+      payloadData?.action ??
+      getNestedValue(payloadData, ['play', 'action']) ??
+      getNestedValue(payloadData, ['decision', 'action']),
+  );
+  if (fallback === 'PASS' || fallback === 'HOLD' || fallback === 'WATCH') return false;
+  if (fallback === 'PLAY' || fallback === 'LEAN' || fallback === 'FIRE') return true;
+  return true;
+}
+
+function resolveFirstPeriodTotalFromMetadata(gameResultMetadata) {
+  if (!gameResultMetadata || typeof gameResultMetadata !== 'object') return null;
+  const verification = gameResultMetadata.firstPeriodVerification;
+  if (verification && typeof verification === 'object' && verification.isComplete === false) {
+    return null;
+  }
+
+  for (const scoreObject of [
+    gameResultMetadata.firstPeriodScores,
+    gameResultMetadata.first_period_scores,
+  ]) {
+    if (!scoreObject || typeof scoreObject !== 'object') continue;
+    const home = toNumber(scoreObject.home);
+    const away = toNumber(scoreObject.away);
+    if (Number.isFinite(home) && Number.isFinite(away)) return home + away;
+  }
+  return null;
+}
+
+function resolveNhl1pActualValue(gameResultMetadata, actualResult) {
+  return (
+    resolveFirstPeriodTotalFromMetadata(gameResultMetadata) ??
+    toNumber(actualResult?.goals_1p)
+  );
+}
+
+function finalizeNhl1pBaselineBucket(bucket) {
+  const directionalDecisions = bucket.directionalWins + bucket.directionalLosses;
+  return {
+    ...bucket,
+    directionalAccuracy:
+      directionalDecisions > 0 ? toRounded(bucket.directionalWins / directionalDecisions) : null,
+  };
+}
+
+function buildNhl1pBaselineScorecard(db) {
+  const buckets = NHL_1P_BASELINE_BUCKETS.map(buildEmptyNhl1pBaselineBucket);
+  const baseReport = {
+    status: 'INSUFFICIENT_DATA',
+    sampleScope: {
+      sport: 'NHL',
+      cardFamily: 'NHL_1P_TOTAL',
+      source: 'all_final_game_results',
+      buckets: NHL_1P_BASELINE_BUCKETS.map((bucket) => bucket.label),
+    },
+    sampleSize: 0,
+    directionalWins: 0,
+    directionalLosses: 0,
+    directionalAccuracy: null,
+    buckets,
+    dataQuality: {
+      sourceRows: 0,
+      usableRows: 0,
+      droppedRows: 0,
+      droppedReasonCounts: {},
+    },
+  };
+
+  const hasCardResults = tableExists(db, 'card_results');
+  const hasCardPayloads = tableExists(db, 'card_payloads');
+  const hasGameResults = tableExists(db, 'game_results');
+  if (!hasCardResults || !hasCardPayloads || !hasGameResults) return baseReport;
+
+  const actualResultSelect = tableColumnExists(db, 'card_payloads', 'actual_result')
+    ? 'cp.actual_result AS actual_result'
+    : 'NULL AS actual_result';
+  const placeholders = NHL_1P_BASELINE_CARD_TYPES.map(() => '?').join(', ');
+  const rows = db
+    .prepare(
+      `
+      SELECT
+        cp.payload_data,
+        ${actualResultSelect},
+        gr.metadata AS game_result_metadata
+      FROM card_results cr
+      INNER JOIN card_payloads cp ON cp.id = cr.card_id
+      INNER JOIN game_results gr ON gr.game_id = cr.game_id
+      WHERE LOWER(COALESCE(cr.sport, '')) = 'nhl'
+        AND LOWER(COALESCE(cr.card_type, '')) IN (${placeholders})
+        AND LOWER(COALESCE(gr.status, '')) = 'final'
+      ORDER BY cr.game_id ASC, cr.card_id ASC
+    `,
+    )
+    .all(...NHL_1P_BASELINE_CARD_TYPES);
+
+  const bucketByLabel = new Map(buckets.map((bucket) => [bucket.bucketRangeLabel, bucket]));
+  const droppedReasonCounts = {};
+  let usableRows = 0;
+  let directionalWins = 0;
+  let directionalLosses = 0;
+
+  for (const row of rows) {
+    const payloadData = parseJsonObject(row.payload_data);
+    if (!payloadData) {
+      droppedReasonCounts.invalid_payload = (droppedReasonCounts.invalid_payload || 0) + 1;
+      continue;
+    }
+
+    const projection = resolveNhl1pProjectionValue(payloadData);
+    const bucketDefinition = resolveNhl1pBaselineBucket(projection);
+    if (!bucketDefinition) {
+      droppedReasonCounts.missing_projection = (droppedReasonCounts.missing_projection || 0) + 1;
+      continue;
+    }
+
+    const bucket = bucketByLabel.get(bucketDefinition.label);
+    bucket.rowsSeen += 1;
+
+    const gameResultMetadata = parseJsonObject(row.game_result_metadata);
+    const actualResult = parseJsonObject(row.actual_result);
+    const actual = resolveNhl1pActualValue(gameResultMetadata, actualResult);
+    if (!Number.isFinite(actual)) {
+      droppedReasonCounts.missing_actual = (droppedReasonCounts.missing_actual || 0) + 1;
+      continue;
+    }
+
+    usableRows += 1;
+    bucket.sampleSize += 1;
+
+    if (!isActionableNhl1pProjection(payloadData)) continue;
+    const direction = resolveNhl1pDirection(payloadData);
+    if (!direction) {
+      droppedReasonCounts.missing_direction = (droppedReasonCounts.missing_direction || 0) + 1;
+      continue;
+    }
+
+    const isCorrect =
+      (direction === 'OVER' && actual >= projection) ||
+      (direction === 'UNDER' && actual <= projection);
+    if (isCorrect) {
+      bucket.directionalWins += 1;
+      directionalWins += 1;
+      if (direction === 'OVER') bucket.overWins += 1;
+      else bucket.underWins += 1;
+    } else {
+      bucket.directionalLosses += 1;
+      directionalLosses += 1;
+      if (direction === 'OVER') bucket.overLosses += 1;
+      else bucket.underLosses += 1;
+    }
+  }
+
+  const directionalDecisions = directionalWins + directionalLosses;
+  return {
+    ...baseReport,
+    status: usableRows > 0 ? 'OK' : 'INSUFFICIENT_DATA',
+    sampleSize: usableRows,
+    directionalWins,
+    directionalLosses,
+    directionalAccuracy:
+      directionalDecisions > 0 ? toRounded(directionalWins / directionalDecisions) : null,
+    buckets: buckets.map(finalizeNhl1pBaselineBucket),
+    dataQuality: {
+      sourceRows: rows.length,
+      usableRows,
+      droppedRows: rows.length - usableRows,
+      droppedReasonCounts,
+    },
+  };
+}
+
 function buildReliabilityBinTemplate() {
   return NHL_ML_RELIABILITY_BIN_RANGES.map(([lower, upper], index) => ({
     bucket: `${lower.toFixed(1)}-${upper.toFixed(1)}`,
@@ -966,6 +1224,7 @@ async function generateTelemetryCalibrationReport({
       windowDays,
       generatedAt,
     );
+    const nhl1pBaselineScorecard = buildNhl1pBaselineScorecard(reader);
     const decisionTierAudit = buildDecisionTierAuditWindows(reader);
     const edgeVerification = buildEdgeVerificationReport(reader);
     const checks = collectChecks(clv);
@@ -990,6 +1249,7 @@ async function generateTelemetryCalibrationReport({
       },
       nhlMoneylineCalibration,
       nhlShotsBreakoutCalibration,
+      nhl1pBaselineScorecard,
       decisionTierAudit,
       edgeVerification,
       checks,
@@ -1048,6 +1308,20 @@ function formatTelemetryCalibrationReport(report, { enforce = false } = {}) {
   lines.push(
     `- selected_reliability_bins: ${formatReliabilityBinsInline(report.nhlMoneylineCalibration.mappings.selected.reliabilityBins)}`,
   );
+  lines.push('');
+
+  lines.push('nhl_1p_baseline_scorecard');
+  lines.push(
+    `- status: ${report.nhl1pBaselineScorecard.status} | sample: ${report.nhl1pBaselineScorecard.sampleSize} | directional_accuracy ${formatPct(report.nhl1pBaselineScorecard.directionalAccuracy)} | record ${report.nhl1pBaselineScorecard.directionalWins}W-${report.nhl1pBaselineScorecard.directionalLosses}L`,
+  );
+  lines.push(
+    `- scope: sport=${report.nhl1pBaselineScorecard.sampleScope.sport} | family=${report.nhl1pBaselineScorecard.sampleScope.cardFamily} | source=${report.nhl1pBaselineScorecard.sampleScope.source}`,
+  );
+  for (const bucket of report.nhl1pBaselineScorecard.buckets) {
+    lines.push(
+      `- ${bucket.bucketRangeLabel} | sample ${bucket.sampleSize} | rows ${bucket.rowsSeen} | dir ${bucket.directionalWins}W-${bucket.directionalLosses}L | OVER ${bucket.overWins}-${bucket.overLosses} | UNDER ${bucket.underWins}-${bucket.underLosses} | acc ${formatPct(bucket.directionalAccuracy)}`,
+    );
+  }
   lines.push('');
 
   lines.push('nhl_shots_breakout_calibration');
