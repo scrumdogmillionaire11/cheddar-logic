@@ -351,10 +351,10 @@ describe('resolveCanonicalPlayState — canonical play-state contract', () => {
     expect(resolveCanonicalPlayState(payload)).toBe('WATCH');
   });
 
-  test('8b: PLAY + MARKET_DATA_STALE → WATCH', () => {
+  test('8b: PLAY + STALE_MARKET -> WATCH', () => {
     const payload = {
       decision_v2: { official_status: 'PLAY' },
-      reason_codes: ['MARKET_DATA_STALE'],
+      reason_codes: ['STALE_MARKET'],
     };
     expect(resolveCanonicalPlayState(payload)).toBe('WATCH');
   });

@@ -154,7 +154,7 @@ function isBlockedWatchCard(card) {
     token === 'EDGE_RECHECK_PENDING' ||
     token === 'PRICE_SYNC_PENDING' ||
     token === 'EDGE_NO_LONGER_CONFIRMED' ||
-    token === 'MARKET_DATA_STALE' ||
+    token === 'STALE_MARKET' ||
     token.includes('BLOCK') ||
     token.includes('GATE') ||
     token.includes('VERIFICATION') ||

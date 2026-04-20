@@ -948,7 +948,7 @@ function applyExecutionGateToNhlCard(card, { oddsSnapshot, nowMs = Date.now() } 
     applyDecisionVeto(payload, passReasonCode);
     if (isStaleBlock || isMixedBookBlock) {
       const blockReasonCode = isStaleBlock
-        ? 'MARKET_DATA_STALE'
+        ? 'STALE_MARKET'
         : 'PRICE_SYNC_PENDING';
       payload.blocked_reason_code = blockReasonCode;
       payload.gate_reason = blockReasonCode;
@@ -1527,7 +1527,7 @@ function applyCanonicalNhlTotalsStatus(card, context = {}) {
   const hasIntegrityBlock =
     blockedReasonCode.includes('LINE_NOT_CONFIRMED') ||
     blockedReasonCode.includes('PRICE_SYNC_PENDING') ||
-    blockedReasonCode.includes('MARKET_DATA_STALE') ||
+    blockedReasonCode.includes('STALE_MARKET') ||
     reasonCodes.some((code) => {
       const token = String(code || '').toUpperCase();
       return token.includes('MIXED_BOOK') || token.includes('STALE');

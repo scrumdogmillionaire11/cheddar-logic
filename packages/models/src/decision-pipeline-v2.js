@@ -6,7 +6,6 @@ const {
 } = require('./decision-pipeline-v2-edge-config');
 // Import from source to avoid disruption when tests mock @cheddar-logic/data.
 const {
-  REASON_CODE_ALIASES: _REASON_CODE_ALIASES,
   ALL_REASON_CODES: _ALL_REASON_CODES,
 } = require('../../data/src/reason-codes');
 
@@ -15,7 +14,7 @@ const {
 function _assertPipelineCodesRegistered(constantMap, label) {
   const set = new Set(_ALL_REASON_CODES);
   for (const code of Object.values(constantMap)) {
-    if (!set.has(code) && !_REASON_CODE_ALIASES[code]) {
+    if (!set.has(code)) {
       throw new Error(`[decision-pipeline-v2] Unregistered ${label} code: ${code}`);
     }
   }
@@ -38,8 +37,8 @@ const WAVE1_MARKETS = new Set([
 const WATCHDOG_REASONS = {
   CONSISTENCY_MISSING: 'WATCHDOG_CONSISTENCY_MISSING',
   PARSE_FAILURE: 'WATCHDOG_PARSE_FAILURE',
-  STALE_SNAPSHOT: 'WATCHDOG_STALE_SNAPSHOT',
-  STALE_MARKET_INPUT: 'STALE_MARKET_INPUT',
+  STALE_SNAPSHOT: 'STALE_SNAPSHOT',
+  STALE_MARKET: 'STALE_MARKET',
   MARKET_UNAVAILABLE: 'WATCHDOG_MARKET_UNAVAILABLE',
   // WI-0383: goalie identity uncertainty reason codes
   GOALIE_UNCONFIRMED: 'GOALIE_UNCONFIRMED',
@@ -81,7 +80,7 @@ const PRICE_REASONS = {
   LINE_NOT_CONFIRMED: 'LINE_NOT_CONFIRMED',
   EDGE_RECHECK_PENDING: 'EDGE_RECHECK_PENDING',
   EDGE_NO_LONGER_CONFIRMED: 'EDGE_NO_LONGER_CONFIRMED',
-  MARKET_DATA_STALE: 'MARKET_DATA_STALE',
+  STALE_MARKET: 'STALE_MARKET',
   PRICE_SYNC_PENDING: 'PRICE_SYNC_PENDING',
   EDGE_SANITY_NON_TOTAL: 'EDGE_SANITY_NON_TOTAL',
   HEAVY_FAVORITE_PRICE_CAP: 'HEAVY_FAVORITE_PRICE_CAP',
@@ -1291,7 +1290,7 @@ function computeWatchdog(payload, context = {}) {
   // quality issues: missing fields, parse errors, market unavailable.
   let watchdogStatus = 'OK';
   if (staleMinutes !== null && staleMinutes >= 5) {
-    watchdogReasonCodes.push(WATCHDOG_REASONS.STALE_MARKET_INPUT);
+    watchdogReasonCodes.push(WATCHDOG_REASONS.STALE_MARKET);
     watchdogReasonCodes.push(WATCHDOG_REASONS.STALE_SNAPSHOT);
   }
 

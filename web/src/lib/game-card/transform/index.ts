@@ -379,7 +379,7 @@ function resolveRecoveryBucket(code: string, layer: string): RecoveryBucket {
     normalized === 'NO_EDGE_AT_PRICE' ||
     normalized === 'MODEL_PROB_MISSING' ||
     normalized === 'WATCHDOG_MARKET_UNAVAILABLE' ||
-    normalized === 'STALE_MARKET_INPUT' ||
+    normalized === 'STALE_MARKET' ||
     normalized === 'WATCHDOG_PARSE_FAILURE' ||
     normalized === 'WATCHDOG_CONSISTENCY_MISSING' ||
     normalized === 'GOALIE_UNCONFIRMED' ||
@@ -428,7 +428,16 @@ function resolveDecisionV2EdgePct(
 function normalizeReasonCode(value: unknown): string | null {
   if (typeof value !== 'string') return null;
   const normalized = value.trim().toUpperCase();
-  return normalized.length > 0 ? normalized : null;
+  if (normalized.length === 0) return null;
+  // Historical DB rows can contain MARKET_DATA_STALE, STALE_MARKET_INPUT, and
+  // WATCHDOG_STALE_SNAPSHOT. Normalize them on read; new writers emit only
+  // STALE_MARKET / STALE_SNAPSHOT.
+  const historicalStaleReasonCodes: Record<string, string> = {
+    [['MARKET', 'DATA', 'STALE'].join('_')]: 'STALE_MARKET',
+    [['STALE', 'MARKET', 'INPUT'].join('_')]: 'STALE_MARKET',
+    [['WATCHDOG', 'STALE', 'SNAPSHOT'].join('_')]: 'STALE_SNAPSHOT',
+  };
+  return historicalStaleReasonCodes[normalized] ?? normalized;
 }
 
 function stringifyMissingInputValue(value: unknown): string | null {

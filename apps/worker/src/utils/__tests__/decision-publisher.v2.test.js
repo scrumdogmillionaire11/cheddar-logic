@@ -367,7 +367,7 @@ describe('decision publisher v2 pipeline', () => {
 
     expect(payload.decision_v2.watchdog_status).toBe('CAUTION');
     expect(payload.decision_v2.watchdog_reason_codes).toContain(
-      'WATCHDOG_STALE_SNAPSHOT',
+      'STALE_SNAPSHOT',
     );
     expect(payload.decision_v2.official_status).toBe('LEAN');
     expect(payload.decision_v2.price_reason_codes).toContain(
@@ -389,10 +389,10 @@ describe('decision publisher v2 pipeline', () => {
     // Stale snapshot produces CAUTION, not BLOCKED
     expect(payload.decision_v2.watchdog_status).toBe('CAUTION');
     expect(payload.decision_v2.watchdog_reason_codes).toContain(
-      'WATCHDOG_STALE_SNAPSHOT',
+      'STALE_SNAPSHOT',
     );
     expect(payload.decision_v2.watchdog_reason_codes).toContain(
-      'STALE_MARKET_INPUT',
+      'STALE_MARKET',
     );
   });
 
@@ -1753,8 +1753,8 @@ describe('deriveTerminalReasonFamilyForPayload — granular buckets (WI-1002)', 
       .toBe('MARKET_STALE_RECHECK');
   });
 
-  it('returns MARKET_STALE_RECHECK for MARKET_DATA_STALE reason code', () => {
-    expect(deriveTerminalReasonFamilyForPayload({ ...base, reasonCodes: ['MARKET_DATA_STALE'] }))
+  it('returns MARKET_STALE_RECHECK for STALE_MARKET reason code', () => {
+    expect(deriveTerminalReasonFamilyForPayload({ ...base, reasonCodes: ['STALE_MARKET'] }))
       .toBe('MARKET_STALE_RECHECK');
   });
 
