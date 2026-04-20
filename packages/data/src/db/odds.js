@@ -501,7 +501,7 @@ function getLatestOdds(gameId) {
  * @returns {array} Odds snapshots
  */
 function getOddsSnapshots(sport, sinceUtc) {
-  const db = getDatabase();
+  const db = getDatabaseReadOnly();
   const normalizedSport = normalizeSportValue(sport, 'getOddsSnapshots');
   
   const stmt = db.prepare(`
