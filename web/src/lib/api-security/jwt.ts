@@ -29,8 +29,6 @@ const {
   isRefreshTokenValid: (token: string) => boolean;
 };
 
-// Prune expired revocation records at module load (best-effort, non-fatal)
-try { pruneRevoked(); } catch { /* non-fatal */ }
 
 export interface AuthToken {
   userId: string;
@@ -214,6 +212,7 @@ export function revokeToken(token: string): void {
     const payload = JSON.parse(base64UrlDecode(parts[1])) as JWTPayload;
     if (payload.jti && payload.exp) {
       insertRevokedToken(payload.jti, payload.exp);
+      try { pruneRevoked(); } catch { /* best-effort, non-fatal */ }
     }
   } catch {
     // fail-open on decode error — token is invalid anyway
