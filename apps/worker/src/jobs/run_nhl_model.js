@@ -109,7 +109,7 @@ const {
   assertFeatureTimeliness,
   applyFeatureTimelinessEnforcement,
 } = require('../models/feature-time-guard');
-const { classifyNhlTotalsStatus, computeNhl1pForecast } = require('../models/nhl-totals-status');
+const { classifyNhlTotalsStatus, computeNhl1pForecast, get1pBucketThresholds } = require('../models/nhl-totals-status');
 
 const ENABLE_WELCOME_HOME = process.env.ENABLE_WELCOME_HOME === 'true';
 const USE_ORCHESTRATED_MARKET =
@@ -1566,6 +1566,7 @@ function applyCanonicalNhlTotalsStatus(card, context = {}) {
     accelerantScore: payload.accelerant_score ?? null,
     hasRequiredInputs: hasRequiredInputs1p,
     forecast: _1pForecast,
+    thresholds: get1pBucketThresholds(marketTotal),
   });
 
   const mapped = mapCanonicalNhlTotalsToInternalStatus(result.status);
@@ -2428,6 +2429,7 @@ function generateNHLMarketCallCards(
       accelerantScore: totalDecision?.projection?.accelerant_score ?? null,
       hasRequiredInputs: hasRequiredInputsTotals,
       forecast: _totalsForecast,
+      thresholds: get1pBucketThresholds(line),
     });
     const canonicalMapped = mapCanonicalNhlTotalsToInternalStatus(canonicalTotalsStatus.status);
     const status = canonicalMapped.officialStatus;

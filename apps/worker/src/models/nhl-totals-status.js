@@ -174,7 +174,32 @@ function classifyNhlTotalsStatus(input) {
   };
 }
 
+const BUCKET_THRESHOLDS = {
+  // market_1p_total [1.0, 1.5)  — historically weakest OVER bucket
+  '1.0-1.4': { over: { play: 1.5, slightEdge: 0.8 }, under: { play: 1.0, slightEdge: 0.5 } },
+  // market_1p_total [1.5, 2.0)  — moderately weak OVER bucket
+  '1.5-1.9': { over: { play: 1.2, slightEdge: 0.6 }, under: { play: 1.0, slightEdge: 0.5 } },
+  // market_1p_total [2.0, 2.2)  — near-average; default thresholds
+  '2.0-2.19': { over: { play: 1.0, slightEdge: 0.5 }, under: { play: 1.0, slightEdge: 0.5 } },
+  // market_1p_total >= 2.2      — high-scoring; default thresholds
+  '2.20+':    { over: { play: 1.0, slightEdge: 0.5 }, under: { play: 1.0, slightEdge: 0.5 } },
+};
+
+/**
+ * Returns per-side threshold config for the given market 1P total bucket.
+ * Returns null if marketTotal is not finite (caller omits thresholds → defaults apply).
+ */
+function get1pBucketThresholds(marketTotal) {
+  if (marketTotal == null || !Number.isFinite(Number(marketTotal))) return null;
+  const t = Number(marketTotal);
+  if (t < 1.5)  return BUCKET_THRESHOLDS['1.0-1.4'];
+  if (t < 2.0)  return BUCKET_THRESHOLDS['1.5-1.9'];
+  if (t < 2.2)  return BUCKET_THRESHOLDS['2.0-2.19'];
+  return BUCKET_THRESHOLDS['2.20+'];
+}
+
 module.exports = {
   classifyNhlTotalsStatus,
   computeNhl1pForecast,
+  get1pBucketThresholds,
 };
