@@ -894,9 +894,76 @@ const NHL_PACE_AUDIT_RULES = Object.freeze({
   unknown_goalie_confidence_cap: UNKNOWN_GOALIE_CONFIDENCE_CAP,
 });
 
+/**
+ * Extract playoff regime features for training data enrichment (WI-0970).
+ *
+ * Stamped onto card.payloadData.raw_data for every card. Series-dependent fields
+ * (series_game_num, elimination_pressure, goalie_stability) are null for non-playoff
+ * games. rest_compression is derived for all games.
+ *
+ * @param {object} params
+ * @param {boolean} params.isPlayoff - true if isPlayoffGame() returned true
+ * @param {object|null} params.oddsSnapshot - normalized odds snapshot
+ * @param {number|null} params.restDaysHome
+ * @param {number|null} params.restDaysAway
+ * @param {string|null} params.homeAdjustmentTrust - 'FULL'|'DEGRADED'|'NEUTRALIZED'|'BLOCKED'|null
+ * @param {string|null} params.awayAdjustmentTrust
+ * @returns {{ playoff_series_game_num: number|null, playoff_elimination_pressure: boolean|null, playoff_rest_compression: boolean, playoff_goalie_stability: string|null }}
+ */
+function extractPlayoffRegimeFeatures({
+  isPlayoff = false,
+  oddsSnapshot = null,
+  restDaysHome = null,
+  restDaysAway = null,
+  homeAdjustmentTrust = null,
+  awayAdjustmentTrust = null,
+} = {}) {
+  const restCompression =
+    restDaysHome != null && restDaysAway != null
+      ? restDaysHome <= 1 || restDaysAway <= 1
+      : false;
+
+  if (!isPlayoff) {
+    return {
+      playoff_series_game_num: null,
+      playoff_elimination_pressure: null,
+      playoff_rest_compression: restCompression,
+      playoff_goalie_stability: null,
+    };
+  }
+
+  // TODO(WI-0970): seriesStatus field path not confirmed in ESPN payload.
+  // Verify against a live playoff snapshot before relying on these values.
+  // If absent, these fields remain null — add a follow-up WI to resolve.
+  const seriesStatus = oddsSnapshot?.raw_data?.seriesStatus ?? null;
+  const rawGameNum = seriesStatus?.seriesGameNumber ?? null;
+  const seriesGameNum = typeof rawGameNum === 'number' ? rawGameNum : null;
+
+  let eliminationPressure = null;
+  if (seriesStatus != null) {
+    // Support common ESPN series record field shapes
+    const homeWins = seriesStatus.homeWins ?? seriesStatus.home?.wins ?? null;
+    const awayWins = seriesStatus.awayWins ?? seriesStatus.away?.wins ?? null;
+    if (homeWins != null && awayWins != null) {
+      eliminationPressure = homeWins >= 3 || awayWins >= 3;
+    }
+  }
+
+  // Prefer home goalie stability; fall back to away
+  const goalieStability = homeAdjustmentTrust ?? awayAdjustmentTrust ?? null;
+
+  return {
+    playoff_series_game_num: seriesGameNum,
+    playoff_elimination_pressure: eliminationPressure,
+    playoff_rest_compression: restCompression,
+    playoff_goalie_stability: goalieStability,
+  };
+}
+
 module.exports = {
   predictNHLGame,
   resolveGoalieComposite,
   validateNhlPaceResult,
   NHL_PACE_AUDIT_RULES,
+  extractPlayoffRegimeFeatures,
 };
