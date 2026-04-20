@@ -34,6 +34,7 @@ jobs:
       - name: Install audit dependencies
         run: |
           npm --prefix packages/data ci
+          npm --prefix packages/models ci
           npm --prefix apps/worker ci
 
       - name: Initialize audit DB
