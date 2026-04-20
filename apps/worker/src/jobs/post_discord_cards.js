@@ -34,6 +34,19 @@ const WATCH_RECHECK_LEAD_MINUTES = Number(process.env.DISCORD_WATCH_RECHECK_LEAD
 // Override with env DISCORD_MIN_LEAN_EDGE (e.g. '0.2')
 const MIN_LEAN_EDGE_ABS = Number(process.env.DISCORD_MIN_LEAN_EDGE ?? 0.15);
 
+// Market tags known to the filter system — unknown tokens emit a warning
+const KNOWN_MARKET_TAGS = Object.freeze([
+  'TOTAL', 'ML', 'Spread', '1P', 'TEAM TOTAL', 'TSOA', 'ANYTIME', 'SOT',
+  'SHOTS', 'PROP', 'POTD',
+]);
+
+// 429 retry / timeout constants — all module-top, no magic numbers in logic
+const DISCORD_RETRY_MAX_AFTER_MS = Number(process.env.DISCORD_MAX_RETRY_AFTER_MS) || 5000;
+const DISCORD_TOTAL_TIMEOUT_MS   = Number(process.env.TOTAL_DISCORD_TIMEOUT_MS)   || 10000;
+const RETRY_JITTER_MIN_MS = 50;
+const RETRY_JITTER_MAX_MS = 150;
+const MAX_RETRIES = 1;
+
 const NHL_TOTAL_CONVICTION_LABELS = {
   STRONG_PLAY: 'Strong Play Edge',
   PLAY_GRADE: 'Play-Grade Edge',
@@ -663,18 +676,96 @@ function resolveLeanSectionTitle(cards) {
   return cards.length > 0 ? '🟡 Slight Edge (Lean)' : '🟡 Slight Edge (Lean)';
 }
 
-function cardMatchesWebhookFilters(card, bucket) {
-  const allowedBuckets = parseCsvTokens(
-    process.env.DISCORD_CARD_WEBHOOK_BUCKETS,
-    normalizeWebhookBucketToken,
-  );
-  if (allowedBuckets && !allowedBuckets.has(bucket)) return false;
+/**
+ * Parse filter environment variables once at job start.
+ * When allow-list is set, deny-list is ignored (allow takes precedence).
+ * Returns { allowedSports, allowedMarkets, allowedBuckets, denyMarkets }
+ */
+function parseFilters() {
+  const allowedMarkets = parseCsvTokens(process.env.DISCORD_CARD_WEBHOOK_MARKETS);
+  // Warn on unknown market tokens in allow-list (but do not throw)
+  if (allowedMarkets) {
+    const knownUpper = new Set(KNOWN_MARKET_TAGS.map((t) => normalizeToken(t)));
+    for (const token of allowedMarkets) {
+      if (!knownUpper.has(normalizeToken(token))) {
+        console.warn(`[post-discord-cards] Unknown market token in allow-list: "${token}" — ignored`);
+      }
+    }
+  }
+  // When allow-list is active, deny-list is ignored
+  const denyMarkets = allowedMarkets ? null : parseCsvTokens(process.env.DISCORD_CARD_WEBHOOK_MARKETS_DENY);
 
-  const allowedSports = parseCsvTokens(process.env.DISCORD_CARD_WEBHOOK_SPORTS);
+  const filters = {
+    allowedSports: parseCsvTokens(process.env.DISCORD_CARD_WEBHOOK_SPORTS),
+    allowedMarkets,
+    allowedBuckets: parseCsvTokens(process.env.DISCORD_CARD_WEBHOOK_BUCKETS, normalizeWebhookBucketToken),
+    denyMarkets,
+  };
+
+  // Emit normalized filter log
+  const marketsList = filters.allowedMarkets ? [...filters.allowedMarkets].join(',') : '*';
+  const denyList = filters.denyMarkets ? [...filters.denyMarkets].join(',') : 'none';
+  console.log(`[post-discord-cards] Normalized filters -> markets:[${marketsList}] deny:[${denyList}]`);
+
+  return filters;
+}
+
+/**
+ * Validate Discord env vars and warn if numeric bounds are violated.
+ * Call once at job start.
+ */
+function validateDiscordEnvVars() {
+  const charLimit = Number(process.env.DISCORD_CARD_WEBHOOK_CHAR_LIMIT);
+  if (charLimit && (charLimit < 400 || charLimit > 2000)) {
+    console.warn(`[post-discord-cards] WARNING: DISCORD_CARD_WEBHOOK_CHAR_LIMIT=${charLimit} is outside allowed range [400, 2000]`);
+  }
+}
+
+/**
+ * Validate a Discord webhook URL: checks https protocol and discord hostname.
+ * Warns but does not throw on invalid URL.
+ */
+function validateDiscordWebhookUrl(url) {
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== 'https:') {
+      console.warn(`[post-discord-cards] WARNING: webhook URL does not use https: — ${url}`);
+    }
+    if (!parsed.hostname.includes('discord')) {
+      console.warn(`[post-discord-cards] WARNING: webhook URL hostname does not include 'discord' — ${url}`);
+    }
+  } catch {
+    console.warn(`[post-discord-cards] WARNING: invalid webhook URL — ${url}`);
+  }
+}
+
+function cardMatchesWebhookFilters(card, bucket, filters) {
+  // Resolve filters from env if not provided (backward compat)
+  if (!filters) {
+    filters = {
+      allowedBuckets: parseCsvTokens(process.env.DISCORD_CARD_WEBHOOK_BUCKETS, normalizeWebhookBucketToken),
+      allowedSports: parseCsvTokens(process.env.DISCORD_CARD_WEBHOOK_SPORTS),
+      allowedMarkets: parseCsvTokens(process.env.DISCORD_CARD_WEBHOOK_MARKETS),
+      denyMarkets: null,
+    };
+  }
+
+  const marketTag = normalizeMarketTag(card);
+
+  // POTD market tag bypasses all filters — always include POTD cards
+  if (marketTag === 'POTD') return true;
+
+  const { allowedBuckets, allowedSports, allowedMarkets, denyMarkets } = filters;
+
+  if (allowedBuckets && !allowedBuckets.has(bucket)) return false;
   if (allowedSports && !allowedSports.has(normalizeToken(card?.sport))) return false;
 
-  const allowedMarkets = parseCsvTokens(process.env.DISCORD_CARD_WEBHOOK_MARKETS);
-  if (allowedMarkets && !allowedMarkets.has(normalizeToken(normalizeMarketTag(card)))) return false;
+  // Apply deny-list only when allow-list is null (allow-list takes precedence)
+  if (allowedMarkets) {
+    if (!allowedMarkets.has(normalizeToken(marketTag))) return false;
+  } else if (denyMarkets) {
+    if (denyMarkets.has(normalizeToken(marketTag))) return false;
+  }
 
   return true;
 }
@@ -685,6 +776,9 @@ function normalizeMarketTag(card) {
   const marketType = String(payload?.market_type || '').toLowerCase();
   const marketKey = String(payload?.market_key || '').toLowerCase();
   const token = `${marketType} ${marketKey} ${cardType}`;
+
+  // POTD must be checked before partial-match rules (e.g. total) to avoid false matches
+  if (cardType === 'potd-call' || cardType === 'potd') return 'POTD';
 
   if (token.includes('asian_handicap') || token.includes('spread') || token.includes('handicap')) return 'Spread';
   if (token.includes('moneyline') || token.includes(':h2h') || token.includes('ml')) return 'ML';
@@ -1028,21 +1122,82 @@ function chunkDiscordContent(content, charLimit = DEFAULT_CHAR_LIMIT) {
   return chunks;
 }
 
-async function sendDiscordMessages({ webhookUrl, messages, fetchImpl = fetch }) {
-  const sent = [];
+const _defaultSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function sendDiscordMessages({
+  webhookUrl,
+  messages,
+  fetchImpl = fetch,
+  sleepFn = _defaultSleep,
+}) {
+  const startEpoch = Date.now();
+  let sentCount = 0;
+
   for (const message of messages) {
-    const response = await fetchImpl(webhookUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ content: message }),
-    });
-    if (!response.ok) {
+    // Check cumulative budget before each send
+    if (Date.now() - startEpoch >= DISCORD_TOTAL_TIMEOUT_MS) {
+      throw new Error('Discord timeout budget exceeded');
+    }
+
+    let retries = 0;
+    let sent = false;
+
+    while (!sent) {
+      const response = await fetchImpl(webhookUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content: message }),
+      });
+
+      if (response.ok) {
+        sentCount++;
+        sent = true;
+        continue;
+      }
+
+      if (response.status === 429) {
+        // Already exhausted retries — fail immediately
+        if (retries >= MAX_RETRIES) {
+          const body = await response.text().catch(() => '');
+          throw new Error(`Discord webhook failed (429 — MAX_RETRIES exhausted): ${body}`);
+        }
+
+        // Parse retry_after (may be float seconds)
+        let retryAfterMs = 0;
+        try {
+          const body = await response.json().catch(() => ({}));
+          const retryAfterSeconds = Number(body?.retry_after ?? 0);
+          retryAfterMs = Math.ceil(retryAfterSeconds * 1000);
+        } catch {
+          retryAfterMs = 0;
+        }
+
+        // Fail fast if retry_after exceeds our budget
+        if (retryAfterMs > DISCORD_RETRY_MAX_AFTER_MS) {
+          throw new Error(`Discord webhook 429: retry_after ${retryAfterMs}ms exceeds max ${DISCORD_RETRY_MAX_AFTER_MS}ms — failing fast`);
+        }
+
+        const jitter = RETRY_JITTER_MIN_MS + Math.floor(Math.random() * (RETRY_JITTER_MAX_MS - RETRY_JITTER_MIN_MS + 1));
+        const sleepMs = retryAfterMs + jitter;
+        console.log(`[post-discord-cards] Rate limited — retrying after ${sleepMs}ms (retry ${retries + 1}/${MAX_RETRIES})`);
+        await sleepFn(sleepMs);
+
+        // Check budget again after sleep
+        if (Date.now() - startEpoch >= DISCORD_TOTAL_TIMEOUT_MS) {
+          throw new Error('Discord timeout budget exceeded');
+        }
+
+        retries++;
+        continue;
+      }
+
+      // Non-429 error — throw immediately
       const body = await response.text().catch(() => '');
       throw new Error(`Discord webhook failed (${response.status}): ${body}`);
     }
-    sent.push(true);
   }
-  return sent.length;
+
+  return sentCount;
 }
 
 function fetchCardsForSnapshot({ maxRows = DEFAULT_MAX_ROWS, now = new Date() } = {}) {
@@ -1129,7 +1284,10 @@ function passesLeanThreshold(card) {
   return true; // no parseable edge → allow through (don't drop unknowns)
 }
 
-function buildDiscordSnapshot({ now = new Date(), cards = [] } = {}) {
+function buildDiscordSnapshot({ now = new Date(), cards = [], filters = null } = {}) {
+  // Parse filters once if not provided (backward compat / direct callers)
+  const resolvedFilters = filters || parseFilters();
+  const preFilterCount = cards.length;
   const filtered = prioritizeClearPlays(cards.filter(isDisplayableWebhookCard));
   const byGame = new Map();
 
@@ -1152,16 +1310,16 @@ function buildDiscordSnapshot({ now = new Date(), cards = [] } = {}) {
   for (const gameCards of gameEntries) {
     const seed        = gameCards[0] || {};
     const official    = gameCards.filter(
-      (c) => classifyDecisionBucket(c) === 'official' && cardMatchesWebhookFilters(c, 'official'),
+      (c) => classifyDecisionBucket(c) === 'official' && cardMatchesWebhookFilters(c, 'official', resolvedFilters),
     );
     // Apply LEAN threshold — drop sub-threshold edge leans before rendering
     const leans       = gameCards
       .filter((c) => classifyDecisionBucket(c) === 'lean')
-      .filter((c) => cardMatchesWebhookFilters(c, 'lean'))
+      .filter((c) => cardMatchesWebhookFilters(c, 'lean', resolvedFilters))
       .filter(passesLeanThreshold);
     const passBlocked = gameCards.filter(
       (c) =>
-        classifyDecisionBucket(c) === 'pass_blocked' && cardMatchesWebhookFilters(c, 'pass_blocked'),
+        classifyDecisionBucket(c) === 'pass_blocked' && cardMatchesWebhookFilters(c, 'pass_blocked', resolvedFilters),
     );
     const blockedWatch = passBlocked.filter(isBlockedWatchCard);
 
@@ -1198,6 +1356,10 @@ function buildDiscordSnapshot({ now = new Date(), cards = [] } = {}) {
 
     headerLines.push('─────────────────');
     messages.push({ sport: normalizeToken(seed?.sport || ''), text: headerLines.join('\n') });
+  }
+
+  if (messages.length === 0 && preFilterCount > 0) {
+    console.warn(`[post-discord-cards] WARNING — 0 cards matched filters after processing. Total cards before filter: ${preFilterCount}`);
   }
 
   const lines = [
@@ -1261,6 +1423,18 @@ async function postDiscordCards({ jobKey = null, dryRun = false, now = new Date(
     };
   }
 
+  // Validate env and URL once at job start
+  validateDiscordEnvVars();
+  validateDiscordWebhookUrl(fallbackUrl);
+
+  // Parse filters once at job start and emit startup log
+  const filters = parseFilters();
+  const sportsList = filters.allowedSports ? [...filters.allowedSports].join(',') : '*';
+  const marketsCount = filters.allowedMarkets ? filters.allowedMarkets.size : '*';
+  const bucketsCount = filters.allowedBuckets ? filters.allowedBuckets.size : '*';
+  const denyCount = filters.denyMarkets ? filters.denyMarkets.size : 0;
+  console.log(`[post-discord-cards] Filters — sports:${sportsList} markets:${marketsCount} buckets:${bucketsCount} deny:${denyCount}`);
+
   const runId = `job-${JOB_NAME}-${new Date().toISOString().split('.')[0]}-${uuidV4().slice(0, 8)}`;
 
   return withDb(async () => {
@@ -1269,7 +1443,7 @@ async function postDiscordCards({ jobKey = null, dryRun = false, now = new Date(
     }
 
     const cards = fetchCardsForSnapshot({ maxRows, now });
-    const snapshot = buildDiscordSnapshot({ cards, now });
+    const snapshot = buildDiscordSnapshot({ cards, now, filters });
 
     // Group chunks by sport so each sport can route to its own webhook channel.
     // Sports with no dedicated URL fall back to DISCORD_CARD_WEBHOOK_URL.
@@ -1380,4 +1554,15 @@ module.exports = {
   selectionSummary,
   passesLeanThreshold,
   decisionReason,
+  // WI-1039-A: filter hygiene exports
+  cardMatchesWebhookFilters,
+  normalizeMarketTag,
+  parseFilters,
+  KNOWN_MARKET_TAGS,
+  // WI-1039-C: retry/timeout constants
+  DISCORD_RETRY_MAX_AFTER_MS,
+  DISCORD_TOTAL_TIMEOUT_MS,
+  RETRY_JITTER_MIN_MS,
+  RETRY_JITTER_MAX_MS,
+  MAX_RETRIES,
 };
