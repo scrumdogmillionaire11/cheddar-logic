@@ -2862,7 +2862,6 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
     decisionClassificationFromAction(finalAction);
   const resolvedDisplayDecision = resolvePlayDisplayDecision({
     action: finalAction,
-    status: sourcePlay?.status,
     classification:
       finalAction === 'FIRE'
         ? 'BASE'
@@ -3570,7 +3569,6 @@ export function transformPropGames(games: GameData[]): PropGameCard[] {
         // Legacy fallback: no prop verdict fields and not projection-only/fallback.
         const resolvedAction = resolvePlayDisplayDecision({
           action: play.action,
-          status: play.status,
         }).action;
         if (resolvedAction === 'FIRE') {
           status = 'FIRE';

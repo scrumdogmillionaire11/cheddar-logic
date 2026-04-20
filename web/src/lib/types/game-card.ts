@@ -461,8 +461,8 @@ export interface Play {
   decision_v2?: DecisionV2;
   final_market_decision?: FinalMarketDecision;
 
-  // Legacy compatibility fields (historical rows only)
-  status: ExpressionStatus;
+  /** @deprecated — display routing now uses `action`. Retained for historical DB rows only. */
+  status?: ExpressionStatus;
   market: Market | 'NONE';
   pick: string;
   lean: string;

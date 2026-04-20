@@ -44,11 +44,9 @@ test('market-inference smoke', () => {
   const play: {
     decision_v2: NonNullable<typeof decision>;
     action?: 'FIRE' | 'HOLD' | 'PASS';
-    status?: 'FIRE' | 'WATCH' | 'PASS';
     classification?: 'BASE' | 'LEAN' | 'PASS';
     pass_reason_code?: string | null;
   } = { decision_v2: decision, action: 'PASS' };
   applyWave1DecisionFields(play);
   assert.equal(play.action, 'FIRE');
-  assert.equal(play.status, 'FIRE');
 });

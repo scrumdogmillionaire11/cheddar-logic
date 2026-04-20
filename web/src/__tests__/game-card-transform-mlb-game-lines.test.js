@@ -138,9 +138,9 @@ function makeBaseGame(overrides = {}) {
     'NO_EDGE_COMPUTED MLB moneyline passes should not be mislabeled as PASS_DATA_ERROR',
   );
   assert.strictEqual(
-    card.play.status,
+    card.play.action,
     'PASS',
-    'blocked MLB moneyline rows must remain PASS even when edge/fair fields are present',
+    'blocked MLB moneyline rows must remain PASS action even when edge/fair fields are present',
   );
   assert.strictEqual(
     card.play.action,
