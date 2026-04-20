@@ -44,7 +44,6 @@ This snapshot reflects the current remaining work list provided by the operator 
 - WI-0972
 - WI-0973
 - WI-1013
-- WI-1014
 - WI-1015
 - WI-1016
 - WI-1018
