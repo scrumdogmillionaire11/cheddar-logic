@@ -595,11 +595,12 @@ export async function getPotdResponseData(now = new Date()): Promise<PotdRespons
              SUM(CASE WHEN sr.id IS NULL OR sr.status = 'pending' THEN 1 ELSE 0 END) AS pending,
              SUM(CASE WHEN sr.status = 'non_gradeable' THEN 1 ELSE 0 END) AS non_gradeable
            FROM potd_shadow_candidates sc
-           INNER JOIN potd_plays pp
-             ON pp.play_date = sc.play_date
            LEFT JOIN potd_shadow_results sr
-             ON sr.play_date = sc.play_date
-            AND sr.candidate_identity_key = sc.candidate_identity_key`,
+             ON (
+                  sr.play_date = sc.play_date
+              AND sr.candidate_identity_key = sc.candidate_identity_key
+                )
+             OR sr.shadow_candidate_id = sc.id`,
         )
         .get() as NearMissAggRow | undefined;
       if (result) {

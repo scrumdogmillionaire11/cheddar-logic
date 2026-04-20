@@ -505,7 +505,7 @@ function renderNearMissSummary(summary: PotdNearMissSummary) {
         </span>
       </div>
 
-      <div className="mt-5 grid gap-3 sm:grid-cols-4">
+      <div className="mt-5 grid gap-3 sm:grid-cols-5">
         <div className="rounded-2xl border border-white/10 bg-night/40 p-4">
           <div className="text-[11px] uppercase tracking-[0.22em] text-cloud/50">
             Record
@@ -533,10 +533,18 @@ function renderNearMissSummary(summary: PotdNearMissSummary) {
         </div>
         <div className="rounded-2xl border border-white/10 bg-night/40 p-4">
           <div className="text-[11px] uppercase tracking-[0.22em] text-cloud/50">
-            Open
+            Pending
           </div>
           <div className="mt-2 text-xl font-semibold text-cloud">
-            {summary.pending + summary.nonGradeable}
+            {summary.pending}
+          </div>
+        </div>
+        <div className="rounded-2xl border border-white/10 bg-night/40 p-4">
+          <div className="text-[11px] uppercase tracking-[0.22em] text-cloud/50">
+            Non-gradeable
+          </div>
+          <div className="mt-2 text-xl font-semibold text-cloud">
+            {summary.nonGradeable}
           </div>
         </div>
       </div>
