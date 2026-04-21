@@ -18,6 +18,7 @@
 require('dotenv').config();
 const { v4: uuidV4 } = require('uuid');
 const { DateTime } = require('luxon');
+const recoveryFlow = require('./helpers/recovery-flow.js');
 
 // Import cheddar-logic data layer
 const {
