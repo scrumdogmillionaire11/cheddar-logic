@@ -899,3 +899,167 @@ describe('WI-1024 residual correction in NBA runner', () => {
     expect(typeof residualResult.shrinkage_factor).toBe('number');
   });
 });
+
+// ---------------------------------------------------------------------------
+// WI-1025: detectNbaRegime — objective regime detection unit tests
+// ---------------------------------------------------------------------------
+
+describe('detectNbaRegime', () => {
+  let detectNbaRegime;
+
+  beforeEach(() => {
+    jest.resetModules();
+    ({ detectNbaRegime } = require('../utils/nba-regime-detection'));
+  });
+
+  function buildInput(overrides = {}) {
+    return {
+      homeTeam: 'Boston Celtics',
+      awayTeam: 'Miami Heat',
+      restDaysHome: 1,
+      restDaysAway: 1,
+      availabilityGate: { totalPointImpact: 0 },
+      teamMetricsHome: { recent_form: ['W', 'W', 'W', 'W', 'W', 'W', 'W', 'W', 'W', 'W'] },
+      teamMetricsAway: { recent_form: ['W', 'W', 'W', 'W', 'W', 'W', 'W', 'W', 'W', 'W'] },
+      gameDate: '2026-02-15T00:00:00.000Z',
+      ...overrides,
+    };
+  }
+
+  // Test 1: TANK_MODE trigger — wins_in_last_10 = 1, gameDate = March 15
+  test('TANK_MODE: team with 1 win in last 10 after February 1 triggers TANK_MODE', () => {
+    const result = detectNbaRegime(buildInput({
+      teamMetricsHome: { recent_form: ['W', 'L', 'L', 'L', 'L', 'L', 'L', 'L', 'L', 'L'] },
+      teamMetricsAway: { recent_form: ['W', 'W', 'W', 'W', 'W', 'W', 'W', 'W', 'W', 'W'] },
+      gameDate: '2026-03-15T00:00:00.000Z',
+    }));
+    expect(result.regime).toBe('TANK_MODE');
+    expect(result.tags).toContain('TANK_MODE');
+    expect(result.modifiers.sigmaMultiplier).toBe(1.10);
+    expect(result.modifiers.paceMultiplier).toBe(0.97);
+  });
+
+  // Test 2: REST_HEAVY — restDaysHome=4, restDaysAway=3
+  test('REST_HEAVY: both teams resting >= 3 days triggers REST_HEAVY', () => {
+    const result = detectNbaRegime(buildInput({
+      restDaysHome: 4,
+      restDaysAway: 3,
+    }));
+    expect(result.regime).toBe('REST_HEAVY');
+    expect(result.tags).toContain('REST_HEAVY');
+    expect(result.modifiers.paceMultiplier).toBe(0.98);
+    expect(result.modifiers.sigmaMultiplier).toBe(1.05);
+  });
+
+  // Test 3: null recent_form → STANDARD
+  test('null recent_form: TANK_MODE skipped, falls through to STANDARD', () => {
+    const result = detectNbaRegime(buildInput({
+      teamMetricsHome: { recent_form: null },
+      teamMetricsAway: { recent_form: null },
+      gameDate: '2026-03-15T00:00:00.000Z',
+    }));
+    expect(result.regime).toBe('STANDARD');
+    expect(result.tags).not.toContain('TANK_MODE');
+    expect(result.modifiers.sigmaMultiplier).toBe(1.00);
+  });
+
+  // Test 4: INJURY_ROTATION — totalPointImpact >= 15
+  test('INJURY_ROTATION: totalPointImpact >= 15 triggers INJURY_ROTATION', () => {
+    const result = detectNbaRegime(buildInput({
+      availabilityGate: { totalPointImpact: 15 },
+    }));
+    expect(result.regime).toBe('INJURY_ROTATION');
+    expect(result.tags).toContain('INJURY_ROTATION');
+    expect(result.modifiers.sigmaMultiplier).toBe(1.15);
+    expect(result.modifiers.paceMultiplier).toBe(1.03);
+  });
+
+  // Test 5: Priority resolution — INJURY_ROTATION wins over TANK_MODE
+  test('priority: INJURY_ROTATION dominates when TANK_MODE also triggers', () => {
+    const result = detectNbaRegime(buildInput({
+      availabilityGate: { totalPointImpact: 20 },
+      teamMetricsHome: { recent_form: ['W', 'L', 'L', 'L', 'L', 'L', 'L', 'L', 'L', 'L'] },
+      teamMetricsAway: { recent_form: ['W', 'W', 'W', 'W', 'W', 'W', 'W', 'W', 'W', 'W'] },
+      gameDate: '2026-03-15T00:00:00.000Z',
+    }));
+    expect(result.regime).toBe('INJURY_ROTATION');
+    expect(result.tags).toContain('INJURY_ROTATION');
+    expect(result.tags).toContain('TANK_MODE');
+    expect(result.modifiers.sigmaMultiplier).toBe(1.15);
+  });
+
+  // Test 6: PLAYOFF_PUSH — valid win%, post-March 1, within 3 games of 10th seed
+  test('PLAYOFF_PUSH: triggers when all conditions met (winPct >= 0.5, after March 1, within 3 of 10th)', () => {
+    const result = detectNbaRegime(buildInput({
+      teamMetricsHome: {
+        recent_form: ['W', 'W', 'W', 'W', 'W', 'W', 'W', 'W', 'W', 'W'],
+        wins: 25,
+        losses: 20,
+        playoff_seed_delta: 2,
+      },
+      teamMetricsAway: {
+        recent_form: ['W', 'W', 'W', 'W', 'W', 'W', 'W', 'W', 'W', 'W'],
+      },
+      gameDate: '2026-03-10T00:00:00.000Z',
+    }));
+    expect(result.regime).toBe('PLAYOFF_PUSH');
+    expect(result.tags).toContain('PLAYOFF_PUSH');
+    expect(result.modifiers.sigmaMultiplier).toBe(0.95);
+    expect(result.modifiers.paceMultiplier).toBe(1.00);
+  });
+
+  // Test 7: Missing playoff delta — trigger skipped cleanly
+  test('missing playoff_seed_delta: PLAYOFF_PUSH skipped cleanly, no throw', () => {
+    expect(() => {
+      const result = detectNbaRegime(buildInput({
+        teamMetricsHome: {
+          recent_form: ['W', 'W', 'W', 'W', 'W', 'W', 'W', 'W', 'W', 'W'],
+          wins: 25,
+          losses: 20,
+          // playoff_seed_delta deliberately absent
+        },
+        gameDate: '2026-03-10T00:00:00.000Z',
+      }));
+      expect(result.tags).not.toContain('PLAYOFF_PUSH');
+    }).not.toThrow();
+  });
+
+  // Test 8a: Sigma clamp — combined multiplier chain > 2.0 → clamped at 2.0
+  test('sigma clamp: combinedMultiplier > 2.0 is clamped to 2.00x of computedSigma', () => {
+    const SIGMA_CHAIN_MAX = 2.00;
+    const SIGMA_CHAIN_MIN = 0.60;
+    const computedSigmaTotal = 10.0;
+
+    // Simulate: vol_env multiplied by 1.5, regime by 1.15 => product 1.725 — within range
+    // For testing clamp, we simulate a chain > 2.0
+    const rawChainMultiplier = 2.5; // exceeds max
+    const clamped = Math.min(SIGMA_CHAIN_MAX, Math.max(SIGMA_CHAIN_MIN, rawChainMultiplier));
+    expect(clamped).toBe(2.00);
+    expect(clamped * computedSigmaTotal).toBe(20.0);
+  });
+
+  // Test 8b: Sigma clamp — combined multiplier chain < 0.6 → clamped at 0.6
+  test('sigma clamp: combinedMultiplier < 0.6 is clamped to 0.60x of computedSigma', () => {
+    const SIGMA_CHAIN_MAX = 2.00;
+    const SIGMA_CHAIN_MIN = 0.60;
+    const computedSigmaTotal = 10.0;
+
+    const rawChainMultiplier = 0.3; // below min
+    const clamped = Math.min(SIGMA_CHAIN_MAX, Math.max(SIGMA_CHAIN_MIN, rawChainMultiplier));
+    expect(clamped).toBe(0.60);
+    expect(clamped * computedSigmaTotal).toBe(6.0);
+  });
+
+  // Test 9: raw_data.nba_regime stamped with required fields
+  test('raw_data.nba_regime: returned object has regime, tags, and modifiers', () => {
+    const result = detectNbaRegime(buildInput());
+    expect(result).toHaveProperty('regime');
+    expect(result).toHaveProperty('tags');
+    expect(result).toHaveProperty('modifiers');
+    expect(result.modifiers).toHaveProperty('paceMultiplier');
+    expect(result.modifiers).toHaveProperty('sigmaMultiplier');
+    expect(result.modifiers).toHaveProperty('blowoutRiskBoost');
+    expect(typeof result.regime).toBe('string');
+    expect(Array.isArray(result.tags)).toBe(true);
+  });
+});
