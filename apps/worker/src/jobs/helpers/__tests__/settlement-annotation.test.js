@@ -41,6 +41,8 @@ describe('settlement-annotation helper', () => {
       // F5 cardtypes need explicit FIRST_5_INNINGS in the string to be detected
       expect(normalizeSettlementPeriod(null, 'nhl-first_5_innings')).toBe('1P');
       expect(normalizeSettlementPeriod(null, 'nhl-1p-shots')).toBe('1P');
+      // Without matching prefix, defaults to FULL_GAME('1P');
+      expect(normalizeSettlementPeriod(null, 'nhl-1p-shots')).toBe('1P');
       // Without matching prefix, defaults to FULL_GAME
       expect(normalizeSettlementPeriod(null, 'nfl-full-game')).toBe('FULL_GAME');
     });
