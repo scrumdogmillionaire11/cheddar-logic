@@ -20,6 +20,7 @@ const {
 
 const JOB_NAME = 'settle_potd_shadow_candidates';
 const DEFAULT_VIRTUAL_STAKE_UNITS = Number(process.env.POTD_SHADOW_VIRTUAL_STAKE_UNITS || 1.0);
+const DEBUG_SHADOW_SETTLEMENT = String(process.env.POTD_SHADOW_SETTLEMENT_DEBUG || '').toLowerCase() === 'true';
 
 function toFiniteNumber(value) {
   const parsed = Number(value);
@@ -107,6 +108,21 @@ function buildMetadata(base) {
   });
 }
 
+function logDebug(row, reason, extra = {}) {
+  if (!DEBUG_SHADOW_SETTLEMENT) return;
+  console.log(JSON.stringify({
+    type: 'POTD_SHADOW_SETTLEMENT_DEBUG',
+    reason,
+    shadow_candidate_id: row?.shadow_candidate_id ?? null,
+    candidate_identity_key: row?.candidate_identity_key ?? null,
+    game_id: row?.game_id ?? null,
+    sport: row?.sport ?? null,
+    market_type: row?.market_type ?? null,
+    game_result_status: row?.game_result_status ?? null,
+    ...extra,
+  }));
+}
+
 async function settleShadowCandidates({ jobKey = null, dryRun = false } = {}) {
   const nowIso = new Date().toISOString();
   const jobRunId = `job-potd-shadow-settle-${uuidV4().slice(0, 8)}`;
@@ -165,14 +181,28 @@ async function settleShadowCandidates({ jobKey = null, dryRun = false } = {}) {
         loss: 0,
         push: 0,
       };
+      const diagnostics = {
+        candidatesLoaded: rows.length,
+        existingSettledSkipped: 0,
+        missingGameId: 0,
+        joinedGameResults: 0,
+        missingGameResult: 0,
+        nonFinalGameResult: 0,
+        unsupportedMarketType: 0,
+        gradingContractError: 0,
+      };
 
       const tx = db.transaction(() => {
         for (const row of rows) {
           if (row.existing_status === 'settled') {
+            diagnostics.existingSettledSkipped += 1;
             continue;
           }
 
           const resolvedCandidateIdentity = row.candidate_identity_key || `missing:${row.shadow_candidate_id}`;
+          if (row.game_result_status != null) {
+            diagnostics.joinedGameResults += 1;
+          }
 
           const basePayload = {
             play_date: row.play_date,
@@ -191,6 +221,8 @@ async function settleShadowCandidates({ jobKey = null, dryRun = false } = {}) {
           };
 
           if (!row.game_id) {
+            diagnostics.missingGameId += 1;
+            logDebug(row, 'missing_game_id');
             upsertShadowResult(db, {
               ...basePayload,
               status: 'non_gradeable',
@@ -205,6 +237,8 @@ async function settleShadowCandidates({ jobKey = null, dryRun = false } = {}) {
 
           const marketType = normalizeMarketType(row.market_type);
           if (!marketType || !['MONEYLINE', 'SPREAD', 'TOTAL'].includes(marketType)) {
+            diagnostics.unsupportedMarketType += 1;
+            logDebug(row, 'unsupported_market_type', { normalized_market_type: marketType });
             upsertShadowResult(db, {
               ...basePayload,
               status: 'non_gradeable',
@@ -218,13 +252,25 @@ async function settleShadowCandidates({ jobKey = null, dryRun = false } = {}) {
           }
 
           if (!isFinalResultRow(row)) {
+            const reason = row.game_result_status == null
+              ? 'missing_game_result'
+              : 'non_final_game_result';
+            if (reason === 'missing_game_result') {
+              diagnostics.missingGameResult += 1;
+            } else {
+              diagnostics.nonFinalGameResult += 1;
+            }
+            logDebug(row, reason);
             upsertShadowResult(db, {
               ...basePayload,
               status: 'pending',
               result: null,
               pnl_units: null,
               settled_at: null,
-              grading_metadata: buildMetadata({ reason: 'missing_final_result' }),
+              grading_metadata: buildMetadata({
+                reason,
+                game_result_status: row.game_result_status ?? null,
+              }),
             });
             summary.pending += 1;
             continue;
@@ -270,6 +316,8 @@ async function settleShadowCandidates({ jobKey = null, dryRun = false } = {}) {
             if (result === 'loss') summary.loss += 1;
             if (result === 'push') summary.push += 1;
           } catch (error) {
+            diagnostics.gradingContractError += 1;
+            logDebug(row, 'grading_contract_error', { message: error.message });
             upsertShadowResult(db, {
               ...basePayload,
               status: 'non_gradeable',
@@ -287,11 +335,24 @@ async function settleShadowCandidates({ jobKey = null, dryRun = false } = {}) {
       });
 
       tx();
-      markJobRunSuccess(jobRunId, summary);
-      return {
+      const result = {
         success: true,
         jobRunId,
         ...summary,
+        diagnostics,
+      };
+      console.log(
+        `[POTD Shadow Settlement] candidates=${diagnostics.candidatesLoaded} ` +
+        `joined_results=${diagnostics.joinedGameResults} ` +
+        `missing_results=${diagnostics.missingGameResult} ` +
+        `non_final=${diagnostics.nonFinalGameResult} ` +
+        `unsupported=${diagnostics.unsupportedMarketType} ` +
+        `settled=${summary.settled} pending=${summary.pending} ` +
+        `non_gradeable=${summary.non_gradeable} skipped_settled=${diagnostics.existingSettledSkipped}`,
+      );
+      markJobRunSuccess(jobRunId, result);
+      return {
+        ...result,
       };
     } catch (error) {
       markJobRunFailure(jobRunId, error.message);

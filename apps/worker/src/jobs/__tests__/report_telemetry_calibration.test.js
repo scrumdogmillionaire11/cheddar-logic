@@ -587,11 +587,18 @@ function insertSettledNhl1pProjectionCard(db, {
   firstPeriodHome,
   firstPeriodAway,
   timestamp,
+  cardType = 'nhl-pace-1p',
+  cardStatus = 'settled',
 }) {
+  const firstPeriodTotal = firstPeriodHome + firstPeriodAway;
+  const isCorrect =
+    (direction === 'OVER' && firstPeriodTotal >= projection) ||
+    (direction === 'UNDER' && firstPeriodTotal <= projection);
+
   runInsert(
     db,
     `
-    INSERT INTO games (id, sport, game_id, home_team, away_team, game_time_utc, status)
+    INSERT OR IGNORE INTO games (id, sport, game_id, home_team, away_team, game_time_utc, status)
     VALUES (?, ?, ?, ?, ?, ?, ?)
   `,
     `g-${gameId}`,
@@ -606,7 +613,7 @@ function insertSettledNhl1pProjectionCard(db, {
   runInsert(
     db,
     `
-    INSERT INTO game_results (
+    INSERT OR IGNORE INTO game_results (
       id, game_id, sport, final_score_home, final_score_away,
       status, result_source, settled_at, metadata
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -640,7 +647,7 @@ function insertSettledNhl1pProjectionCard(db, {
     id,
     gameId,
     'nhl',
-    'nhl-pace-1p',
+    cardType,
     `NHL 1P ${id}`,
     timestamp,
     JSON.stringify({
@@ -676,17 +683,17 @@ function insertSettledNhl1pProjectionCard(db, {
     id,
     gameId,
     'nhl',
-    'nhl-pace-1p',
+    cardType,
     'total',
     `nhl|1p|${gameId}|${direction}`,
     'TOTAL',
     direction,
     projection,
     null,
-    'pending',
-    null,
+    cardStatus,
+    cardStatus === 'settled' ? (isCorrect ? 'win' : 'loss') : null,
     timestamp,
-    null,
+    cardStatus === 'settled' ? (isCorrect ? 0.91 : -1) : null,
     JSON.stringify({ source: 'nhl-1p-baseline-fixture' }),
   );
 }
@@ -993,7 +1000,7 @@ describe('telemetry calibration report', () => {
       sampleScope: {
         sport: 'NHL',
         cardFamily: 'NHL_1P_TOTAL',
-        source: 'all_final_game_results',
+        source: 'all_final_settled_game_results_deduped_by_game_and_card_type',
         buckets: ['1.0-1.4', '1.5-1.9', '2.0-2.19', '2.20+'],
       },
     });
@@ -1017,6 +1024,47 @@ describe('telemetry calibration report', () => {
     expect(text).toContain('nhl_1p_baseline_scorecard');
     expect(text).toContain('1.0-1.4 | sample 1');
     expect(text).toContain('2.20+ | sample 1');
+  });
+
+  test('dedupes NHL 1P rows by game/card type and excludes non-settled rows', async () => {
+    const db = getDatabase();
+    clearTelemetryTables(db);
+
+    const baseTs = Date.now();
+    // Baseline: unique settled UNDER card
+    insertSettledNhl1pProjectionCard(db, {
+      id: 'nhl-1p-settled-under',
+      gameId: 'nhl-1p-settled-under-game',
+      projection: 2.2,
+      direction: 'UNDER',
+      firstPeriodHome: 0,
+      firstPeriodAway: 1,
+      timestamp: new Date(baseTs).toISOString(),
+    });
+    // Non-settled row (should be filtered out)
+    insertSettledNhl1pProjectionCard(db, {
+      id: 'nhl-1p-non-settled',
+      gameId: 'nhl-1p-non-settled-game',
+      projection: 2.2,
+      direction: 'OVER',
+      firstPeriodHome: 2,
+      firstPeriodAway: 1,
+      timestamp: new Date(baseTs + 120_000).toISOString(),
+      cardStatus: 'error',
+    });
+
+    const report = await generateTelemetryCalibrationReport({ db, days: 14 });
+    // Only the settled UNDER card should count in baseline and walk-forward
+    expect(report.nhl1pBaselineScorecard.sampleSize).toBe(1);
+    const highBucket = report.nhl1pBaselineScorecard.buckets.find((b) => b.bucketRangeLabel === '2.20+');
+    expect(highBucket.underWins).toBe(1);
+    expect(highBucket.underLosses).toBe(0);
+    expect(highBucket.overWins).toBe(0);
+    expect(highBucket.overLosses).toBe(0);
+    
+    // Verify non-settled row was skipped by checking data quality
+    expect(report.nhl1pBaselineScorecard.dataQuality.sourceRows).toBe(1);
+    expect(report.nhl1pBaselineScorecard.dataQuality.usableRows).toBe(1);
   });
 
   test('returns insufficient-data status with learning diagnostics and zero enforce exit', async () => {

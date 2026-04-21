@@ -112,6 +112,17 @@ const NBA_PROJECTION_ACCURACY_CARD_TYPES = new Set([
   'nba-totals-call',
 ]);
 
+const NBA_ROLE_MULTIPLIERS = Object.freeze({
+  OFFENSIVE_HUB: 1.2,
+  RIM_PROTECTOR: 0.6,
+  REBOUNDER: 0.7,
+  SPACER: 0.85,
+  BENCH: 0.2,
+});
+
+const NBA_INJURY_TEAM_CAP = 12;
+const NBA_OFFENSIVE_HUB_PACE_SURGE_OFFSET = 0.5;
+
 function toFiniteNumberOrNull(value) {
   if (value === null || value === undefined || value === '') return null;
   const parsed = Number(value);
@@ -246,12 +257,198 @@ function derivePaceTier(rawData, leagueBaselines = null) {
   )?.synergyType ?? null;
 }
 
+function getNbaPlayerNumber(player, snakeKey, camelKey, fallback = 0) {
+  const value = player?.[snakeKey] ?? player?.[camelKey];
+  const numeric = toFiniteNumberOrNull(value);
+  return numeric === null ? fallback : numeric;
+}
+
+function getOptionalNbaPlayerNumber(player, snakeKey, camelKey) {
+  const hasSnake = player && Object.prototype.hasOwnProperty.call(player, snakeKey);
+  const hasCamel = player && Object.prototype.hasOwnProperty.call(player, camelKey);
+  if (!hasSnake && !hasCamel) return null;
+  return toFiniteNumberOrNull(player?.[snakeKey] ?? player?.[camelKey]);
+}
+
+function computeNbaStartRatio(player) {
+  const startsLast5 = getNbaPlayerNumber(player, 'starts_last5', 'startsLast5', 0);
+  return Math.min(1, Math.max(0, startsLast5 / 5));
+}
+
+function classifyNbaInjuryRole(player) {
+  const startsLast5 = getNbaPlayerNumber(player, 'starts_last5', 'startsLast5', 0);
+  const avgPointsLast5 = getNbaPlayerNumber(player, 'avg_points_last5', 'avgPointsLast5', 0);
+  const assistsLast5 = getOptionalNbaPlayerNumber(player, 'assists_last5', 'assistsLast5');
+  const usagePct = getOptionalNbaPlayerNumber(player, 'usage_pct', 'usagePct');
+  const blocksLast5 = getOptionalNbaPlayerNumber(player, 'blocks_last5', 'blocksLast5');
+  const reboundsLast5 = getOptionalNbaPlayerNumber(player, 'rebounds_last5', 'reboundsLast5');
+
+  if (startsLast5 === 0) return 'BENCH';
+
+  const hasExtendedSignals =
+    assistsLast5 !== null ||
+    usagePct !== null ||
+    blocksLast5 !== null ||
+    reboundsLast5 !== null;
+
+  if (hasExtendedSignals) {
+    if (
+      (assistsLast5 !== null && assistsLast5 > 4) ||
+      (usagePct !== null && usagePct > 28) ||
+      avgPointsLast5 > 22
+    ) {
+      return 'OFFENSIVE_HUB';
+    }
+
+    if (reboundsLast5 !== null && reboundsLast5 > 8) {
+      return 'REBOUNDER';
+    }
+
+    if (
+      (blocksLast5 !== null && blocksLast5 > 1.5) ||
+      (avgPointsLast5 < 12 && startsLast5 >= 3)
+    ) {
+      return 'RIM_PROTECTOR';
+    }
+
+    return 'SPACER';
+  }
+
+  if (avgPointsLast5 > 22) return 'OFFENSIVE_HUB';
+  if (avgPointsLast5 >= 10) return 'SPACER';
+  if (avgPointsLast5 < 10 && startsLast5 >= 3) return 'RIM_PROTECTOR';
+  return 'BENCH';
+}
+
+function computeNbaRoleAwarePointImpact(player) {
+  const avgPointsLast5 = getNbaPlayerNumber(player, 'avg_points_last5', 'avgPointsLast5', 0);
+  const roleClass = classifyNbaInjuryRole(player);
+  const roleMultiplier = NBA_ROLE_MULTIPLIERS[roleClass] ?? 0;
+  const startRatio = computeNbaStartRatio(player);
+  const pointImpact = avgPointsLast5 * roleMultiplier * startRatio;
+
+  return {
+    role_class: roleClass,
+    role_multiplier: roleMultiplier,
+    start_ratio: Number(startRatio.toFixed(3)),
+    point_impact: Number(pointImpact.toFixed(2)),
+  };
+}
+
+function buildNbaRoleAuditEntry(flag) {
+  return {
+    player_name: flag?.player ?? flag?.player_name ?? null,
+    player_id: flag?.player_id ?? null,
+    role_class: flag?.role_class ?? null,
+    role_multiplier: flag?.role_multiplier ?? null,
+    start_ratio: flag?.start_ratio ?? null,
+    point_impact: flag?.point_impact ?? null,
+  };
+}
+
+function inferNbaActiveStarterCount(players, missingImpactFlags) {
+  const explicitActiveStarters = players.filter((player) => {
+    const rawStatus = String(player?.rawStatus ?? player?.status ?? '').trim().toUpperCase();
+    return (
+      rawStatus &&
+      !['OUT', 'INACTIVE', 'DOUBTFUL'].includes(rawStatus) &&
+      getNbaPlayerNumber(player, 'starts_last5', 'startsLast5', 0) > 0
+    );
+  }).length;
+
+  if (explicitActiveStarters > 0) return explicitActiveStarters;
+
+  const missingStarterCount = missingImpactFlags.filter(
+    (flag) => getNbaPlayerNumber(flag, 'starts_last5', 'startsLast5', 0) > 0,
+  ).length;
+  return Math.max(0, 5 - missingStarterCount);
+}
+
+function computeNbaTeamInjuryImpact({ flags = [], players = [] } = {}) {
+  const impactFlags = flags.filter((flag) => flag?.is_impact_player);
+  const rawTeamImpact = impactFlags.reduce(
+    (sum, flag) => sum + (toFiniteNumberOrNull(flag?.point_impact) ?? 0),
+    0,
+  );
+  const missingHub = impactFlags.some((flag) => flag.role_class === 'OFFENSIVE_HUB');
+  const activeStarterCount = inferNbaActiveStarterCount(players, impactFlags);
+  const paceSurgeOffset =
+    missingHub && activeStarterCount >= 2
+      ? NBA_OFFENSIVE_HUB_PACE_SURGE_OFFSET
+      : 0;
+  const teamImpactAfterRedistribution = Math.max(
+    0,
+    rawTeamImpact - paceSurgeOffset,
+  );
+  const cappedTeamImpact = Math.min(
+    teamImpactAfterRedistribution,
+    NBA_INJURY_TEAM_CAP,
+  );
+
+  return {
+    raw_team_impact: Number(rawTeamImpact.toFixed(2)),
+    pace_surge_offset: Number(paceSurgeOffset.toFixed(2)),
+    team_impact_after_redistribution: Number(teamImpactAfterRedistribution.toFixed(2)),
+    capped_team_impact: Number(cappedTeamImpact.toFixed(2)),
+    role_classes: impactFlags.map(buildNbaRoleAuditEntry),
+  };
+}
+
+function computeNbaInjuryProjectionReduction(homeImpactContext, awayImpactContext) {
+  const homeFlags = Array.isArray(homeImpactContext?.availabilityFlags)
+    ? homeImpactContext.availabilityFlags
+    : [];
+  const awayFlags = Array.isArray(awayImpactContext?.availabilityFlags)
+    ? awayImpactContext.availabilityFlags
+    : [];
+  const homePlayers = Array.isArray(homeImpactContext?.players)
+    ? homeImpactContext.players
+    : [];
+  const awayPlayers = Array.isArray(awayImpactContext?.players)
+    ? awayImpactContext.players
+    : [];
+  const homeImpact = computeNbaTeamInjuryImpact({
+    flags: homeFlags,
+    players: homePlayers,
+  });
+  const awayImpact = computeNbaTeamInjuryImpact({
+    flags: awayFlags,
+    players: awayPlayers,
+  });
+  const reduction = (homeImpact.capped_team_impact + awayImpact.capped_team_impact) * 0.5;
+
+  return {
+    home_impact: {
+      raw_team_impact: homeImpact.raw_team_impact,
+      pace_surge_offset: homeImpact.pace_surge_offset,
+      team_impact_after_redistribution: homeImpact.team_impact_after_redistribution,
+      capped_team_impact: homeImpact.capped_team_impact,
+    },
+    away_impact: {
+      raw_team_impact: awayImpact.raw_team_impact,
+      pace_surge_offset: awayImpact.pace_surge_offset,
+      team_impact_after_redistribution: awayImpact.team_impact_after_redistribution,
+      capped_team_impact: awayImpact.capped_team_impact,
+    },
+    reduction_applied: Number(reduction.toFixed(2)),
+    role_classes: {
+      home: homeImpact.role_classes,
+      away: awayImpact.role_classes,
+    },
+  };
+}
+
 function computeInjuryPointImpact(availabilityFlags) {
   if (!Array.isArray(availabilityFlags) || availabilityFlags.length === 0) return 0;
   let total = 0;
   for (const flag of availabilityFlags) {
     if (!flag?.is_impact_player) continue;
     const status = String(flag.status || '').trim().toUpperCase();
+    const roleAwareImpact = toFiniteNumberOrNull(flag.point_impact);
+    if (roleAwareImpact !== null) {
+      total += roleAwareImpact;
+      continue;
+    }
     const avgPoints = toFiniteNumberOrNull(flag.avg_points_last5);
     if (avgPoints === null) continue;
     if (status === 'OUT' || status === 'INACTIVE' || status === 'DOUBTFUL') {
@@ -625,14 +822,29 @@ async function sendEspnNullDiscordAlert({
  * @returns {{ missingFlags: string[], uncertainFlags: string[], availabilityFlags: Array<object> }}
  */
 function buildNbaAvailabilityGate(homeImpactContext, awayImpactContext) {
-  const EMPTY = { missingFlags: [], uncertainFlags: [], availabilityFlags: [], gateFailedError: null };
+  const EMPTY = {
+    missingFlags: [],
+    uncertainFlags: [],
+    availabilityFlags: [],
+    injuryProjectionReduction: null,
+    gateFailedError: null,
+  };
   try {
     const missingFlags = [];
     const uncertainFlags = [];
     const availabilityFlags = [];
+    const homeGateContext = {
+      players: Array.isArray(homeImpactContext?.players) ? homeImpactContext.players : [],
+      availabilityFlags: [],
+    };
+    const awayGateContext = {
+      players: Array.isArray(awayImpactContext?.players) ? awayImpactContext.players : [],
+      availabilityFlags: [],
+    };
 
-    for (const context of [homeImpactContext, awayImpactContext]) {
+    for (const [index, context] of [homeImpactContext, awayImpactContext].entries()) {
       if (!context || context.available === false) continue;
+      const sideGateContext = index === 0 ? homeGateContext : awayGateContext;
       const players = Array.isArray(context.players) ? context.players : [];
       for (const player of players) {
         const rawStatus = String(player.rawStatus || '').trim().toUpperCase();
@@ -648,8 +860,16 @@ function buildNbaAvailabilityGate(homeImpactContext, awayImpactContext) {
           is_impact_player: Boolean(player.isImpactPlayer),
           avg_points_last5: player.avgPointsLast5 ?? null,
           starts_last5: player.startsLast5 ?? null,
+          assists_last5: player.assistsLast5 ?? null,
+          usage_pct: player.usagePct ?? null,
+          blocks_last5: player.blocksLast5 ?? null,
+          rebounds_last5: player.reboundsLast5 ?? null,
         };
+        if (player.isImpactPlayer) {
+          Object.assign(flag, computeNbaRoleAwarePointImpact(flag));
+        }
         availabilityFlags.push(flag);
+        sideGateContext.availabilityFlags.push(flag);
         if (player.isImpactPlayer) {
           if (!missingFlags.includes('key_player_out')) missingFlags.push('key_player_out');
         } else if (rawStatus === 'DOUBTFUL') {
@@ -658,7 +878,17 @@ function buildNbaAvailabilityGate(homeImpactContext, awayImpactContext) {
       }
     }
 
-    return { missingFlags, uncertainFlags, availabilityFlags };
+    const injuryProjectionReduction = computeNbaInjuryProjectionReduction(
+      homeGateContext,
+      awayGateContext,
+    );
+
+    return {
+      missingFlags,
+      uncertainFlags,
+      availabilityFlags,
+      injuryProjectionReduction,
+    };
   } catch (err) {
     // Fail-open: DB query errors must not block card generation
     // WI-0907 Phase 4 Task 2: Track gate failure so cards emit AVAILABILITY_GATE_DEGRADED
@@ -684,6 +914,12 @@ function applyNbaImpactGateToCard(card, availabilityGate) {
   if (availabilityFlags.length > 0) {
     if (!card.payloadData.raw_data) card.payloadData.raw_data = {};
     card.payloadData.raw_data.availability_flags = availabilityFlags;
+  }
+
+  if (availabilityGate?.injuryProjectionReduction) {
+    if (!card.payloadData.raw_data) card.payloadData.raw_data = {};
+    card.payloadData.raw_data.injury_projection_reduction =
+      availabilityGate.injuryProjectionReduction;
   }
 
   if (
@@ -1385,6 +1621,10 @@ async function applyNbaTeamContext(
       ? marketTotal * (1 - TEAM_CONTEXT_WEIGHT) +
         correctedAnchor * TEAM_CONTEXT_WEIGHT
       : correctedAnchor;
+    const injuryProjectionReduction = availabilityGate.injuryProjectionReduction || null;
+    const reductionApplied =
+      toFiniteNumberOrNull(injuryProjectionReduction?.reduction_applied) ?? 0;
+    const adjustedBlendedTotal = Math.max(0, blendedTotal - reductionApplied);
 
     // Mutate raw_data so downstream models can read the anchor
     if (oddsSnapshot.raw_data && typeof oddsSnapshot.raw_data === 'object') {
@@ -1394,19 +1634,31 @@ async function applyNbaTeamContext(
       oddsSnapshot.raw_data.pace_anchor_total = Number(
         correctedAnchor.toFixed(2),
       );
-      oddsSnapshot.raw_data.blended_total = Number(blendedTotal.toFixed(2));
+      oddsSnapshot.raw_data.blended_total = Number(adjustedBlendedTotal.toFixed(2));
       oddsSnapshot.raw_data.calibration_state = calibrationState;
+      if (
+        injuryProjectionReduction &&
+        (
+          reductionApplied > 0 ||
+          injuryProjectionReduction.role_classes?.home?.length > 0 ||
+          injuryProjectionReduction.role_classes?.away?.length > 0
+        )
+      ) {
+        oddsSnapshot.raw_data.injury_projection_reduction =
+          injuryProjectionReduction;
+      }
     }
 
     console.log(
-      `  [NBA_TEAM_CTX] ${gameId}: pace_anchor=${correctedAnchor.toFixed(2)}, blended=${blendedTotal.toFixed(2)} (market=${marketTotal ?? 'n/a'})`,
+      `  [NBA_TEAM_CTX] ${gameId}: pace_anchor=${correctedAnchor.toFixed(2)}, blended=${adjustedBlendedTotal.toFixed(2)} (market=${marketTotal ?? 'n/a'})`,
     );
 
     return {
       available: true,
       paceAnchorTotal: Number(correctedAnchor.toFixed(2)),
       rawPaceAnchorTotal: Number(paceAnchorTotal.toFixed(2)),
-      blendedTotal: Number(blendedTotal.toFixed(2)),
+      blendedTotal: Number(adjustedBlendedTotal.toFixed(2)),
+      originalBlendedTotal: Number(blendedTotal.toFixed(2)),
       teamContextMissingInputs: [],
       availabilityGate,
       nullMetricTeams,

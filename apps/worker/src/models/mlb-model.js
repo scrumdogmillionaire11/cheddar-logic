@@ -1629,6 +1629,12 @@ function projectFullGameTotalCard(homePitcher, awayPitcher, fullGameLine, contex
         support_keys: driverValidation.drivers,
       },
     ],
+    decision_v2: {
+      official_status: canFire ? 'PLAY' : (canLean ? 'LEAN' : 'PASS'),
+      degraded: isDegraded,
+      degradation_reason: isDegraded ? 'INSUFFICIENT_DATA' : null,
+      watchdog_status: 'READY',
+    },
   };
 }
 

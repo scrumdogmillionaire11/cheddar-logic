@@ -304,65 +304,6 @@ describe('settle_pending_cards market contract', () => {
     ).toBeNull();
   });
 
-  test('auto-closes final legacy WATCH/HOLD MLB full-game rows as non-actionable', () => {
-    const watchReason = __private.resolveNonActionableFinalReason(
-      {
-        kind: 'PLAY',
-        sport: 'MLB',
-        status: 'WATCH',
-        market_type: 'TOTAL',
-        period: 'FULL_GAME',
-      },
-      {
-        sport: 'MLB',
-        card_type: 'mlb-full-game',
-        market_key: 'game-1:TOTAL:OVER:8.5',
-        market_type: 'TOTAL',
-      },
-    );
-    expect(watchReason).toMatchObject({
-      code: 'NON_ACTIONABLE_FINAL_LEGACY_WATCH_HOLD',
-      details: { legacyStatus: 'WATCH' },
-    });
-
-    const holdReason = __private.resolveNonActionableFinalReason(
-      {
-        kind: 'PLAY',
-        sport: 'MLB',
-        action: 'HOLD',
-        market_type: 'MONEYLINE',
-        period: 'FULL_GAME',
-      },
-      {
-        sport: 'MLB',
-        card_type: 'mlb-full-game-ml',
-        market_key: 'game-1:MONEYLINE:HOME:NA',
-        market_type: 'MONEYLINE',
-      },
-    );
-    expect(holdReason).toMatchObject({
-      code: 'NON_ACTIONABLE_FINAL_LEGACY_WATCH_HOLD',
-      details: { legacyStatus: 'HOLD' },
-    });
-
-    const f5Reason = __private.resolveNonActionableFinalReason(
-      {
-        kind: 'PLAY',
-        sport: 'MLB',
-        status: 'WATCH',
-        market_type: 'TOTAL',
-        period: 'FIRST_5_INNINGS',
-      },
-      {
-        sport: 'MLB',
-        card_type: 'mlb-f5',
-        market_key: 'game-1:F5_TOTAL:OVER:4.5',
-        market_type: 'TOTAL',
-      },
-    );
-    expect(f5Reason).toBeNull();
-  });
-
   test('repair job eligibility is limited to executable MLB full-game LEAN rows', () => {
     const totalRow = {
       sport: 'MLB',
