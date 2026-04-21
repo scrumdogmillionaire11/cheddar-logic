@@ -16,7 +16,7 @@ const {
 } = require('@cheddar-logic/data');
 const { buildProjectionProxyMarketRows, CARD_TYPE_TO_FAMILY } = require('../audit/projection_evaluator');
 const { fetchNhlSettlementSnapshot, resolveNhlFullGamePlayerShots } = require('./nhl-settlement-source');
-const { fetchF5Total, fetchF5GameState, resolveF5Snapshot } = require('./settle_mlb_f5');
+const { fetchF5Total, fetchF5GameState, resolveF5Snapshot, resolveMlbGamePk } = require('./settle_mlb_f5');
 
 const JOB_NAME = 'settle_projections';
 const PITCHER_K_PROJECTION_SETTLEMENT_CODES = Object.freeze({
@@ -257,31 +257,17 @@ async function settleProjections({ jobKey = null, dryRun = false } = {}) {
 
           // ── MLB mlb-f5 ───────────────────────────────────────────────────
           if (card.card_type === 'mlb-f5') {
-            const gameDate = card.game_time_utc?.slice(0, 10);
-            const homeTeam = card.home_team;
-            const awayTeam = card.away_team;
-            const gamePkKey =
-              gameDate && homeTeam && awayTeam
-                ? `${gameDate}|${homeTeam}|${awayTeam}`
-                : null;
+            const gamePk = resolveMlbGamePk(db, card);
 
-            const pkRow = gamePkKey
-              ? db
-                  .prepare(
-                    'SELECT game_pk FROM mlb_game_pk_map WHERE game_pk_key = ?',
-                  )
-                  .get(gamePkKey)
-              : null;
-
-            if (!pkRow?.game_pk) {
+            if (!gamePk) {
               console.warn(
-                `  [${JOB_NAME}] mlb ${card.game_id}: no gamePk in mlb_game_pk_map for key=${gamePkKey ?? `(missing date/teams)`}`,
+                `  [${JOB_NAME}] mlb ${card.game_id}: no gamePk resolved`,
               );
               skipped++;
               continue;
             }
 
-            const actualF5 = await fetchF5Total(pkRow.game_pk);
+            const actualF5 = await fetchF5Total(gamePk);
 
             if (actualF5 === null) {
               // Game may not yet be 5 innings complete — skip silently
@@ -323,31 +309,17 @@ async function settleProjections({ jobKey = null, dryRun = false } = {}) {
 
           // ── MLB mlb-f5-ml ────────────────────────────────────────────────
           if (card.card_type === 'mlb-f5-ml') {
-            const gameDate = card.game_time_utc?.slice(0, 10);
-            const homeTeam = card.home_team;
-            const awayTeam = card.away_team;
-            const gamePkKey =
-              gameDate && homeTeam && awayTeam
-                ? `${gameDate}|${homeTeam}|${awayTeam}`
-                : null;
+            const gamePk = resolveMlbGamePk(db, card);
 
-            const pkRow = gamePkKey
-              ? db
-                  .prepare(
-                    'SELECT game_pk FROM mlb_game_pk_map WHERE game_pk_key = ?',
-                  )
-                  .get(gamePkKey)
-              : null;
-
-            if (!pkRow?.game_pk) {
+            if (!gamePk) {
               console.warn(
-                `  [${JOB_NAME}] mlb ${card.game_id}: no gamePk in mlb_game_pk_map for key=${gamePkKey ?? `(missing date/teams)`}`,
+                `  [${JOB_NAME}] mlb ${card.game_id}: no gamePk resolved`,
               );
               skipped++;
               continue;
             }
 
-            const gameState = await fetchF5GameState(pkRow.game_pk);
+            const gameState = await fetchF5GameState(gamePk);
             if (!gameState) {
               skipped++;
               continue;
@@ -549,23 +521,9 @@ async function settleProjections({ jobKey = null, dryRun = false } = {}) {
 
           // ── MLB mlb-pitcher-k ────────────────────────────────────────────
           if (card.card_type === 'mlb-pitcher-k') {
-            const gameDate = card.game_time_utc?.slice(0, 10);
-            const homeTeam = card.home_team;
-            const awayTeam = card.away_team;
-            const gamePkKey =
-              gameDate && homeTeam && awayTeam
-                ? `${gameDate}|${homeTeam}|${awayTeam}`
-                : null;
+            const gamePk = resolveMlbGamePk(db, card);
 
-            const pkRow = gamePkKey
-              ? db
-                  .prepare(
-                    'SELECT game_pk FROM mlb_game_pk_map WHERE game_pk_key = ?',
-                  )
-                  .get(gamePkKey)
-              : null;
-
-            if (!pkRow?.game_pk) {
+            if (!gamePk) {
               if (!dryRun) {
                 setProjectionSettlementMetadata(db, card.card_id, {
                   code: PITCHER_K_PROJECTION_SETTLEMENT_CODES.NO_GAME_PK,
@@ -573,14 +531,14 @@ async function settleProjections({ jobKey = null, dryRun = false } = {}) {
                 });
               }
               console.warn(
-                `  [${JOB_NAME}] mlb ${card.game_id}: no gamePk in mlb_game_pk_map for key=${gamePkKey ?? `(missing date/teams)`}`,
+                `  [${JOB_NAME}] mlb ${card.game_id}: no gamePk resolved`,
               );
               pitcherKTelemetry.no_game_pk++;
               skipped++;
               continue;
             }
 
-            const ksResult = await fetchMlbPitcherKs(pkRow.game_pk);
+            const ksResult = await fetchMlbPitcherKs(gamePk);
 
             if (!ksResult.available) {
               if (ksResult.reason === 'game_not_final') {

@@ -106,6 +106,14 @@ const ESPN_NULL_ALERT_THRESHOLD_DEFAULT = 2;
 const ESPN_NULL_NO_GAMES_PERSIST_WINDOW_MINUTES_DEFAULT = 20;
 const NBA_ROLLING_BIAS_MIN_GAMES = 50;
 const NBA_ROLLING_BIAS_CLAMP = 4.0;
+const VOL_ENV_SIGMA_MIN_SAMPLES = 15;
+const VOL_ENV_SIGMA_MIN_MULTIPLIER = 0.75;
+const VOL_ENV_SIGMA_MAX_MULTIPLIER = 1.5;
+const VOL_ENV_SIGMA_DEFAULTS = Object.freeze({
+  HIGH: 1.25,
+  MED: 1.0,
+  LOW: 0.85,
+});
 
 const NBA_PROJECTION_ACCURACY_CARD_TYPES = new Set([
   'nba-total-projection',
@@ -230,6 +238,189 @@ function deriveVolEnv(totalSigma) {
   if (sigma < 11) return 'LOW';
   if (sigma < 14) return 'MED';
   return 'HIGH';
+}
+
+function computeVolEnvSigmaMultipliers({ db, logger = console } = {}) {
+  const defaults = {
+    multipliers: { ...VOL_ENV_SIGMA_DEFAULTS },
+    sourceByBucket: {
+      HIGH: 'fallback',
+      MED: 'fallback',
+      LOW: 'fallback',
+    },
+    sampleByBucket: {
+      HIGH: null,
+      MED: null,
+      LOW: null,
+    },
+    mode: 'fallback',
+    medSamples: 0,
+  };
+
+  if (!db || typeof db.prepare !== 'function') {
+    return defaults;
+  }
+
+  try {
+    const rowsStmt = db.prepare(`
+      SELECT vol_env,
+             SQRT(AVG((raw_total - actual_total) * (raw_total - actual_total))) AS rmse,
+             COUNT(*) AS n
+      FROM projection_accuracy_line_evals
+      WHERE sport = 'nba'
+        AND market_family = 'NBA_TOTAL'
+        AND vol_env IS NOT NULL
+        AND raw_total IS NOT NULL
+        AND actual_total IS NOT NULL
+        AND settled_at < datetime('now')
+      GROUP BY vol_env
+      HAVING COUNT(*) >= ${VOL_ENV_SIGMA_MIN_SAMPLES}
+    `);
+    const rows = typeof rowsStmt.all === 'function' ? rowsStmt.all() : [];
+
+    let medSamples = 0;
+    try {
+      const medStmt = db.prepare(`
+        SELECT COUNT(*) AS n
+        FROM projection_accuracy_line_evals
+        WHERE sport = 'nba'
+          AND market_family = 'NBA_TOTAL'
+          AND vol_env = 'MED'
+          AND raw_total IS NOT NULL
+          AND actual_total IS NOT NULL
+          AND settled_at < datetime('now')
+      `);
+      const medRow = typeof medStmt.get === 'function' ? medStmt.get() : null;
+      medSamples = Number.isFinite(Number(medRow?.n)) ? Number(medRow.n) : 0;
+    } catch (_) {
+      medSamples = 0;
+    }
+
+    const bucketMap = new Map();
+    for (const row of rows) {
+      const bucket = String(row?.vol_env || '').toUpperCase();
+      if (!['HIGH', 'MED', 'LOW'].includes(bucket)) continue;
+      const rmse = toFiniteNumberOrNull(row?.rmse);
+      const n = Number.isFinite(Number(row?.n)) ? Number(row.n) : 0;
+      if (rmse === null || n < VOL_ENV_SIGMA_MIN_SAMPLES) continue;
+      bucketMap.set(bucket, { rmse, n });
+    }
+
+    const med = bucketMap.get('MED');
+    if (!med) {
+      return {
+        ...defaults,
+        medSamples,
+      };
+    }
+
+    const high = bucketMap.get('HIGH');
+    const low = bucketMap.get('LOW');
+    const next = {
+      multipliers: {
+        HIGH: high
+          ? clamp(
+            high.rmse / med.rmse,
+            VOL_ENV_SIGMA_MIN_MULTIPLIER,
+            VOL_ENV_SIGMA_MAX_MULTIPLIER,
+          )
+          : VOL_ENV_SIGMA_DEFAULTS.HIGH,
+        MED: 1,
+        LOW: low
+          ? clamp(
+            low.rmse / med.rmse,
+            VOL_ENV_SIGMA_MIN_MULTIPLIER,
+            VOL_ENV_SIGMA_MAX_MULTIPLIER,
+          )
+          : VOL_ENV_SIGMA_DEFAULTS.LOW,
+      },
+      sourceByBucket: {
+        HIGH: high ? 'empirical' : 'fallback',
+        MED: 'empirical',
+        LOW: low ? 'empirical' : 'fallback',
+      },
+      sampleByBucket: {
+        HIGH: high?.n ?? null,
+        MED: med.n,
+        LOW: low?.n ?? null,
+      },
+      mode: high && low ? 'empirical' : 'mixed',
+      medSamples,
+    };
+
+    next.multipliers.HIGH = clamp(
+      next.multipliers.HIGH,
+      VOL_ENV_SIGMA_MIN_MULTIPLIER,
+      VOL_ENV_SIGMA_MAX_MULTIPLIER,
+    );
+    next.multipliers.MED = clamp(
+      next.multipliers.MED,
+      VOL_ENV_SIGMA_MIN_MULTIPLIER,
+      VOL_ENV_SIGMA_MAX_MULTIPLIER,
+    );
+    next.multipliers.LOW = clamp(
+      next.multipliers.LOW,
+      VOL_ENV_SIGMA_MIN_MULTIPLIER,
+      VOL_ENV_SIGMA_MAX_MULTIPLIER,
+    );
+
+    return next;
+  } catch (error) {
+    logger.warn?.(`[NBAModel] [VOL_ENV_SIGMA] fallback to defaults: ${error.message}`);
+    return defaults;
+  }
+}
+
+function formatVolEnvSigmaLog(volEnvSigmaConfig) {
+  if (volEnvSigmaConfig.mode === 'fallback') {
+    return `[NBAModel] [VOL_ENV_SIGMA] using hardcoded defaults - insufficient MED samples (n=${volEnvSigmaConfig.medSamples ?? 0})`;
+  }
+
+  const renderBucket = (bucket) => {
+    const multiplier = Number(volEnvSigmaConfig.multipliers?.[bucket]);
+    const source = volEnvSigmaConfig.sourceByBucket?.[bucket] === 'empirical'
+      ? 'empirical'
+      : 'fallback';
+    const samples = volEnvSigmaConfig.sampleByBucket?.[bucket];
+    if (source === 'empirical') {
+      return `${bucket}=${multiplier.toFixed(2)}x(n=${samples},empirical)`;
+    }
+    return `${bucket}=${multiplier.toFixed(2)}x(fallback)`;
+  };
+
+  return `[NBAModel] [VOL_ENV_SIGMA] ${renderBucket('HIGH')} ${renderBucket('MED')} ${renderBucket('LOW')}`;
+}
+
+function applyVolEnvSigmaMultiplier(sigma, volEnv, volEnvSigmaConfig) {
+  if (!sigma || typeof sigma !== 'object') return sigma;
+  const normalizedVolEnv = ['HIGH', 'MED', 'LOW'].includes(volEnv)
+    ? volEnv
+    : 'MED';
+  const multiplier = clamp(
+    toFiniteNumberOrNull(volEnvSigmaConfig?.multipliers?.[normalizedVolEnv])
+      ?? VOL_ENV_SIGMA_DEFAULTS[normalizedVolEnv]
+      ?? 1,
+    VOL_ENV_SIGMA_MIN_MULTIPLIER,
+    VOL_ENV_SIGMA_MAX_MULTIPLIER,
+  );
+  const source = volEnvSigmaConfig?.sourceByBucket?.[normalizedVolEnv] === 'empirical'
+    ? 'empirical'
+    : 'fallback';
+
+  const scale = (value) => {
+    const numeric = toFiniteNumberOrNull(value);
+    return numeric === null ? value ?? null : numeric * multiplier;
+  };
+
+  return {
+    ...sigma,
+    margin: scale(sigma.margin),
+    total: scale(sigma.total),
+    spread: scale(sigma.spread),
+    vol_env_sigma_multiplier: multiplier,
+    vol_env_sigma_source: source,
+    vol_env_bucket: normalizedVolEnv,
+  };
 }
 
 function derivePaceTier(rawData, leagueBaselines = null) {
@@ -506,6 +697,7 @@ function resolveProjectionRawForAccuracy(payloadData) {
 function stampNbaProjectionAccuracyFields(card, {
   oddsSnapshot,
   effectiveSigma,
+  volEnv,
   availabilityGate,
   leagueBaselines = null,
 } = {}) {
@@ -536,7 +728,11 @@ function stampNbaProjectionAccuracyFields(card, {
     oddsSnapshot?.raw_data ?? payloadData.raw_data,
     leagueBaselines,
   );
-  payloadData.raw_data.vol_env = deriveVolEnv(effectiveSigma?.total);
+  payloadData.raw_data.vol_env = volEnv ?? deriveVolEnv(effectiveSigma?.total);
+  payloadData.raw_data.vol_env_sigma_multiplier =
+    toFiniteNumberOrNull(effectiveSigma?.vol_env_sigma_multiplier) ?? null;
+  payloadData.raw_data.vol_env_sigma_source =
+    effectiveSigma?.vol_env_sigma_source === 'empirical' ? 'empirical' : 'fallback';
   payloadData.raw_data.total_band = deriveTotalBand(marketTotal);
   payloadData.raw_data.injury_cloud = deriveInjuryCloud(injuryPointImpact);
   payloadData.raw_data.driver_contributions = normalizeDriverContributions(payloadData);
@@ -2148,6 +2344,9 @@ async function runNBAModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
           'All PLAY cards will be downgraded to LEAN until empirical sigma is available.',
         );
       }
+      // WI-1023: Compute vol_env sigma multipliers from empirical RMSE buckets
+      const volEnvSigmaConfig = computeVolEnvSigmaMultipliers({ db });
+      console.log(formatVolEnvSigmaLog(volEnvSigmaConfig));
       const leagueBaselines = computeNbaLeagueBaselines({ db });
       setNbaLeagueBaselinesForRun({
         paceMin: leagueBaselines.paceMin,
@@ -2258,9 +2457,18 @@ async function runNBAModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
           // WI-0646: Detect playoff game and apply threshold overrides
           const isPlayoff = isPlayoffGame(oddsSnapshot);
           if (isPlayoff) console.log(`[PLAYOFF_MODE] gameId: ${gameId}`);
-          const effectiveSigma = isPlayoff
+          let effectiveSigma = isPlayoff
             ? applyPlayoffSigmaMultiplier(computedSigma, PLAYOFF_SIGMA_MULTIPLIER)
             : computedSigma;
+          // WI-1023: Apply vol_env sigma multiplier after playoff adjustment
+          const volEnvFromSigma = deriveVolEnv(effectiveSigma?.total);
+          if (volEnvFromSigma) {
+            effectiveSigma = applyVolEnvSigmaMultiplier(
+              effectiveSigma,
+              volEnvFromSigma,
+              volEnvSigmaConfig,
+            );
+          }
           const effectiveSpreadLeanMin = isPlayoff
             ? (resolveThresholdProfile({ sport: 'NBA', marketType: 'SPREAD' }).edge.lean_edge_min + PLAYOFF_EDGE_MIN_INCREMENT)
             : null; // null = use default from generateNBAMarketCallCards
@@ -2668,6 +2876,7 @@ async function runNBAModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
             stampNbaProjectionAccuracyFields(entry.card, {
               oddsSnapshot,
               effectiveSigma,
+              volEnv: volEnvFromSigma,
               availabilityGate,
               leagueBaselines,
             });
@@ -2838,4 +3047,8 @@ module.exports = {
   applyNbaTeamContext,
   computeNbaRollingBias,
   deriveTotalBand,
+  computeVolEnvSigmaMultipliers,
+  applyVolEnvSigmaMultiplier,
+  formatVolEnvSigmaLog,
+  deriveVolEnv,
 };

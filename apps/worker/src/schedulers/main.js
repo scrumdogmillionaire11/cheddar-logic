@@ -57,6 +57,7 @@ const { checkOddsHealth } = require('../jobs/check_odds_health');
 const { run: refreshTeamMetricsDaily } = require('../jobs/refresh_team_metrics_daily');
 const { pullScheduleNba } = require('../jobs/pull_schedule_nba');
 const { pullScheduleNhl } = require('../jobs/pull_schedule_nhl');
+const { pullNhlGameIds } = require('../jobs/pull_nhl_game_ids');
 const { postDiscordCards } = require('../jobs/post_discord_cards');
 const { runPotdEngine } = require('../jobs/potd/run_potd_engine');
 const { mirrorPotdSettlement } = require('../jobs/potd/settlement-mirror');
@@ -205,6 +206,12 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
   if (scheduleRefresh && ENABLE_PULL_SCHEDULE_NHL) {
     const jobKey = keyPullScheduleNhl(nowEt);
     jobs.push({ jobName: 'pull_schedule_nhl', jobKey, execute: pullScheduleNhl, args: { jobKey, dryRun }, reason: `NHL schedule refresh (${scheduleRefresh.reason})` });
+  }
+
+  // NHL gamecenter ID sync — runs once daily at 06:00 ET before settlement sweep
+  if (isFixedDue(nowEt, '06:00')) {
+    const jobKey = `pull|nhl-game-ids|${nowEt.toISODate()}`;
+    jobs.push({ jobName: 'pull_nhl_game_ids', jobKey, execute: pullNhlGameIds, args: { jobKey, dryRun }, reason: `daily NHL gamecenter ID sync ${nowEt.toISODate()}` });
   }
 
   // ========== INGESTION / ODDS (2) ==========
