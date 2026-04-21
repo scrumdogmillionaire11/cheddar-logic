@@ -52,7 +52,11 @@ const {
   determineTier,
   buildMarketCallCard,
 } = require('../models');
-const { analyzePaceSynergy } = require('../models/nba-pace-synergy');
+const {
+  analyzePaceSynergy,
+  computeNbaLeagueBaselines,
+  setNbaLeagueBaselinesForRun,
+} = require('../models/nba-pace-synergy');
 const { assessProjectionInputs } = require('../models/projections');
 const {
   buildRecommendationFromPrediction,
@@ -100,6 +104,8 @@ const TEAM_CONTEXT_WEIGHT = 0.25;
 const ESPN_NULL_ALERT_WINDOW_MINUTES = 60;
 const ESPN_NULL_ALERT_THRESHOLD_DEFAULT = 2;
 const ESPN_NULL_NO_GAMES_PERSIST_WINDOW_MINUTES_DEFAULT = 20;
+const NBA_ROLLING_BIAS_MIN_GAMES = 50;
+const NBA_ROLLING_BIAS_CLAMP = 4.0;
 
 const NBA_PROJECTION_ACCURACY_CARD_TYPES = new Set([
   'nba-total-projection',
@@ -110,6 +116,93 @@ function toFiniteNumberOrNull(value) {
   if (value === null || value === undefined || value === '') return null;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+function formatSignedOneDecimal(value) {
+  const numeric = Number.isFinite(value) ? value : 0;
+  return `${numeric >= 0 ? '+' : ''}${numeric.toFixed(1)}`;
+}
+
+function normalizeNbaCalibrationState(rollingBias) {
+  const source = rollingBias?.source === 'computed' ? 'computed' : 'fallback';
+  const bias = source === 'computed'
+    ? (toFiniteNumberOrNull(rollingBias?.bias) ?? 0)
+    : 0;
+  return {
+    bias,
+    games_sampled: Number.isFinite(rollingBias?.games_sampled)
+      ? rollingBias.games_sampled
+      : 0,
+    source,
+    correction_applied: source === 'computed',
+  };
+}
+
+function computeNbaRollingBias({
+  db,
+  windowGames = NBA_ROLLING_BIAS_MIN_GAMES,
+  logger = console,
+} = {}) {
+  const limit = Number.isInteger(windowGames) && windowGames > 0
+    ? windowGames
+    : NBA_ROLLING_BIAS_MIN_GAMES;
+
+  if (!db || typeof db.prepare !== 'function') {
+    logger.warn?.(
+      `[NBAModel] [CALIBRATION_INACTIVE] 0 settled games - minimum ${NBA_ROLLING_BIAS_MIN_GAMES} required before correction activates`,
+    );
+    return { bias: 0, games_sampled: 0, source: 'fallback' };
+  }
+
+  let row = null;
+  try {
+    const stmt = db.prepare(`
+      SELECT AVG(sample.raw_total - sample.actual_total) AS mean_error, COUNT(*) AS n
+      FROM (
+        SELECT raw_total, actual_total
+        FROM projection_accuracy_line_evals
+        WHERE sport = 'nba'
+          AND market_family = 'NBA_TOTAL'
+          AND actual_total IS NOT NULL
+          AND raw_total IS NOT NULL
+          AND settled_at < datetime('now')
+        ORDER BY settled_at DESC
+        LIMIT ${limit}
+      ) AS sample
+    `);
+    row = typeof stmt.get === 'function'
+      ? stmt.get()
+      : (typeof stmt.all === 'function' ? stmt.all()[0] : null);
+  } catch (_) {
+    logger.warn?.(
+      `[NBAModel] [CALIBRATION_INACTIVE] 0 settled games - minimum ${NBA_ROLLING_BIAS_MIN_GAMES} required before correction activates`,
+    );
+    return { bias: 0, games_sampled: 0, source: 'fallback' };
+  }
+  const gamesSampled = Number.isFinite(Number(row?.n)) ? Number(row.n) : 0;
+
+  if (gamesSampled < NBA_ROLLING_BIAS_MIN_GAMES) {
+    logger.warn?.(
+      `[NBAModel] [CALIBRATION_INACTIVE] ${gamesSampled} settled games - minimum ${NBA_ROLLING_BIAS_MIN_GAMES} required before correction activates`,
+    );
+    return { bias: 0, games_sampled: gamesSampled, source: 'fallback' };
+  }
+
+  const rawBias = toFiniteNumberOrNull(row?.mean_error) ?? 0;
+  const clampedBias = Math.max(
+    -NBA_ROLLING_BIAS_CLAMP,
+    Math.min(NBA_ROLLING_BIAS_CLAMP, rawBias),
+  );
+  if (Math.abs(rawBias) > NBA_ROLLING_BIAS_CLAMP) {
+    logger.warn?.(
+      `[NBAModel] [BIAS_CORRECTION] bias_raw=${rawBias.toFixed(1)} clamped to +/-4.0 - investigate outlier`,
+    );
+  }
+  logger.log?.(
+    `[NBAModel] [BIAS_CORRECTION] rolling_bias=${formatSignedOneDecimal(clampedBias)} games_sampled=${gamesSampled}`,
+  );
+
+  return { bias: clampedBias, games_sampled: gamesSampled, source: 'computed' };
 }
 
 function deriveTotalBand(marketTotal) {
@@ -128,7 +221,7 @@ function deriveVolEnv(totalSigma) {
   return 'HIGH';
 }
 
-function derivePaceTier(rawData) {
+function derivePaceTier(rawData, leagueBaselines = null) {
   const metrics = rawData?.espn_metrics;
   const paceHome = toFiniteNumberOrNull(
     metrics?.home?.metrics?.paceHome ?? metrics?.home?.metrics?.pace,
@@ -144,7 +237,13 @@ function derivePaceTier(rawData) {
   );
 
   if (!Number.isFinite(paceHome) || !Number.isFinite(paceAway)) return null;
-  return analyzePaceSynergy(paceHome, paceAway, avgPtsHome, avgPtsAway)?.synergyType ?? null;
+  return analyzePaceSynergy(
+    paceHome,
+    paceAway,
+    avgPtsHome,
+    avgPtsAway,
+    leagueBaselines,
+  )?.synergyType ?? null;
 }
 
 function computeInjuryPointImpact(availabilityFlags) {
@@ -211,6 +310,7 @@ function stampNbaProjectionAccuracyFields(card, {
   oddsSnapshot,
   effectiveSigma,
   availabilityGate,
+  leagueBaselines = null,
 } = {}) {
   if (!card?.cardType || !NBA_PROJECTION_ACCURACY_CARD_TYPES.has(card.cardType)) return;
   if (!card.payloadData || typeof card.payloadData !== 'object') return;
@@ -235,7 +335,10 @@ function stampNbaProjectionAccuracyFields(card, {
   );
 
   payloadData.raw_data.market_total = marketTotal;
-  payloadData.raw_data.pace_tier = derivePaceTier(oddsSnapshot?.raw_data ?? payloadData.raw_data);
+  payloadData.raw_data.pace_tier = derivePaceTier(
+    oddsSnapshot?.raw_data ?? payloadData.raw_data,
+    leagueBaselines,
+  );
   payloadData.raw_data.vol_env = deriveVolEnv(effectiveSigma?.total);
   payloadData.raw_data.total_band = deriveTotalBand(marketTotal);
   payloadData.raw_data.injury_cloud = deriveInjuryCloud(injuryPointImpact);
@@ -1202,9 +1305,17 @@ function getHomeTeamRecentRoadTrip(
  * @param {object} oddsSnapshot
  * @returns {Promise<{available: boolean, paceAnchorTotal: number|null, blendedTotal: number|null, teamContextMissingInputs: string[]}>}
  */
-async function applyNbaTeamContext(gameId, oddsSnapshot) {
+async function applyNbaTeamContext(
+  gameId,
+  oddsSnapshot,
+  {
+    rollingBias = null,
+    getTeamMetricsWithGamesFn = getTeamMetricsWithGames,
+  } = {},
+) {
   const homeTeam = oddsSnapshot?.home_team;
   const awayTeam = oddsSnapshot?.away_team;
+  const calibrationState = normalizeNbaCalibrationState(rollingBias);
 
   if (!homeTeam || !awayTeam) {
     return {
@@ -1214,13 +1325,14 @@ async function applyNbaTeamContext(gameId, oddsSnapshot) {
       teamContextMissingInputs: ['nba_team_context'],
       availabilityGate: { missingFlags: [], uncertainFlags: [], availabilityFlags: [] },
       nullMetricTeams: [],
+      calibrationState,
     };
   }
 
   try {
     const [homeResult, awayResult] = await Promise.all([
-      getTeamMetricsWithGames(homeTeam, 'NBA', { includeImpactContext: true }),
-      getTeamMetricsWithGames(awayTeam, 'NBA', { includeImpactContext: true }),
+      getTeamMetricsWithGamesFn(homeTeam, 'NBA', { includeImpactContext: true }),
+      getTeamMetricsWithGamesFn(awayTeam, 'NBA', { includeImpactContext: true }),
     ]);
     const availabilityGate = buildNbaAvailabilityGate(
       homeResult?.impactContext || null,
@@ -1256,37 +1368,49 @@ async function applyNbaTeamContext(gameId, oddsSnapshot) {
         teamContextMissingInputs: ['nba_team_context'],
         availabilityGate,
         nullMetricTeams,
+        calibrationState,
       };
     }
 
     // pace-anchor: average of both teams' expected scoring contributions
     const paceAnchorTotal =
       (hAvgPts + hAvgPtsAllowed + aAvgPts + aAvgPtsAllowed) / 2;
+    // Apply rolling global bias exactly once before market blending. Later
+    // residual layers must add their own corrections on top, not compound this.
+    const correctedAnchor =
+      paceAnchorTotal -
+      (calibrationState.correction_applied ? calibrationState.bias : 0);
     const marketTotal = oddsSnapshot?.total ?? null;
     const blendedTotal = Number.isFinite(marketTotal)
       ? marketTotal * (1 - TEAM_CONTEXT_WEIGHT) +
-        paceAnchorTotal * TEAM_CONTEXT_WEIGHT
-      : paceAnchorTotal;
+        correctedAnchor * TEAM_CONTEXT_WEIGHT
+      : correctedAnchor;
 
     // Mutate raw_data so downstream models can read the anchor
     if (oddsSnapshot.raw_data && typeof oddsSnapshot.raw_data === 'object') {
-      oddsSnapshot.raw_data.pace_anchor_total = Number(
+      oddsSnapshot.raw_data.pace_anchor_total_raw = Number(
         paceAnchorTotal.toFixed(2),
       );
+      oddsSnapshot.raw_data.pace_anchor_total = Number(
+        correctedAnchor.toFixed(2),
+      );
       oddsSnapshot.raw_data.blended_total = Number(blendedTotal.toFixed(2));
+      oddsSnapshot.raw_data.calibration_state = calibrationState;
     }
 
     console.log(
-      `  [NBA_TEAM_CTX] ${gameId}: pace_anchor=${paceAnchorTotal.toFixed(2)}, blended=${blendedTotal.toFixed(2)} (market=${marketTotal ?? 'n/a'})`,
+      `  [NBA_TEAM_CTX] ${gameId}: pace_anchor=${correctedAnchor.toFixed(2)}, blended=${blendedTotal.toFixed(2)} (market=${marketTotal ?? 'n/a'})`,
     );
 
     return {
       available: true,
-      paceAnchorTotal: Number(paceAnchorTotal.toFixed(2)),
+      paceAnchorTotal: Number(correctedAnchor.toFixed(2)),
+      rawPaceAnchorTotal: Number(paceAnchorTotal.toFixed(2)),
       blendedTotal: Number(blendedTotal.toFixed(2)),
       teamContextMissingInputs: [],
       availabilityGate,
       nullMetricTeams,
+      calibrationState,
     };
   } catch (err) {
     console.warn(
@@ -1299,6 +1423,7 @@ async function applyNbaTeamContext(gameId, oddsSnapshot) {
       teamContextMissingInputs: ['nba_team_context'],
       availabilityGate: { missingFlags: [], uncertainFlags: [], availabilityFlags: [] },
       nullMetricTeams: [],
+      calibrationState,
     };
   }
 }
@@ -1755,11 +1880,12 @@ async function runNBAModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
     try {
       insertJobRun('run_nba_model', jobRunId, jobKey);
 
+      const db = getDatabase();
       // WI-0552: Compute empirical sigma from settled game history at job start.
       // Falls back to hardcoded defaults when fewer than 20 settled games exist.
       const computedSigma = edgeCalculator.computeSigmaFromHistory({
         sport: 'NBA',
-        db: getDatabase(),
+        db,
       });
       console.log('[run_nba_model] sigma:', JSON.stringify(computedSigma));
       console.log(`[SIGMA_SOURCE] sport=NBA source=${computedSigma.sigma_source} games_sampled=${computedSigma.games_sampled ?? null}`);
@@ -1770,6 +1896,13 @@ async function runNBAModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
           'All PLAY cards will be downgraded to LEAN until empirical sigma is available.',
         );
       }
+      const leagueBaselines = computeNbaLeagueBaselines({ db });
+      setNbaLeagueBaselinesForRun({
+        paceMin: leagueBaselines.paceMin,
+        paceMax: leagueBaselines.paceMax,
+        leagueMedianOffEff: leagueBaselines.medianOffEff,
+      });
+      const rollingBias = computeNbaRollingBias({ db, windowGames: 50 });
 
       const { DateTime } = require('luxon');
       const nowUtc = DateTime.utc();
@@ -1851,7 +1984,9 @@ async function runNBAModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
           }
 
           // WI-0768: Fetch team_metrics_cache; compute and blend pace-anchor total
-          const teamCtx = await applyNbaTeamContext(gameId, oddsSnapshot);
+          const teamCtx = await applyNbaTeamContext(gameId, oddsSnapshot, {
+            rollingBias,
+          });
           recordEspnNullTeams({
             sport: 'NBA',
             registry: espnNullRegistry,
@@ -2282,7 +2417,10 @@ async function runNBAModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
               oddsSnapshot,
               effectiveSigma,
               availabilityGate,
+              leagueBaselines,
             });
+            entry.card.payloadData.raw_data.calibration_state =
+              teamCtx.calibrationState || normalizeNbaCalibrationState(rollingBias);
           }
 
           // WI-0831: apply isotonic calibration to fair_prob before Kelly and card write.
@@ -2445,5 +2583,7 @@ module.exports = {
   applyPlayoffSigmaMultiplier,
   applyNbaFeatureTimelinessGuardToCards,
   stampNbaProjectionAccuracyFields,
+  applyNbaTeamContext,
+  computeNbaRollingBias,
   deriveTotalBand,
 };
