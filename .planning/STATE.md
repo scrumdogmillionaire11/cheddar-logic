@@ -4,7 +4,7 @@ milestone: v1.1
 milestone_name: Model Integrity & Betting Execution Hardening
 status: active
 last_updated: "2026-04-21T00:18:00Z"
-last_activity: "2026-04-21 - WI-1034-c in progress: MLB verification contract + watchdog enforcement"
+last_activity: "2026-04-21 - Completed quick task 169: WI-1024: NBA Phase 3A — Residual learning layer for total projection"
 ---
 
 # Project State
@@ -215,6 +215,7 @@ Notable: WI-0797 (pipeline health Discord watchdog), WI-0798 (NHL season key fix
 
 | # | Description | Date | Commit | Directory |
 |---|-------------|------|--------|-----------|
+| 169 | WI-1024: NBA Phase 3A — Residual learning layer for total projection | 2026-04-21 | 7818c7e3 | [169-wi-1024-nba-phase-3a-residual-learning-l](./quick/169-wi-1024-nba-phase-3a-residual-learning-l/) |
 | 168 | Document and gate initDualDb activation path | 2026-04-20 | cc9b8167 | [168-document-and-gate-initdualdb-activation-](./quick/168-document-and-gate-initdualdb-activation-/) |
 | 167 | WI-1015: Complete status→action migration in card transform | 2026-04-20 | 3b62cb2d | [167-wi-1015](./quick/167-wi-1015/) |
 | 166 | WI-1014: Delete orphaned canonical-decision.ts (deletion path) | 2026-04-20 | d506ce23 | [166-wi-1014](./quick/166-wi-1014/) |
