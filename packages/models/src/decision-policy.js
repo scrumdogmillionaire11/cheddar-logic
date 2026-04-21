@@ -1,18 +1,38 @@
 // Import reason-code constants from the package entrypoint to keep
 // cross-package imports on public surfaces.
-const {
-  MODEL_REASON_CODES,
-  DATA_REASON_CODES,
-  DATA_BLOCKER_CODES,
-  MARKET_REASON_CODES,
-  MARKET_UNVERIFIED_CODES,
-  GATE_REASON_CODES,
-  ALL_REASON_CODES,
-  REASON_CODE_SCHEMA_VERSION,
-  REASON_CODE_LABELS: CANONICAL_REASON_CODE_LABELS,
-  classifyReasonCode,
-  getReasonCodeLabel,
-} = require('../../data');
+const _reasonCodeRegistry = require('../../data');
+
+function asSet(value) {
+  if (value instanceof Set) return value;
+  if (Array.isArray(value)) return new Set(value);
+  return new Set();
+}
+
+const MODEL_REASON_CODES = asSet(_reasonCodeRegistry.MODEL_REASON_CODES);
+const DATA_REASON_CODES = asSet(_reasonCodeRegistry.DATA_REASON_CODES);
+const DATA_BLOCKER_CODES = asSet(_reasonCodeRegistry.DATA_BLOCKER_CODES);
+const MARKET_REASON_CODES = asSet(_reasonCodeRegistry.MARKET_REASON_CODES);
+const MARKET_UNVERIFIED_CODES = asSet(_reasonCodeRegistry.MARKET_UNVERIFIED_CODES);
+const GATE_REASON_CODES = asSet(_reasonCodeRegistry.GATE_REASON_CODES);
+const ALL_REASON_CODES = Array.isArray(_reasonCodeRegistry.ALL_REASON_CODES)
+  ? _reasonCodeRegistry.ALL_REASON_CODES
+  : [];
+const REASON_CODE_SCHEMA_VERSION = Number.isFinite(_reasonCodeRegistry.REASON_CODE_SCHEMA_VERSION)
+  ? _reasonCodeRegistry.REASON_CODE_SCHEMA_VERSION
+  : 0;
+const CANONICAL_REASON_CODE_LABELS =
+  _reasonCodeRegistry.REASON_CODE_LABELS &&
+  typeof _reasonCodeRegistry.REASON_CODE_LABELS === 'object'
+    ? _reasonCodeRegistry.REASON_CODE_LABELS
+    : {};
+const classifyReasonCode =
+  typeof _reasonCodeRegistry.classifyReasonCode === 'function'
+    ? _reasonCodeRegistry.classifyReasonCode
+    : () => 'UNKNOWN';
+const getReasonCodeLabel =
+  typeof _reasonCodeRegistry.getReasonCodeLabel === 'function'
+    ? _reasonCodeRegistry.getReasonCodeLabel
+    : (code) => CANONICAL_REASON_CODE_LABELS[toUpperToken(code)] || null;
 
 function toUpperToken(value) {
   if (value == null) return '';
