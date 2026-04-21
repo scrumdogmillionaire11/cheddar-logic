@@ -66,3 +66,4 @@ Web routes that query tables managed exclusively by migrations (e.g. `run_state`
 - `README.md` — repository-level runtime and ownership summary
 - `packages/data/README.md` — DB path and migration/runtime notes
 - `web/README.md` — web read-only runtime contract
+- Production DB path contract: `CHEDDAR_DB_PATH=/opt/data/cheddar-prod.db`

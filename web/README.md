@@ -10,7 +10,7 @@ This app is read-only with respect to the shared SQLite/sql.js database.
 - Web routes must not run migrations or DB writes.
 - Web DB teardown must use read-only close paths.
 
-Canonical contract: `../docs/decisions/ADR-0002-single-writer-db-contract.md`.
+Canonical contract: [`../docs/decisions/ADR-0002-single-writer-db-contract.md`](../docs/decisions/ADR-0002-single-writer-db-contract.md).
 
 Production DB path contract used by the runtime:
 
@@ -21,8 +21,8 @@ Production DB path contract used by the runtime:
 Install dependencies and run the dev server:
 
 ```bash
-npm install
-npm run dev
+npm --prefix web install
+npm --prefix web run dev
 ```
 
 Open <http://localhost:3000>.
@@ -32,8 +32,8 @@ Open <http://localhost:3000>.
 UI smoke tests (dev server required):
 
 ```bash
-npm run test:ui:cards
-npm run test:ui:results
+npm --prefix web run test:ui:cards
+npm --prefix web run test:ui:results
 ```
 
 ## Build Constraints
