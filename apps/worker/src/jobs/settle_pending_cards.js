@@ -932,9 +932,29 @@ function isProjectionAuditOnlyBlkRow(row) {
   return String(row?.card_type || '').trim().toLowerCase() === 'nhl-player-blk';
 }
 
+// nhl-pace-1p cards are projection-only (no market_key) and are settled exclusively
+// by settle_projections.js.  They must not be auto-closed by this job.
+const PROJECTION_ONLY_CARD_TYPES = Object.freeze([
+  'nhl-pace-1p',
+]);
+
+function isProjectionOnlyNoMarketKeyRow(row) {
+  return (
+    PROJECTION_ONLY_CARD_TYPES.includes(
+      String(row?.card_type || '').trim().toLowerCase(),
+    ) && !row?.market_key
+  );
+}
+
 function resolveNonActionableFinalReason(payloadData, row) {
   // F5 market cards are projection-only and must remain pending for settle_mlb_f5.
   if (isProjectionOnlyF5Row(row, payloadData)) {
+    return null;
+  }
+
+  // nhl-pace-1p and other projection-only types have no market_key by design;
+  // they must remain pending so settle_projections.js can grade them.
+  if (isProjectionOnlyNoMarketKeyRow(row)) {
     return null;
   }
 
@@ -2534,6 +2554,14 @@ async function settlePendingCards({
           continue;
         }
 
+        if (isProjectionOnlyNoMarketKeyRow(pendingCard)) {
+          cardsSkipped++;
+          console.log(
+            `[SettleCards] Skipping projection-only row ${pendingCard.card_id} (${pendingCard.result_id}) card_type=${pendingCard.card_type} for settle_projections`,
+          );
+          continue;
+        }
+
         let clvTracked = false;
         let lockedMarket = null;
 
@@ -3037,6 +3065,7 @@ module.exports = {
     resolveNonActionableFinalReason,
     isProjectionOnlyF5Row,
     isProjectionAuditOnlyBlkRow,
+    isProjectionOnlyNoMarketKeyRow,
     shouldEnableDisplayBackfill,
   },
 };
