@@ -134,10 +134,10 @@ async function validateResultsSourceContract(assert) {
   );
   assert.ok(
     pageSource.includes('Bucket Mapping') &&
-      pageSource.includes('LOW: confidence_score < 52%') &&
+      /LOW:\s+confidence_score\s+(?:<|&lt;)\s+52%/.test(pageSource) &&
       pageSource.includes('WATCH: 52%-57.99%') &&
       pageSource.includes('TRUST: 58%-62.99%') &&
-      pageSource.includes('STRONG: >= 63%'),
+      /STRONG:\s+(?:>=|&gt;=)\s+63%/.test(pageSource),
     'results page must show explicit LOW/WATCH/TRUST/STRONG bucket threshold mapping',
   );
   assert.ok(
