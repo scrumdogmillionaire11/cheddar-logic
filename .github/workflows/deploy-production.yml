@@ -22,16 +22,22 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
+          cache-dependency-path: |
+            packages/data/package-lock.json
+            packages/models/package-lock.json
+            packages/adapters/package-lock.json
+            packages/odds/package-lock.json
+            web/package-lock.json
 
       - name: Install package dependencies
         run: |
-          npm --prefix packages/data install
-          npm --prefix packages/models install
-          npm --prefix packages/adapters install
-          npm --prefix packages/odds install
+          npm --prefix packages/data ci
+          npm --prefix packages/models ci
+          npm --prefix packages/adapters ci
+          npm --prefix packages/odds ci
 
       - name: Install web dependencies
-        run: npm --prefix web install --include=dev
+        run: npm --prefix web ci --include=dev
 
       - name: Check middleware file integrity
         # middleware.ts is the sole Next.js middleware entry point.
@@ -53,9 +59,6 @@ jobs:
 
       - name: Lint web
         run: npm --prefix web run lint
-
-      - name: Build web
-        run: npm --prefix web run build
 
   deploy-web-vercel:
     name: Deploy Web (Vercel)
@@ -233,11 +236,11 @@ jobs:
             npm config set fetch-retry-maxtimeout 120000
             npm config set fetch-timeout 300000
             # Install dependencies
-            retry_npm_install "packages/data install" npm --prefix packages/data install --omit=dev
-            retry_npm_install "packages/models install" npm --prefix packages/models install --omit=dev
-            retry_npm_install "packages/adapters install" npm --prefix packages/adapters install --omit=dev
-            retry_npm_install "packages/odds install" npm --prefix packages/odds install --omit=dev
-            retry_npm_install "apps/worker install" npm --prefix apps/worker install --omit=dev
+            retry_npm_install "packages/data ci" npm --prefix packages/data ci --omit=dev
+            retry_npm_install "packages/models ci" npm --prefix packages/models ci --omit=dev
+            retry_npm_install "packages/adapters ci" npm --prefix packages/adapters ci --omit=dev
+            retry_npm_install "packages/odds ci" npm --prefix packages/odds ci --omit=dev
+            retry_npm_install "apps/worker ci" npm --prefix apps/worker ci --omit=dev
             # Web: only wipe node_modules when the lockfile changed — prevents
             # better-sqlite3 from re-downloading its ARM prebuild on every deploy.
             WEB_LOCK_HASH=$(md5sum web/package-lock.json | awk '{print $1}')
@@ -302,8 +305,10 @@ jobs:
             # Ensure feature flags are present in .env.production (idempotent)
             ENV_PROD=/opt/cheddar-logic/.env.production
             grep -q '^ENABLE_CLV_LEDGER=' "$ENV_PROD" 2>/dev/null || echo 'ENABLE_CLV_LEDGER=true' >> "$ENV_PROD"
-            sudo apt-get update -y
-            sudo apt-get install -y sqlite3
+            if ! command -v sqlite3 >/dev/null 2>&1; then
+              sudo apt-get update -y
+              sudo apt-get install -y sqlite3
+            fi
             # Fail deploy if expected schema is missing from production DB
             test -s "$CANONICAL_DB_PATH" || { echo "ERROR: missing or empty canonical DB after migrations: $CANONICAL_DB_PATH"; exit 1; }
             TABLE_CHECK_OK=0

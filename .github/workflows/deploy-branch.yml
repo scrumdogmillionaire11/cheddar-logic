@@ -86,42 +86,6 @@ jobs:
           CHEDDAR_DB_PATH: /tmp/cheddar-logic/ci-safe.db
         run: npm --prefix apps/worker test
 
-      - name: Pack worker artifact
-        id: pack
-        run: |
-          SHA=${{ steps.meta.outputs.sha }}
-          ARTIFACT_NAME="worker-${SHA}"
-          tar --exclude='node_modules' \
-              --exclude='.git' \
-              --exclude='.next' \
-              --exclude='*.db' \
-              --exclude='*.db-journal' \
-              --exclude='*.db.lock' \
-              -czf "/tmp/${ARTIFACT_NAME}.tar.gz" \
-              packages/data/src \
-              packages/data/package.json \
-              packages/models/src \
-              packages/models/package.json \
-              packages/adapters/src \
-              packages/adapters/package.json \
-              packages/odds/src \
-              packages/odds/package.json \
-              apps/worker/src \
-              apps/worker/package.json \
-              apps/worker/package-lock.json \
-              scripts/run-migrations.js
-          echo "artifact_name=$ARTIFACT_NAME" >> "$GITHUB_OUTPUT"
-          echo "artifact_path=/tmp/${ARTIFACT_NAME}.tar.gz" >> "$GITHUB_OUTPUT"
-          echo "Packed artifact: ${ARTIFACT_NAME}.tar.gz ($(du -sh /tmp/${ARTIFACT_NAME}.tar.gz | cut -f1))"
-
-      - name: Upload immutable artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ steps.pack.outputs.artifact_name }}
-          path: ${{ steps.pack.outputs.artifact_path }}
-          retention-days: 14
-          if-no-files-found: error
-
   deploy-worker-pi:
     name: Deploy Worker to Pi
     needs: build-artifact
@@ -191,11 +155,11 @@ jobs:
             rm -f "${CHEDDAR_DB_PATH}.lock"
 
             # Install package + worker deps (omit dev)
-            npm --prefix packages/data install --omit=dev
-            npm --prefix packages/models install --omit=dev
-            npm --prefix packages/adapters install --omit=dev
-            npm --prefix packages/odds install --omit=dev
-            npm --prefix apps/worker install --omit=dev
+            npm --prefix packages/data ci --omit=dev
+            npm --prefix packages/models ci --omit=dev
+            npm --prefix packages/adapters ci --omit=dev
+            npm --prefix packages/odds ci --omit=dev
+            npm --prefix apps/worker ci --omit=dev
 
             # ── WI-0979: Migration preflight ──────────────────────────────────
             echo "Running migration preflight against: $CHEDDAR_DB_PATH"
