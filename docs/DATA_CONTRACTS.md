@@ -151,6 +151,12 @@ CREATE INDEX idx_odds_game_id ON odds_snapshots(game_id);
 CREATE INDEX idx_odds_captured_at ON odds_snapshots(captured_at);
 ```
 
+**Timestamp Policy (odds_snapshots):**
+- Use captured_at for freshness, recency, and joins to runtime odds state.
+- Treat created_at as row-audit metadata only (insert time), not market-capture time.
+- Do not use created_at in odds_snapshots recency queries or diagnostics.
+
+
 ---
 
 ### `model_outputs` (Betting Predictions)

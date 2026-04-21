@@ -5,6 +5,8 @@
 
 ## Root Cause: Stale Odds Data
 
+Timestamp contract for odds diagnostics: use captured_at from odds_snapshots for freshness checks; do not use created_at.
+
 ### Odds Pipeline Status
 
 - **Last NBA odds captured**: March 4, 2026 7:00 PM EST (~8 hours ago)
