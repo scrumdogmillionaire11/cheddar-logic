@@ -651,19 +651,38 @@ function buildNhl1pWalkForwardReport(db) {
   const rows = db
     .prepare(
       `
+      WITH ranked_nhl_1p AS (
+        SELECT
+          cr.card_id,
+          cr.game_id,
+          cr.card_type,
+          cr.settled_at,
+          ROW_NUMBER() OVER (
+            PARTITION BY cr.game_id, LOWER(COALESCE(cr.card_type, ''))
+            ORDER BY
+              datetime(COALESCE(cr.settled_at, cp.created_at)) DESC,
+              datetime(cp.created_at) DESC,
+              cr.card_id DESC
+          ) AS dedupe_rank
+        FROM card_results cr
+        INNER JOIN card_payloads cp ON cp.id = cr.card_id
+        INNER JOIN game_results gr ON gr.game_id = cr.game_id
+        WHERE LOWER(COALESCE(cr.sport, '')) = 'nhl'
+          AND LOWER(COALESCE(cr.card_type, '')) IN (${placeholders})
+          AND LOWER(COALESCE(gr.status, '')) = 'final'
+          AND LOWER(COALESCE(cr.status, '')) = 'settled'
+          AND cr.settled_at IS NOT NULL
+      )
       SELECT
         cp.payload_data,
         ${actualResultSelect},
         gr.metadata AS game_result_metadata,
-        cr.settled_at
-      FROM card_results cr
-      INNER JOIN card_payloads cp ON cp.id = cr.card_id
-      INNER JOIN game_results gr ON gr.game_id = cr.game_id
-      WHERE LOWER(COALESCE(cr.sport, '')) = 'nhl'
-        AND LOWER(COALESCE(cr.card_type, '')) IN (${placeholders})
-        AND LOWER(COALESCE(gr.status, '')) = 'final'
-        AND cr.settled_at IS NOT NULL
-      ORDER BY cr.settled_at ASC
+        rn.settled_at
+      FROM ranked_nhl_1p rn
+      INNER JOIN card_payloads cp ON cp.id = rn.card_id
+      INNER JOIN game_results gr ON gr.game_id = rn.game_id
+      WHERE rn.dedupe_rank = 1
+      ORDER BY rn.settled_at ASC
     `,
     )
     .all(...NHL_1P_BASELINE_CARD_TYPES);
@@ -1007,7 +1026,7 @@ function buildNhl1pBaselineScorecard(db) {
     sampleScope: {
       sport: 'NHL',
       cardFamily: 'NHL_1P_TOTAL',
-      source: 'all_final_game_results',
+      source: 'all_final_settled_game_results_deduped_by_game_and_card_type',
       buckets: NHL_1P_BASELINE_BUCKETS.map((bucket) => bucket.label),
     },
     sampleSize: 0,
@@ -1035,17 +1054,36 @@ function buildNhl1pBaselineScorecard(db) {
   const rows = db
     .prepare(
       `
+      WITH ranked_nhl_1p AS (
+        SELECT
+          cr.card_id,
+          cr.game_id,
+          cr.card_type,
+          ROW_NUMBER() OVER (
+            PARTITION BY cr.game_id, LOWER(COALESCE(cr.card_type, ''))
+            ORDER BY
+              datetime(COALESCE(cr.settled_at, cp.created_at)) DESC,
+              datetime(cp.created_at) DESC,
+              cr.card_id DESC
+          ) AS dedupe_rank
+        FROM card_results cr
+        INNER JOIN card_payloads cp ON cp.id = cr.card_id
+        INNER JOIN game_results gr ON gr.game_id = cr.game_id
+        WHERE LOWER(COALESCE(cr.sport, '')) = 'nhl'
+          AND LOWER(COALESCE(cr.card_type, '')) IN (${placeholders})
+          AND LOWER(COALESCE(gr.status, '')) = 'final'
+          AND LOWER(COALESCE(cr.status, '')) = 'settled'
+          AND cr.settled_at IS NOT NULL
+      )
       SELECT
         cp.payload_data,
         ${actualResultSelect},
         gr.metadata AS game_result_metadata
-      FROM card_results cr
-      INNER JOIN card_payloads cp ON cp.id = cr.card_id
-      INNER JOIN game_results gr ON gr.game_id = cr.game_id
-      WHERE LOWER(COALESCE(cr.sport, '')) = 'nhl'
-        AND LOWER(COALESCE(cr.card_type, '')) IN (${placeholders})
-        AND LOWER(COALESCE(gr.status, '')) = 'final'
-      ORDER BY cr.game_id ASC, cr.card_id ASC
+      FROM ranked_nhl_1p rn
+      INNER JOIN card_payloads cp ON cp.id = rn.card_id
+      INNER JOIN game_results gr ON gr.game_id = rn.game_id
+      WHERE rn.dedupe_rank = 1
+      ORDER BY rn.game_id ASC, rn.card_id ASC
     `,
     )
     .all(...NHL_1P_BASELINE_CARD_TYPES);
