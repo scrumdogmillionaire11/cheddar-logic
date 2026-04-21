@@ -524,9 +524,9 @@ function renderNearMissSummary(summary: PotdNearMissSummary) {
           </div>
         </div>
         <a
-          href="#potd-play-log"
-          aria-label="Jump to POTD play log"
-          title="Jump to play log"
+          href="/play-of-the-day/settled"
+          aria-label="Open POTD settled games"
+          title="Open settled games"
           className="cursor-pointer rounded-2xl border border-white/10 bg-night/40 p-4 transition hover:border-teal/45 hover:bg-teal/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal/60 focus-visible:ring-offset-2 focus-visible:ring-offset-night"
         >
           <div className="text-[11px] uppercase tracking-[0.22em] text-cloud/50">
@@ -536,7 +536,7 @@ function renderNearMissSummary(summary: PotdNearMissSummary) {
             {summary.settledCount}
           </div>
           <div className="mt-1 text-[10px] uppercase tracking-[0.18em] text-teal-100/80">
-            View play log
+            View all settled games
           </div>
         </a>
         <div className="rounded-2xl border border-white/10 bg-night/40 p-4">

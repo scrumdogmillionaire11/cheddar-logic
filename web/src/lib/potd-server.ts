@@ -240,6 +240,11 @@ export type PotdResponseData = {
   winnerStatus: 'FIRED' | 'NO_PICK' | null;
 };
 
+export type PotdSettledHistoryData = {
+  settledCount: number;
+  settled: PotdApiPlay[];
+};
+
 function splitNomineesByPresentation(
   nominees: PotdNominee[],
   winnerStatus: 'FIRED' | 'NO_PICK' | null,
@@ -685,6 +690,30 @@ export async function getPotdResponseData(now = new Date()): Promise<PotdRespons
       diagnosticNominees: nomineeBuckets.diagnosticNominees,
       nearMissSummary,
       winnerStatus,
+    };
+  } finally {
+    if (db) closeReadOnlyInstance(db);
+  }
+}
+
+export async function getPotdSettledHistoryData(): Promise<PotdSettledHistoryData> {
+  let db: ReturnType<typeof getDatabaseReadOnly> | null = null;
+  try {
+    await ensureDbReady();
+    db = getDatabaseReadOnly();
+
+    const settledRows = (db
+      .prepare(
+        `SELECT *
+         FROM potd_plays
+         WHERE result IS NOT NULL
+         ORDER BY play_date DESC, datetime(COALESCE(settled_at, posted_at)) DESC`,
+      )
+      .all() as PotdPlayRow[]).map(mapPlayRow);
+
+    return {
+      settledCount: settledRows.length,
+      settled: settledRows,
     };
   } finally {
     if (db) closeReadOnlyInstance(db);
