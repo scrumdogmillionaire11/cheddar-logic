@@ -442,6 +442,40 @@ const POTD_MAX_NOMINEES = Number(process.env.POTD_MAX_NOMINEES || 5);
 const POTD_MAX_NEAR_MISS_SHADOW_CANDIDATES = 3;
 // Set POTD_AUDIT_LOG_ENABLED=false to suppress per-candidate audit lines in production logs.
 const POTD_AUDIT_LOG_ENABLED = process.env.POTD_AUDIT_LOG_ENABLED !== 'false';
+/**
+ * Load model health gates from the most recent snapshot per sport.
+ * Returns a Set of uppercase sport keys (e.g. 'NBA', 'MLB', 'NHL') whose
+ * MODEL-sourced candidates are blocked from POTD selection.
+ * Blocked statuses: 'critical' only.
+ * 'stale' means the health report job hasn't run recently — model quality is unknown, not
+ * confirmed bad. Blocking stale sports would cause silent NO_PICK days whenever the monitoring
+ * job misses a run, which is an operational failure masquerading as a signal failure.
+ * 'degraded' candidates still compete — lower hit rates but not disqualified.
+ * Safe-fails to empty Set if the table is missing or has no rows.
+ */
+function loadModelHealthGates(db) {
+  const blocked = new Set();
+  if (!db) return blocked;
+  try {
+    const rows = db.prepare(`
+      SELECT sport, status
+      FROM model_health_snapshots
+      WHERE (sport, run_at) IN (
+        SELECT sport, MAX(run_at) FROM model_health_snapshots GROUP BY sport
+      )
+    `).all();
+    for (const row of rows) {
+      if (row.status === 'critical') {
+        blocked.add(String(row.sport).toUpperCase());
+      }
+    }
+  } catch (_) {
+    // Table missing or query error — fail open (no gates applied)
+  }
+  return blocked;
+}
+
+
 
 /**
  * Pure function — builds a structured audit entry for a scored candidate.
@@ -709,6 +743,7 @@ async function gatherBestCandidate({
   buildCandidatesFn,
   scoreCandidateFn,
   selectTopPlaysFn,
+  db = null,
 }) {
   const sports = getActivePotdSports();
   const scoredCandidates = [];
@@ -762,7 +797,40 @@ async function gatherBestCandidate({
 
   // Apply per-sport noise floors before ranking; pass minEdgePct: 0 so
   // selectTopPlaysFn does not re-apply a single global floor on top.
+  const modelHealthGates = loadModelHealthGates(db);
+  if (POTD_AUDIT_LOG_ENABLED && modelHealthGates.size > 0) {
+    console.log(JSON.stringify({
+      type: 'POTD_MODEL_HEALTH_GATES_ACTIVE',
+      blockedSports: Array.from(modelHealthGates),
+      note: 'MODEL-sourced candidates from these sports are excluded from POTD selection',
+    }));
+  }
+  function isSportModelGated(candidate) {
+    if (modelHealthGates.size === 0 || candidate.edgeSourceTag !== 'MODEL') return false;
+    const sportKey = String(candidate.sport || '')
+      .toUpperCase()
+      .replace('BASEBALL_', '')
+      .replace('ICEHOCKEY_', '')
+      .replace('BASKETBALL_', '')
+      .replace('AMERICANFOOTBALL_', '');
+    return modelHealthGates.has(sportKey);
+  }
   const noisePassed = scoredCandidates.filter(c => {
+    if (isSportModelGated(c)) {
+      if (POTD_AUDIT_LOG_ENABLED) {
+        console.log(JSON.stringify({
+          type: 'POTD_MODEL_HEALTH_GATE',
+          sport: c.sport,
+          marketType: c.marketType,
+          selectionLabel: c.selectionLabel,
+          edgePct: c.edgePct,
+          totalScore: c.totalScore,
+          edgeSourceTag: c.edgeSourceTag,
+          note: 'MODEL candidate blocked — sport health status is critical or stale',
+        }));
+      }
+      return false;
+    }
     const noiseFloor = resolveNoiseFloor(c.sport, c.marketType, POTD_MIN_EDGE);
     return isFiniteNumber(c.edgePct) && c.edgePct > noiseFloor;
   });
@@ -901,6 +969,7 @@ async function runPotdEngine({
         buildCandidatesFn,
         scoreCandidateFn,
         selectTopPlaysFn,
+        db,
       });
 
       const bankrollState = ensureInitialBankroll(db, {
@@ -1345,5 +1414,6 @@ module.exports = {
     getActivePotdSports,
     selectNearMissShadowCandidates,
     buildCandidateAuditEntry,
+    loadModelHealthGates,
   },
 };

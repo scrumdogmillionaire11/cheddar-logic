@@ -47,6 +47,23 @@ const TRACKED_PROJECTION_ACCURACY_CARD_TYPES = Object.freeze({
     propType: 'f5_total',
     identity: 'game',
   }),
+  'mlb-f5-ml': Object.freeze({
+    marketFamily: 'MLB_F5_ML',
+    actualKeys: ['f5_ml_actual'],
+    defaultPeriod: 'F5',
+    projectionKeys: [
+      'projection_accuracy.win_probability',
+      'win_probability',
+      'p_fair',
+      'fair_prob',
+      'model_prob',
+      'projection.projected_win_prob_home',
+      'drivers.0.projected_win_prob_home',
+      'drivers.0.win_prob_home',
+    ],
+    propType: 'f5_moneyline',
+    identity: 'game',
+  }),
   'nhl-player-shots': Object.freeze({
     marketFamily: 'NHL_PLAYER_SHOTS',
     actualKeys: ['shots'],
@@ -113,6 +130,7 @@ const COMMON_LINES_BY_MARKET_FAMILY = Object.freeze({
 const MARKET_CONFIDENCE_DEFAULTS = Object.freeze({
   NBA_TOTAL: Object.freeze({ marketEdgeScale: 1.25, marketVarianceCap: 6.0 }),
   MLB_F5_TOTAL: Object.freeze({ marketEdgeScale: 0.75, marketVarianceCap: 3.0 }),
+  MLB_F5_ML: Object.freeze({ marketEdgeScale: 0.08, marketVarianceCap: 0.25 }),
   MLB_PITCHER_K: Object.freeze({ marketEdgeScale: 1.0, marketVarianceCap: 3.5 }),
   NHL_PLAYER_SHOTS: Object.freeze({ marketEdgeScale: 0.75, marketVarianceCap: 2.5 }),
   NHL_PLAYER_SHOTS_1P: Object.freeze({ marketEdgeScale: 0.5, marketVarianceCap: 1.5 }),
@@ -121,10 +139,13 @@ const MARKET_CONFIDENCE_DEFAULTS = Object.freeze({
 
 const WEAK_DIRECTION_EDGE_THRESHOLD = 0.15;
 const SYNTHETIC_RULE_NEAREST_HALF = 'nearest_half';
+const SYNTHETIC_RULE_MONEYLINE_BASELINE = 'moneyline_baseline';
+const MONEYLINE_BASELINE = 0.5;
 const MIN_MARKET_TRUST_SAMPLE = 25;
 const PROJECTION_ACCURACY_MARKET_FAMILIES = Object.freeze([
   'NBA_TOTAL',
   'MLB_F5_TOTAL',
+  'MLB_F5_ML',
   'MLB_PITCHER_K',
   'NHL_PLAYER_SHOTS',
   'NHL_PLAYER_BLOCKS',
@@ -228,6 +249,69 @@ function normalizeConfidenceScore(value) {
   if (parsed === null) return null;
   if (parsed > 1 && parsed <= 100) return parsed / 100;
   return Math.max(0, Math.min(1, parsed));
+}
+
+function normalizeProbability(value) {
+  const parsed = toFiniteNumberOrNull(value);
+  if (parsed === null) return null;
+  const probability = parsed > 1 && parsed <= 100 ? parsed / 100 : parsed;
+  if (probability < 0 || probability > 1) return null;
+  return probability;
+}
+
+function normalizeMoneylineSide(value) {
+  const token = String(value || '').trim().toUpperCase();
+  if (token === 'HOME' || token === 'H') return 'HOME';
+  if (token === 'AWAY' || token === 'A') return 'AWAY';
+  return null;
+}
+
+function resolveMoneylineSelectedSide(payload = {}) {
+  return normalizeMoneylineSide(
+    payload?.selection?.side ??
+      payload?.play?.selection?.side ??
+      payload?.market_context?.selection_side ??
+      payload?.canonical_envelope_v2?.selection_side ??
+      payload?.decision_v2?.selection_side ??
+      payload?.prediction,
+  );
+}
+
+function resolveMoneylineWinProbability(payload = {}, selectedSide = null) {
+  const selectedProbability = pickFirstFinite(payload, [
+    'projection_accuracy.win_probability',
+    'win_probability',
+    'p_fair',
+    'fair_prob',
+    'model_prob',
+  ]);
+  const normalizedSelected = normalizeProbability(selectedProbability);
+  if (normalizedSelected !== null) return normalizedSelected;
+
+  const homeProbability = normalizeProbability(pickFirstFinite(payload, [
+    'projection.projected_win_prob_home',
+    'drivers.0.projected_win_prob_home',
+    'drivers.0.win_prob_home',
+  ]));
+  if (homeProbability === null) return null;
+  const side = normalizeMoneylineSide(selectedSide);
+  if (side === 'HOME') return homeProbability;
+  if (side === 'AWAY') return roundMetric(1 - homeProbability, 6);
+  return null;
+}
+
+function isMoneylineMarketFamily(marketFamily) {
+  return marketFamily === 'MLB_F5_ML';
+}
+
+function moneylineExpectedOutcomeLabel(selectedSide) {
+  const side = normalizeMoneylineSide(selectedSide);
+  return side ? `${side}_WIN` : null;
+}
+
+function moneylineEdgePp(winProbability) {
+  const probability = normalizeProbability(winProbability);
+  return probability === null ? null : roundMetric((probability - MONEYLINE_BASELINE) * 100, 6);
 }
 
 function confidenceBand(score) {
@@ -1081,6 +1165,37 @@ function materializeProjectionAccuracyMarketHealth(db, {
 
 function buildProjectionAccuracyLineRows(capture) {
   if (!capture) return [];
+  if (isMoneylineMarketFamily(capture.marketFamily)) {
+    const evalLine = toFiniteNumberOrNull(capture.syntheticLine ?? MONEYLINE_BASELINE);
+    const probability = normalizeProbability(capture.winProbability ?? capture.projectionValue);
+    if (evalLine === null || probability === null) return [];
+    const edge = roundMetric(probability - evalLine, 6);
+    const confidenceScore = deriveProjectionConfidence({
+      edgeDistance: Math.abs(edge ?? 0),
+      historicalBucketHitRate: capture.historicalBucketHitRate ?? 0.5,
+      varianceOfMarket: capture.varianceOfMarket ?? null,
+      marketFamily: capture.marketFamily,
+    });
+    return [{
+      card_id: capture.cardId,
+      line_role: 'SYNTHETIC',
+      line: evalLine,
+      eval_line: evalLine,
+      projection_value: probability,
+      direction: capture.selectedDirection ?? 'SELECTED_SIDE',
+      weak_direction_flag: 0,
+      edge_vs_line: edge,
+      edge_pp: moneylineEdgePp(probability),
+      confidence_score: confidenceScore,
+      confidence_band: confidenceBand(confidenceScore),
+      market_trust: capture.marketTrust,
+      expected_over_prob: probability,
+      expected_direction_prob: probability,
+      tracking_role: capture.trackingRole ?? 'SELECTED_SIDE',
+      expected_outcome_label: capture.expectedOutcomeLabel ?? null,
+    }];
+  }
+
   const rows = [];
   const addLine = (lineRole, line) => {
     const evalLine = toFiniteNumberOrNull(line);

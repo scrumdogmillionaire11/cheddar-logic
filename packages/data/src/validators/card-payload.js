@@ -425,6 +425,39 @@ const mlbF5PayloadSchema = basePayloadSchema
     }
   });
 
+const mlbF5MoneylinePayloadSchema = basePayloadSchema
+  .extend({
+    game_id: z.string().min(1),
+    sport: z.literal('MLB'),
+    model_version: z.string().min(1),
+    market_type: z.literal('FIRST_5_INNINGS'),
+    selection: z.object({
+      side: z.enum(['HOME', 'AWAY']),
+    }),
+    status: z.enum(['FIRE', 'WATCH', 'PASS']).optional(),
+    action: z.enum(['FIRE', 'HOLD', 'PASS']).optional(),
+    classification: z.enum(['BASE', 'LEAN', 'PASS']).optional(),
+    ev_passed: z.boolean(),
+    edge_pp: z.number(),
+    confidence_score: z.number().min(0).max(100),
+    confidence_band: z.enum(['HIGH', 'MED', 'LOW']),
+    model_signal_tier: z.enum(['PLAY', 'SLIGHT_EDGE', 'PASS']),
+    tracking_role: z.enum(['OFFICIAL_PICK', 'CALIBRATION_ONLY']),
+    projection: z.object({
+      projected_win_prob_home: z.number().min(0).max(1),
+      selected_side: z.enum(['HOME', 'AWAY']),
+      win_probability: z.number().min(0).max(1),
+    }).passthrough(),
+    projection_accuracy: z.object({
+      projection_raw: z.number().min(0).max(1),
+      projection_key: z.literal('win_probability'),
+      actual_key: z.literal('win_outcome'),
+      synthetic_line: z.literal(0.5),
+      synthetic_rule: z.literal('moneyline_baseline'),
+    }).passthrough(),
+  })
+  .passthrough();
+
 const schemaByCardType = {
   // Active NHL driver + evidence cards
   'nhl-goalie': driverPayloadSchema,
@@ -470,7 +503,7 @@ const schemaByCardType = {
   'mlb-model-output': basePayloadSchema,
   'mlb-strikeout': basePayloadSchema,
   'mlb-f5': mlbF5PayloadSchema,
-  'mlb-f5-ml': basePayloadSchema,
+  'mlb-f5-ml': mlbF5MoneylinePayloadSchema,
   'mlb-full-game': basePayloadSchema,
   'mlb-full-game-ml': basePayloadSchema,
   'nfl-model-output': basePayloadSchema,

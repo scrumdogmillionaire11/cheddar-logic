@@ -10,10 +10,11 @@ const {
   getProjectionAccuracyMarketHealth,
 } = data;
 
-const DEFAULT_LOOKBACK_DAYS = 90;
+const DEFAULT_LOOKBACK_DAYS = 30;
 const MAX_LOOKBACK_DAYS = 365;
 const VALID_MARKETS = new Set([
   'MLB_F5_TOTAL',
+  'MLB_F5_ML',
   'MLB_PITCHER_K',
   'NHL_PLAYER_SHOTS',
   'NHL_PLAYER_BLOCKS',

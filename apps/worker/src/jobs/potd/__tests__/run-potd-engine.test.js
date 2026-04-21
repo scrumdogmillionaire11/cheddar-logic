@@ -1441,3 +1441,49 @@ describe('buildCandidateAuditEntry', () => {
     expect(entry.noiseFloor).toBe(noiseFloor);
   });
 });
+
+describe('loadModelHealthGates', () => {
+  let loadModelHealthGates;
+  beforeAll(() => {
+    ({ __private: { loadModelHealthGates } } = require('../run_potd_engine'));
+  });
+
+  function makeDb(rows) {
+    return {
+      prepare: () => ({ all: () => rows }),
+    };
+  }
+
+  test('returns empty Set when db is null', () => {
+    expect(loadModelHealthGates(null).size).toBe(0);
+  });
+
+  test('blocks only critical sports — not stale', () => {
+    const gates = loadModelHealthGates(makeDb([
+      { sport: 'nba', status: 'critical' },
+      { sport: 'mlb', status: 'stale' },
+      { sport: 'nhl', status: 'healthy' },
+    ]));
+    expect(gates.has('NBA')).toBe(true);
+    expect(gates.has('MLB')).toBe(false); // stale = unknown quality, not confirmed bad
+    expect(gates.has('NHL')).toBe(false);
+  });
+
+  test('does not block degraded sports', () => {
+    const gates = loadModelHealthGates(makeDb([
+      { sport: 'nba', status: 'degraded' },
+    ]));
+    expect(gates.has('NBA')).toBe(false);
+  });
+
+  test('returns empty Set when query throws', () => {
+    const badDb = { prepare: () => { throw new Error('no table'); } };
+    expect(() => loadModelHealthGates(badDb)).not.toThrow();
+    expect(loadModelHealthGates(badDb).size).toBe(0);
+  });
+
+  test('returns empty Set when snapshots table is empty', () => {
+    const gates = loadModelHealthGates(makeDb([]));
+    expect(gates.size).toBe(0);
+  });
+});
