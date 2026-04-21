@@ -45,6 +45,10 @@ const {
   deriveMlbExecutionEnvelope,
   assertMlbExecutionInvariant,
   applyExecutionGateToMlbPayload,
+  resolveMlbVerificationThresholds,
+  evaluateMlbVerificationGateChecks,
+  buildMlbVerificationRequirements,
+  applyMlbVerificationContract,
   applyMlbProjectionOnlyGuards,
   buildMlbMarketAvailability,
   hydrateCanonicalMlbMarketLines,
@@ -1503,6 +1507,235 @@ describe('buildMlbPitcherKPayloadFields', () => {
 });
 
 describe('WI-0720 MLB execution envelope', () => {
+  describe('verification contract semantics (WI-1034-c)', () => {
+    test('threshold resolver uses defaults and allows overrides', () => {
+      expect(resolveMlbVerificationThresholds()).toEqual({
+        priceDriftCents: 5,
+        adverseMoveCents: 5,
+      });
+      expect(
+        resolveMlbVerificationThresholds({ priceDriftCents: 9, adverseMoveCents: 12 }),
+      ).toEqual({
+        priceDriftCents: 9,
+        adverseMoveCents: 12,
+      });
+    });
+
+    test('gate check evaluation honors default and override thresholds', () => {
+      expect(
+        evaluateMlbVerificationGateChecks({
+          priceDriftCents: 6,
+          adverseMoveCents: 4,
+          thresholds: resolveMlbVerificationThresholds(),
+        }),
+      ).toEqual(['PRICE_STALE']);
+
+      expect(
+        evaluateMlbVerificationGateChecks({
+          priceDriftCents: 6,
+          adverseMoveCents: 4,
+          thresholds: resolveMlbVerificationThresholds({ priceDriftCents: 10 }),
+        }),
+      ).toEqual([]);
+    });
+
+    test('builds verification requirements preserving first-fail order while capturing all cheap blockers', () => {
+      const requirements = buildMlbVerificationRequirements({
+        reasonCodes: ['LINE_MOVE_ADVERSE', 'STARTER_UNCONFIRMED', 'INJURY_UNCERTAIN'],
+        gateCheckBlockers: ['PRICE_STALE'],
+      });
+
+      expect(requirements.map((entry) => entry.blocker_code)).toEqual([
+        'PRICE_STALE',
+        'STARTER_UNCONFIRMED',
+        'LINE_MOVE_ADVERSE',
+        'INJURY_UNCERTAIN',
+      ]);
+    });
+
+    test('pending verification stamps LEAN + verification_state=PENDING with next action summary', () => {
+      const card = {
+        payloadData: {
+          action: 'FIRE',
+          status: 'FIRE',
+          classification: 'BASE',
+          reason_codes: ['STARTER_UNCONFIRMED', 'LINE_MOVE_ADVERSE'],
+          decision_v2: {
+            official_status: 'PLAY',
+            watchdog_reason_codes: ['STARTER_UNCONFIRMED'],
+            price_reason_codes: ['LINE_MOVE_ADVERSE'],
+          },
+          raw_data: { price_drift_cents: 9 },
+        },
+      };
+
+      const verification = applyMlbVerificationContract(card);
+
+      expect(card.payloadData.classification).toBe('LEAN');
+      expect(card.payloadData.action).toBe('HOLD');
+      expect(card.payloadData.verification_state).toBe('PENDING');
+      expect(card.payloadData.next_action_summary).toEqual(expect.any(String));
+      expect(verification.requirements.length).toBeGreaterThan(1);
+    });
+
+    test('CLEARED does not auto-promote to PLAY and keeps re-evaluation semantics', () => {
+      const card = {
+        payloadData: {
+          action: 'FIRE',
+          status: 'FIRE',
+          classification: 'BASE',
+          reason_codes: ['STARTER_UNCONFIRMED'],
+          decision_v2: { official_status: 'PLAY' },
+          raw_data: {},
+        },
+      };
+
+      applyMlbVerificationContract(card, { terminalState: 'CLEARED' });
+
+      expect(card.payloadData.verification_state).toBe('CLEARED');
+      expect(card.payloadData.action).toBe('HOLD');
+      expect(card.payloadData.classification).toBe('LEAN');
+      expect(card.payloadData.next_action_summary).toContain('re-run threshold logic');
+    });
+
+    test('EXPIRED terminal state emits contract PASS message and stops progression', () => {
+      const card = {
+        payloadData: {
+          action: 'HOLD',
+          status: 'WATCH',
+          classification: 'LEAN',
+          reason_codes: ['STARTER_UNCONFIRMED'],
+          raw_data: {},
+        },
+      };
+
+      applyMlbVerificationContract(card, { terminalState: 'EXPIRED' });
+
+      expect(card.payloadData.verification_state).toBe('EXPIRED');
+      expect(card.payloadData.action).toBe('PASS');
+      expect(card.payloadData.pass_reason_code).toBe(
+        'PASS - EXPIRED: Verification window closed without resolution.',
+      );
+    });
+
+    test('LEAN + verification_state=CLEARED|NOT_REQUIRED semantics remain distinguishable', () => {
+      const clearedCard = {
+        payloadData: {
+          action: 'HOLD',
+          status: 'WATCH',
+          classification: 'LEAN',
+          reason_codes: [],
+          raw_data: {},
+        },
+      };
+      applyMlbVerificationContract(clearedCard, { terminalState: 'CLEARED' });
+
+      const notRequiredCard = {
+        payloadData: {
+          action: 'HOLD',
+          status: 'WATCH',
+          classification: 'LEAN',
+          reason_codes: [],
+          raw_data: {},
+        },
+      };
+      applyMlbVerificationContract(notRequiredCard);
+
+      expect(clearedCard.payloadData.verification_state).toBe('CLEARED');
+      expect(notRequiredCard.payloadData.verification_state).toBe('NOT_REQUIRED');
+    });
+
+    test('watchdog flags LEAN payload without verification_state companion context', () => {
+      expect(() =>
+        assertMlbExecutionInvariant({
+          execution_status: 'BLOCKED',
+          actionable: false,
+          status: 'WATCH',
+          action: 'HOLD',
+          classification: 'LEAN',
+          _pricing_state: { status: 'FRESH' },
+          _publish_state: { publish_ready: false },
+        }),
+      ).toThrow(/classification=LEAN requires verification_state/);
+    });
+
+    test('watchdog flags PENDING payload with empty requirements', () => {
+      expect(() =>
+        assertMlbExecutionInvariant({
+          execution_status: 'BLOCKED',
+          actionable: false,
+          status: 'WATCH',
+          action: 'HOLD',
+          classification: 'LEAN',
+          verification_state: 'PENDING',
+          next_action_summary: 'FETCH_STARTER_STATUS: waiting',
+          verification: { requirements: [] },
+          _pricing_state: { status: 'FRESH' },
+          _publish_state: { publish_ready: false },
+        }),
+      ).toThrow(/requires non-empty verification.requirements/);
+    });
+
+    test('watchdog flags PENDING payload with missing next_action_summary', () => {
+      expect(() =>
+        assertMlbExecutionInvariant({
+          execution_status: 'BLOCKED',
+          actionable: false,
+          status: 'WATCH',
+          action: 'HOLD',
+          classification: 'LEAN',
+          verification_state: 'PENDING',
+          verification: {
+            requirements: [
+              {
+                blocker_code: 'STARTER_UNCONFIRMED',
+                severity: 'HARD',
+                status: 'PENDING',
+                unblock_condition: 'Official starter is confirmed and matches priced assumption.',
+                action_type: 'FETCH_STARTER_STATUS',
+                retry_policy: { mode: 'UNTIL_START', interval_minutes: 5 },
+              },
+            ],
+          },
+          _pricing_state: { status: 'FRESH' },
+          _publish_state: { publish_ready: false },
+        }),
+      ).toThrow(/requires next_action_summary/);
+    });
+
+    test('watchdog flags stale PENDING payload still marked actionable past expiry', () => {
+      const pastIso = new Date(Date.now() - 60_000).toISOString();
+      expect(() =>
+        assertMlbExecutionInvariant({
+          execution_status: 'EXECUTABLE',
+          actionable: true,
+          status: 'WATCH',
+          action: 'HOLD',
+          classification: 'LEAN',
+          verification_state: 'PENDING',
+          next_action_summary: 'FETCH_MARKET_SNAPSHOT: waiting',
+          verification: {
+            requirements: [
+              {
+                blocker_code: 'PRICE_STALE',
+                severity: 'HARD',
+                status: 'PENDING',
+                unblock_condition: 'Best price within configured drift threshold or repriced edge survives.',
+                action_type: 'FETCH_MARKET_SNAPSHOT',
+                retry_policy: { mode: 'WINDOWED', interval_minutes: 2 },
+              },
+            ],
+          },
+          raw_data: {
+            verification_expires_at: pastIso,
+          },
+          _pricing_state: { status: 'FRESH' },
+          _publish_state: { publish_ready: true },
+        }),
+      ).toThrow(/past expiry must not remain actionable/);
+    });
+  });
+
   test.each([
     [
       'projection-floor game card',

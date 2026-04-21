@@ -119,6 +119,44 @@ describe('autoCloseNonActionableFinalPendingRows', () => {
     expect(result.failures).toBe(0);
   });
 
+  test('warns when a recent card auto-closes through legacy decision fallback', () => {
+    const candidateRows = [
+      makeCandidateRow({
+        result_id: 'r-legacy-001',
+        card_id: 'c-legacy-001',
+        sport: 'MLB',
+        card_type: 'mlb-full-game',
+        market_key: 'game-001:TOTAL:OVER:8.5',
+        market_type: 'TOTAL',
+        card_created_at: '2026-03-30T00:00:00.000Z',
+        payload_data: JSON.stringify({
+          kind: 'PLAY',
+          status: 'PASS',
+          market_type: 'TOTAL',
+          period: 'FULL_GAME',
+        }),
+      }),
+    ];
+    const db = buildDbStub({ candidateRows, runThrows: null, countClosedResult: 1 });
+    const warnMessages = [];
+    const origWarn = console.warn;
+    console.warn = (...args) => {
+      warnMessages.push(args.join(' '));
+    };
+
+    try {
+      autoCloseNonActionableFinalPendingRows(db, '2026-04-01T00:00:00.000Z');
+    } finally {
+      console.warn = origWarn;
+    }
+
+    expect(warnMessages).toEqual([
+      expect.stringContaining('Legacy decision fallback used for non-historical card'),
+    ]);
+    expect(warnMessages[0]).toContain('cardId=c-legacy-001');
+    expect(warnMessages[0]).toContain('legacyStatus=PASS');
+  });
+
   // ─────────────────────────────────────────────────────────────────────────
   // T2: DB throws a string — failures=1, no rethrow, warn log has non-"undefined" text
   // ─────────────────────────────────────────────────────────────────────────

@@ -82,6 +82,7 @@ const MARKET_REASON_CODES = Object.freeze(new Set([
   'EDGE_RECHECK_PENDING',
   'EDGE_NO_LONGER_CONFIRMED',
   'STALE_MARKET',
+  'PRICE_STALE',
   'PRICE_SYNC_PENDING',
   'BLOCKED_BET_VERIFICATION_REQUIRED',
   'GATE_LINE_MOVEMENT',
@@ -92,6 +93,11 @@ const MARKET_REASON_CODES = Object.freeze(new Set([
   'GOALIE_UNCONFIRMED',
   'GOALIE_CONFLICTING',
   'INJURY_UNCERTAIN',
+  'STARTER_UNCONFIRMED',
+  'STARTER_MISMATCH',
+  'BEST_LINE_UNCONFIRMED',
+  'WEATHER_STATUS_PENDING',
+  'MARKET_SOURCE_UNCONFIRMED',
 ]));
 
 // GATE: a hard policy rule blocked the play regardless of model edge → BLOCKED.
@@ -125,7 +131,7 @@ const ALL_REASON_CODES = Object.freeze([
   ...GATE_REASON_CODES,
 ]);
 
-const REASON_CODE_SCHEMA_VERSION = 1;
+const REASON_CODE_SCHEMA_VERSION = 2;
 
 // ─── Human-readable labels ───────────────────────────────────────────────────
 // Every code in ALL_REASON_CODES must appear here.
@@ -191,7 +197,13 @@ const REASON_CODE_LABELS = Object.freeze({
   WATCHDOG_MARKET_UNAVAILABLE: 'Market unavailable',
   EDGE_SANITY_NON_TOTAL: 'Edge sanity check failed',
   LINE_MOVE_ADVERSE: 'Line moved adversely',
+  PRICE_STALE: 'Price stale versus signal',
   PLAY_REQUIRES_FRESH_MARKET: 'Play requires fresh market data',
+  STARTER_UNCONFIRMED: 'Starter not confirmed',
+  STARTER_MISMATCH: 'Starter mismatch versus priced assumption',
+  BEST_LINE_UNCONFIRMED: 'Best line not confirmed',
+  WEATHER_STATUS_PENDING: 'Weather status pending',
+  MARKET_SOURCE_UNCONFIRMED: 'Market source unconfirmed',
   // GATE
   HEAVY_FAVORITE_PRICE_CAP: 'High price cap',
   FIRST_PERIOD_NO_PROJECTION: 'No 1P projection available',
@@ -223,6 +235,7 @@ const BLOCKER_REASON_CODES = Object.freeze([
   'EDGE_RECHECK_PENDING',
   'EDGE_NO_LONGER_CONFIRMED',
   'STALE_MARKET',
+  'PRICE_STALE',
   'PRICE_SYNC_PENDING',
   'BLOCKED_BET_VERIFICATION_REQUIRED',
   'SUPPORT_BELOW_LEAN_THRESHOLD',
@@ -250,6 +263,11 @@ const MARKET_UNVERIFIED_CODES = Object.freeze(new Set([
   'GOALIE_UNCONFIRMED',
   'GOALIE_CONFLICTING',
   'INJURY_UNCERTAIN',
+  'STARTER_UNCONFIRMED',
+  'STARTER_MISMATCH',
+  'BEST_LINE_UNCONFIRMED',
+  'WEATHER_STATUS_PENDING',
+  'MARKET_SOURCE_UNCONFIRMED',
 ]));
 
 // ─── Utilities ───────────────────────────────────────────────────────────────
