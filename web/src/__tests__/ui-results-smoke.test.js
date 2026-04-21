@@ -141,7 +141,7 @@ async function validateResultsSourceContract(assert) {
     'results page must show explicit LOW/WATCH/TRUST/STRONG bucket threshold mapping',
   );
   assert.ok(
-    pageSource.includes('edge_distance < 0.15 are excluded from directional W/L and still included in MAE and bias auditing') &&
+    /edge_distance\s+(?:<|&lt;)\s+0\.15\s+are\s+excluded\s+from\s+directional\s+W\/L\s+and\s+still\s+included\s+in\s+MAE\s+and\s+bias\s+auditing/.test(pageSource) &&
       pageSource.includes('FRAGILE is a presentation label for weak/no-edge directions') &&
       pageSource.includes('not a native confidence_band value'),
     'results page must document weak-direction policy and FRAGILE presentation semantics',
