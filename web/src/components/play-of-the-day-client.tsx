@@ -523,14 +523,17 @@ function renderNearMissSummary(summary: PotdNearMissSummary) {
             {summary.winRate === null ? 'N/A' : formatPercent(summary.winRate)}
           </div>
         </div>
-        <div className="rounded-2xl border border-white/10 bg-night/40 p-4">
+        <a
+          href="#potd-play-log"
+          className="rounded-2xl border border-white/10 bg-night/40 p-4 transition hover:border-teal/45 hover:bg-teal/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal/60 focus-visible:ring-offset-2 focus-visible:ring-offset-night"
+        >
           <div className="text-[11px] uppercase tracking-[0.22em] text-cloud/50">
             Settled
           </div>
           <div className="mt-2 text-xl font-semibold text-cloud">
             {summary.settledCount}
           </div>
-        </div>
+        </a>
         <div className="rounded-2xl border border-white/10 bg-night/40 p-4">
           <div className="text-[11px] uppercase tracking-[0.22em] text-cloud/50">
             Pending
@@ -676,7 +679,10 @@ export default function PlayOfTheDayClient({
             </div>
           </div>
 
-          <div className="rounded-[28px] border border-white/10 bg-surface/80 p-6">
+          <div
+            id="potd-play-log"
+            className="scroll-mt-24 rounded-[28px] border border-white/10 bg-surface/80 p-6"
+          >
             <div className="flex items-center justify-between gap-3">
               <h2 className="font-display text-2xl font-semibold text-cloud">
                 Recent History
