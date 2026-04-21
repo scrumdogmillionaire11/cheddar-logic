@@ -26,6 +26,28 @@ const ALLOWED_CATEGORIES = ['driver', 'call'] as const;
 const ALLOWED_MARKETS = ['moneyline', 'spread', 'total'] as const;
 const DEFAULT_EXCLUDED_SPORT = 'NCAAM';
 
+// In-process bounded cache for /api/results (15 s TTL, max 100 entries).
+// Diagnostic requests (?_diag) always bypass the cache.
+type _CachedEntry = { body: unknown; coverageHeader: string; expiresAt: number };
+const _resultsCache = new Map<string, _CachedEntry>();
+const _CACHE_TTL_MS = 15_000;
+const _CACHE_MAX = 100;
+
+function _evictCache(): void {
+  const now = Date.now();
+  for (const [k, v] of _resultsCache) {
+    if (v.expiresAt <= now) _resultsCache.delete(k);
+  }
+}
+
+function _cacheSet(key: string, body: unknown, coverageHeader: string): void {
+  if (_resultsCache.size >= _CACHE_MAX) {
+    const oldest = _resultsCache.keys().next().value;
+    if (oldest !== undefined) _resultsCache.delete(oldest);
+  }
+  _resultsCache.set(key, { body, coverageHeader, expiresAt: Date.now() + _CACHE_TTL_MS });
+}
+
 type ActionableSourceRow = {
   id: string;
   sport: string;
@@ -426,6 +448,19 @@ export async function GET(request: NextRequest) {
     const includeOrphaned = false;
     const dedupe = parseBooleanLikeParam(searchParams.get('dedupe'), true);
 
+    // Cache lookup — security checks already ran above; cache cannot bypass them.
+    const diagnosticsEnabled = searchParams.has('_diag');
+    const cacheKey = `${sport}|${cardCategory}|${minConfidence}|${market}|${dedupe}|${limit}`;
+    if (!diagnosticsEnabled) {
+      _evictCache();
+      const _cached = _resultsCache.get(cacheKey);
+      if (_cached && _cached.expiresAt > Date.now()) {
+        const _r = NextResponse.json(_cached.body, { headers: { 'Content-Type': 'application/json' } });
+        _r.headers.set('X-Settlement-Coverage', _cached.coverageHeader);
+        return addRateLimitHeaders(_r, request);
+      }
+    }
+
     // Build filter SQL fragments
     const sportFilter = buildSportFilter(
       sport,
@@ -557,16 +592,6 @@ export async function GET(request: NextRequest) {
       id: string;
     }[];
 
-    const filteredCountSql = `
-      ${filteredCteSql}
-      SELECT COUNT(*) AS count
-      FROM filtered
-    `;
-    const filteredCountRow = db
-      .prepare(filteredCountSql)
-      .get(...dedupParams) as { count: number } | null;
-    const filteredCount = Number(filteredCountRow?.count || 0);
-
     const totalSettledSportFilter = buildSportFilter(sport, 'cr.sport');
     const totalSettledRow = db
       .prepare(
@@ -596,6 +621,21 @@ export async function GET(request: NextRequest) {
     const totalSettled = Number(totalSettledRow?.count || 0);
     const withPayloadSettled = Number(displayedSettledRow?.count || 0);
     const orphanedSettled = totalSettled - withPayloadSettled;
+
+    // filteredCount re-runs the full filtered CTE — gate behind ?_diag.
+    let filteredCount: number | null = null;
+    if (diagnosticsEnabled) {
+      const filteredCountSql = `
+        ${filteredCteSql}
+        SELECT COUNT(*) AS count
+        FROM filtered
+      `;
+      const filteredCountRow = db
+        .prepare(filteredCountSql)
+        .get(...dedupParams) as { count: number } | null;
+      filteredCount = Number(filteredCountRow?.count || 0);
+    }
+
     const displayedFinalSportFilter = buildSportFilter(
       sport,
       'COALESCE(cdl.sport, gr.sport)',
@@ -693,7 +733,7 @@ export async function GET(request: NextRequest) {
               displayedFinal,
               settledFinalDisplayed,
               missingFinalDisplayed,
-              filteredCount,
+              ...(diagnosticsEnabled ? { filteredCount } : {}),
               returnedCount: 0,
               includeOrphaned,
               dedupe,
@@ -1274,57 +1314,51 @@ export async function GET(request: NextRequest) {
       ];
     });
 
-    const response = NextResponse.json(
-      {
-        success: true,
-        data: {
-          summary: {
-            totalCards,
-            settledCards,
-            wins,
-            losses,
-            pushes,
-            totalPnlUnits,
-            winRate,
-            avgPnl,
-            avgClvPct,
-          },
-          segments: segmentRows,
-          segmentFamilies,
-          projectionSummaries,
-          ledger: ledgerRows,
-          filters: {
-            sport,
-            cardCategory,
-            minConfidence,
-            market,
-            includeOrphaned,
-            dedupe,
-          },
-          meta: {
-            totalSettled,
-            withPayloadSettled,
-            orphanedSettled,
-            displayedFinal,
-            settledFinalDisplayed,
-            missingFinalDisplayed,
-            filteredCount,
-            returnedCount: dedupedIdRows.length,
-            includeOrphaned,
-            dedupe,
-          },
+    const coverageHeader = `${settledFinalDisplayed}/${displayedFinal}`;
+    const responseBody = {
+      success: true,
+      data: {
+        summary: {
+          totalCards,
+          settledCards,
+          wins,
+          losses,
+          pushes,
+          totalPnlUnits,
+          winRate,
+          avgPnl,
+          avgClvPct,
+        },
+        segments: segmentRows,
+        segmentFamilies,
+        projectionSummaries,
+        ledger: ledgerRows,
+        filters: {
+          sport,
+          cardCategory,
+          minConfidence,
+          market,
+          includeOrphaned,
+          dedupe,
+        },
+        meta: {
+          totalSettled,
+          withPayloadSettled,
+          orphanedSettled,
+          displayedFinal,
+          settledFinalDisplayed,
+          missingFinalDisplayed,
+          ...(diagnosticsEnabled ? { filteredCount } : {}),
+          returnedCount: dedupedIdRows.length,
+          includeOrphaned,
+          dedupe,
         },
       },
-      { headers: { 'Content-Type': 'application/json' } },
-    );
-    return addRateLimitHeaders(
-      addSettlementCoverageHeader(
-        response,
-        settledFinalDisplayed,
-        displayedFinal,
-      ),
-      request,
-    );
+    };
+    if (!diagnosticsEnabled) _cacheSet(cacheKey, responseBody, coverageHeader);
+    const response = NextResponse.json(responseBody, { headers: { 'Content-Type': 'application/json' } });
+    response.headers.set('X-Settlement-Coverage', coverageHeader);
+    return addRateLimitHeaders(response, request);
   } catch (error) {
     console.error('[API] Error fetching results:', error);
     let errorMessage = 'Unknown error';
