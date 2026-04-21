@@ -1104,6 +1104,7 @@ describe('scheduler POTD windows', () => {
     });
 
     const mirrorIndex = dueJobs.findIndex((job) => job.jobName === 'mirror_potd_settlement');
+    const shadowIndex = dueJobs.findIndex((job) => job.jobName === 'settle_potd_shadow_candidates');
     const lastSettlementIndex = Math.max(
       dueJobs.findIndex((job) => job.jobName === 'settle_game_results'),
       dueJobs.findIndex((job) => job.jobName === 'settle_projections'),
@@ -1112,5 +1113,6 @@ describe('scheduler POTD windows', () => {
 
     expect(mirrorIndex).toBeGreaterThan(-1);
     expect(mirrorIndex).toBeGreaterThan(lastSettlementIndex);
+    expect(shadowIndex).toBeGreaterThan(mirrorIndex);
   });
 });

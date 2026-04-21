@@ -304,13 +304,118 @@ describe('settleShadowCandidates', () => {
     expect(result.success).toBe(true);
     expect(result.pending).toBe(1);
     expect(result.settled).toBe(0);
+    expect(result.diagnostics).toMatchObject({
+      candidatesLoaded: 1,
+      joinedGameResults: 0,
+      missingGameResult: 1,
+      nonFinalGameResult: 0,
+    });
 
     const [row] = readRows(
-      `SELECT status, result FROM potd_shadow_results WHERE candidate_identity_key = ?`,
+      `SELECT status, result, grading_metadata FROM potd_shadow_results WHERE candidate_identity_key = ?`,
       ['NHL|shadow-pending|TOTAL|OVER|5.500'],
     );
     expect(row.status).toBe('pending');
     expect(row.result).toBeNull();
+    expect(JSON.parse(row.grading_metadata)).toMatchObject({
+      reason: 'missing_game_result',
+      game_result_status: null,
+    });
+  });
+
+  test('materializes and settles shadow-only candidate games with no card_results rows', async () => {
+    const gameTimeUtc = '2026-04-17T23:00:00.000Z';
+    seedShadowCandidate({
+      sport: 'NBA',
+      game_id: 'shadow-only-materialize',
+      candidate_identity_key: 'NBA|shadow-only-materialize|TOTAL|OVER|199.500',
+      home_team: 'Los Angeles Lakers',
+      away_team: 'Boston Celtics',
+      market_type: 'TOTAL',
+      selection: 'OVER',
+      selection_label: 'OVER 199.5',
+      line: 199.5,
+      price: -110,
+      game_time_utc: gameTimeUtc,
+    });
+
+    jest.doMock('../../../utils/db-backup.js', () => ({
+      backupDatabase: jest.fn(),
+    }));
+    jest.doMock('../../../utils/espn-resilient-client.js', () => ({
+      ResilientESPNClient: jest.fn().mockImplementation(() => ({
+        fetchScoreboardEvents: jest.fn(async () => [
+          {
+            id: 'espn-shadow-only-materialize',
+            date: gameTimeUtc,
+            competitions: [
+              {
+                date: gameTimeUtc,
+                status: { type: { completed: true } },
+                competitors: [
+                  {
+                    homeAway: 'home',
+                    score: '101',
+                    team: { displayName: 'Los Angeles Lakers' },
+                  },
+                  {
+                    homeAway: 'away',
+                    score: '99',
+                    team: { displayName: 'Boston Celtics' },
+                  },
+                ],
+              },
+            ],
+          },
+        ]),
+      })),
+    }));
+
+    const { settleGameResults } = require('../../settle_game_results');
+    const gameResult = await settleGameResults({
+      jobKey: 'settle|shadow-only-materialize',
+      minHoursAfterStart: 0,
+    });
+
+    expect(gameResult.success).toBe(true);
+    expect(gameResult.gamesSettled).toBe(1);
+    expect(
+      readRows(
+        `SELECT game_id, status, final_score_home, final_score_away
+         FROM game_results
+         WHERE game_id = ?`,
+        ['shadow-only-materialize'],
+      ),
+    ).toEqual([
+      {
+        game_id: 'shadow-only-materialize',
+        status: 'final',
+        final_score_home: 101,
+        final_score_away: 99,
+      },
+    ]);
+
+    const { settleShadowCandidates } = require('../settle-shadow-candidates');
+    const shadowResult = await settleShadowCandidates({ jobKey: 'shadow|materialized-game-result' });
+
+    expect(shadowResult.success).toBe(true);
+    expect(shadowResult.settled).toBe(1);
+    expect(shadowResult.win).toBe(1);
+    expect(shadowResult.diagnostics).toMatchObject({
+      candidatesLoaded: 1,
+      joinedGameResults: 1,
+      missingGameResult: 0,
+    });
+
+    const [settledRow] = readRows(
+      `SELECT status, result, pnl_units
+       FROM potd_shadow_results
+       WHERE candidate_identity_key = ?`,
+      ['NBA|shadow-only-materialize|TOTAL|OVER|199.500'],
+    );
+    expect(settledRow.status).toBe('settled');
+    expect(settledRow.result).toBe('win');
+    expect(settledRow.pnl_units).toBeGreaterThan(0);
   });
 
   test('does not write to potd_plays or potd_bankroll', async () => {

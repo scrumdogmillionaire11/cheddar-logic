@@ -30,6 +30,7 @@ const {
 
 const {
   upsertGameResult,
+  upsertGame,
   getDatabase,
   insertJobRun,
   markJobRunSuccess,
@@ -1138,37 +1139,95 @@ async function settleGameResults({
       // 2) explicitly marked final/completed upstream.
       // This allows settlement to proceed even when scheduled start timestamps drift.
       const pendingGamesStmt = db.prepare(`
-        SELECT
-          g.game_id,
-          g.sport,
-          g.home_team,
-          g.away_team,
-          g.game_time_utc,
-          COUNT(DISTINCT cr.id) AS pending_card_count,
-          COUNT(DISTINCT CASE WHEN cdl.pick_id IS NOT NULL THEN cr.id END) AS displayed_pending_card_count
-        FROM games g
-        INNER JOIN card_results cr ON cr.game_id = g.game_id
-        LEFT JOIN card_display_log cdl ON cdl.pick_id = cr.card_id
-        WHERE (
-          g.game_time_utc < ?
-          OR LOWER(g.status) IN ('final', 'ft', 'completed')
-          OR (? = 1 AND cdl.pick_id IS NOT NULL)
-        )
-          AND cr.status = 'pending'
-          AND cr.is_primary = 1
-          AND g.game_id NOT IN (
-            SELECT game_id FROM game_results WHERE status = 'final'
+        WITH pending_card_games AS (
+          SELECT
+            g.game_id,
+            g.sport,
+            g.home_team,
+            g.away_team,
+            g.game_time_utc,
+            COUNT(DISTINCT cr.id) AS pending_card_count,
+            COUNT(DISTINCT CASE WHEN cdl.pick_id IS NOT NULL THEN cr.id END) AS displayed_pending_card_count,
+            0 AS shadow_candidate_count
+          FROM games g
+          INNER JOIN card_results cr ON cr.game_id = g.game_id
+          LEFT JOIN card_display_log cdl ON cdl.pick_id = cr.card_id
+          WHERE (
+            g.game_time_utc < ?
+            OR LOWER(g.status) IN ('final', 'ft', 'completed')
+            OR (? = 1 AND cdl.pick_id IS NOT NULL)
           )
-        GROUP BY g.game_id, g.sport, g.home_team, g.away_team, g.game_time_utc
-        ORDER BY g.game_time_utc ASC
+            AND cr.status = 'pending'
+            AND cr.is_primary = 1
+            AND g.game_id NOT IN (
+              SELECT game_id FROM game_results WHERE status = 'final'
+            )
+          GROUP BY g.game_id, g.sport, g.home_team, g.away_team, g.game_time_utc
+        ),
+        shadow_candidate_games AS (
+          SELECT
+            sc.game_id,
+            COALESCE(g.sport, sc.sport) AS sport,
+            COALESCE(g.home_team, sc.home_team) AS home_team,
+            COALESCE(g.away_team, sc.away_team) AS away_team,
+            COALESCE(g.game_time_utc, sc.game_time_utc) AS game_time_utc,
+            0 AS pending_card_count,
+            0 AS displayed_pending_card_count,
+            COUNT(DISTINCT sc.id) AS shadow_candidate_count
+          FROM potd_shadow_candidates sc
+          LEFT JOIN games g ON g.game_id = sc.game_id
+          LEFT JOIN potd_shadow_results sr
+            ON sr.play_date = sc.play_date
+           AND sr.candidate_identity_key = sc.candidate_identity_key
+          WHERE sc.game_id IS NOT NULL
+            AND COALESCE(g.game_time_utc, sc.game_time_utc) IS NOT NULL
+            AND COALESCE(g.home_team, sc.home_team) IS NOT NULL
+            AND COALESCE(g.away_team, sc.away_team) IS NOT NULL
+            AND (
+              COALESCE(g.game_time_utc, sc.game_time_utc) < ?
+              OR LOWER(COALESCE(g.status, '')) IN ('final', 'ft', 'completed')
+            )
+            AND COALESCE(sr.status, '') != 'settled'
+            AND sc.game_id NOT IN (
+              SELECT game_id FROM game_results WHERE status = 'final'
+            )
+          GROUP BY
+            sc.game_id,
+            COALESCE(g.sport, sc.sport),
+            COALESCE(g.home_team, sc.home_team),
+            COALESCE(g.away_team, sc.away_team),
+            COALESCE(g.game_time_utc, sc.game_time_utc)
+        )
+        SELECT
+          game_id,
+          sport,
+          home_team,
+          away_team,
+          game_time_utc,
+          SUM(pending_card_count) AS pending_card_count,
+          SUM(displayed_pending_card_count) AS displayed_pending_card_count,
+          SUM(shadow_candidate_count) AS shadow_candidate_count
+        FROM (
+          SELECT * FROM pending_card_games
+          UNION ALL
+          SELECT * FROM shadow_candidate_games
+        )
+        GROUP BY game_id, sport, home_team, away_team, game_time_utc
+        ORDER BY game_time_utc ASC
       `);
 
       const pendingGames = pendingGamesStmt.all(
         cutoffUtc,
         SETTLEMENT_INCLUDE_DISPLAYED_PENDING_IGNORE_CUTOFF ? 1 : 0,
+        cutoffUtc,
       );
+      const shadowOnlyGameCount = pendingGames.filter(
+        (game) =>
+          Number(game.shadow_candidate_count || 0) > 0 &&
+          Number(game.pending_card_count || 0) === 0,
+      ).length;
       console.log(
-        `[SettleGames] Found ${pendingGames.length} unsettled past games`,
+        `[SettleGames] Found ${pendingGames.length} unsettled past games (${shadowOnlyGameCount} shadow-only POTD game(s))`,
       );
 
       if (pendingGames.length === 0) {
@@ -1617,6 +1676,17 @@ async function settleGameResults({
           }
 
           try {
+            if (Number(dbGame.shadow_candidate_count || 0) > 0) {
+              upsertGame({
+                id: `game-${String(dbGame.sport || '').toLowerCase()}-${dbGame.game_id}`,
+                gameId: dbGame.game_id,
+                sport: dbGame.sport,
+                homeTeam: dbGame.home_team,
+                awayTeam: dbGame.away_team,
+                gameTimeUtc: dbGame.game_time_utc,
+                status: 'completed',
+              });
+            }
             upsertGameResult({
               id: `result-${dbGame.game_id}-${Date.now()}`,
               gameId: dbGame.game_id,
