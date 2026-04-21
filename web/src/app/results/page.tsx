@@ -362,8 +362,11 @@ export default function ResultsPage() {
       const directionalLosses = gradedRows.filter((row) => row.gradedResult === 'LOSS').length;
       const overRows = gradedRows.filter((row) => row.recommendedSide === 'OVER');
       const underRows = gradedRows.filter((row) => row.recommendedSide === 'UNDER');
-      const absoluteErrors = familyRows.map((row) => Math.abs(row.projValue - row.actualValue));
-      const signedErrors = familyRows.map((row) => row.projValue - row.actualValue);
+      const errorRows = familyRows.filter(
+        (row) => Number.isFinite(row.projValue) && Number.isFinite(row.actualValue),
+      );
+      const absoluteErrors = errorRows.map((row) => Math.abs((row.projValue as number) - (row.actualValue as number)));
+      const signedErrors = errorRows.map((row) => (row.projValue as number) - (row.actualValue as number));
       const mae =
         absoluteErrors.length > 0
           ? absoluteErrors.reduce((sum, value) => sum + value, 0) / absoluteErrors.length
