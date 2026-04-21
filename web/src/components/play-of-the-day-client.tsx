@@ -525,13 +525,18 @@ function renderNearMissSummary(summary: PotdNearMissSummary) {
         </div>
         <a
           href="#potd-play-log"
-          className="rounded-2xl border border-white/10 bg-night/40 p-4 transition hover:border-teal/45 hover:bg-teal/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal/60 focus-visible:ring-offset-2 focus-visible:ring-offset-night"
+          aria-label="Jump to POTD play log"
+          title="Jump to play log"
+          className="cursor-pointer rounded-2xl border border-white/10 bg-night/40 p-4 transition hover:border-teal/45 hover:bg-teal/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal/60 focus-visible:ring-offset-2 focus-visible:ring-offset-night"
         >
           <div className="text-[11px] uppercase tracking-[0.22em] text-cloud/50">
             Settled
           </div>
           <div className="mt-2 text-xl font-semibold text-cloud">
             {summary.settledCount}
+          </div>
+          <div className="mt-1 text-[10px] uppercase tracking-[0.18em] text-teal-100/80">
+            View play log
           </div>
         </a>
         <div className="rounded-2xl border border-white/10 bg-night/40 p-4">
