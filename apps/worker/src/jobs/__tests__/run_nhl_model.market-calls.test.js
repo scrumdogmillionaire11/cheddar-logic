@@ -10,6 +10,10 @@ const {
   applyNhlGoalieExecutionStatusGuard,
   deriveNhlUncertaintyHoldReasonCodes,
   applyNhlUncertaintyHold,
+  resolveNhlVerificationThresholds,
+  evaluateNhlVerificationGateChecks,
+  buildNhlVerificationRequirements,
+  applyNhlVerificationContract,
   applyNhlFeatureTimelinessGuardToCards,
   isHardProjectionInputBlock,
 } = require('../run_nhl_model');
@@ -1127,7 +1131,7 @@ describe('run_nhl_model market call generation', () => {
   describe('uncertainty HOLD gating (WI-0932)', () => {
     test('derives goalie and injury HOLD reason codes deterministically', () => {
       const reasonCodes = deriveNhlUncertaintyHoldReasonCodes({
-        homeGoalieState: { starter_state: 'UNKNOWN' },
+        homeGoalieState: { starter_state: 'CONFLICTING' },
         awayGoalieState: { starter_state: 'CONFIRMED' },
         availabilityGate: {
           missingFlags: ['key_player_out'],
@@ -1136,8 +1140,8 @@ describe('run_nhl_model market call generation', () => {
       });
 
       expect(reasonCodes).toEqual([
-        'GATE_GOALIE_UNCONFIRMED',
-        'BLOCK_INJURY_RISK',
+        'STARTER_MISMATCH',
+        'INJURY_UNCERTAIN',
       ]);
     });
 
@@ -1158,18 +1162,157 @@ describe('run_nhl_model market call generation', () => {
         },
       };
 
-      const changed = applyNhlUncertaintyHold(card, ['GATE_GOALIE_UNCONFIRMED']);
+      const changed = applyNhlUncertaintyHold(card, ['STARTER_UNCONFIRMED']);
 
       expect(changed).toBe(true);
       expect(card.payloadData.action).toBe('HOLD');
       expect(card.payloadData.status).toBe('WATCH');
       expect(card.payloadData.classification).toBe('LEAN');
       expect(card.payloadData.pass_reason_code).toBeNull();
-      expect(card.payloadData.gate_reason).toBe('GATE_GOALIE_UNCONFIRMED');
-      expect(card.payloadData.reason_codes).toContain('GATE_GOALIE_UNCONFIRMED');
+      expect(card.payloadData.gate_reason).toBe('STARTER_UNCONFIRMED');
+      expect(card.payloadData.reason_codes).toContain('STARTER_UNCONFIRMED');
       expect(card.payloadData.decision_v2.official_status).toBe('LEAN');
       expect(card.payloadData.decision_v2.watchdog_status).toBe('CAUTION');
-      expect(card.payloadData.decision_v2.watchdog_reason_codes).toContain('GOALIE_UNCONFIRMED');
+      expect(card.payloadData.decision_v2.watchdog_reason_codes).toContain('STARTER_UNCONFIRMED');
+    });
+  });
+
+  describe('verification contract semantics (WI-1034-b)', () => {
+    test('threshold resolver uses defaults and allows overrides', () => {
+      expect(resolveNhlVerificationThresholds()).toEqual({
+        priceDriftCents: 5,
+        adverseMoveCents: 5,
+      });
+      expect(
+        resolveNhlVerificationThresholds({ priceDriftCents: 8, adverseMoveCents: 11 }),
+      ).toEqual({
+        priceDriftCents: 8,
+        adverseMoveCents: 11,
+      });
+    });
+
+    test('gate check evaluation honors default and override thresholds', () => {
+      expect(
+        evaluateNhlVerificationGateChecks({
+          priceDriftCents: 6,
+          adverseMoveCents: 4,
+          thresholds: resolveNhlVerificationThresholds(),
+        }),
+      ).toEqual(['PRICE_STALE']);
+
+      expect(
+        evaluateNhlVerificationGateChecks({
+          priceDriftCents: 6,
+          adverseMoveCents: 4,
+          thresholds: resolveNhlVerificationThresholds({ priceDriftCents: 10 }),
+        }),
+      ).toEqual([]);
+    });
+
+    test('builds verification requirements and preserves first-fail order while capturing all cheap blockers', () => {
+      const requirements = buildNhlVerificationRequirements({
+        reasonCodes: ['LINE_MOVE_ADVERSE', 'GOALIE_UNCONFIRMED', 'INJURY_UNCERTAIN'],
+        gateCheckBlockers: ['PRICE_STALE'],
+      });
+
+      expect(requirements.map((entry) => entry.blocker_code)).toEqual([
+        'PRICE_STALE',
+        'STARTER_UNCONFIRMED',
+        'LINE_MOVE_ADVERSE',
+        'INJURY_UNCERTAIN',
+      ]);
+    });
+
+    test('pending verification stamps LEAN + verification_state=PENDING with next action summary', () => {
+      const card = {
+        payloadData: {
+          action: 'FIRE',
+          status: 'FIRE',
+          classification: 'BASE',
+          reason_codes: ['GOALIE_UNCONFIRMED', 'LINE_MOVE_ADVERSE'],
+          decision_v2: {
+            official_status: 'PLAY',
+            watchdog_reason_codes: ['GOALIE_UNCONFIRMED'],
+            price_reason_codes: ['LINE_MOVE_ADVERSE'],
+          },
+          raw_data: { price_drift_cents: 8 },
+        },
+      };
+
+      const verification = applyNhlVerificationContract(card);
+
+      expect(card.payloadData.classification).toBe('LEAN');
+      expect(card.payloadData.action).toBe('HOLD');
+      expect(card.payloadData.verification_state).toBe('PENDING');
+      expect(card.payloadData.next_action_summary).toEqual(expect.any(String));
+      expect(verification.requirements.length).toBeGreaterThan(1);
+    });
+
+    test('CLEARED does not auto-promote to PLAY and keeps re-evaluation semantics', () => {
+      const card = {
+        payloadData: {
+          action: 'FIRE',
+          status: 'FIRE',
+          classification: 'BASE',
+          reason_codes: ['GOALIE_UNCONFIRMED'],
+          decision_v2: { official_status: 'PLAY' },
+          raw_data: {},
+        },
+      };
+
+      applyNhlVerificationContract(card, { terminalState: 'CLEARED' });
+
+      expect(card.payloadData.verification_state).toBe('CLEARED');
+      expect(card.payloadData.action).toBe('HOLD');
+      expect(card.payloadData.classification).toBe('LEAN');
+      expect(card.payloadData.next_action_summary).toContain('re-run threshold logic');
+    });
+
+    test('EXPIRED terminal state emits contract PASS message and stops progression', () => {
+      const card = {
+        payloadData: {
+          action: 'HOLD',
+          status: 'WATCH',
+          classification: 'LEAN',
+          reason_codes: ['GOALIE_UNCONFIRMED'],
+          raw_data: {},
+        },
+      };
+
+      applyNhlVerificationContract(card, { terminalState: 'EXPIRED' });
+
+      expect(card.payloadData.verification_state).toBe('EXPIRED');
+      expect(card.payloadData.action).toBe('PASS');
+      expect(card.payloadData.pass_reason_code).toBe(
+        'PASS - EXPIRED: Verification window closed without resolution.',
+      );
+    });
+
+    test('LEAN + verification_state=CLEARED|NOT_REQUIRED semantics remain distinguishable', () => {
+      const clearedCard = {
+        payloadData: {
+          action: 'HOLD',
+          status: 'WATCH',
+          classification: 'LEAN',
+          reason_codes: [],
+          raw_data: {},
+        },
+      };
+      applyNhlVerificationContract(clearedCard, { terminalState: 'CLEARED' });
+
+      const notRequiredCard = {
+        payloadData: {
+          action: 'HOLD',
+          status: 'WATCH',
+          classification: 'LEAN',
+          reason_codes: [],
+          raw_data: {},
+        },
+      };
+      applyNhlVerificationContract(notRequiredCard);
+
+      expect(clearedCard.payloadData.verification_state).toBe('CLEARED');
+      expect(notRequiredCard.payloadData.verification_state).toBe('NOT_REQUIRED');
     });
   });
 
@@ -1274,7 +1417,7 @@ describe('run_nhl_model market call generation', () => {
         },
       };
 
-      applyNhlUncertaintyHold(card, ['GATE_GOALIE_UNCONFIRMED']);
+      applyNhlUncertaintyHold(card, ['STARTER_UNCONFIRMED']);
 
       // After uncertainty hold, reason_codes must be non-empty and decision_v2 must agree
       expect(card.payloadData.reason_codes.length).toBeGreaterThan(0);
