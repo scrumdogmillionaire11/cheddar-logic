@@ -20,6 +20,17 @@ function fmtNum(
   return value.toFixed(digits);
 }
 
+function fmtPct(
+  value: number | null | undefined,
+  digits = 1,
+  { signed = false } = {},
+): string {
+  if (value === null || value === undefined || Number.isNaN(value)) return '—';
+  const pct = value * 100;
+  const sign = signed && pct > 0 ? '+' : '';
+  return `${sign}${pct.toFixed(digits)}%`;
+}
+
 function fmtMatchup(
   row: ProjectionProxyRow,
 ): string {
@@ -57,6 +68,14 @@ function moneylineDirectionLabel(row: ProjectionProxyRow): string {
   return 'PASS';
 }
 
+function moneylineProjectedLabel(row: ProjectionProxyRow): string {
+  const side = moneylineDirectionLabel(row);
+  if (row.predictionSignalMissing || row.winProbability === null || row.winProbability === undefined) {
+    return `${side} (signal missing)`;
+  }
+  return `${side} (${fmtPct(row.winProbability)})`;
+}
+
 function projectionRowKey(row: ProjectionProxyRow, index: number): string {
   if (row.id !== null && row.id !== undefined) {
     return String(row.id);
@@ -67,14 +86,27 @@ function projectionRowKey(row: ProjectionProxyRow, index: number): string {
   return `${row.gameId || 'unknown-game'}-${index}`;
 }
 
-function tierBadgeClass(tier: 'PLAY' | 'LEAN' | 'STRONG' | 'PASS'): string {
+function tierBadgeClass(tier: 'PLAY' | 'SLIGHT_EDGE' | 'LEAN' | 'STRONG' | 'PASS'): string {
   if (tier === 'PLAY')
     return 'border-blue-500/60 bg-blue-500/25 text-blue-100 font-semibold';
+  if (tier === 'SLIGHT_EDGE')
+    return 'border-sky-500/40 bg-sky-500/15 text-sky-200';
   if (tier === 'LEAN')
     return 'border-blue-500/40 bg-blue-500/15 text-blue-200';
   if (tier === 'STRONG')
     return 'border-blue-600/70 bg-blue-600/30 text-blue-50 font-bold';
   return 'border-white/20 bg-white/5 text-cloud/50';
+}
+
+function confidenceBadgeClass(band: string | null | undefined): string {
+  const token = String(band || '').toUpperCase();
+  if (token === 'HIGH' || token === 'STRONG')
+    return 'border-emerald-500/40 bg-emerald-500/15 text-emerald-200';
+  if (token === 'MED' || token === 'TRUST' || token === 'WATCH')
+    return 'border-amber-500/40 bg-amber-500/15 text-amber-200';
+  if (token === 'LOW')
+    return 'border-white/20 bg-white/5 text-cloud/60';
+  return 'border-rose-500/30 bg-rose-500/10 text-rose-200';
 }
 
 function outcomeBadgeClass(outcome: 'WIN' | 'LOSS' | 'NO_BET'): string {
@@ -96,18 +128,31 @@ function ProjectionRow({ row, attribution }: ProjectionRowProps) {
   const date = fmtDate(row.gameDateUtc);
   const moneylineFamily = isMoneylineFamily(row.cardFamily);
   const projected = moneylineFamily
-    ? moneylineProjectedSide(row)
+    ? moneylineProjectedLabel(row)
     : fmtNum(row.projValue, 3);
-  const edge = (row.edgeVsLine >= 0 ? '+' : '') + fmtNum(row.edgeVsLine, 2);
-  const actual = fmtNum(row.actualValue, 3);
+  const edge = moneylineFamily
+    ? fmtPct(row.edgePp ?? row.edgeVsLine, 1, { signed: true })
+    : row.edgeVsLine === null || row.edgeVsLine === undefined
+      ? '—'
+      : (row.edgeVsLine >= 0 ? '+' : '') + fmtNum(row.edgeVsLine, 2);
+  const actual = moneylineFamily
+    ? row.actualValue === 0.5 ? 'PUSH' : row.gradedResult
+    : fmtNum(row.actualValue, 3);
   const direction = row.recommendedSide;
   const directionLabel = moneylineFamily ? moneylineDirectionLabel(row) : direction;
   const tier = row.tier;
   const outcome = row.gradedResult;
   const attributionProjectionRaw = fmtNum(attribution?.projection_raw, 3);
-  const attributionSyntheticLine = fmtNum(attribution?.synthetic_line, 3);
-  const attributionEdgeDistance = fmtNum(attribution?.edge_distance, 3);
-  const attributionBand = attribution?.confidence_band || 'UNKNOWN';
+  const attributionSyntheticLine = fmtNum(attribution?.synthetic_line ?? row.proxyLine, 3);
+  const attributionEdgeDistance = moneylineFamily
+    ? fmtPct(row.edgePp ?? attribution?.edge_pp ?? null, 1, { signed: true })
+    : fmtNum(attribution?.edge_distance, 3);
+  const attributionBand = row.confidenceBand || attribution?.confidence_band || 'UNKNOWN';
+  const confidenceLabel = row.confidenceScore !== null && row.confidenceScore !== undefined
+    ? `${attributionBand} (${Math.round(row.confidenceScore)})`
+    : row.predictionSignalMissing
+      ? 'MISSING SIGNAL'
+      : attributionBand;
 
   return (
     <>
@@ -127,8 +172,8 @@ function ProjectionRow({ row, attribution }: ProjectionRowProps) {
             </span>
           </span>
           <span className="flex justify-center">
-            <span className={`rounded-full border px-2 py-0.5 text-xs ${tierBadgeClass(tier)}`}>
-              {tier}
+            <span className={`rounded-full border px-2 py-0.5 text-xs ${moneylineFamily ? confidenceBadgeClass(row.confidenceBand) : tierBadgeClass(tier)}`}>
+              {moneylineFamily ? confidenceLabel : tier}
             </span>
           </span>
           <span className="text-right font-mono text-cloud/50">{edge}</span>
@@ -151,12 +196,17 @@ function ProjectionRow({ row, attribution }: ProjectionRowProps) {
             synthetic_line: {attributionSyntheticLine}
           </span>
           <span className="rounded-lg border border-white/10 bg-white/5 px-2 py-1 font-mono">
-            edge_distance: {attributionEdgeDistance}
+            {moneylineFamily ? 'edge_pp' : 'edge_distance'}: {attributionEdgeDistance}
           </span>
           <span className="rounded-lg border border-white/10 bg-white/5 px-2 py-1 font-mono">
             confidence_band: {attributionBand}
           </span>
         </div>
+        {moneylineFamily && row.expectedOutcomeLabel && (
+          <div className="mt-2 text-[11px] uppercase tracking-[0.16em] text-cloud/45">
+            Expected vs actual: {row.expectedOutcomeLabel.replaceAll('_', ' ')}
+          </div>
+        )}
       </div>
 
       {/* Mobile card */}
@@ -181,6 +231,11 @@ function ProjectionRow({ row, attribution }: ProjectionRowProps) {
           <span className={`rounded-full border px-2 py-0.5 text-xs ${tierBadgeClass(tier)}`}>
             {tier}
           </span>
+          {moneylineFamily && (
+            <span className={`rounded-full border px-2 py-0.5 text-xs ${confidenceBadgeClass(row.confidenceBand)}`}>
+              {confidenceLabel}
+            </span>
+          )}
         </div>
         <div className="mt-2 grid grid-cols-4 gap-2 text-xs">
           <div className="rounded-lg border border-white/10 bg-white/5 px-2 py-1.5 text-center">
@@ -208,12 +263,17 @@ function ProjectionRow({ row, attribution }: ProjectionRowProps) {
             synthetic_line: {attributionSyntheticLine}
           </span>
           <span className="rounded-lg border border-white/10 bg-white/5 px-2 py-1 font-mono">
-            edge_distance: {attributionEdgeDistance}
+            {moneylineFamily ? 'edge_pp' : 'edge_distance'}: {attributionEdgeDistance}
           </span>
           <span className="rounded-lg border border-white/10 bg-white/5 px-2 py-1 font-mono">
             confidence_band: {attributionBand}
           </span>
         </div>
+        {moneylineFamily && row.expectedOutcomeLabel && (
+          <div className="text-[11px] uppercase tracking-[0.16em] text-cloud/45">
+            Expected vs actual: {row.expectedOutcomeLabel.replaceAll('_', ' ')}
+          </div>
+        )}
       </div>
     </>
   );
