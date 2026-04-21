@@ -20,6 +20,8 @@ const {
   extractNbaEspnNullMetricTeams,
   recordEspnNullTeams,
   sendEspnNullDiscordAlert,
+  computeNbaRollingBias,
+  applyNbaTeamContext,
 } = require('../run_nba_model');
 const {
   publishDecisionForCard,
@@ -72,6 +74,119 @@ async function queryDb(fn) {
     closeDatabase();
   }
 }
+
+describe('WI-1020: NBA rolling bias calibration', () => {
+  function fakeBiasDb(row, sqlSink = []) {
+    return {
+      prepare: jest.fn((sql) => {
+        sqlSink.push(sql);
+        return { get: jest.fn(() => row) };
+      }),
+    };
+  }
+
+  test('computeNbaRollingBias returns computed mean error and enforces anti-leak query', () => {
+    const sqlSeen = [];
+    const logger = { log: jest.fn(), warn: jest.fn() };
+
+    const result = computeNbaRollingBias({
+      db: fakeBiasDb({ mean_error: 2.25, n: 50 }, sqlSeen),
+      windowGames: 50,
+      logger,
+    });
+
+    expect(result).toEqual({ bias: 2.25, games_sampled: 50, source: 'computed' });
+    expect(sqlSeen[0]).toContain('settled_at < datetime(\'now\')');
+    expect(sqlSeen[0]).toContain('ORDER BY settled_at DESC');
+    expect(sqlSeen[0]).toContain('LIMIT 50');
+    expect(sqlSeen[0]).toContain('raw_total');
+    expect(sqlSeen[0]).toContain('actual_total');
+    expect(sqlSeen[0]).not.toContain('created_at');
+    expect(sqlSeen[0]).not.toContain('updated_at');
+    expect(logger.log).toHaveBeenCalledWith(
+      '[NBAModel] [BIAS_CORRECTION] rolling_bias=+2.3 games_sampled=50',
+    );
+  });
+
+  test('computeNbaRollingBias hard-gates fallback when settled rows are below 50', () => {
+    const logger = { log: jest.fn(), warn: jest.fn() };
+
+    const result = computeNbaRollingBias({
+      db: fakeBiasDb({ mean_error: 3.5, n: 49 }),
+      logger,
+    });
+
+    expect(result).toEqual({ bias: 0, games_sampled: 49, source: 'fallback' });
+    expect(logger.warn).toHaveBeenCalledWith(
+      '[NBAModel] [CALIBRATION_INACTIVE] 49 settled games - minimum 50 required before correction activates',
+    );
+    expect(logger.log).not.toHaveBeenCalled();
+  });
+
+  test('computeNbaRollingBias returns zero fallback when no settled rows exist', () => {
+    const logger = { log: jest.fn(), warn: jest.fn() };
+
+    const result = computeNbaRollingBias({
+      db: fakeBiasDb({ mean_error: null, n: 0 }),
+      logger,
+    });
+
+    expect(result).toEqual({ bias: 0, games_sampled: 0, source: 'fallback' });
+    expect(logger.warn).toHaveBeenCalledWith(
+      '[NBAModel] [CALIBRATION_INACTIVE] 0 settled games - minimum 50 required before correction activates',
+    );
+  });
+
+  test('computeNbaRollingBias clamps outlier correction to +/-4 points', () => {
+    const logger = { log: jest.fn(), warn: jest.fn() };
+
+    const result = computeNbaRollingBias({
+      db: fakeBiasDb({ mean_error: 8, n: 50 }),
+      logger,
+    });
+
+    expect(result).toEqual({ bias: 4, games_sampled: 50, source: 'computed' });
+    expect(logger.warn).toHaveBeenCalledWith(
+      '[NBAModel] [BIAS_CORRECTION] bias_raw=8.0 clamped to +/-4.0 - investigate outlier',
+    );
+  });
+
+  test('applyNbaTeamContext subtracts rolling bias before blending with market total', async () => {
+    const oddsSnapshot = {
+      home_team: 'Boston Celtics',
+      away_team: 'Miami Heat',
+      total: 220,
+      raw_data: {},
+    };
+    const getTeamMetricsWithGamesFn = jest.fn(async (team) => ({
+      metrics: team === 'Boston Celtics'
+        ? { avgPoints: 120, avgPointsAllowed: 110 }
+        : { avgPoints: 114, avgPointsAllowed: 106 },
+      impactContext: null,
+    }));
+
+    const result = await applyNbaTeamContext('nba-bias-game', oddsSnapshot, {
+      rollingBias: { bias: 4, games_sampled: 50, source: 'computed' },
+      getTeamMetricsWithGamesFn,
+    });
+
+    expect(result.available).toBe(true);
+    expect(result.rawPaceAnchorTotal).toBe(225);
+    expect(result.paceAnchorTotal).toBe(221);
+    expect(result.blendedTotal).toBe(220.25);
+    expect(oddsSnapshot.raw_data).toMatchObject({
+      pace_anchor_total_raw: 225,
+      pace_anchor_total: 221,
+      blended_total: 220.25,
+      calibration_state: {
+        bias: 4,
+        games_sampled: 50,
+        source: 'computed',
+        correction_applied: true,
+      },
+    });
+  });
+});
 
 describe('run_nba_model job', () => {
   beforeAll(async () => {
