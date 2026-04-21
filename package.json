@@ -4,11 +4,12 @@
   "workspaces": ["packages/*", "apps/*", "web"],
   "scripts": {
     "db:sync": "bash scripts/sync-prod-db.sh",
+    "check:odds-timestamps": "bash scripts/check-odds-snapshot-timestamp.sh",
     "refresh:ncaam-ft-csv": "node scripts/refresh-teamrankings-ncaam-ft.js",
     "backtest:ncaam-ft-spread": "node scripts/backtest-ncaam-ft-spread-rule.js",
     "lint:web": "npm --prefix web run lint",
     "lint:repo": "eslint \"apps/worker/src/**/*.{js,ts}\" \"packages/**/src/**/*.{js,ts}\" --ext .js,.ts",
-    "lint": "npm run lint:web && npm run lint:repo",
+    "lint": "npm run check:odds-timestamps && npm run lint:web && npm run lint:repo",
     "lint:fix": "npm run lint:repo -- --fix",
     "format:check": "prettier --check \"apps/worker/src/**/*\" \"packages/**/src/**/*\" \"web/src/**/*\"",
     "format": "prettier --write \"apps/worker/src/**/*\" \"packages/**/src/**/*\" \"web/src/**/*\""

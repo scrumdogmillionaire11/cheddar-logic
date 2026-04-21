@@ -1033,6 +1033,8 @@ sqlite3 "$CHEDDAR_DB_PATH" "SELECT job_name, started_at, status FROM job_runs OR
 ```
 
 **Key Guardrails:**
+- For odds recency checks, use odds_snapshots.captured_at (not created_at).
+
 
 > **NEVER** skip the timestamped corrupt backup (Step 4). It is required for post-incident forensics.
 >
