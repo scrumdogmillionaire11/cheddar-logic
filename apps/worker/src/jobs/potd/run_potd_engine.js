@@ -152,7 +152,8 @@ function writeDailyStats(db, {
  * official play has been published for today.
  */
 function resolvePotdTimingState(nowEt, hasOfficialPlay = false) {
-  const hour = nowEt.hour;
+  const hour = Number(nowEt?.hour);
+  if (!Number.isFinite(hour)) return POTD_TIMING_STATES.PENDING_WINDOW;
   if (hour < POTD_WINDOW_ET.OPENS_HOUR) return POTD_TIMING_STATES.PENDING_WINDOW;
   if (hour < POTD_WINDOW_ET.CLOSES_HOUR) {
     return hasOfficialPlay ? POTD_TIMING_STATES.OFFICIAL_PLAY : POTD_TIMING_STATES.PENDING_WINDOW;
@@ -275,9 +276,37 @@ function formatNopickNearMiss(candidate) {
   return `${candidate.sport || 'UNK'} | ${candidate.selectionLabel || '—'} | Edge ${edgeLabel} | Score ${scoreLabel}`;
 }
 
+function formatNopickDateLabel(nowEt) {
+  if (!nowEt) return 'today';
+
+  if (typeof nowEt.toFormat === 'function') {
+    try {
+      return nowEt.toFormat('MMM dd');
+    } catch (_) {
+      // Fall through to ISO date formatting.
+    }
+  }
+
+  if (typeof nowEt.toISODate === 'function') {
+    const isoDate = nowEt.toISODate();
+    if (typeof isoDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(isoDate)) {
+      const asDate = new Date(`${isoDate}T00:00:00Z`);
+      if (!Number.isNaN(asDate.getTime())) {
+        return asDate.toLocaleDateString('en-US', {
+          month: 'short',
+          day: '2-digit',
+          timeZone: 'UTC',
+        });
+      }
+    }
+  }
+
+  return 'today';
+}
+
 function buildNopickAlertMessage({ alertCandidate, topByEdge, reason, candidatesCount, viableCount, nowEt, nearMissCandidates = [] }) {
   const candidate = alertCandidate || topByEdge;
-  const dateLabel = nowEt ? nowEt.toFormat('MMM dd') : 'today';
+  const dateLabel = formatNopickDateLabel(nowEt);
   const reasonLabel = POTD_NOPICK_REASONS[reason] || reason;
   const requiredEdge = candidate
     ? resolveNoiseFloor(candidate.sport, candidate.marketType, POTD_MIN_EDGE)
