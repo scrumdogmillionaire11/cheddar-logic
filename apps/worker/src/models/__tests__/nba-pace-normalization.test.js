@@ -5,6 +5,13 @@
  * per-100-possession ORtg/DRtg before applying the PPP × pace formula.
  */
 const { projectNBACanonical } = require('../projections');
+const {
+  analyzePaceSynergy,
+  computeNbaLeagueBaselines,
+  FALLBACK_PACE_MIN,
+  FALLBACK_PACE_MAX,
+  FALLBACK_LEAGUE_MEDIAN_OFF_EFF,
+} = require('../nba-pace-synergy');
 
 describe('WI-0822: NBA pace normalization — projectNBACanonical', () => {
   // Baseline: average-pace team (pace ≈ 100) — normalization is nearly identity
@@ -87,5 +94,81 @@ describe('WI-0822: NBA pace normalization — projectNBACanonical', () => {
     const result = projectNBACanonical(115, 110, null, 112, 108, 100, 0);
     expect(result.status).toBe('NO_BET');
     expect(result.missingCritical).toContain('homePace');
+  });
+});
+
+describe('WI-1021: NBA dynamic pace synergy baselines', () => {
+  function fakeDb(rows) {
+    return {
+      prepare: jest.fn((sql) => {
+        expect(sql).toContain('FROM team_metrics_cache');
+        expect(sql).toContain("fetched_at >= datetime('now', '-14 days')");
+        return { all: jest.fn(() => rows) };
+      }),
+    };
+  }
+
+  test('computed path derives p5/p95 pace and median offensive efficiency from valid rows', () => {
+    const rows = Array.from({ length: 20 }, (_, index) => ({
+      metrics: JSON.stringify({
+        pace: 100 + index,
+        offensive_rating: 110 + index,
+      }),
+      fetched_at: '2026-04-21T00:00:00.000Z',
+      cache_date: '2026-04-21',
+    }));
+    const logger = { log: jest.fn(), warn: jest.fn() };
+
+    const result = computeNbaLeagueBaselines({ db: fakeDb(rows), logger });
+
+    expect(result).toEqual({
+      paceMin: 101,
+      paceMax: 118,
+      medianOffEff: 119.5,
+      gamesUsed: 20,
+      source: 'computed',
+    });
+    expect(logger.log).toHaveBeenCalledWith(
+      '[NBA_BASELINES] paceMin=101.0 paceMax=118.0 medianOffEff=119.5 gamesUsed=20',
+    );
+    expect(logger.warn).not.toHaveBeenCalled();
+  });
+
+  test('fallback path uses hardcoded defaults and logs the fallback marker', () => {
+    const logger = { log: jest.fn(), warn: jest.fn() };
+
+    const result = computeNbaLeagueBaselines({
+      db: fakeDb([
+        { metrics: JSON.stringify({ pace: 101, offensive_rating: 112 }) },
+        { metrics: JSON.stringify({ pace: 102, offensive_rating: 113 }) },
+      ]),
+      logger,
+    });
+
+    expect(result).toEqual({
+      paceMin: FALLBACK_PACE_MIN,
+      paceMax: FALLBACK_PACE_MAX,
+      medianOffEff: FALLBACK_LEAGUE_MEDIAN_OFF_EFF,
+      gamesUsed: 2,
+      source: 'fallback',
+    });
+    expect(logger.warn).toHaveBeenCalledWith(
+      '[NBA_BASELINES] insufficient data - using hardcoded fallback',
+    );
+  });
+
+  test('analyzePaceSynergy accepts explicit dynamic baselines', () => {
+    const result = analyzePaceSynergy(
+      108,
+      109,
+      121,
+      122,
+      { paceMin: 100, paceMax: 110, leagueMedianOffEff: 120 },
+    );
+
+    expect(result.synergyType).toBe('VERY_FAST\xd7VERY_FAST');
+    expect(result.passesEfficiencyGate).toBe(true);
+    expect(result.homePacePct).toBe(80);
+    expect(result.awayPacePct).toBe(90);
   });
 });
