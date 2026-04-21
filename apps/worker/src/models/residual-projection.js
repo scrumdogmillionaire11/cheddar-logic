@@ -142,10 +142,16 @@ function buildResidualQuery(homeTeam, awayTeam, extraFilters, extraValues) {
       AND actual_total IS NOT NULL
       AND raw_total IS NOT NULL
       AND settled_at < datetime('now')
-      AND (home_team = ? OR away_team = ?)
+      AND (
+        home_team = ? OR away_team = ?
+        OR home_team = ? OR away_team = ?
+      )
       ${extraFilters.join('\n      ')}
   `;
-  return { sql, params: [homeTeam, awayTeam, ...extraValues] };
+  return {
+    sql,
+    params: [homeTeam, homeTeam, awayTeam, awayTeam, ...extraValues],
+  };
 }
 
 /**

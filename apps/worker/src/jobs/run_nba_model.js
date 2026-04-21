@@ -1247,6 +1247,26 @@ function clamp(value, min, max) {
   return Math.min(Math.max(value, min), max);
 }
 
+function applyRegimePaceToBlendedTotal({
+  marketTotal,
+  paceAnchorTotal,
+  regimePaceMultiplier,
+  teamContextWeight = TEAM_CONTEXT_WEIGHT,
+  injuryProjectionReduction = 0,
+} = {}) {
+  const anchor = toFiniteNumberOrNull(paceAnchorTotal);
+  if (anchor === null) return null;
+
+  const multiplier = toFiniteNumberOrNull(regimePaceMultiplier) ?? 1;
+  const adjustedAnchor = anchor * multiplier;
+  const market = toFiniteNumberOrNull(marketTotal);
+  const blended = market === null
+    ? adjustedAnchor
+    : market * (1 - teamContextWeight) + adjustedAnchor * teamContextWeight;
+  const reduction = toFiniteNumberOrNull(injuryProjectionReduction) ?? 0;
+  return Math.max(0, blended - reduction);
+}
+
 function computePricedCallCardConfidence({ edgePct, conflictScore }) {
   const normalizedEdgePct = hasFiniteNumber(edgePct) ? edgePct : 0;
   const normalizedConflictScore = hasFiniteNumber(conflictScore)
@@ -2633,10 +2653,18 @@ async function runNBAModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
             margin: computedSigma.margin * clampedMultiplierMargin,
           };
           console.log(`  [NBA_REGIME] ${gameId}: regime=${nbaRegime.regime} tags=[${nbaRegime.tags.join(',')}] sigmaMultiplier=${rawRegimeSigmaMultiplier} clampedTotal=${clampedMultiplierTotal.toFixed(3)}`);
-          // WI-1025: Apply paceMultiplier from regime to blendedTotal before projection use
+          // WI-1025: Apply paceMultiplier to paceAnchorTotal before market blending.
           const regimePaceMultiplier = nbaRegime.modifiers.paceMultiplier;
-          const effectiveBlendedTotal = teamCtx.available && Number.isFinite(teamCtx.blendedTotal)
-            ? Number((teamCtx.blendedTotal * regimePaceMultiplier).toFixed(2))
+          const injuryReductionApplied =
+            toFiniteNumberOrNull(teamCtx?.availabilityGate?.injuryProjectionReduction?.reduction_applied) ?? 0;
+          const preBlendRegimeTotal = applyRegimePaceToBlendedTotal({
+            marketTotal: oddsSnapshot?.total,
+            paceAnchorTotal: teamCtx?.paceAnchorTotal,
+            regimePaceMultiplier,
+            injuryProjectionReduction: injuryReductionApplied,
+          });
+          const effectiveBlendedTotal = teamCtx.available && Number.isFinite(preBlendRegimeTotal)
+            ? Number(preBlendRegimeTotal.toFixed(2))
             : teamCtx.blendedTotal;
           const effectiveSpreadLeanMin = isPlayoff
             ? (resolveThresholdProfile({ sport: 'NBA', marketType: 'SPREAD' }).edge.lean_edge_min + PLAYOFF_EDGE_MIN_INCREMENT)
@@ -2855,6 +2883,13 @@ async function runNBAModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
               tags: nbaRegime.tags,
               modifiers: nbaRegime.modifiers,
             };
+            card.payloadData.raw_data.residual_correction = {
+              correction: nbaResidualResult.correction,
+              source: nbaResidualResult.source,
+              samples: nbaResidualResult.samples,
+              segment: nbaResidualResult.segment,
+              shrinkage_factor: nbaResidualResult.shrinkage_factor,
+            };
             const tierLabel = card.payloadData.tier
               ? ` [${card.payloadData.tier}]`
               : '';
@@ -2886,10 +2921,10 @@ async function runNBAModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
             if (
               card.cardType === 'nba-totals-call' &&
               teamCtx.available &&
-              Number.isFinite(teamCtx.blendedTotal)
+              Number.isFinite(effectiveBlendedTotal)
             ) {
               // WI-1024: Apply residual correction exactly once, after rolling bias.
-              // WI-1025: Use effectiveBlendedTotal (pace-multiplied by regime) as the base.
+              // WI-1025: Use effectiveBlendedTotal (pace-adjusted pre-blend total) as the base.
               const residualCorrection = nbaResidualResult.correction;
               const adjustedTotal = effectiveBlendedTotal + residualCorrection;
               if (card.payloadData?.projection) {
@@ -2898,16 +2933,15 @@ async function runNBAModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
               if (card.payloadData?.market_context?.projection) {
                 card.payloadData.market_context.projection.total = adjustedTotal;
               }
-              // Stamp residual metadata for observability and accuracy tracking
-              if (!card.payloadData.raw_data) card.payloadData.raw_data = {};
-              card.payloadData.raw_data.residual_correction = {
-                correction: nbaResidualResult.correction,
-                source: nbaResidualResult.source,
-                samples: nbaResidualResult.samples,
-                segment: nbaResidualResult.segment,
-                shrinkage_factor: nbaResidualResult.shrinkage_factor,
-              };
             }
+            if (!card.payloadData.raw_data) card.payloadData.raw_data = {};
+            card.payloadData.raw_data.residual_correction = {
+              correction: nbaResidualResult.correction,
+              source: nbaResidualResult.source,
+              samples: nbaResidualResult.samples,
+              segment: nbaResidualResult.segment,
+              shrinkage_factor: nbaResidualResult.shrinkage_factor,
+            };
             applyNbaSettlementMarketContext(card);
             assignExecutionStatus(card, { withoutOddsMode });
             // WI-0768: cap execution_status at PROJECTION_ONLY when nba_team_context absent
@@ -3239,6 +3273,7 @@ module.exports = {
   stampNbaProjectionAccuracyFields,
   applyNbaTeamContext,
   computeNbaRollingBias,
+  applyRegimePaceToBlendedTotal,
   deriveTotalBand,
   computeVolEnvSigmaMultipliers,
   applyVolEnvSigmaMultiplier,

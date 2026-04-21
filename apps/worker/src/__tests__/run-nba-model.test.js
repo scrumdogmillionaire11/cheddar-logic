@@ -826,6 +826,53 @@ describe('WI-1024 residual correction in NBA runner', () => {
     });
   });
 
+  test('residual_correction is stamped on every inserted card payload', async () => {
+    const { runNBAModel, mocks } = loadRunNBAModel();
+    await runNBAModel();
+
+    const insertedCards = mocks.insertCardPayload.mock.calls.map(([card]) => card);
+    expect(insertedCards.length).toBeGreaterThan(0);
+
+    for (const card of insertedCards) {
+      expect(card.payloadData.raw_data).toBeDefined();
+      expect(card.payloadData.raw_data.residual_correction).toBeDefined();
+      expect(card.payloadData.raw_data.residual_correction).toEqual(
+        expect.objectContaining({
+          correction: expect.any(Number),
+          source: expect.any(String),
+          samples: expect.any(Number),
+          segment: expect.any(String),
+          shrinkage_factor: expect.any(Number),
+        }),
+      );
+    }
+  });
+
+  test('regime pace adjustment applies to pace anchor before market blending', () => {
+    const { applyRegimePaceToBlendedTotal } = loadRunNBAModel();
+
+    const marketTotal = 220;
+    const paceAnchorTotal = 230;
+    const regimePaceMultiplier = 0.9;
+    const teamContextWeight = 0.25;
+
+    const preBlend = applyRegimePaceToBlendedTotal({
+      marketTotal,
+      paceAnchorTotal,
+      regimePaceMultiplier,
+      teamContextWeight,
+      injuryProjectionReduction: 0,
+    });
+
+    const expectedPreBlend = marketTotal * (1 - teamContextWeight)
+      + (paceAnchorTotal * regimePaceMultiplier) * teamContextWeight;
+    const incorrectPostBlend = (marketTotal * (1 - teamContextWeight)
+      + paceAnchorTotal * teamContextWeight) * regimePaceMultiplier;
+
+    expect(preBlend).toBeCloseTo(expectedPreBlend, 6);
+    expect(preBlend).not.toBeCloseTo(incorrectPostBlend, 6);
+  });
+
   test('combined ceiling: |rollingBias + residualCorrection| > 6 scales residual down', () => {
     // Use the real (unmocked) module for this test
     jest.resetModules();

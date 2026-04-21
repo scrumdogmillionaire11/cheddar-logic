@@ -244,3 +244,16 @@ Plans:
 - [x] pass-reason-integrity-02-PLAN.md — mlb-model.js projectFullGameML confidence gate fix + selectPassReasonCode helper (Wave 1)
 - [x] pass-reason-integrity-03-PLAN.md — run_mlb_model.js card builder propagation + post_discord_cards.js display cleanup (Wave 2)
 - [x] pass-reason-integrity-04-SUMMARY.md — adversarial follow-up: stored payload truth surface, ADR-0016, re-verification (Wave 3)
+
+---
+
+### Phase: WI-1105 — Analytics Schema Lift: Projection Accuracy Materialization
+
+**Goal**: Eliminate JSON-dependent projection-accuracy reads by materializing immutable projection/grading/confidence core fields and exposing deterministic trust metrics through `/results`.
+
+**Requirements:** [WI-1105-SCHEMA-01, WI-1105-GRADE-01, WI-1105-CONF-01, WI-1105-TRUST-01, WI-1105-API-01]
+
+**Plans:** 1 plan in 1 wave
+
+Plans:
+- [ ] WI-1105-01-PLAN.md — Materialized schema + immutable write contract + grading/confidence/trust derivation + `/results` materialized-first read path (Wave 1)

@@ -188,6 +188,37 @@ describe('computeNbaResidualCorrection', () => {
     expect(result.samples).toBe(20);
   });
 
+  test('team match query includes both teams across home/away positions', async () => {
+    let capturedSql = '';
+    let capturedParams = [];
+    const db = {
+      prepare: jest.fn((sql) => {
+        capturedSql = sql;
+        return {
+          get: jest.fn((...params) => {
+            capturedParams = params;
+            return { mean_residual: 1.2, n: 20 };
+          }),
+          all: jest.fn(() => []),
+        };
+      }),
+    };
+
+    await computeNbaResidualCorrection({
+      db,
+      ...BASE_PARAMS,
+      globalBias: 0,
+    });
+
+    expect(capturedSql).toContain('home_team = ? OR away_team = ?');
+    expect(capturedParams.slice(0, 4)).toEqual([
+      BASE_PARAMS.homeTeam,
+      BASE_PARAMS.homeTeam,
+      BASE_PARAMS.awayTeam,
+      BASE_PARAMS.awayTeam,
+    ]);
+  });
+
   test('hierarchy: falls back to level 2 when level 1 has insufficient samples', async () => {
     const db = makeDbSequence([
       { mean_residual: 5.0, n: 5 }, // level 1: insufficient (< 15)
