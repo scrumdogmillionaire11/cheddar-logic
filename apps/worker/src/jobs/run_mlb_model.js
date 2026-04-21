@@ -119,6 +119,8 @@ const MLB_SEED_CONTEXT_MAX_AGE_MINUTES = Number(
     process.env.ODDS_GAP_ALERT_MINUTES ||
     210,
 );
+const MLB_VERIFICATION_DEFAULT_PRICE_DRIFT_CENTS = 5;
+const MLB_VERIFICATION_DEFAULT_ADVERSE_MOVE_CENTS = 5;
 const MLB_PROJECTION_ONLY_MARKET_FLAGS = Object.freeze([
   'PROJECTION_ONLY_NO_MARKET_TRUST',
   'PROJECTION_ONLY_NOT_ACTIONABLE',
@@ -129,6 +131,301 @@ const STALE_RECOVERY_DEDUP_TTL_MS = 10 * 60 * 1000;
 const staleRecoveryDedupCache = new Map();
 
 let cachedFreshnessEnvOverrides = null;
+
+function resolveMlbVerificationThresholds(overrides = {}) {
+  const toFiniteNumberOrNull = (value) => {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  };
+  const overridePrice = toFiniteNumberOrNull(overrides?.priceDriftCents);
+  const overrideAdverse = toFiniteNumberOrNull(overrides?.adverseMoveCents);
+  const envPrice = toFiniteNumberOrNull(process.env.MLB_VERIFICATION_PRICE_DRIFT_CENTS);
+  const envAdverse = toFiniteNumberOrNull(process.env.MLB_VERIFICATION_ADVERSE_MOVE_CENTS);
+
+  return {
+    priceDriftCents:
+      overridePrice ??
+      envPrice ??
+      MLB_VERIFICATION_DEFAULT_PRICE_DRIFT_CENTS,
+    adverseMoveCents:
+      overrideAdverse ??
+      envAdverse ??
+      MLB_VERIFICATION_DEFAULT_ADVERSE_MOVE_CENTS,
+  };
+}
+
+function evaluateMlbVerificationGateChecks({
+  priceDriftCents = null,
+  adverseMoveCents = null,
+  thresholds = resolveMlbVerificationThresholds(),
+}) {
+  const blockers = [];
+  const normalizedPriceDrift = toFiniteNumber(priceDriftCents);
+  const normalizedAdverseMove = toFiniteNumber(adverseMoveCents);
+  if (
+    normalizedPriceDrift !== null &&
+    normalizedPriceDrift > thresholds.priceDriftCents
+  ) {
+    blockers.push('PRICE_STALE');
+  }
+  if (
+    normalizedAdverseMove !== null &&
+    normalizedAdverseMove > thresholds.adverseMoveCents
+  ) {
+    blockers.push('LINE_MOVE_ADVERSE');
+  }
+  return blockers;
+}
+
+function buildMlbVerificationRequirements({ reasonCodes = [], gateCheckBlockers = [] }) {
+  const mergedCodes = Array.from(new Set([
+    ...reasonCodes,
+    ...gateCheckBlockers,
+  ].map((code) => String(code || '').trim().toUpperCase()).filter(Boolean)));
+
+  const mappedBlockers = [];
+  for (const code of mergedCodes) {
+    if (code === 'GATE_STARTER_UNCONFIRMED' || code === 'STARTER_UNCONFIRMED') {
+      mappedBlockers.push('STARTER_UNCONFIRMED');
+      continue;
+    }
+    if (code === 'STARTER_CONFLICTING' || code === 'STARTER_MISMATCH') {
+      mappedBlockers.push('STARTER_MISMATCH');
+      continue;
+    }
+    if (
+      code === 'PASS_EXECUTION_GATE_STALE_SNAPSHOT' ||
+      code === 'STALE_SNAPSHOT' ||
+      code === 'STALE_MARKET' ||
+      code === 'PRICE_STALE'
+    ) {
+      mappedBlockers.push('PRICE_STALE');
+      continue;
+    }
+    if (code === 'BLOCK_INJURY_RISK') {
+      mappedBlockers.push('INJURY_UNCERTAIN');
+      continue;
+    }
+    mappedBlockers.push(code);
+  }
+
+  const specByCode = {
+    PRICE_STALE: {
+      severity: 'HARD',
+      action_type: 'FETCH_MARKET_SNAPSHOT',
+      unblock_condition: 'Best price within configured drift threshold or repriced edge survives.',
+      retry_policy: { mode: 'WINDOWED', interval_minutes: 2 },
+      source_needed: 'market_snapshot',
+    },
+    STARTER_UNCONFIRMED: {
+      severity: 'HARD',
+      action_type: 'FETCH_STARTER_STATUS',
+      unblock_condition: 'Official starter is confirmed and matches priced assumption.',
+      retry_policy: { mode: 'UNTIL_START', interval_minutes: 5 },
+      source_needed: 'starter_feed',
+    },
+    STARTER_MISMATCH: {
+      severity: 'HARD',
+      action_type: 'REPRICE_MODEL',
+      unblock_condition: 'Repriced edge survives with actual starter.',
+      retry_policy: { mode: 'UNTIL_START', interval_minutes: 5 },
+      source_needed: 'starter_feed',
+    },
+    LINE_MOVE_ADVERSE: {
+      severity: 'HARD',
+      action_type: 'RECHECK_MOVEMENT_WINDOW',
+      unblock_condition: 'Adverse move stabilizes and repriced edge survives.',
+      retry_policy: { mode: 'WINDOWED', interval_minutes: 2 },
+      source_needed: 'line_context',
+    },
+    EDGE_RECHECK_PENDING: {
+      severity: 'HARD',
+      action_type: 'REPRICE_MODEL',
+      unblock_condition: 'Repriced edge still clears threshold.',
+      retry_policy: { mode: 'WINDOWED', interval_minutes: 2 },
+      source_needed: 'repricing_context',
+    },
+    INJURY_UNCERTAIN: {
+      severity: 'HARD',
+      action_type: 'FETCH_LINEUP_STATUS',
+      unblock_condition: 'Injury status is confirmed or repriced edge survives confirmed absence.',
+      retry_policy: { mode: 'UNTIL_START', interval_minutes: 5 },
+      source_needed: 'lineup_feed',
+    },
+    BEST_LINE_UNCONFIRMED: {
+      severity: 'SOFT',
+      action_type: 'FETCH_BEST_LINE',
+      unblock_condition: 'Best available line is confirmed and edge survives there.',
+      retry_policy: { mode: 'WINDOWED', interval_minutes: 2 },
+      source_needed: 'market_snapshot',
+    },
+    WEATHER_STATUS_PENDING: {
+      severity: 'SOFT',
+      action_type: 'FETCH_WEATHER_STATUS',
+      unblock_condition: 'Weather status no longer materially changes projection.',
+      retry_policy: { mode: 'WINDOWED', interval_minutes: 10 },
+      source_needed: 'weather_feed',
+    },
+    MARKET_SOURCE_UNCONFIRMED: {
+      severity: 'SOFT',
+      action_type: 'FETCH_MARKET_SNAPSHOT',
+      unblock_condition: 'Market source is confirmed and synchronized.',
+      retry_policy: { mode: 'WINDOWED', interval_minutes: 2 },
+      source_needed: 'market_snapshot',
+    },
+  };
+
+  const orderedCodes = [
+    'PRICE_STALE',
+    'STARTER_UNCONFIRMED',
+    'STARTER_MISMATCH',
+    'LINE_MOVE_ADVERSE',
+    'EDGE_RECHECK_PENDING',
+    'INJURY_UNCERTAIN',
+    'BEST_LINE_UNCONFIRMED',
+    'WEATHER_STATUS_PENDING',
+    'MARKET_SOURCE_UNCONFIRMED',
+  ];
+
+  const normalized = Array.from(new Set(mappedBlockers));
+  const sorted = orderedCodes
+    .filter((code) => normalized.includes(code))
+    .concat(normalized.filter((code) => !orderedCodes.includes(code)));
+
+  return sorted
+    .map((code) => {
+      const spec = specByCode[code];
+      if (!spec) return null;
+      return {
+        blocker_code: code,
+        severity: spec.severity,
+        status: 'PENDING',
+        unblock_condition: spec.unblock_condition,
+        action_type: spec.action_type,
+        source_needed: spec.source_needed,
+        retry_policy: spec.retry_policy,
+      };
+    })
+    .filter(Boolean);
+}
+
+function applyMlbVerificationContract(card, options = {}) {
+  const payload = card?.payloadData;
+  if (!payload || typeof payload !== 'object') return null;
+
+  if (!payload.raw_data || typeof payload.raw_data !== 'object') {
+    payload.raw_data = {};
+  }
+
+  const thresholds = resolveMlbVerificationThresholds(options.thresholdOverrides);
+  const gateCheckBlockers = evaluateMlbVerificationGateChecks({
+    priceDriftCents:
+      payload.raw_data.verification_price_drift_cents ??
+      payload.raw_data.price_drift_cents ??
+      payload.raw_data.price_drift,
+    adverseMoveCents:
+      payload.raw_data.verification_adverse_move_cents ??
+      payload.raw_data.adverse_move_cents ??
+      payload.raw_data.adverse_line_move_cents,
+    thresholds,
+  });
+
+  const reasonCodes = Array.from(
+    new Set(
+      [
+        ...(Array.isArray(payload.reason_codes) ? payload.reason_codes : []),
+        payload.gate_reason,
+        payload.blocked_reason_code,
+        payload.pass_reason_code,
+        payload.decision_v2?.primary_reason_code,
+        ...(Array.isArray(payload.decision_v2?.price_reason_codes)
+          ? payload.decision_v2.price_reason_codes
+          : []),
+        ...(Array.isArray(payload.decision_v2?.watchdog_reason_codes)
+          ? payload.decision_v2.watchdog_reason_codes
+          : []),
+      ]
+        .map((code) => String(code || '').trim().toUpperCase())
+        .filter(Boolean),
+    ),
+  );
+
+  const requirements = buildMlbVerificationRequirements({
+    reasonCodes,
+    gateCheckBlockers,
+  });
+
+  const terminalStateRaw =
+    options.terminalState ?? payload.raw_data.verification_terminal_state ?? null;
+  const terminalState = String(terminalStateRaw || '').trim().toUpperCase();
+  const firstRequirement = requirements[0] || null;
+  const firstBlockerCode = firstRequirement?.blocker_code || null;
+
+  if (terminalState === 'FAILED') {
+    const failureReason =
+      String(options.failureReason || payload.raw_data.verification_failure_reason || '').trim() ||
+      'Verification failed.';
+    payload.action = 'PASS';
+    payload.status = 'PASS';
+    payload.classification = 'PASS';
+    payload.execution_status = 'BLOCKED';
+    payload.pass_reason_code = `PASS - ${firstBlockerCode || 'VERIFICATION_FAILED'}: ${failureReason}`;
+    payload.verification_state = 'FAILED';
+    payload.next_action_summary = null;
+  } else if (terminalState === 'EXPIRED') {
+    payload.action = 'PASS';
+    payload.status = 'PASS';
+    payload.classification = 'PASS';
+    payload.execution_status = 'BLOCKED';
+    payload.pass_reason_code = 'PASS - EXPIRED: Verification window closed without resolution.';
+    payload.verification_state = 'EXPIRED';
+    payload.next_action_summary = null;
+  } else if (terminalState === 'CLEARED') {
+    payload.verification_state = 'CLEARED';
+    payload.next_action_summary = 'CLEARED: re-run threshold logic before PLAY eligibility.';
+    if (payload.action === 'FIRE') {
+      payload.action = 'HOLD';
+      payload.status = 'WATCH';
+      payload.classification = 'LEAN';
+      payload.execution_status = 'BLOCKED';
+    }
+  } else if (requirements.length > 0) {
+    payload.verification_state = 'PENDING';
+    payload.next_action_summary = firstRequirement
+      ? `${firstRequirement.action_type}: ${firstRequirement.unblock_condition}`
+      : null;
+    payload.action = 'HOLD';
+    payload.status = 'WATCH';
+    payload.classification = 'LEAN';
+    payload.execution_status = 'BLOCKED';
+    if (payload.decision_v2 && typeof payload.decision_v2 === 'object') {
+      payload.decision_v2.official_status = 'LEAN';
+      payload.decision_v2.watchdog_status = 'CAUTION';
+      if (!payload.decision_v2.primary_reason_code && firstBlockerCode) {
+        payload.decision_v2.primary_reason_code = firstBlockerCode;
+      }
+    }
+    if (!payload.gate_reason && firstBlockerCode) {
+      payload.gate_reason = firstBlockerCode;
+    }
+    if (!payload.blocked_reason_code && firstBlockerCode) {
+      payload.blocked_reason_code = firstBlockerCode;
+    }
+  } else {
+    payload.verification_state = payload.verification_state || 'NOT_REQUIRED';
+    payload.next_action_summary = null;
+  }
+
+  payload.verification = {
+    verification_state: payload.verification_state,
+    requirements,
+    can_promote_to_play: payload.verification_state === 'CLEARED',
+    next_action_summary: payload.next_action_summary,
+    thresholds,
+  };
+
+  return payload.verification;
+}
 
 const loggedUnknownMlbTeamVariants = new Set();
 const MLB_TEAM_CANONICAL_BY_TOKEN = Object.freeze(
@@ -2460,6 +2757,23 @@ function assertMlbExecutionInvariant(payload) {
   const actionable = payload.actionable === true;
   const projectionFloor = payload.projection_floor === true;
   const featureTimestampBlocked = payload.pass_reason_code === 'PASS_FEATURE_TIMESTAMP_LEAK';
+  const verificationState = String(payload.verification_state || '').trim().toUpperCase();
+  const verificationRequirements = Array.isArray(payload.verification?.requirements)
+    ? payload.verification.requirements
+    : [];
+  const verificationSummary =
+    typeof payload.next_action_summary === 'string'
+      ? payload.next_action_summary.trim()
+      : '';
+  const leanClassification = String(payload.classification || '').toUpperCase() === 'LEAN';
+  const verificationExpiryRaw =
+    payload.raw_data?.verification_expires_at ??
+    payload.raw_data?.verification_stop_at ??
+    payload.verification?.expires_at ??
+    null;
+  const verificationExpiryMs = verificationExpiryRaw
+    ? Date.parse(String(verificationExpiryRaw))
+    : NaN;
   const failures = [];
 
   if (executionStatus === 'EXECUTABLE' && pricingStatus !== 'FRESH') {
@@ -2483,8 +2797,37 @@ function assertMlbExecutionInvariant(payload) {
       `actionable must equal execution_status===EXECUTABLE (execution_status=${executionStatus || 'MISSING'}, actionable=${String(actionable)})`,
     );
   }
+  if (leanClassification && !verificationState) {
+    failures.push('classification=LEAN requires verification_state companion context');
+  }
+  if (verificationState === 'PENDING' && verificationRequirements.length === 0) {
+    failures.push('verification_state=PENDING requires non-empty verification.requirements');
+  }
+  if (verificationState === 'PENDING' && !verificationSummary) {
+    failures.push('verification_state=PENDING requires next_action_summary');
+  }
+  if (
+    verificationState === 'PENDING' &&
+    Number.isFinite(verificationExpiryMs) &&
+    verificationExpiryMs <= Date.now() &&
+    (actionable || executionStatus === 'EXECUTABLE' || publishReady === true)
+  ) {
+    failures.push('verification_state=PENDING past expiry must not remain actionable');
+  }
 
   if (failures.length === 0) return;
+
+  if (!payload.raw_data || typeof payload.raw_data !== 'object') {
+    payload.raw_data = {};
+  }
+  payload.raw_data.verification_contract_violations = Array.from(
+    new Set([
+      ...(Array.isArray(payload.raw_data.verification_contract_violations)
+        ? payload.raw_data.verification_contract_violations
+        : []),
+      ...failures,
+    ]),
+  );
 
   const error = new Error(`[INVARIANT_BREACH] ${failures.join('; ')}`);
   error.code = 'INVARIANT_BREACH';
@@ -4500,6 +4843,7 @@ async function runMLBModel({
               betPlacedAt: baseOddsSnapshot?.captured_at ?? null,
               gameId,
             });
+            applyMlbVerificationContract({ payloadData });
             assertMlbExecutionInvariant(payloadData);
 
             const cardTitle = isF5
@@ -4784,6 +5128,10 @@ module.exports = {
   applyExecutionGateToMlbPayload,
   applyExecutionGateWithStaleRecoveryToMlbPayload,
   applyMlbFeatureTimelinessGuardToPayload,
+  resolveMlbVerificationThresholds,
+  evaluateMlbVerificationGateChecks,
+  buildMlbVerificationRequirements,
+  applyMlbVerificationContract,
   shouldAttemptStaleRecoveryFromGate,
   buildStaleRecoveryKey,
   claimStaleRecoveryKey,

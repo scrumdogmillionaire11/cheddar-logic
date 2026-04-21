@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Model Integrity & Betting Execution Hardening
 status: active
-last_updated: "2026-04-21T00:10:00Z"
-last_activity: "2026-04-21 - WI-1034-b in progress: NHL verification contract + blocker registration"
+last_updated: "2026-04-21T00:18:00Z"
+last_activity: "2026-04-21 - WI-1034-c in progress: MLB verification contract + watchdog enforcement"
 ---
 
 # Project State
