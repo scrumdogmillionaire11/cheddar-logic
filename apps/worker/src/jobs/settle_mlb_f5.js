@@ -805,5 +805,7 @@ module.exports = {
   isF5MlCard,
   gradeF5Card,
   gradeF5MlCard,
+  resolveMlbGamePk,
+  buildGamePkLookupCandidates,
   parseCliArgs,
 };

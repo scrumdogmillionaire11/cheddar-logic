@@ -28,6 +28,7 @@ jest.mock('../nhl-settlement-source', () => ({
 // Mock settle_mlb_f5 (imported for fetchF5Total, not used in player-prop handlers)
 jest.mock('../settle_mlb_f5', () => ({
   fetchF5Total: jest.fn(),
+  resolveMlbGamePk: jest.fn(),
 }));
 
 const {
@@ -356,11 +357,13 @@ describe('settleProjections — nhl-player-blk actual_result shape', () => {
 describe('settleProjections — mlb-pitcher-k actual_result shape', () => {
   let originalFetch;
   let metadataUpdates;
+  let resolveMlbGamePkMock;
 
   beforeEach(() => {
     jest.clearAllMocks();
     originalFetch = global.fetch;
     metadataUpdates = [];
+    resolveMlbGamePkMock = require('../settle_mlb_f5').resolveMlbGamePk;
   });
 
   afterEach(() => {
@@ -375,16 +378,9 @@ describe('settleProjections — mlb-pitcher-k actual_result shape', () => {
     const playerId = '543135';
     const mockCard = makeCard('mlb-pitcher-k', playerId, 'mlb-test-game');
     getUnsettledProjectionCards.mockReturnValue([mockCard]);
+    resolveMlbGamePkMock.mockReturnValue(745398);
     getDatabase.mockReturnValue({
-      prepare: jest.fn((sql) => {
-        if (sql.includes('FROM mlb_game_pk_map')) {
-          return { get: jest.fn().mockReturnValue({ game_pk: 745398 }) };
-        }
-        return {
-          get: jest.fn().mockReturnValue(null),
-          run: jest.fn(),
-        };
-      }),
+      prepare: jest.fn().mockReturnValue({ get: jest.fn().mockReturnValue(null), run: jest.fn() }),
     });
 
     const payload = buildMlbBoxscorePayload({
@@ -409,11 +405,9 @@ describe('settleProjections — mlb-pitcher-k actual_result shape', () => {
   test('writes terminal projection_settlement metadata when gamePk not found in mlb_game_pk_map', async () => {
     const playerId = '543135';
     getUnsettledProjectionCards.mockReturnValue([makeCard('mlb-pitcher-k', playerId)]);
+      resolveMlbGamePkMock.mockReturnValue(null);
     getDatabase.mockReturnValue({
       prepare: jest.fn((sql) => {
-        if (sql.includes('FROM mlb_game_pk_map')) {
-          return { get: jest.fn().mockReturnValue(null) };
-        }
         if (sql.includes('FROM card_results')) {
           return {
             get: jest.fn().mockReturnValue({ id: 'result-1', metadata: '{}' }),
@@ -450,10 +444,9 @@ describe('settleProjections — mlb-pitcher-k actual_result shape', () => {
   test('skips silently when game is not yet final', async () => {
     const playerId = '543135';
     getUnsettledProjectionCards.mockReturnValue([makeCard('mlb-pitcher-k', playerId)]);
+    resolveMlbGamePkMock.mockReturnValue(745398);
     getDatabase.mockReturnValue({
-      prepare: jest.fn().mockReturnValue({
-        get: jest.fn().mockReturnValue({ game_pk: 745398 }),
-      }),
+      prepare: jest.fn().mockReturnValue({ get: jest.fn().mockReturnValue(null), run: jest.fn() }),
     });
 
     const payload = buildMlbBoxscorePayload({ gameState: 'Live' });
@@ -470,12 +463,10 @@ describe('settleProjections — mlb-pitcher-k actual_result shape', () => {
 
   test('writes terminal projection_settlement metadata when pitcher_id not found in boxscore', async () => {
     const playerId = '999999';
+      resolveMlbGamePkMock.mockReturnValue(745398);
     getUnsettledProjectionCards.mockReturnValue([makeCard('mlb-pitcher-k', playerId)]);
     getDatabase.mockReturnValue({
       prepare: jest.fn((sql) => {
-        if (sql.includes('FROM mlb_game_pk_map')) {
-          return { get: jest.fn().mockReturnValue({ game_pk: 745398 }) };
-        }
         if (sql.includes('FROM card_results')) {
           return {
             get: jest.fn().mockReturnValue({ id: 'result-2', metadata: '{}' }),
@@ -597,7 +588,7 @@ function makeProjectionCard(cardType, projection) {
 }
 
 describe('settleProjections — proxy eval integration', () => {
-  const { fetchF5Total } = require('../settle_mlb_f5');
+  const { fetchF5Total, resolveMlbGamePk: resolveMlbGamePkFn } = require('../settle_mlb_f5');
   const { fetchNhlSettlementSnapshot: fetchNhlSnapshot } = require('../nhl-settlement-source');
 
   beforeEach(() => {
@@ -607,6 +598,7 @@ describe('settleProjections — proxy eval integration', () => {
         get: jest.fn().mockReturnValue({ game_pk: '745340' }),
       }),
     });
+    resolveMlbGamePkFn.mockReturnValue('745340');
   });
 
   test('Case 1: mlb-f5 card triggers batchInsertProjectionProxyEvals with 2 rows', async () => {
