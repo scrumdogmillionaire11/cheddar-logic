@@ -1790,7 +1790,11 @@ function getProjectionAccuracyEvals(db, opts = {}) {
   const { where, params } = buildWhereClause(opts, 'e');
   return db
     .prepare(`
-      SELECT *
+      SELECT e.*,
+        ABS(
+          COALESCE(e.projection_raw, e.projection_value) -
+          COALESCE(e.synthetic_line, e.nearest_half_line)
+        ) AS edge_distance
       FROM projection_accuracy_evals e
       ${where}
       ORDER BY datetime(e.captured_at) DESC, e.id DESC

@@ -132,6 +132,12 @@ describe('projection accuracy confidence engine', () => {
       signed_error: 1.24,
     });
     expect(graded.absolute_error).toBeCloseTo(1.24);
+    // WI-1115: edge_distance attribution contract
+    expect(typeof graded.edge_distance).toBe('number');
+    expect(graded.edge_distance).toBeCloseTo(
+      Math.abs((graded.projection_raw ?? graded.projection_value) - (graded.synthetic_line ?? graded.nearest_half_line)),
+      6,
+    );
 
     const selectedSummary = getProjectionAccuracyEvalSummary(db, {
       cardType: 'nhl-player-shots',
