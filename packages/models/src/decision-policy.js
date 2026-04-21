@@ -1,5 +1,5 @@
-// Import reason-code constants directly from source to avoid disruption when
-// tests mock the full @cheddar-logic/data package (which mocks the DB layer).
+// Import reason-code constants from the package entrypoint to keep
+// cross-package imports on public surfaces.
 const {
   MODEL_REASON_CODES,
   DATA_REASON_CODES,
@@ -12,7 +12,7 @@ const {
   REASON_CODE_LABELS: CANONICAL_REASON_CODE_LABELS,
   classifyReasonCode,
   getReasonCodeLabel,
-} = require('../../data/src/reason-codes');
+} = require('../../data');
 
 function toUpperToken(value) {
   if (value == null) return '';
