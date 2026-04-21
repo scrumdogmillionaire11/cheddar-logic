@@ -313,7 +313,7 @@ function CardFamilySection({
       <span className="col-span-2">Matchup</span>
       <span className="text-right">Projected</span>
       <span className="text-center">Direction</span>
-      <span className="text-center">Tier</span>
+      <span className="text-center">Tier / Conf</span>
       <span className="text-right">Edge</span>
       <span className="text-right">Actual</span>
       <span className="text-right">Outcome</span>
