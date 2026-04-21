@@ -1104,6 +1104,47 @@ describe('selectPassReasonCode (PRI-MLB-02)', () => {
     expect(result.evaluation_status).toBe('NO_EVALUATION');
     expect(result.block_reasons).toEqual(['PASS_SYNTHETIC_FALLBACK']);
   });
+
+  test('degraded MLB full-game card has decision_v2 with degradation flag', () => {
+    // Degraded context (no bullpen data) has less inputs available
+    const degradedContext = {
+      ...baseContext,
+      home_bullpen_era: null,
+      away_bullpen_era: null,
+    };
+    // Degraded projection ~8.65
+    const result = projectFullGameTotalCard(avgPitcher, avgPitcher, 8.0, degradedContext);
+
+    expect(result).not.toBeNull();
+    expect(result.decision_v2).toBeDefined();
+    expect(result.decision_v2.degraded).toBe(true);
+    expect(result.decision_v2.degradation_reason).toBe('INSUFFICIENT_DATA');
+    expect(result.decision_v2.watchdog_status).toBe('READY');
+    // Degraded cards with lean edge but not heavily degraded still return PASS
+    expect(result.decision_v2.official_status).toBe('PASS');
+  });
+
+  test('MLB full-game card with fire signal has decision_v2.official_status: PLAY', () => {
+    const result = projectFullGameTotalCard(avgPitcher, avgPitcher, 7.0, baseContext);
+
+    expect(result).not.toBeNull();
+    expect(result.decision_v2).toBeDefined();
+    expect(result.decision_v2.official_status).toBe('PLAY');
+    expect(result.decision_v2.degraded).toBe(false);
+    expect(result.decision_v2.degradation_reason).toBeNull();
+    expect(result.decision_v2.watchdog_status).toBe('READY');
+  });
+
+  test('MLB full-game card with no edge has decision_v2.official_status: PASS', () => {
+    const result = projectFullGameTotalCard(avgPitcher, avgPitcher, 9.05, baseContext);
+
+    expect(result).not.toBeNull();
+    expect(result.decision_v2).toBeDefined();
+    expect(result.decision_v2.official_status).toBe('PASS');
+    expect(result.decision_v2.degraded).toBe(false);
+    expect(result.decision_v2.degradation_reason).toBeNull();
+    expect(result.decision_v2.watchdog_status).toBe('READY');
+  });
 });
 
 // ── PRI-RUNNER-01/02: card builder propagation + projection-floor scrub ────────

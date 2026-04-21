@@ -931,39 +931,6 @@ function isProjectionAuditOnlyBlkRow(row) {
   return String(row?.card_type || '').trim().toLowerCase() === 'nhl-player-blk';
 }
 
-function isMlbFullGameTotalOrMoneylineRow(row, payloadData = null) {
-  if (isProjectionOnlyF5Row(row, payloadData)) {
-    return false;
-  }
-
-  const sport = toBackfillUpperToken(
-    row?.sport ??
-      payloadData?.sport ??
-      payloadData?.league ??
-      null,
-  );
-  if (sport !== 'MLB' && sport !== 'BASEBALL_MLB') {
-    return false;
-  }
-
-  const marketType = normalizeBackfillMarketType(
-    row?.market_type ??
-      payloadData?.market_type ??
-      payloadData?.recommended_bet_type ??
-      null,
-  );
-  if (marketType !== 'TOTAL' && marketType !== 'MONEYLINE') {
-    return false;
-  }
-
-  const period = extractSettlementPeriod({
-    row,
-    payloadData,
-    cardResultMetadata: null,
-  });
-  return period !== '1P';
-}
-
 function resolveNonActionableFinalReason(payloadData, row) {
   // F5 market cards are projection-only and must remain pending for settle_mlb_f5.
   if (isProjectionOnlyF5Row(row, payloadData)) {
@@ -1006,18 +973,6 @@ function resolveNonActionableFinalReason(payloadData, row) {
     return {
       code: 'NON_ACTIONABLE_FINAL_PASS',
       message: 'Card status=PASS is non-actionable',
-      details: { legacyStatus, legacyFallback: true },
-    };
-  }
-  if (
-    !officialStatus &&
-    (legacyStatus === 'WATCH' || legacyStatus === 'HOLD') &&
-    isMlbFullGameTotalOrMoneylineRow(row, payloadData)
-  ) {
-    return {
-      code: 'NON_ACTIONABLE_FINAL_LEGACY_WATCH_HOLD',
-      message:
-        'Legacy MLB full-game WATCH/HOLD card is non-actionable',
       details: { legacyStatus, legacyFallback: true },
     };
   }
@@ -3079,7 +3034,6 @@ module.exports = {
     resolveSettlementMarketBucket,
     resolveBackfillOfficialStatus,
     resolveNonActionableFinalReason,
-    isMlbFullGameTotalOrMoneylineRow,
     isProjectionOnlyF5Row,
     isProjectionAuditOnlyBlkRow,
     shouldEnableDisplayBackfill,

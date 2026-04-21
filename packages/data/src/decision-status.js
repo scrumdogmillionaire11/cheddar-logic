@@ -30,6 +30,8 @@ function normalizeLegacyDecisionStatus(value) {
 }
 
 function resolveLegacyDecisionStatusToken(payloadData) {
+  // DEPRECATED: Use decision_v2.official_status instead.
+  // Settlement should consult decision_v2 for authoritative decision status.
   if (hasOwnNonEmptyValue(payloadData, 'status')) {
     return toUpperToken(payloadData.status);
   }
