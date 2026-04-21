@@ -480,6 +480,64 @@ describe('runNBAModel', () => {
     expect(mocks.insertCardPayload).not.toHaveBeenCalled();
     expect(mocks.markJobRunSuccess).toHaveBeenCalledWith(result.jobRunId);
   });
+
+  test('stamps NBA projection_accuracy and contextual raw_data fields for totals call cards', () => {
+    const { stampNbaProjectionAccuracyFields } = loadRunNBAModel();
+    const oddsSnapshot = buildOddsSnapshot({
+      total: 233.5,
+      raw_data: {
+        espn_metrics: {
+          home: { metrics: { paceHome: 102.4, avgPtsHome: 118.2 } },
+          away: { metrics: { paceAway: 101.9, avgPtsAway: 115.4 } },
+        },
+      },
+    });
+    const card = {
+      cardType: 'nba-totals-call',
+      payloadData: {
+        projection: { total: 234.1 },
+        driver_summary: {
+          weights: [
+            { driver: 'totalProjection', weight: 0.45, signal: 0.41 },
+          ],
+        },
+        raw_data: {},
+      },
+    };
+
+    stampNbaProjectionAccuracyFields(card, {
+      oddsSnapshot,
+      effectiveSigma: { total: 13.2 },
+      availabilityGate: {
+        availabilityFlags: [
+          {
+            is_impact_player: true,
+            status: 'OUT',
+            avg_points_last5: 11,
+          },
+        ],
+      },
+    });
+
+    expect(card.payloadData.projection_accuracy.projection_raw).toBe(234.1);
+    expect(card.payloadData.raw_data.market_total).toBe(233.5);
+    expect(card.payloadData.raw_data.pace_tier).toBeTruthy();
+    expect(card.payloadData.raw_data.vol_env).toBe('MED');
+    expect(card.payloadData.raw_data.total_band).toBe('230-240');
+    expect(card.payloadData.raw_data.injury_cloud).toBe('MODERATE');
+    expect(card.payloadData.raw_data.driver_contributions).toEqual([
+      { driver: 'totalProjection', weight: 0.45, signal: 0.41 },
+    ]);
+  });
+
+  test('deriveTotalBand buckets totals per WI-1019 thresholds', () => {
+    const { deriveTotalBand } = loadRunNBAModel();
+
+    expect(deriveTotalBand(219.5)).toBe('<220');
+    expect(deriveTotalBand(220)).toBe('220-230');
+    expect(deriveTotalBand(230)).toBe('230-240');
+    expect(deriveTotalBand(240)).toBe('240+');
+  });
 });
 
 // WI-0646: Playoff mode detection tests
