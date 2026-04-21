@@ -6,6 +6,7 @@
 
 const {
   generateNBAMarketCallCards,
+  applyMarketIntelligenceModifier,
   applyNbaFeatureTimelinessGuardToCards,
 } = require('../run_nba_model');
 
@@ -26,7 +27,7 @@ const baseOdds = {
   captured_at: new Date().toISOString(),
 };
 
-function makeSpreadDecision(edge, status = 'FIRE') {
+function makeSpreadDecision(edge, status = 'FIRE', overrides = {}) {
   return {
     status,
     edge,
@@ -43,8 +44,106 @@ function makeSpreadDecision(edge, status = 'FIRE') {
     projection: { projected_margin: 5 },
     line_source: 'odds_snapshot',
     price_source: 'odds_snapshot',
+    ...overrides,
   };
 }
+
+describe('applyMarketIntelligenceModifier', () => {
+  test('SHARP_VS_PUBLIC applies a 0.85 conflict multiplier', () => {
+    const result = applyMarketIntelligenceModifier({
+      baseConfidence: 0.8,
+      sharpDivergence: 'SHARP_VS_PUBLIC',
+      splitsDivergence: null,
+      edge: 0.06,
+    });
+
+    expect(result.adjustedConfidence).toBeCloseTo(0.68);
+    expect(result.multiplier).toBe(0.85);
+    expect(result.reasonCodes).toEqual(['SHARP_VS_MODEL_CONFLICT']);
+  });
+
+  test('PUBLIC_TRAP_RISK applies a 0.88 multiplier for public-heavy low edge', () => {
+    const result = applyMarketIntelligenceModifier({
+      baseConfidence: 0.8,
+      sharpDivergence: null,
+      splitsDivergence: 'PUBLIC_HEAVY_HOME',
+      edge: 0.03,
+    });
+
+    expect(result.adjustedConfidence).toBeCloseTo(0.704);
+    expect(result.multiplier).toBe(0.88);
+    expect(result.reasonCodes).toEqual(['PUBLIC_TRAP_RISK']);
+  });
+
+  test('SHARP_CONFIRMATION boosts confidence but caps at 0.90', () => {
+    const result = applyMarketIntelligenceModifier({
+      baseConfidence: 0.89,
+      sharpDivergence: 'SHARP_ALIGNED',
+      splitsDivergence: null,
+      edge: 0.08,
+    });
+
+    expect(result).toEqual({
+      adjustedConfidence: 0.90,
+      multiplier: 1.05,
+      reasonCodes: ['SHARP_CONFIRMATION'],
+    });
+  });
+
+  test('combined risk signals use the single most conservative multiplier', () => {
+    const result = applyMarketIntelligenceModifier({
+      baseConfidence: 0.8,
+      sharpDivergence: 'SHARP_VS_PUBLIC',
+      splitsDivergence: 'PUBLIC_HEAVY_HOME',
+      edge: 0.03,
+    });
+
+    expect(result.adjustedConfidence).toBe(0.68);
+    expect(result.adjustedConfidence).not.toBeCloseTo(0.8 * 0.85 * 0.88);
+    expect(result.multiplier).toBe(0.85);
+    expect(result.reasonCodes).toEqual(['SHARP_VS_MODEL_CONFLICT']);
+  });
+
+  test('risk beats alignment when public trap and sharp confirmation both apply', () => {
+    const result = applyMarketIntelligenceModifier({
+      baseConfidence: 0.8,
+      sharpDivergence: 'SHARP_ALIGNED',
+      splitsDivergence: 'PUBLIC_HEAVY_AWAY',
+      edge: 0.03,
+    });
+
+    expect(result.adjustedConfidence).toBeCloseTo(0.704);
+    expect(result.multiplier).toBe(0.88);
+    expect(result.reasonCodes).toEqual(['PUBLIC_TRAP_RISK']);
+  });
+
+  test('no market intelligence signals keep confidence and empty reasons', () => {
+    const result = applyMarketIntelligenceModifier({
+      baseConfidence: 0.72,
+      sharpDivergence: null,
+      splitsDivergence: null,
+      edge: 0.06,
+    });
+
+    expect(result).toEqual({
+      adjustedConfidence: 0.72,
+      multiplier: 1.0,
+      reasonCodes: [],
+    });
+  });
+
+  test('risk multiplier cannot push adjusted confidence below 0.45', () => {
+    const result = applyMarketIntelligenceModifier({
+      baseConfidence: 0.5,
+      sharpDivergence: 'SHARP_VS_PUBLIC',
+      splitsDivergence: null,
+      edge: 0.06,
+    });
+
+    expect(result.adjustedConfidence).toBe(0.45);
+    expect(result.multiplier).toBe(0.85);
+  });
+});
 
 describe('generateNBAMarketCallCards — spread edge gate', () => {
   test('RED: negative edge (-0.25) with FIRE status emits no spread card', () => {
@@ -87,6 +186,44 @@ describe('generateNBAMarketCallCards — spread edge gate', () => {
     );
     const spreadCards = cards.filter((c) => c.cardType === 'nba-spread-call');
     expect(spreadCards).toHaveLength(1);
+  });
+
+  test('market intelligence stamp adjusts only confidence and confidence-derived tier', () => {
+    const decision = makeSpreadDecision(0.08, 'FIRE', { conflict: 0 });
+    const unmodifiedCard = generateNBAMarketCallCards(
+      'game-123',
+      { SPREAD: makeSpreadDecision(0.08, 'FIRE', { conflict: 0 }) },
+      { ...baseOdds, raw_data: {} },
+    ).find((c) => c.cardType === 'nba-spread-call');
+    const modifiedCard = generateNBAMarketCallCards(
+      'game-123',
+      { SPREAD: decision },
+      {
+        ...baseOdds,
+        raw_data: {
+          sharp_divergence: 'SHARP_VS_PUBLIC',
+          splits_divergence: 'PUBLIC_HEAVY_HOME',
+        },
+      },
+    ).find((c) => c.cardType === 'nba-spread-call');
+
+    expect(unmodifiedCard.payloadData.raw_data.market_intel_modifier).toEqual({
+      multiplier: 1.0,
+      reason_codes: [],
+    });
+    expect(modifiedCard.payloadData.raw_data.market_intel_modifier).toEqual({
+      multiplier: 0.85,
+      reason_codes: ['SHARP_VS_MODEL_CONFLICT'],
+    });
+    expect(modifiedCard.payloadData.confidence).toBeCloseTo(
+      unmodifiedCard.payloadData.confidence * 0.85,
+    );
+    expect(unmodifiedCard.payloadData.tier).toBe('BEST');
+    expect(modifiedCard.payloadData.tier).toBe('WATCH');
+    expect(modifiedCard.payloadData.edge).toBe(decision.edge);
+    expect(modifiedCard.payloadData.p_fair).toBe(decision.p_fair);
+    expect(modifiedCard.payloadData.ev_passed).toBe(true);
+    expect(modifiedCard.payloadData.recommended_bet_type).toBe('spread');
   });
 });
 

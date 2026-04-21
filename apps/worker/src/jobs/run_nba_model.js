@@ -1262,6 +1262,70 @@ function computePricedCallCardConfidence({ edgePct, conflictScore }) {
   });
 }
 
+function applyMarketIntelligenceModifier({
+  baseConfidence,
+  sharpDivergence,
+  splitsDivergence,
+  edge,
+}) {
+  const candidates = [];
+
+  if (sharpDivergence === 'SHARP_VS_PUBLIC') {
+    candidates.push({
+      multiplier: 0.85,
+      reasonCode: 'SHARP_VS_MODEL_CONFLICT',
+    });
+  }
+
+  if (
+    (splitsDivergence === 'PUBLIC_HEAVY_HOME' ||
+      splitsDivergence === 'PUBLIC_HEAVY_AWAY') &&
+    hasFiniteNumber(edge) &&
+    edge < 0.04
+  ) {
+    candidates.push({
+      multiplier: 0.88,
+      reasonCode: 'PUBLIC_TRAP_RISK',
+    });
+  }
+
+  if (sharpDivergence === 'SHARP_ALIGNED') {
+    candidates.push({
+      multiplier: 1.05,
+      reasonCode: 'SHARP_CONFIRMATION',
+    });
+  }
+
+  const selected =
+    candidates.length > 0
+      ? candidates.reduce((mostConservative, candidate) =>
+          candidate.multiplier < mostConservative.multiplier
+            ? candidate
+            : mostConservative,
+        )
+      : { multiplier: 1.0, reasonCode: null };
+  const normalizedBaseConfidence = hasFiniteNumber(baseConfidence)
+    ? baseConfidence
+    : 0.5;
+
+  return {
+    adjustedConfidence: clamp(
+      normalizedBaseConfidence * selected.multiplier,
+      0.45,
+      0.90,
+    ),
+    multiplier: selected.multiplier,
+    reasonCodes: selected.reasonCode ? [selected.reasonCode] : [],
+  };
+}
+
+function buildMarketIntelModifierPayload(marketIntel) {
+  return {
+    multiplier: marketIntel.multiplier,
+    reason_codes: [...marketIntel.reasonCodes],
+  };
+}
+
 function buildMarketLineContext({
   sport,
   gameId,
@@ -1904,6 +1968,10 @@ function generateNBAMarketCallCards(
   const market = buildMarketFromOdds(oddsSnapshot);
   const totalLineContext = lineContexts?.TOTAL || null;
   const spreadLineContext = lineContexts?.SPREAD || null;
+  const rawMarketIntel =
+    oddsSnapshot?.raw_data && typeof oddsSnapshot.raw_data === 'object'
+      ? oddsSnapshot.raw_data
+      : {};
 
   const cards = [];
 
@@ -1921,12 +1989,19 @@ function generateNBAMarketCallCards(
   ) {
     const rawStatus = totalDecision.status || 'PASS';
     const status = withoutOddsMode && rawStatus === 'PASS' ? 'LEAN' : rawStatus;
-    const confidence = withoutOddsMode
+    const baseConfidence = withoutOddsMode
       ? 0.52
       : computePricedCallCardConfidence({
           edgePct: totalDecision.edge,
           conflictScore: totalDecision.conflict,
         });
+    const marketIntel = applyMarketIntelligenceModifier({
+      baseConfidence,
+      sharpDivergence: rawMarketIntel.sharp_divergence ?? null,
+      splitsDivergence: rawMarketIntel.splits_divergence ?? null,
+      edge: totalDecision.edge,
+    });
+    const confidence = marketIntel.adjustedConfidence;
     const tier = determineTier(confidence);
     const { side, line: marketLine } = totalDecision.best_candidate;
     // In Without Odds Mode there is no market line — fall back to projection.
@@ -1985,6 +2060,9 @@ function generateNBAMarketCallCards(
         tags: withoutOddsMode ? ['no_odds_mode'] : [],
         consistency: {
           total_bias: totalBias,
+        },
+        raw_data: {
+          market_intel_modifier: buildMarketIntelModifierPayload(marketIntel),
         },
         reasoning: `${pickText}: ${totalDecision.reasoning}`,
         execution_status: withoutOddsMode ? 'PROJECTION_ONLY' : 'EXECUTABLE',
@@ -2118,10 +2196,17 @@ function generateNBAMarketCallCards(
     (spreadDecision.status === 'FIRE' || spreadDecision.status === 'WATCH') &&
     (spreadDecision.edge == null || spreadDecision.edge > SPREAD_LEAN_MIN)
   ) {
-    const confidence = computePricedCallCardConfidence({
+    const baseConfidence = computePricedCallCardConfidence({
       edgePct: spreadDecision.edge,
       conflictScore: spreadDecision.conflict,
     });
+    const marketIntel = applyMarketIntelligenceModifier({
+      baseConfidence,
+      sharpDivergence: rawMarketIntel.sharp_divergence ?? null,
+      splitsDivergence: rawMarketIntel.splits_divergence ?? null,
+      edge: spreadDecision.edge,
+    });
+    const confidence = marketIntel.adjustedConfidence;
     const tier = determineTier(confidence);
     const { side, line } = spreadDecision.best_candidate;
     const spreadPrice =
@@ -2175,6 +2260,9 @@ function generateNBAMarketCallCards(
         tags: [],
         consistency: {
           total_bias: totalBias,
+        },
+        raw_data: {
+          market_intel_modifier: buildMarketIntelModifierPayload(marketIntel),
         },
         reasoning: `${pickText}: ${spreadDecision.reasoning}`,
         execution_status: 'EXECUTABLE',
@@ -3084,6 +3172,7 @@ module.exports = {
   recordEspnNullTeams,
   sendEspnNullDiscordAlert,
   generateNBAMarketCallCards,
+  applyMarketIntelligenceModifier,
   deriveExecutionStatusForCard,
   applyExecutionGateToNbaCard,
   applyPlayoffSigmaMultiplier,
