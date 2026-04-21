@@ -257,3 +257,16 @@ Plans:
 
 Plans:
 - [ ] WI-1105-01-PLAN.md — Materialized schema + immutable write contract + grading/confidence/trust derivation + `/results` materialized-first read path (Wave 1)
+
+---
+
+### Phase: WI-1101 — POTD Near-Miss Settled Metric Deep Link
+
+**Goal**: Add an accessible, visible link affordance on the Near-Miss Tracking Settled metric that navigates directly to the POTD play log/history section for immediate settled-result exploration.
+
+**Requirements:** [WI-1101-UI-01]
+
+**Plans:** 1 plan in 1 wave
+
+Plans:
+- [ ] WI-1101-01-PLAN.md — Make Near-Miss Settled metric an accessible anchor link to POTD play log/history section (Wave 1)
