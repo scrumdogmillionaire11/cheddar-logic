@@ -36,6 +36,66 @@ function parseJsonObject(value) {
   }
 }
 
+function toFiniteNumberOrNull(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function normalizeProbability(value) {
+  const parsed = toFiniteNumberOrNull(value);
+  if (parsed === null) return null;
+  const probability = parsed > 1 && parsed <= 100 ? parsed / 100 : parsed;
+  return probability >= 0 && probability <= 1 ? probability : null;
+}
+
+function normalizeMoneylineSide(value) {
+  const token = String(value || '').trim().toUpperCase();
+  if (token === 'HOME' || token === 'H') return 'HOME';
+  if (token === 'AWAY' || token === 'A') return 'AWAY';
+  return null;
+}
+
+function resolveF5MlSelectedSide(payload = {}) {
+  return normalizeMoneylineSide(
+    payload?.selection?.side ??
+      payload?.play?.selection?.side ??
+      payload?.market_context?.selection_side ??
+      payload?.canonical_envelope_v2?.selection_side ??
+      payload?.decision_v2?.selection_side ??
+      payload?.prediction,
+  );
+}
+
+function resolveF5MlSelectedWinProbability(payload = {}, selectedSide = null) {
+  const selectedProbability = normalizeProbability(
+    payload?.projection_accuracy?.win_probability ??
+      payload?.win_probability ??
+      payload?.p_fair ??
+      payload?.fair_prob ??
+      payload?.model_prob,
+  );
+  if (selectedProbability !== null) return selectedProbability;
+
+  const homeProbability = normalizeProbability(
+    payload?.projection?.projected_win_prob_home ??
+      payload?.drivers?.[0]?.projected_win_prob_home ??
+      payload?.drivers?.[0]?.win_prob_home,
+  );
+  if (homeProbability === null) return null;
+  if (selectedSide === 'HOME') return homeProbability;
+  if (selectedSide === 'AWAY') return Math.round((1 - homeProbability) * 1_000_000) / 1_000_000;
+  return null;
+}
+
+function resolveF5MlActualForSelectedSide(winner, selectedSide) {
+  const normalizedWinner = normalizeMoneylineSide(winner);
+  const normalizedSide = normalizeMoneylineSide(selectedSide);
+  if (String(winner || '').toUpperCase() === 'PUSH') return 0.5;
+  if (!normalizedWinner || !normalizedSide) return null;
+  return normalizedWinner === normalizedSide ? 1 : 0;
+}
+
 function setProjectionSettlementMetadata(db, cardId, { code, message }) {
   const row = db
     .prepare(
@@ -337,18 +397,53 @@ async function settleProjections({ jobKey = null, dryRun = false } = {}) {
                 : snapshot.away_runs > snapshot.home_runs
                   ? 'AWAY'
                   : 'PUSH';
+            const selectedSide = resolveF5MlSelectedSide(payload);
+            const actualSelectedSide = resolveF5MlActualForSelectedSide(winner, selectedSide);
 
             if (!dryRun) {
               setProjectionActualResult(card.card_id, {
                 f5_home_runs: snapshot.home_runs,
                 f5_away_runs: snapshot.away_runs,
                 f5_winner: winner,
+                f5_ml_actual: actualSelectedSide,
+                selected_side: selectedSide,
               });
             }
 
             console.log(
               `  [${JOB_NAME}] mlb ${card.game_id}: f5_ml home=${snapshot.home_runs} away=${snapshot.away_runs} winner=${winner}`,
             );
+
+            if (!dryRun) {
+              const selectedWinProbability = resolveF5MlSelectedWinProbability(payload, selectedSide);
+              if (selectedWinProbability !== null && actualSelectedSide !== null) {
+                const actualResultObj = {
+                  f5_ml_actual: actualSelectedSide,
+                  f5_winner: winner,
+                  selected_side: selectedSide,
+                };
+                const proxyRows = buildProjectionProxyMarketRows({
+                  card_id: card.card_id,
+                  game_id: card.game_id,
+                  game_date: card.game_time_utc?.slice(0, 10),
+                  sport: card.sport,
+                  card_family: CARD_TYPE_TO_FAMILY[card.card_type],
+                  model_projection: selectedWinProbability,
+                  actual_value: actualSelectedSide,
+                  selected_side: selectedSide,
+                  confidence_bucket: payload?.confidence_band,
+                  confidence_score: payload?.confidence_score,
+                  actual_result: JSON.stringify(actualResultObj),
+                });
+                if (proxyRows.length > 0) {
+                  try {
+                    batchInsertProjectionProxyEvals(db, proxyRows);
+                  } catch (proxyErr) {
+                    console.error('[settle_projections] proxy eval insert failed', card.card_id, proxyErr?.message);
+                  }
+                }
+              }
+            }
 
             settled++;
             continue;

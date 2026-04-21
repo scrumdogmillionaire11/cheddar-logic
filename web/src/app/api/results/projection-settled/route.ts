@@ -20,13 +20,21 @@ type DbProxyEvalRow = {
   proxy_line: number;
   edge_vs_line: number;
   recommended_side: 'OVER' | 'UNDER' | 'PASS';
-  tier: 'PLAY' | 'LEAN' | 'STRONG' | 'PASS';
+  tier: 'PLAY' | 'SLIGHT_EDGE' | 'LEAN' | 'STRONG' | 'PASS';
   confidence_bucket: string;
   agreement_group: string;
   graded_result: 'WIN' | 'LOSS' | 'NO_BET';
   hit_flag: number;
   tier_score: number;
   consensus_bonus: number;
+  win_probability: number | null;
+  edge_pp: number | null;
+  confidence_score: number | null;
+  accuracy_confidence_band: string | null;
+  tracking_role: string | null;
+  calibration_bucket: string | null;
+  brier_score: number | null;
+  expected_outcome_label: string | null;
   card_title: string | null;
   home_team: string | null;
   away_team: string | null;
@@ -43,6 +51,14 @@ type DbF5MoneylineRow = {
   card_type: string;
   selection: string | null;
   payload_data: string | null;
+  accuracy_projection_value: number | null;
+  accuracy_edge_pp: number | null;
+  accuracy_confidence_score: number | null;
+  accuracy_confidence_band: string | null;
+  tracking_role: string | null;
+  calibration_bucket: string | null;
+  brier_score: number | null;
+  expected_outcome_label: string | null;
   card_title: string | null;
   home_team: string | null;
   away_team: string | null;
@@ -55,12 +71,12 @@ export type ProjectionProxyRow = {
   gameDateUtc: string;
   sport: string;
   cardFamily: string;
-  projValue: number;
+  projValue: number | null;
   actualValue: number;
-  proxyLine: number;
-  edgeVsLine: number;
+  proxyLine: number | null;
+  edgeVsLine: number | null;
   recommendedSide: 'OVER' | 'UNDER' | 'PASS';
-  tier: 'PLAY' | 'LEAN' | 'STRONG' | 'PASS';
+  tier: 'PLAY' | 'SLIGHT_EDGE' | 'LEAN' | 'STRONG' | 'PASS';
   confidenceBucket: string;
   agreementGroup: string;
   gradedResult: 'WIN' | 'LOSS' | 'NO_BET';
@@ -70,6 +86,15 @@ export type ProjectionProxyRow = {
   cardTitle: string | null;
   homeTeam: string | null;
   awayTeam: string | null;
+  winProbability?: number | null;
+  edgePp?: number | null;
+  confidenceScore?: number | null;
+  confidenceBand?: string | null;
+  trackingRole?: string | null;
+  calibrationBucket?: string | null;
+  brierScore?: number | null;
+  expectedOutcomeLabel?: string | null;
+  predictionSignalMissing?: boolean;
 };
 
 export type ProjectionSettledResponse = {
@@ -97,6 +122,48 @@ function toNumberOrNull(value: unknown): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function readObject(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' ? (value as Record<string, unknown>) : null;
+}
+
+function resolvePayloadF5WinProbability(
+  payload: Record<string, unknown> | null,
+  selection: 'HOME' | 'AWAY' | null,
+): number | null {
+  const projection = readObject(payload?.projection);
+  const direct = toNumberOrNull(
+    projection?.win_probability ??
+      payload?.win_probability ??
+      readObject(payload?.decision)?.win_prob,
+  );
+  if (direct !== null) return direct;
+
+  const homeProb = toNumberOrNull(
+    projection?.projected_win_prob_home ??
+      payload?.projected_win_prob_home,
+  );
+  if (homeProb === null || !selection) return null;
+  return selection === 'HOME' ? homeProb : 1 - homeProb;
+}
+
+function resolveExpectedOutcomeLabel(
+  winProbability: number | null,
+  gradedResult: 'WIN' | 'LOSS' | 'NO_BET',
+  actualValue: number,
+): string | null {
+  if (actualValue === 0.5) return 'PUSH';
+  if (winProbability === null) return null;
+  if (gradedResult === 'LOSS') {
+    if (winProbability >= 0.65) return 'MODEL_ERROR';
+    if (winProbability >= 0.56) return 'BAD_VARIANCE';
+    return 'EXPECTED_ISH';
+  }
+  if (gradedResult === 'WIN') {
+    return winProbability >= 0.56 ? 'EXPECTED_WIN' : 'POSITIVE_VARIANCE';
+  }
+  return null;
+}
+
 function resolveF5MlSelection(row: DbF5MoneylineRow, payload: Record<string, unknown> | null): 'HOME' | 'AWAY' | null {
   const payloadSelection =
     (payload?.selection as Record<string, unknown> | undefined)?.side ??
@@ -110,12 +177,18 @@ function resolveF5MlSelection(row: DbF5MoneylineRow, payload: Record<string, unk
   return null;
 }
 
-function resolveTier(payload: Record<string, unknown> | null): 'PLAY' | 'LEAN' | 'STRONG' | 'PASS' {
+function resolveTier(payload: Record<string, unknown> | null): 'PLAY' | 'SLIGHT_EDGE' | 'LEAN' | 'STRONG' | 'PASS' {
+  const modelSignalTier = String(payload?.model_signal_tier ?? '').toUpperCase();
+  if (modelSignalTier === 'PLAY' || modelSignalTier === 'SLIGHT_EDGE' || modelSignalTier === 'PASS') {
+    return modelSignalTier as 'PLAY' | 'SLIGHT_EDGE' | 'PASS';
+  }
   const decisionV2 = payload?.decision_v2 as Record<string, unknown> | undefined;
   const official = String(decisionV2?.official_status ?? '').toUpperCase();
   if (official === 'PLAY' || official === 'LEAN') return official;
   if (official === 'PASS') return 'PASS';
   const status = String((payload?.status ?? payload?.action ?? '')).toUpperCase();
+  if (status === 'FIRE') return 'PLAY';
+  if (status === 'WATCH' || status === 'HOLD') return 'SLIGHT_EDGE';
   if (status === 'PLAY' || status === 'LEAN' || status === 'PASS') return status;
   return 'PASS';
 }
@@ -171,11 +244,20 @@ export async function GET(
            ppe.hit_flag,
            ppe.tier_score,
            ppe.consensus_bonus,
+           pae.projection_value AS win_probability,
+           pae.edge_pp,
+           pae.confidence_score,
+           pae.confidence_band AS accuracy_confidence_band,
+           pae.tracking_role,
+           pae.calibration_bucket,
+           pae.brier_score,
+           pae.expected_outcome_label,
            cp.card_title,
            g.home_team,
            g.away_team
          FROM projection_proxy_evals ppe
          LEFT JOIN card_payloads cp ON cp.id = ppe.card_id
+         LEFT JOIN projection_accuracy_evals pae ON pae.card_id = ppe.card_id
          LEFT JOIN games g ON g.game_id = ppe.game_id
          ORDER BY ppe.game_date DESC, ppe.id DESC
          LIMIT 200`,
@@ -205,8 +287,24 @@ export async function GET(
         cardTitle: row.card_title,
         homeTeam: row.home_team,
         awayTeam: row.away_team,
+        winProbability: row.win_probability,
+        edgePp: row.edge_pp,
+        confidenceScore: row.confidence_score,
+        confidenceBand: row.accuracy_confidence_band ?? row.confidence_bucket,
+        trackingRole: row.tracking_role,
+        calibrationBucket: row.calibration_bucket,
+        brierScore: row.brier_score,
+        expectedOutcomeLabel: row.expected_outcome_label,
+        predictionSignalMissing:
+          String(row.card_family || '').toUpperCase() === 'MLB_F5_ML' &&
+          row.win_probability === null,
       };
     });
+    const materializedF5MoneylineCardIds = new Set(
+      enrichedRows
+        .filter((row) => String(row.cardFamily || '').toUpperCase() === 'MLB_F5_ML')
+        .map((row) => row.cardId),
+    );
 
     const f5MoneylineRows = db
       .prepare(
@@ -221,11 +319,20 @@ export async function GET(
            cr.card_type,
            cr.selection,
            cp.payload_data,
+           pae.projection_value AS accuracy_projection_value,
+           pae.edge_pp AS accuracy_edge_pp,
+           pae.confidence_score AS accuracy_confidence_score,
+           pae.confidence_band AS accuracy_confidence_band,
+           pae.tracking_role,
+           pae.calibration_bucket,
+           pae.brier_score,
+           pae.expected_outcome_label,
            cp.card_title,
            g.home_team,
            g.away_team
          FROM card_results cr
          JOIN card_payloads cp ON cp.id = cr.card_id
+         LEFT JOIN projection_accuracy_evals pae ON pae.card_id = cr.card_id
          LEFT JOIN games g ON g.game_id = cr.game_id
          WHERE LOWER(cr.card_type) = 'mlb-f5-ml'
            AND LOWER(cr.status) = 'settled'
@@ -237,18 +344,26 @@ export async function GET(
     const mappedF5MoneylineRows: ProjectionProxyRow[] = f5MoneylineRows.map((row) => {
       const payload = parsePayload(row.payload_data);
       const selection = resolveF5MlSelection(row, payload);
-      const projProb = toNumberOrNull(
-        (payload?.decision as Record<string, unknown> | undefined)?.win_prob,
-      );
-      const projValue =
-        projProb ??
-        (selection === 'HOME' ? 1 : selection === 'AWAY' ? 0 : 0.5);
+      const payloadProb = resolvePayloadF5WinProbability(payload, selection);
+      const projProb = row.accuracy_projection_value ?? payloadProb;
+      const projValue = projProb;
       const resultToken = gradedResultToken(row.result);
       const actualValue =
         resultToken === 'WIN' ? 1 : resultToken === 'LOSS' ? 0 : 0.5;
-      const recommendedSide =
+      const recommendedSide: 'OVER' | 'UNDER' | 'PASS' =
         selection === 'HOME' ? 'OVER' : selection === 'AWAY' ? 'UNDER' : 'PASS';
-      const edgeVsLine = projValue - 0.5;
+      const payloadEdge = toNumberOrNull(payload?.edge_pp);
+      const edgeVsLine = row.accuracy_edge_pp ?? payloadEdge ?? (projValue === null ? null : projValue - 0.5);
+      const confidenceScore =
+        row.accuracy_confidence_score ?? toNumberOrNull(payload?.confidence_score);
+      const payloadConfidenceBand = String(payload?.confidence_band ?? '').trim();
+      const confidenceBand =
+        row.accuracy_confidence_band ?? (payloadConfidenceBand ? payloadConfidenceBand : null);
+      const trackingRole =
+        row.tracking_role ?? String(payload?.tracking_role ?? 'CALIBRATION_ONLY');
+      const expectedOutcomeLabel =
+        row.expected_outcome_label ??
+        resolveExpectedOutcomeLabel(projValue, resultToken, actualValue);
 
       return {
         id: -1 * row.id,
@@ -259,11 +374,11 @@ export async function GET(
         cardFamily: 'MLB_F5_ML',
         projValue,
         actualValue,
-        proxyLine: 0.5,
+        proxyLine: projValue === null ? null : 0.5,
         edgeVsLine,
         recommendedSide,
         tier: resolveTier(payload),
-        confidenceBucket: 'F5_ML',
+        confidenceBucket: confidenceBand ?? 'MISSING_SIGNAL',
         agreementGroup: 'DIRECT_SELECTION',
         gradedResult: resultToken,
         hitFlag: resultToken === 'WIN' ? 1 : 0,
@@ -272,8 +387,17 @@ export async function GET(
         cardTitle: row.card_title,
         homeTeam: row.home_team,
         awayTeam: row.away_team,
+        winProbability: projValue,
+        edgePp: edgeVsLine,
+        confidenceScore,
+        confidenceBand,
+        trackingRole,
+        calibrationBucket: row.calibration_bucket,
+        brierScore: row.brier_score,
+        expectedOutcomeLabel,
+        predictionSignalMissing: projValue === null,
       };
-    });
+    }).filter((row) => !materializedF5MoneylineCardIds.has(row.cardId));
 
     const settledRows = [...enrichedRows, ...mappedF5MoneylineRows].sort((a, b) => {
       const dateDiff = Date.parse(b.gameDateUtc) - Date.parse(a.gameDateUtc);

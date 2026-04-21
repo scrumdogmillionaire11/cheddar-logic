@@ -115,6 +115,12 @@ const MLB_MARKET_GROUP = Object.freeze({
   OTHER_PROP: 'OTHER_PROP',
 });
 
+const F5_ML_BASELINE_PROB = 0.5;
+const F5_ML_PLAY_WIN_PROB_MIN = 0.56;
+const F5_ML_PLAY_CONFIDENCE_MIN = 70;
+const F5_ML_SLIGHT_EDGE_WIN_PROB_MIN = 0.54;
+const F5_ML_SLIGHT_EDGE_CONFIDENCE_MIN = 50;
+
 const MLB_SEED_CONTEXT_MAX_AGE_MINUTES = Number(
   process.env.MODEL_ODDS_MAX_AGE_MINUTES ||
     process.env.ODDS_GAP_ALERT_MINUTES ||
@@ -132,6 +138,43 @@ const STALE_RECOVERY_DEDUP_TTL_MS = 10 * 60 * 1000;
 const staleRecoveryDedupCache = new Map();
 
 let cachedFreshnessEnvOverrides = null;
+
+function resolveF5MlConfidenceBand(confidenceScore) {
+  const score = Number(confidenceScore);
+  if (!Number.isFinite(score)) return 'LOW';
+  if (score >= 70) return 'HIGH';
+  if (score >= 55) return 'MED';
+  return 'LOW';
+}
+
+function resolveF5MlSelectedWinProbability(selection, homeWinProbability) {
+  const homeProb = Number(homeWinProbability);
+  if (!Number.isFinite(homeProb)) return null;
+  const side = String(selection || '').toUpperCase();
+  if (side === 'HOME') return homeProb;
+  if (side === 'AWAY') return 1 - homeProb;
+  return null;
+}
+
+function resolveF5MlSignalTier({ winProbability, confidenceScore }) {
+  if (
+    Number.isFinite(winProbability) &&
+    Number.isFinite(confidenceScore) &&
+    winProbability >= F5_ML_PLAY_WIN_PROB_MIN &&
+    confidenceScore >= F5_ML_PLAY_CONFIDENCE_MIN
+  ) {
+    return 'PLAY';
+  }
+  if (
+    Number.isFinite(winProbability) &&
+    Number.isFinite(confidenceScore) &&
+    winProbability >= F5_ML_SLIGHT_EDGE_WIN_PROB_MIN &&
+    confidenceScore >= F5_ML_SLIGHT_EDGE_CONFIDENCE_MIN
+  ) {
+    return 'SLIGHT_EDGE';
+  }
+  return 'PASS';
+}
 
 function resolveMlbVerificationThresholds(overrides = {}) {
   const toFiniteNumberOrNull = (value) => {
@@ -4297,31 +4340,57 @@ async function runMLBModel({
                     ')',
                 );
               } else {
-              const confidence = f5MlResult.confidence / 10;
-              const isStrongProjection = f5MlResult.ev_threshold_passed === true;
-              f5MlDriverCard = {
-                market: 'f5_ml',
-                prediction: normalizedSelection,
-                confidence,
-                ev_threshold_passed: isStrongProjection,
-                status: isStrongProjection ? 'FIRE' : 'WATCH',
-                action: isStrongProjection ? 'FIRE' : 'HOLD',
-                classification: isStrongProjection ? 'BASE' : 'LEAN',
-                reason_codes: uniqueReasonCodes([
-                  ...(isStrongProjection ? [] : ['PROJECTION_ONLY_INSIGHT']),
-                  'PROJECTION_PROXY_FULL_GAME_ML',
-                ]),
-                reasoning: f5MlResult.reasoning,
-                projection_source: 'FULL_MODEL',
-                without_odds_mode: true,
-                drivers: [{
-                  type: 'mlb-f5-ml',
-                  edge: f5MlResult.edge,
-                  projected_win_prob_home: f5MlResult.projected_win_prob_home,
-                }],
-                ml_f5_home: f5MlHomePrice,
-                ml_f5_away: f5MlAwayPrice,
-              };
+                const selectedWinProbability = resolveF5MlSelectedWinProbability(
+                  normalizedSelection,
+                  f5MlResult.projected_win_prob_home,
+                );
+                const confidenceScore = Math.max(
+                  0,
+                  Math.min(100, Math.round(Number(f5MlResult.confidence || 0) * 10)),
+                );
+                const confidenceBand = resolveF5MlConfidenceBand(confidenceScore);
+                const edgePp = Number.isFinite(selectedWinProbability)
+                  ? selectedWinProbability - F5_ML_BASELINE_PROB
+                  : null;
+                const signalTier = resolveF5MlSignalTier({
+                  winProbability: selectedWinProbability,
+                  confidenceScore,
+                });
+                const isActionableSignal = signalTier !== 'PASS';
+                f5MlDriverCard = {
+                  market: 'f5_ml',
+                  prediction: normalizedSelection,
+                  confidence: confidenceScore / 100,
+                  confidence_score: confidenceScore,
+                  confidence_band: confidenceBand,
+                  edge_pp: edgePp,
+                  model_signal_tier: signalTier,
+                  tracking_role: isActionableSignal ? 'OFFICIAL_PICK' : 'CALIBRATION_ONLY',
+                  ev_threshold_passed: isActionableSignal,
+                  status: signalTier === 'PLAY' ? 'FIRE' : signalTier === 'SLIGHT_EDGE' ? 'WATCH' : 'PASS',
+                  action: signalTier === 'PLAY' ? 'FIRE' : signalTier === 'SLIGHT_EDGE' ? 'HOLD' : 'PASS',
+                  classification: signalTier === 'PLAY' ? 'BASE' : signalTier === 'SLIGHT_EDGE' ? 'LEAN' : 'PASS',
+                  reason_codes: uniqueReasonCodes([
+                    ...(isActionableSignal ? [] : ['PROJECTION_CALIBRATION_ONLY']),
+                    ...(signalTier === 'SLIGHT_EDGE' ? ['PROJECTION_SLIGHT_EDGE'] : []),
+                    'PROJECTION_PROXY_FULL_GAME_ML',
+                  ]),
+                  reasoning: f5MlResult.reasoning,
+                  projection_source: 'FULL_MODEL',
+                  without_odds_mode: true,
+                  drivers: [{
+                    type: 'mlb-f5-ml',
+                    edge: f5MlResult.edge,
+                    edge_pp: edgePp,
+                    win_probability: selectedWinProbability,
+                    projected_win_prob_home: f5MlResult.projected_win_prob_home,
+                    selected_side: normalizedSelection,
+                    confidence_score: confidenceScore,
+                    confidence_band: confidenceBand,
+                  }],
+                  ml_f5_home: f5MlHomePrice,
+                  ml_f5_away: f5MlAwayPrice,
+                };
               }
             }
           } else {
@@ -4704,13 +4773,35 @@ async function runMLBModel({
                 : isF5ML
                   ? {
                       recommended_bet_type: 'moneyline',
+                      edge_pp: Number.isFinite(driver.edge_pp)
+                        ? driver.edge_pp
+                        : (Number.isFinite(driverDetail.edge_pp) ? driverDetail.edge_pp : null),
+                      confidence_score: Number.isFinite(driver.confidence_score)
+                        ? driver.confidence_score
+                        : null,
+                      confidence_band: driver.confidence_band ?? null,
+                      model_signal_tier: driver.model_signal_tier ?? null,
+                      tracking_role: driver.tracking_role ?? 'CALIBRATION_ONLY',
                       odds_context: {
                         ml_f5_home: driver.ml_f5_home ?? null,
                         ml_f5_away: driver.ml_f5_away ?? null,
                         captured_at: gameOddsSnapshot?.captured_at ?? null,
                       },
+                      projection_accuracy: {
+                        projection_raw: Number.isFinite(driverDetail.win_probability)
+                          ? driverDetail.win_probability
+                          : null,
+                        projection_key: 'win_probability',
+                        actual_key: 'win_outcome',
+                        synthetic_line: F5_ML_BASELINE_PROB,
+                        synthetic_rule: 'moneyline_baseline',
+                      },
                       projection: {
                         projected_win_prob_home: driver.drivers?.[0]?.projected_win_prob_home ?? null,
+                        selected_side: driver.prediction ?? null,
+                        win_probability: Number.isFinite(driverDetail.win_probability)
+                          ? driverDetail.win_probability
+                          : null,
                       },
                     }
                 : isFullGameTotal

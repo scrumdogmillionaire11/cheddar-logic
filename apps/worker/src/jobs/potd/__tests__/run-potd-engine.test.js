@@ -41,6 +41,15 @@ function readRows(sql, params = []) {
 }
 
 function buildSelectedCandidate(overrides = {}) {
+  const impliedProb =
+    typeof overrides.impliedProb === 'number' ? overrides.impliedProb : 0.465;
+  const edgePct =
+    typeof overrides.edgePct === 'number' ? overrides.edgePct : 0.025;
+  const modelWinProb =
+    typeof overrides.modelWinProb === 'number'
+      ? overrides.modelWinProb
+      : Number((impliedProb + edgePct).toFixed(6));
+
   return {
     gameId: 'potd-game-001',
     sport: 'NHL',
@@ -59,9 +68,10 @@ function buildSelectedCandidate(overrides = {}) {
       captured_at: '2026-04-09T18:00:00.000Z',
     },
     totalScore: 0.73,
-    modelWinProb: 0.49,
-    impliedProb: 0.465,
-    edgePct: 0.025,
+    modelWinProb,
+    impliedProb,
+    edgePct,
+    edgeSourceTag: overrides.edgeSourceTag || 'MODEL',
     confidenceLabel: 'HIGH',
     scoreBreakdown: {
       lineValue: 0.81,
@@ -642,8 +652,10 @@ describe('runPotdEngine', () => {
               h2h_away: 140,
               captured_at: game.capturedAtUtc,
             },
-            modelWinProb: 0.61,
+            modelWinProb: 0.665385,
+            impliedProb: 0.615385,
             edgePct: 0.05,
+            edgeSourceTag: 'MODEL',
             scoreBreakdown: {
               lineValue: 0.56,
               marketConsensus: 0.77,
@@ -961,7 +973,7 @@ describe('potd_nominees persistence', () => {
     expect(nomineeRows[0].sport).toBe('NHL');
   });
 
-  test('no-pick day with no positive edge still stores diagnostic nominees', async () => {
+  test('no-pick day with no positive edge does not persist non-model/non-positive nominees', async () => {
     const { runPotdEngine } = require('../run_potd_engine');
     const candidate = buildSelectedCandidate({
       sport: 'NHL',
@@ -988,10 +1000,7 @@ describe('potd_nominees persistence', () => {
     expect(readRows('SELECT * FROM potd_plays')).toHaveLength(0);
 
     const nomineeRows = readRows('SELECT * FROM potd_nominees');
-    expect(nomineeRows).toHaveLength(1);
-    expect(nomineeRows[0].winner_status).toBe('NO_PICK');
-    expect(nomineeRows[0].sport).toBe('NHL');
-    expect(nomineeRows[0].edge_pct).toBeCloseTo(-0.004, 6);
+    expect(nomineeRows).toHaveLength(0);
   });
 
   test('no candidates: nominees table remains empty', async () => {
@@ -1175,7 +1184,7 @@ describe('WI-1039-B: POTD timing state machine and heartbeat', () => {
     else delete process.env.DISCORD_ALERT_WEBHOOK_URL;
   });
 
-  test('no-pick alert is deduped to once per day and includes near-miss candidates', async () => {
+  test('no-pick alert is deduped to once per day', async () => {
     const { runPotdEngine } = require('../run_potd_engine');
     const origUrl = process.env.DISCORD_ALERT_WEBHOOK_URL;
     process.env.DISCORD_ALERT_WEBHOOK_URL = 'https://discord.com/api/webhooks/alert';
@@ -1183,9 +1192,7 @@ describe('WI-1039-B: POTD timing state machine and heartbeat', () => {
     const alertFn = jest.fn(async () => 1);
     const nearMissA = buildSelectedCandidate({ gameId: 'near-miss-1', selection: 'OVER', selectionLabel: 'OVER 5.5', edgePct: 0.018, totalScore: 0.34 });
     const nearMissB = buildSelectedCandidate({ gameId: 'near-miss-2', selection: 'UNDER', selectionLabel: 'UNDER 6.0', edgePct: 0.017, totalScore: 0.33 });
-    const selectTopPlaysForNoPick = (candidates, options = {}) => (
-      options.requirePositiveEdge === false ? candidates : []
-    );
+    const selectTopPlaysForNoPick = () => [];
     const nowFn = () => makeEtDateTime(17, 5);
 
     await runPotdEngine({
@@ -1219,8 +1226,7 @@ describe('WI-1039-B: POTD timing state machine and heartbeat', () => {
 
     const message = alertCalls[0][0].messages[0];
     expect(message).toContain('Near misses:');
-    expect(message).toContain('OVER 5.5');
-    expect(message).toContain('UNDER 6.0');
+    expect(message).toContain('None available');
 
     if (origUrl !== undefined) process.env.DISCORD_ALERT_WEBHOOK_URL = origUrl;
     else delete process.env.DISCORD_ALERT_WEBHOOK_URL;
@@ -1368,12 +1374,23 @@ describe('buildCandidateAuditEntry', () => {
 
   test('VIABLE — candidate passes all gates', () => {
     const entry = buildCandidateAuditEntry(
-      { edgePct: 0.03, totalScore: 0.5, confidenceLabel: 'HIGH', sport: 'NHL', marketType: 'MONEYLINE' },
+      {
+        edgePct: 0.03,
+        totalScore: 0.5,
+        confidenceLabel: 'HIGH',
+        sport: 'NHL',
+        marketType: 'MONEYLINE',
+        edgeSourceTag: 'MODEL',
+        modelWinProb: 0.56,
+        impliedProb: 0.53,
+        price: -112,
+      },
       noiseFloor,
       minScore,
     );
     expect(entry.potd_audit).toBe(true);
     expect(entry.rejectedReason).toBe('VIABLE');
+    expect(entry.source).toBe('MODEL');
     expect(entry.passesNoise).toBe(true);
     expect(entry.passesScore).toBe(true);
     expect(entry.passesConfidence).toBe(true);
@@ -1381,7 +1398,15 @@ describe('buildCandidateAuditEntry', () => {
 
   test('NEGATIVE_EDGE — edgePct <= 0', () => {
     const entry = buildCandidateAuditEntry(
-      { edgePct: -0.01, totalScore: 0.5, confidenceLabel: 'HIGH' },
+      {
+        edgePct: -0.01,
+        totalScore: 0.5,
+        confidenceLabel: 'HIGH',
+        edgeSourceTag: 'MODEL',
+        modelWinProb: 0.49,
+        impliedProb: 0.5,
+        price: -105,
+      },
       noiseFloor,
       minScore,
     );
@@ -1390,7 +1415,15 @@ describe('buildCandidateAuditEntry', () => {
 
   test('BELOW_NOISE_FLOOR — edgePct positive but below floor', () => {
     const entry = buildCandidateAuditEntry(
-      { edgePct: 0.005, totalScore: 0.5, confidenceLabel: 'HIGH' },
+      {
+        edgePct: 0.005,
+        totalScore: 0.5,
+        confidenceLabel: 'HIGH',
+        edgeSourceTag: 'MODEL',
+        modelWinProb: 0.505,
+        impliedProb: 0.5,
+        price: -110,
+      },
       noiseFloor,
       minScore,
     );
@@ -1400,7 +1433,15 @@ describe('buildCandidateAuditEntry', () => {
 
   test('BELOW_MIN_SCORE — passes noise floor but score too low', () => {
     const entry = buildCandidateAuditEntry(
-      { edgePct: 0.03, totalScore: 0.1, confidenceLabel: 'HIGH' },
+      {
+        edgePct: 0.03,
+        totalScore: 0.1,
+        confidenceLabel: 'HIGH',
+        edgeSourceTag: 'MODEL',
+        modelWinProb: 0.56,
+        impliedProb: 0.53,
+        price: -110,
+      },
       noiseFloor,
       minScore,
     );
@@ -1410,7 +1451,15 @@ describe('buildCandidateAuditEntry', () => {
 
   test('BELOW_CONFIDENCE_LABEL — LOW confidence after passing noise+score gates', () => {
     const entry = buildCandidateAuditEntry(
-      { edgePct: 0.03, totalScore: 0.5, confidenceLabel: 'LOW' },
+      {
+        edgePct: 0.03,
+        totalScore: 0.5,
+        confidenceLabel: 'LOW',
+        edgeSourceTag: 'MODEL',
+        modelWinProb: 0.56,
+        impliedProb: 0.53,
+        price: -110,
+      },
       noiseFloor,
       minScore,
     );
@@ -1418,19 +1467,53 @@ describe('buildCandidateAuditEntry', () => {
     expect(entry.passesConfidence).toBe(false);
   });
 
-  test('NO_EDGE_COMPUTED — null edgePct', () => {
+  test('MISSING_EDGE_INPUTS — null edgePct', () => {
     const entry = buildCandidateAuditEntry(
-      { edgePct: null, totalScore: 0.5, confidenceLabel: 'HIGH' },
+      {
+        edgePct: null,
+        totalScore: 0.5,
+        confidenceLabel: 'HIGH',
+        edgeSourceTag: 'MODEL',
+        modelWinProb: 0.55,
+        impliedProb: 0.52,
+        price: -110,
+      },
       noiseFloor,
       minScore,
     );
-    expect(entry.rejectedReason).toBe('NO_EDGE_COMPUTED');
+    expect(entry.rejectedReason).toBe('MISSING_EDGE_INPUTS');
     expect(entry.edgePct).toBeNull();
+  });
+
+  test('NON_MODEL_SOURCE — consensus candidate is not POTD-eligible', () => {
+    const entry = buildCandidateAuditEntry(
+      {
+        edgePct: 0.03,
+        totalScore: 0.7,
+        confidenceLabel: 'HIGH',
+        edgeSourceTag: 'CONSENSUS_FALLBACK',
+        modelWinProb: 0.55,
+        impliedProb: 0.52,
+        price: -110,
+      },
+      noiseFloor,
+      minScore,
+    );
+    expect(entry.rejectedReason).toBe('NON_MODEL_SOURCE');
+    expect(entry.source).toBe('CONSENSUS');
   });
 
   test('potd_audit:true is set on all entries — field contract', () => {
     const entry = buildCandidateAuditEntry(
-      { edgePct: 0.03, totalScore: 0.5, confidenceLabel: 'HIGH' },
+      {
+        edgePct: 0.03,
+        totalScore: 0.5,
+        confidenceLabel: 'HIGH',
+        edgeSourceTag: 'MODEL',
+        modelWinProb: 0.56,
+        impliedProb: 0.53,
+        price: -112,
+      },
       noiseFloor,
       minScore,
     );
@@ -1439,5 +1522,51 @@ describe('buildCandidateAuditEntry', () => {
     // minScore is included in the entry for downstream analysis
     expect(entry.minScore).toBe(minScore);
     expect(entry.noiseFloor).toBe(noiseFloor);
+  });
+});
+
+describe('loadModelHealthGates', () => {
+  let loadModelHealthGates;
+  beforeAll(() => {
+    ({ __private: { loadModelHealthGates } } = require('../run_potd_engine'));
+  });
+
+  function makeDb(rows) {
+    return {
+      prepare: () => ({ all: () => rows }),
+    };
+  }
+
+  test('returns empty Set when db is null', () => {
+    expect(loadModelHealthGates(null).size).toBe(0);
+  });
+
+  test('blocks only critical sports — not stale', () => {
+    const gates = loadModelHealthGates(makeDb([
+      { sport: 'nba', status: 'critical' },
+      { sport: 'mlb', status: 'stale' },
+      { sport: 'nhl', status: 'healthy' },
+    ]));
+    expect(gates.has('NBA')).toBe(true);
+    expect(gates.has('MLB')).toBe(false); // stale = unknown quality, not confirmed bad
+    expect(gates.has('NHL')).toBe(false);
+  });
+
+  test('does not block degraded sports', () => {
+    const gates = loadModelHealthGates(makeDb([
+      { sport: 'nba', status: 'degraded' },
+    ]));
+    expect(gates.has('NBA')).toBe(false);
+  });
+
+  test('returns empty Set when query throws', () => {
+    const badDb = { prepare: () => { throw new Error('no table'); } };
+    expect(() => loadModelHealthGates(badDb)).not.toThrow();
+    expect(loadModelHealthGates(badDb).size).toBe(0);
+  });
+
+  test('returns empty Set when snapshots table is empty', () => {
+    const gates = loadModelHealthGates(makeDb([]));
+    expect(gates.size).toBe(0);
   });
 });

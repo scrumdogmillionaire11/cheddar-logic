@@ -43,6 +43,10 @@ async function validateResultsSourceContract(assert) {
     new URL('../app/results/page.tsx', import.meta.url),
     'utf8',
   );
+  const projectionTableSource = await fs.readFile(
+    new URL('../components/results/ProjectionResultsTable.tsx', import.meta.url),
+    'utf8',
+  );
 
   [
     'totalCards:',
@@ -127,6 +131,28 @@ async function validateResultsSourceContract(assert) {
       pageSource.includes('NHL 1P totals and MLB F5') &&
       pageSource.includes('Awaiting settled outcome data'),
     'results page must render a single projection settlement lane for mapped projection families',
+  );
+  assert.ok(
+    pageSource.includes('Bucket Mapping') &&
+      /LOW:\s+confidence_score\s+(?:<|&lt;)\s+52%/.test(pageSource) &&
+      pageSource.includes('WATCH: 52%-57.99%') &&
+      pageSource.includes('TRUST: 58%-62.99%') &&
+      /STRONG:\s+(?:>=|&gt;=)\s+63%/.test(pageSource),
+    'results page must show explicit LOW/WATCH/TRUST/STRONG bucket threshold mapping',
+  );
+  assert.ok(
+    /edge_distance\s+(?:<|&lt;)\s+0\.15\s+are\s+excluded\s+from\s+directional\s+W\/L\s+and\s+still\s+included\s+in\s+MAE\s+and\s+bias\s+auditing/.test(pageSource) &&
+      pageSource.includes('FRAGILE is a presentation label for weak/no-edge directions') &&
+      pageSource.includes('not a native confidence_band value'),
+    'results page must document weak-direction policy and FRAGILE presentation semantics',
+  );
+  assert.ok(
+    projectionTableSource.includes('attributionRows?: ProjectionAccuracyRecord[]') &&
+      projectionTableSource.includes('projection_raw:') &&
+      projectionTableSource.includes('synthetic_line:') &&
+      projectionTableSource.includes('edge_distance:') &&
+      projectionTableSource.includes('confidence_band:'),
+    'projection results table must render API-backed attribution fields for bucket inspection',
   );
 }
 

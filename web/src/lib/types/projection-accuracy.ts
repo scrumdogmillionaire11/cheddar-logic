@@ -48,6 +48,8 @@ export interface ProjectionAccuracyRecord {
   synthetic_rule: string;
   synthetic_direction: string | null;
   direction_strength: string | null;
+  weak_direction_flag: number | null;
+  edge_distance: number | null;
   actual: number | null;
   actual_value: number | null;
   graded_result: string | null;
@@ -55,6 +57,10 @@ export interface ProjectionAccuracyRecord {
   signed_error: number | null;
   projection_confidence: number | null;
   confidence_band: string;
+  edge_pp?: number | null;
+  brier_score?: number | null;
+  tracking_role?: string | null;
+  expected_outcome_label?: string | null;
   market_trust_status: string;
   failure_flags: string | null;
 }

@@ -149,6 +149,16 @@ async function run() {
   assert.strictEqual(payload.rows.length, 1);
   assert.strictEqual(payload.rows[0].projection_raw, 6.8);
   assert.strictEqual(payload.rows[0].synthetic_line, 6.5);
+  // WI-1115: attribution contract — all bucket-mapping fields must be present
+  assert.strictEqual(payload.rows[0].weak_direction_flag, 0, 'weak_direction_flag must be 0 for a STRONG direction row');
+  assert.strictEqual(payload.rows[0].direction_strength, 'STRONG', 'direction_strength must be STRONG');
+  assert.strictEqual(payload.rows[0].confidence_band, 'TRUST', 'confidence_band must match seeded value');
+  assert.ok(payload.rows[0].projection_confidence != null, 'projection_confidence must be present');
+  assert.ok(typeof payload.rows[0].edge_distance === 'number', 'edge_distance must be a number');
+  assert.ok(
+    Math.abs(payload.rows[0].edge_distance - Math.abs(payload.rows[0].projection_raw - payload.rows[0].synthetic_line)) < 1e-9,
+    'edge_distance must equal abs(projection_raw - synthetic_line)',
+  );
   assert.strictEqual(payload.marketHealth.length, 1);
   assert.strictEqual(payload.marketHealth[0].market_family, 'MLB_PITCHER_K');
 

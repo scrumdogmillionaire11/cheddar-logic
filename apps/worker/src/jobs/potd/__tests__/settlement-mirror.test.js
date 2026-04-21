@@ -87,6 +87,7 @@ describe('mirrorPotdSettlement', () => {
       modelWinProb: 0.49,
       impliedProb: 0.46,
       edgePct: 0.03,
+      edgeSourceTag: 'MODEL',
       confidenceLabel: 'HIGH',
       scoreBreakdown: { lineValue: 0.8, marketConsensus: 0.6 },
     };

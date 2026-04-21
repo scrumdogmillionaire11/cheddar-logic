@@ -2,6 +2,16 @@
 
 This repository powers **cheddarlogic.com**.
 
+## Database Ownership Contract (Canonical)
+
+Cheddar Logic uses a single shared SQLite/sql.js database file.
+
+- **Worker (`apps/worker`) is the only writer**: runs migrations, writes model outputs, writes card payloads, and saves DB snapshots.
+- **Web (`web/`) is read-only**: serves API responses and UI from worker-produced data.
+- **Production DB path is fixed**: `CHEDDAR_DB_PATH=/opt/data/cheddar-prod.db`.
+
+Authoritative rules and rationale: [`docs/decisions/ADR-0002-single-writer-db-contract.md`](docs/decisions/ADR-0002-single-writer-db-contract.md).
+
 ## Identity + Naming (do not improvise)
 - GitHub repo: `cheddar-logic`
 - Production domain: `cheddarlogic.com`
@@ -23,7 +33,7 @@ This monorepo runs:
 1) **Web app**: UI + lightweight API (`web/`)
 2) **Worker**: scheduler + ingestion + sport runners (`apps/worker`)
 3) **FPL Sage**: Fantasy Premier League analysis engine (`cheddar-fpl-sage/`)
-4) **Database**: shared persistence (Postgres recommended)
+4) **Database**: shared SQLite/sql.js persistence (single-writer contract)
 
 **Rule:** the web app does not run heavy models.  
 The worker generates outputs and stores them. The web reads and renders.
@@ -94,21 +104,26 @@ See **[docs/DEPLOY_GITHUB.md](docs/DEPLOY_GITHUB.md)** for cloud setup.
 ### 1) Initialize local data store (SQLite)
 
 - `npm --prefix packages/data install`
+- `export CHEDDAR_DB_PATH=/tmp/cheddar-logic/cheddar.db` (local)
 - `npm --prefix packages/data run migrate`
+
+Migrations are part of the worker-owned write path. Run them from `packages/data` or worker startup tooling only; do not add web-side migration or snapshot-save paths.
 
 To populate with real odds data, run:
 - `npm --prefix apps/worker run job:pull-odds` (fetches live games from The Odds API)
 
-### 2) Run worker
+### 2) Run worker (sole DB writer)
 
-- `cd apps/worker`
-- run the worker (see `apps/worker/README.md` once created)
+- `npm --prefix apps/worker run scheduler`
 
-### 3) Run web
+The worker owns model execution, migrations, writes, and sql.js snapshot saves.
 
-- `cd web`
-- `npm install`
-- `npm run dev`
+### 3) Run web (read-only)
+
+- `npm --prefix web install`
+- `npm --prefix web run dev`
+
+Web reads from the shared DB but must never perform DB writes, migrations, or snapshot saves. Web teardown must use the read-only close path defined in ADR-0002.
 
 ### 4) Run FPL Sage (optional)
 
@@ -159,10 +174,12 @@ Copy `.env.example` to `.env` and set required values.
 
 - Web uses:
   - `PUBLIC_DOMAIN`
-  - `DATABASE_URL` (or calls internal API depending on your design)
+  - app/UI env vars as needed (no web-side DB migrations or snapshot writes)
 - Worker uses:
-  - `DATABASE_URL`
+  - `CHEDDAR_DB_PATH` (required in production: `/opt/data/cheddar-prod.db`)
   - provider keys (`ODDS_API_KEY`, etc.)
+
+Deprecated DB path variables must not be used for production runtime guidance. In production, set exactly `CHEDDAR_DB_PATH=/opt/data/cheddar-prod.db`.
 
 ---
 
@@ -178,73 +195,10 @@ Copy `.env.example` to `.env` and set required values.
 ## Docs
 - `docs/IDENTITY.md` — naming contract (repo/domain/namespace)
 - `docs/ARCHITECTURE.md` — data flow + job model + storage model
+- `docs/decisions/ADR-0002-single-writer-db-contract.md` — worker-only DB write ownership and web read-only contract
 - `docs/WORKING_AGREEMENTS.md` — guardrails for agents + contributors
 - `docs/DATA_PIPELINE_TROUBLESHOOTING.md` — inefficient-model replacement runbook (triggers/action matrix/rollback)
 - `docs/ARCHITECTURE_SEPARATION.md` — phased rollout flags and production-safe rollback sequence
 - `docs/API_BASELINES.md` — telemetry SQL baselines for projection and CLV ledgers
-
----LEGACY---
-# Cheddar Logic LLC
-
-A probabilistic sports analytics decision-support platform that provides statistical insights derived from sports data and public reference markets.
-
-## Overview
-
-Cheddar Logic specializes in abstention-first methodology - identifying when confidence is insufficient for signal generation while delivering transparent, evidence-based analytical insights.
-
-## Core Services
-
-- **Sports Analytics Decision-Support** (80% focus): Probabilistic modeling and market-relative signals
-- **Custom Web Development** (20% focus): Technical consulting and development services
-
-## Getting Started
-
-See [.planning/](.planning/) for project requirements and development roadmap.
-
-### Landing Page Frontend (`/web`)
-
-The `web` directory contains the Next.js 14 + TypeScript marketing site.
-
-#### Prerequisites
-- Node.js 20+
-- npm 10+
-
-#### Install & Run
-```bash
-cd web
-npm install
-npm run dev
-```
-
-#### Viewing the Site
-Once the server is running, open your browser and go to:
-
-http://localhost:3000
-
-This is the default address for the Next.js development server.
-```
-
-#### Environment Variables
-Create a `.env.local` file inside `web/` and set:
-
-| Variable | Description |
-| --- | --- |
-| `NEXT_PUBLIC_DISCORD_INVITE` | Discord invite URL for CTA buttons |
-| `NEXT_PUBLIC_DISCORD_MEMBER_COUNT` | Text used for community size display (e.g., `"412 analysts"`) |
-| `NEXT_PUBLIC_ANALYTICS_STATUS` | `online` or `paused`; drives the analytics kill switch banner |
-| `NEXT_PUBLIC_ANALYTICS_LAST_UPDATED` | ISO timestamp for the kill switch metadata |
-
-If the status is set to `paused`, analytics visuals collapse while the educational copy stays live.
-
-#### Deployment Notes
-- Designed for Vercel/Netlify. Configure the above env vars in each environment.
-- Health check endpoint TBD; add before production deployment.
-- Contact form currently client-side only. Wire to a serverless function or webhook with CAPTCHA before accepting submissions.
-
-## Community
-
-Join our Discord research community for analytical discussions and methodology insights.
-
----
 
 *Positioned as analytical infrastructure for research and decision-support purposes.*

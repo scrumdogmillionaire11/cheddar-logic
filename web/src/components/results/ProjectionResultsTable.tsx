@@ -1,6 +1,7 @@
 'use client';
 
 import type { ProjectionProxyRow } from '@/app/api/results/projection-settled/route';
+import type { ProjectionAccuracyRecord } from '@/lib/types/projection-accuracy';
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -17,6 +18,17 @@ function fmtNum(
 ): string {
   if (value === null || value === undefined || Number.isNaN(value)) return '—';
   return value.toFixed(digits);
+}
+
+function fmtPct(
+  value: number | null | undefined,
+  digits = 1,
+  { signed = false } = {},
+): string {
+  if (value === null || value === undefined || Number.isNaN(value)) return '—';
+  const pct = value * 100;
+  const sign = signed && pct > 0 ? '+' : '';
+  return `${sign}${pct.toFixed(digits)}%`;
 }
 
 function fmtMatchup(
@@ -56,6 +68,14 @@ function moneylineDirectionLabel(row: ProjectionProxyRow): string {
   return 'PASS';
 }
 
+function moneylineProjectedLabel(row: ProjectionProxyRow): string {
+  const side = moneylineDirectionLabel(row);
+  if (row.predictionSignalMissing || row.winProbability === null || row.winProbability === undefined) {
+    return `${side} (signal missing)`;
+  }
+  return `${side} (${fmtPct(row.winProbability)})`;
+}
+
 function projectionRowKey(row: ProjectionProxyRow, index: number): string {
   if (row.id !== null && row.id !== undefined) {
     return String(row.id);
@@ -66,14 +86,27 @@ function projectionRowKey(row: ProjectionProxyRow, index: number): string {
   return `${row.gameId || 'unknown-game'}-${index}`;
 }
 
-function tierBadgeClass(tier: 'PLAY' | 'LEAN' | 'STRONG' | 'PASS'): string {
+function tierBadgeClass(tier: 'PLAY' | 'SLIGHT_EDGE' | 'LEAN' | 'STRONG' | 'PASS'): string {
   if (tier === 'PLAY')
     return 'border-blue-500/60 bg-blue-500/25 text-blue-100 font-semibold';
+  if (tier === 'SLIGHT_EDGE')
+    return 'border-sky-500/40 bg-sky-500/15 text-sky-200';
   if (tier === 'LEAN')
     return 'border-blue-500/40 bg-blue-500/15 text-blue-200';
   if (tier === 'STRONG')
     return 'border-blue-600/70 bg-blue-600/30 text-blue-50 font-bold';
   return 'border-white/20 bg-white/5 text-cloud/50';
+}
+
+function confidenceBadgeClass(band: string | null | undefined): string {
+  const token = String(band || '').toUpperCase();
+  if (token === 'HIGH' || token === 'STRONG')
+    return 'border-emerald-500/40 bg-emerald-500/15 text-emerald-200';
+  if (token === 'MED' || token === 'TRUST' || token === 'WATCH')
+    return 'border-amber-500/40 bg-amber-500/15 text-amber-200';
+  if (token === 'LOW')
+    return 'border-white/20 bg-white/5 text-cloud/60';
+  return 'border-rose-500/30 bg-rose-500/10 text-rose-200';
 }
 
 function outcomeBadgeClass(outcome: 'WIN' | 'LOSS' | 'NO_BET'): string {
@@ -88,53 +121,93 @@ function outcomeBadgeClass(outcome: 'WIN' | 'LOSS' | 'NO_BET'): string {
 
 interface ProjectionRowProps {
   row: ProjectionProxyRow;
+  attribution?: ProjectionAccuracyRecord;
 }
 
-function ProjectionRow({ row }: ProjectionRowProps) {
+function ProjectionRow({ row, attribution }: ProjectionRowProps) {
   const date = fmtDate(row.gameDateUtc);
   const moneylineFamily = isMoneylineFamily(row.cardFamily);
   const projected = moneylineFamily
-    ? moneylineProjectedSide(row)
+    ? moneylineProjectedLabel(row)
     : fmtNum(row.projValue, 3);
-  const edge = (row.edgeVsLine >= 0 ? '+' : '') + fmtNum(row.edgeVsLine, 2);
-  const actual = fmtNum(row.actualValue, 3);
+  const edge = moneylineFamily
+    ? fmtPct(row.edgePp ?? row.edgeVsLine, 1, { signed: true })
+    : row.edgeVsLine === null || row.edgeVsLine === undefined
+      ? '—'
+      : (row.edgeVsLine >= 0 ? '+' : '') + fmtNum(row.edgeVsLine, 2);
+  const actual = moneylineFamily
+    ? row.actualValue === 0.5 ? 'PUSH' : row.gradedResult
+    : fmtNum(row.actualValue, 3);
   const direction = row.recommendedSide;
   const directionLabel = moneylineFamily ? moneylineDirectionLabel(row) : direction;
   const tier = row.tier;
   const outcome = row.gradedResult;
+  const attributionProjectionRaw = fmtNum(attribution?.projection_raw, 3);
+  const attributionSyntheticLine = fmtNum(attribution?.synthetic_line ?? row.proxyLine, 3);
+  const attributionEdgeDistance = moneylineFamily
+    ? fmtPct(row.edgePp ?? attribution?.edge_pp ?? null, 1, { signed: true })
+    : fmtNum(attribution?.edge_distance, 3);
+  const attributionEdgeLabel = moneylineFamily ? 'edge_pp:' : 'edge_distance:';
+  const attributionBand = row.confidenceBand || attribution?.confidence_band || 'UNKNOWN';
+  const confidenceLabel = row.confidenceScore !== null && row.confidenceScore !== undefined
+    ? `${attributionBand} (${Math.round(row.confidenceScore)})`
+    : row.predictionSignalMissing
+      ? 'MISSING SIGNAL'
+      : attributionBand;
 
   return (
     <>
       {/* Desktop row */}
-      <div className="hidden grid-cols-9 gap-3 px-4 py-3 text-sm text-cloud/70 md:grid">
-        <span>{date}</span>
-        <span className="col-span-2 truncate">{fmtMatchup(row)}</span>
-        <span className="text-right font-mono">{projected}</span>
-        <span className="flex justify-center">
-          <span
-            className={`rounded-full border px-2 py-0.5 text-xs font-semibold ${directionBadgeClass(
-              direction,
-            )}`}
-          >
-            {directionLabel}
+      <div className="hidden px-4 py-3 text-sm text-cloud/70 md:block">
+        <div className="grid grid-cols-9 gap-3">
+          <span>{date}</span>
+          <span className="col-span-2 truncate">{fmtMatchup(row)}</span>
+          <span className="text-right font-mono">{projected}</span>
+          <span className="flex justify-center">
+            <span
+              className={`rounded-full border px-2 py-0.5 text-xs font-semibold ${directionBadgeClass(
+                direction,
+              )}`}
+            >
+              {directionLabel}
+            </span>
           </span>
-        </span>
-        <span className="flex justify-center">
-          <span className={`rounded-full border px-2 py-0.5 text-xs ${tierBadgeClass(tier)}`}>
-            {tier}
+          <span className="flex justify-center">
+            <span className={`rounded-full border px-2 py-0.5 text-xs ${moneylineFamily ? confidenceBadgeClass(row.confidenceBand) : tierBadgeClass(tier)}`}>
+              {moneylineFamily ? confidenceLabel : tier}
+            </span>
           </span>
-        </span>
-        <span className="text-right font-mono text-cloud/50">{edge}</span>
-        <span className="text-right font-mono">{actual}</span>
-        <span className="flex justify-end">
-          <span
-            className={`rounded-full border px-2 py-0.5 text-xs font-semibold ${outcomeBadgeClass(
-              outcome,
-            )}`}
-          >
-            {outcome}
+          <span className="text-right font-mono text-cloud/50">{edge}</span>
+          <span className="text-right font-mono">{actual}</span>
+          <span className="flex justify-end">
+            <span
+              className={`rounded-full border px-2 py-0.5 text-xs font-semibold ${outcomeBadgeClass(
+                outcome,
+              )}`}
+            >
+              {outcome}
+            </span>
           </span>
-        </span>
+        </div>
+        <div className="mt-2 grid grid-cols-4 gap-2 text-[11px] text-cloud/55">
+          <span className="rounded-lg border border-white/10 bg-white/5 px-2 py-1 font-mono">
+            projection_raw: {attributionProjectionRaw}
+          </span>
+          <span className="rounded-lg border border-white/10 bg-white/5 px-2 py-1 font-mono">
+            synthetic_line: {attributionSyntheticLine}
+          </span>
+          <span className="rounded-lg border border-white/10 bg-white/5 px-2 py-1 font-mono">
+            {attributionEdgeLabel} {attributionEdgeDistance}
+          </span>
+          <span className="rounded-lg border border-white/10 bg-white/5 px-2 py-1 font-mono">
+            confidence_band: {attributionBand}
+          </span>
+        </div>
+        {moneylineFamily && row.expectedOutcomeLabel && (
+          <div className="mt-2 text-[11px] uppercase tracking-[0.16em] text-cloud/45">
+            Expected vs actual: {row.expectedOutcomeLabel.replaceAll('_', ' ')}
+          </div>
+        )}
       </div>
 
       {/* Mobile card */}
@@ -159,6 +232,11 @@ function ProjectionRow({ row }: ProjectionRowProps) {
           <span className={`rounded-full border px-2 py-0.5 text-xs ${tierBadgeClass(tier)}`}>
             {tier}
           </span>
+          {moneylineFamily && (
+            <span className={`rounded-full border px-2 py-0.5 text-xs ${confidenceBadgeClass(row.confidenceBand)}`}>
+              {confidenceLabel}
+            </span>
+          )}
         </div>
         <div className="mt-2 grid grid-cols-4 gap-2 text-xs">
           <div className="rounded-lg border border-white/10 bg-white/5 px-2 py-1.5 text-center">
@@ -178,6 +256,25 @@ function ProjectionRow({ row }: ProjectionRowProps) {
             <p className="text-cloud/50">Score</p>
           </div>
         </div>
+        <div className="mt-2 grid grid-cols-2 gap-2 text-[11px] text-cloud/55">
+          <span className="rounded-lg border border-white/10 bg-white/5 px-2 py-1 font-mono">
+            projection_raw: {attributionProjectionRaw}
+          </span>
+          <span className="rounded-lg border border-white/10 bg-white/5 px-2 py-1 font-mono">
+            synthetic_line: {attributionSyntheticLine}
+          </span>
+          <span className="rounded-lg border border-white/10 bg-white/5 px-2 py-1 font-mono">
+            {attributionEdgeLabel} {attributionEdgeDistance}
+          </span>
+          <span className="rounded-lg border border-white/10 bg-white/5 px-2 py-1 font-mono">
+            confidence_band: {attributionBand}
+          </span>
+        </div>
+        {moneylineFamily && row.expectedOutcomeLabel && (
+          <div className="text-[11px] uppercase tracking-[0.16em] text-cloud/45">
+            Expected vs actual: {row.expectedOutcomeLabel.replaceAll('_', ' ')}
+          </div>
+        )}
       </div>
     </>
   );
@@ -188,6 +285,7 @@ function ProjectionRow({ row }: ProjectionRowProps) {
 interface CardFamilySectionProps {
   cardFamily: string;
   rows: ProjectionProxyRow[];
+  attributionByCardId: Map<string, ProjectionAccuracyRecord>;
 }
 
 function familyLabel(cardFamily: string): string {
@@ -205,14 +303,18 @@ function familyLabel(cardFamily: string): string {
   return `${cardFamily.replaceAll('_', ' ')} Projections`;
 }
 
-function CardFamilySection({ cardFamily, rows }: CardFamilySectionProps) {
+function CardFamilySection({
+  cardFamily,
+  rows,
+  attributionByCardId,
+}: CardFamilySectionProps) {
   const headers = (
     <div className="grid grid-cols-9 gap-3 bg-night/70 px-4 py-3 text-xs font-semibold uppercase tracking-[0.2em] text-cloud/60">
       <span>Date</span>
       <span className="col-span-2">Matchup</span>
       <span className="text-right">Projected</span>
       <span className="text-center">Direction</span>
-      <span className="text-center">Tier</span>
+      <span className="text-center">Tier / Conf</span>
       <span className="text-right">Edge</span>
       <span className="text-right">Actual</span>
       <span className="text-right">Outcome</span>
@@ -242,7 +344,11 @@ function CardFamilySection({ cardFamily, rows }: CardFamilySectionProps) {
         ) : (
           <div className="divide-y divide-white/10 md:divide-y-0">
             {rows.map((row, index) => (
-              <ProjectionRow key={projectionRowKey(row, index)} row={row} />
+              <ProjectionRow
+                key={projectionRowKey(row, index)}
+                row={row}
+                attribution={attributionByCardId.get(String(row.cardId || ''))}
+              />
             ))}
           </div>
         )}
@@ -255,9 +361,13 @@ function CardFamilySection({ cardFamily, rows }: CardFamilySectionProps) {
 
 interface ProjectionResultsTableProps {
   rows: ProjectionProxyRow[];
+  attributionRows?: ProjectionAccuracyRecord[];
 }
 
-export function ProjectionResultsTable({ rows }: ProjectionResultsTableProps) {
+export function ProjectionResultsTable({
+  rows,
+  attributionRows = [],
+}: ProjectionResultsTableProps) {
   if (rows.length === 0) {
     return (
       <div className="rounded-xl border border-white/10 bg-night/30 px-4 py-8 text-center text-sm text-cloud/60">
@@ -278,6 +388,16 @@ export function ProjectionResultsTable({ rows }: ProjectionResultsTableProps) {
     return groups;
   }, new Map());
 
+  const attributionByCardId = attributionRows.reduce<Map<string, ProjectionAccuracyRecord>>(
+    (map, row) => {
+      const cardId = String(row.card_id || '').trim();
+      if (!cardId || map.has(cardId)) return map;
+      map.set(cardId, row);
+      return map;
+    },
+    new Map(),
+  );
+
   return (
     <div className="mt-6 space-y-8">
       {Array.from(groupedRows.entries()).map(([cardFamily, familyRows]) => (
@@ -285,6 +405,7 @@ export function ProjectionResultsTable({ rows }: ProjectionResultsTableProps) {
           key={cardFamily}
           cardFamily={cardFamily}
           rows={familyRows}
+          attributionByCardId={attributionByCardId}
         />
       ))}
     </div>

@@ -126,6 +126,22 @@ function resolveEdgeSourceContract(sport, marketType) {
   return EDGE_SOURCE_CONTRACT[sportKey]?.[marketKey] ?? 'UNKNOWN';
 }
 
+function normalizeEdgeSource(edgeSourceTag) {
+  if (edgeSourceTag === 'MODEL') return 'MODEL';
+  if (edgeSourceTag === 'CONSENSUS_FALLBACK') return 'CONSENSUS';
+  return 'UNKNOWN';
+}
+
+function hasRequiredEdgeInputs(candidate) {
+  if (!candidate || typeof candidate !== 'object') return false;
+  return (
+    isFiniteNumber(candidate.price) &&
+    isFiniteNumber(candidate.modelWinProb) &&
+    isFiniteNumber(candidate.impliedProb) &&
+    isFiniteNumber(candidate.edgePct)
+  );
+}
+
 /**
  * Returns the minimum gross edge (noise floor) for a sport+market combination.
  * Strips API-prefixes (BASEBALL_, ICEHOCKEY_, BASKETBALL_) before lookup.
@@ -742,34 +758,37 @@ function scoreCandidate(candidate) {
     Number.isFinite(mlbSignal?.modelWinProb) &&
     Number.isFinite(mlbSignal?.edge);
   if (useMlbModelSignal) {
-    const modelEdge = round(mlbSignal.edge, 6);
+    const modelWinProb = round(mlbSignal.modelWinProb, 6);
+    const modelEdge = round(modelWinProb - impliedProb, 6);
+    if (!isFiniteNumber(modelWinProb) || !isFiniteNumber(modelEdge)) return null;
     const totalScore = round((lineValue * 0.625) + (marketConsensus * 0.375), 6);
     return {
       ...candidate,
       lineValue,
       marketConsensus,
       totalScore,
-      modelWinProb: round(mlbSignal.modelWinProb, 6),
+      modelWinProb,
       impliedProb,
       edgePct: modelEdge,
       edgeSourceTag: 'MODEL',
+      edgeSource: normalizeEdgeSource('MODEL'),
       edgeSourceMeta: {
         projection_source: mlbSignal.projection_source ?? null,
-        model_win_prob: round(mlbSignal.modelWinProb, 6),
+        model_win_prob: modelWinProb,
         signal_type: 'MLB_PITCHER_MODEL',
       },
       confidenceLabel: confidenceLabel(totalScore),
       scoreBreakdown: {
         lineValue,
         marketConsensus,
-        model_win_prob: round(mlbSignal.modelWinProb, 6),
+        model_win_prob: modelWinProb,
         projection_source: mlbSignal.projection_source ?? null,
       },
       reasoning: buildReasoningString({
         selectionLabel: candidate.selectionLabel,
         price: candidate.price,
         edgePct: modelEdge,
-        modelWinProb: round(mlbSignal.modelWinProb, 6),
+        modelWinProb,
         lineValue,
         marketConsensus,
         marketType: candidate.marketType,
@@ -800,6 +819,7 @@ function scoreCandidate(candidate) {
       impliedProb,
       edgePct: modelEdge,
       edgeSourceTag: 'MODEL',
+      edgeSource: normalizeEdgeSource('MODEL'),
       edgeSourceMeta: {
         projection_source: nhlSignal.projection_source ?? null,
         model_win_prob: modelWinProb,
@@ -848,6 +868,7 @@ function scoreCandidate(candidate) {
       impliedProb,
       edgePct: modelEdge,
       edgeSourceTag: 'MODEL',
+      edgeSource: normalizeEdgeSource('MODEL'),
       edgeSourceMeta: {
         projection_source: nbaSignal.projection_source,
         model_win_prob: modelSelectionProb,
@@ -885,6 +906,7 @@ function scoreCandidate(candidate) {
     impliedProb,
     edgePct,
     edgeSourceTag: 'CONSENSUS_FALLBACK',
+    edgeSource: normalizeEdgeSource('CONSENSUS_FALLBACK'),
     edgeSourceMeta: {
       projection_source: null,
       model_win_prob: modelFairProbability,
@@ -998,7 +1020,9 @@ module.exports = {
   confidenceThreshold,
   EDGE_SOURCE_CONTRACT,
   isNhlSport,
+  hasRequiredEdgeInputs,
   kellySize,
+  normalizeEdgeSource,
   removeVig,
   resolveEdgeSourceContract,
   resolveNHLModelSignal,

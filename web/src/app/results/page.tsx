@@ -300,6 +300,45 @@ export default function ResultsPage() {
       ),
     [projectionSummariesWithActuals, projectionSettlementFamilies],
   );
+  const mappedProjectionAccuracyRows = useMemo(() => {
+    if (!projectionAccuracy?.rows?.length) return [];
+    const settledCardIds = new Set(
+      mappedProjectionSettledRows.map((row) => String(row.cardId || '').trim()),
+    );
+    const inFamily = projectionAccuracy.rows.filter((row) =>
+      projectionSettlementFamilies.has(String(row.market_family || '').toUpperCase()),
+    );
+    const matchingSettled = inFamily.filter((row) =>
+      settledCardIds.has(String(row.card_id || '').trim()),
+    );
+    if (matchingSettled.length > 0) return matchingSettled;
+    return inFamily;
+  }, [projectionAccuracy?.rows, mappedProjectionSettledRows, projectionSettlementFamilies]);
+  const projectionAttributionSample = mappedProjectionAccuracyRows[0] || null;
+  const moneylineCalibrationStats = useMemo(() => {
+    const rows = mappedProjectionSettledRows.filter((row) => {
+      const family = String(row.cardFamily || '').toUpperCase();
+      return family === 'MLB_F5_ML' || family === 'MLB_F5_MONEYLINE';
+    });
+    const officialRows = rows.filter((row) => row.trackingRole === 'OFFICIAL_PICK');
+    const officialGraded = officialRows.filter((row) => row.gradedResult === 'WIN' || row.gradedResult === 'LOSS');
+    const calibrationRows = rows.filter((row) => row.winProbability !== null && row.winProbability !== undefined);
+    const avgBrierValues = calibrationRows
+      .map((row) => row.brierScore)
+      .filter((value): value is number => typeof value === 'number' && Number.isFinite(value));
+    return {
+      total: rows.length,
+      officialCount: officialRows.length,
+      officialWins: officialGraded.filter((row) => row.gradedResult === 'WIN').length,
+      officialLosses: officialGraded.filter((row) => row.gradedResult === 'LOSS').length,
+      calibrationCount: calibrationRows.length,
+      avgBrier:
+        avgBrierValues.length > 0
+          ? avgBrierValues.reduce((sum, value) => sum + value, 0) / avgBrierValues.length
+          : null,
+      sufficientSample: calibrationRows.length >= 20,
+    };
+  }, [mappedProjectionSettledRows]);
   const projectionSummaryRows = useMemo(() => {
     const existingByFamily = new Map(
       mappedProjectionSummaries.map((row) => [String(row.cardFamily || '').toUpperCase(), row]),
@@ -313,8 +352,11 @@ export default function ResultsPage() {
       );
       if (familyRows.length === 0) continue;
 
+      const isMoneylineFamily = family === 'MLB_F5_ML' || family === 'MLB_F5_MONEYLINE';
       const gradedRows = familyRows.filter(
-        (row) => row.gradedResult === 'WIN' || row.gradedResult === 'LOSS',
+        (row) =>
+          (row.gradedResult === 'WIN' || row.gradedResult === 'LOSS') &&
+          (!isMoneylineFamily || row.trackingRole === 'OFFICIAL_PICK'),
       );
       const directionalWins = gradedRows.filter((row) => row.gradedResult === 'WIN').length;
       const directionalLosses = gradedRows.filter((row) => row.gradedResult === 'LOSS').length;
@@ -346,7 +388,7 @@ export default function ResultsPage() {
         underWins: underRows.filter((row) => row.gradedResult === 'WIN').length,
         underLosses: underRows.filter((row) => row.gradedResult === 'LOSS').length,
         familyLabel:
-          family === 'MLB_F5_ML' || family === 'MLB_F5_MONEYLINE'
+          isMoneylineFamily
             ? 'MLB F5 Moneyline Projections'
             : family.replaceAll('_', ' '),
         mae,
@@ -947,9 +989,10 @@ export default function ResultsPage() {
                 <div>
                   <h2 className="text-2xl font-semibold">Projection Settlement</h2>
                   <p className="mt-2 text-sm text-cloud/70">
-                    Settled projection-only cards for NHL 1P totals and MLB F5
-                    ML graded against actual game outcomes. No P&amp;L — model
-                    accuracy only.
+                    Settled projection-only cards graded against actual game
+                    outcomes, including NHL 1P totals and MLB F5. F5
+                    moneyline rows use stored win probability, edge,
+                    confidence, and calibration fields when available.
                   </p>
                 </div>
                 <span className="rounded-full border border-cyan-400/25 bg-cyan-400/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-cyan-200">
@@ -960,10 +1003,13 @@ export default function ResultsPage() {
                 <span>
                   Results are mapped into one settlement panel as actuals arrive.
                 </span>
-                <span>HIT = model direction correct. Error = |projected − actual|.</span>
+                <span>Official pick rates exclude PASS; PASS remains calibration telemetry.</span>
               </div>
             </div>
-            <ProjectionResultsTable rows={mappedProjectionSettledRows} />
+            <ProjectionResultsTable
+              rows={mappedProjectionSettledRows}
+              attributionRows={mappedProjectionAccuracyRows}
+            />
             {projectionAccuracy && (
               <div className="mt-6 rounded-xl border border-white/10 bg-night/40 p-4">
                 <div className="flex flex-wrap items-center justify-between gap-3">
@@ -972,11 +1018,66 @@ export default function ResultsPage() {
                       Projection Confidence Engine
                     </p>
                     <p className="mt-1 text-sm text-cloud/70">
-                      Synthetic-line W/L excludes weak directions under 0.15 while MAE and bias still audit every settled projection.
+                      Weak directions and calibration-only rows are separated from official pick stats while remaining available for model-health telemetry.
                     </p>
                   </div>
                   <p className={`text-sm font-semibold ${marketHealthClass(projectionAccuracy.summary.market_trust_status)}`}>
                     {projectionAccuracy.summary.market_trust_status} — {marketHealthLabel(projectionAccuracy.summary.market_trust_status)}
+                  </p>
+                </div>
+                {moneylineCalibrationStats.total > 0 && (
+                  <div className="mt-4 rounded-xl border border-white/10 bg-white/5 p-3">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <p className="text-xs font-semibold uppercase tracking-[0.16em] text-cloud/50">
+                        Moneyline Model Stats
+                      </p>
+                      <span className={`rounded-full border px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] ${
+                        moneylineCalibrationStats.sufficientSample
+                          ? 'border-emerald-400/30 bg-emerald-400/10 text-emerald-200'
+                          : 'border-amber-400/30 bg-amber-400/10 text-amber-200'
+                      }`}>
+                        {moneylineCalibrationStats.sufficientSample ? 'Sample Ready' : 'Need N >= 20'}
+                      </span>
+                    </div>
+                    <div className="mt-3 grid gap-3 md:grid-cols-4">
+                      <div>
+                        <p className="text-xs text-cloud/50">Official Picks</p>
+                        <p className="mt-1 font-mono text-cloud">
+                          {moneylineCalibrationStats.officialWins}-{moneylineCalibrationStats.officialLosses}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-xs text-cloud/50">Official Count</p>
+                        <p className="mt-1 font-mono text-cloud">{moneylineCalibrationStats.officialCount}</p>
+                      </div>
+                      <div>
+                        <p className="text-xs text-cloud/50">Calibration Rows</p>
+                        <p className="mt-1 font-mono text-cloud">{moneylineCalibrationStats.calibrationCount}</p>
+                      </div>
+                      <div>
+                        <p className="text-xs text-cloud/50">Avg Brier</p>
+                        <p className="mt-1 font-mono text-cloud">
+                          {moneylineCalibrationStats.avgBrier !== null
+                            ? formatDecimal(moneylineCalibrationStats.avgBrier, 3, { signed: false })
+                            : 'N/A'}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                )}
+                <div className="mt-4 rounded-xl border border-white/10 bg-white/5 p-3 text-xs text-cloud/65">
+                  <p className="font-semibold uppercase tracking-[0.16em] text-cloud/50">
+                    Bucket Mapping
+                  </p>
+                  <div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+                    <span className="rounded-lg border border-white/10 bg-night/50 px-2 py-1 font-mono">LOW: confidence_score &lt; 52%</span>
+                    <span className="rounded-lg border border-white/10 bg-night/50 px-2 py-1 font-mono">WATCH: 52%-57.99%</span>
+                    <span className="rounded-lg border border-white/10 bg-night/50 px-2 py-1 font-mono">TRUST: 58%-62.99%</span>
+                    <span className="rounded-lg border border-white/10 bg-night/50 px-2 py-1 font-mono">STRONG: &gt;= 63%</span>
+                  </div>
+                  <p className="mt-3 text-cloud/60">
+                    Rows with weak_direction_flag=1 or edge_distance &lt; 0.15 are excluded from directional W/L and still included in MAE and bias auditing.
+                    FRAGILE is a presentation label for weak/no-edge directions, not a native confidence_band value.
                   </p>
                 </div>
                 <div className="mt-4 grid gap-3 md:grid-cols-5">
@@ -1024,6 +1125,31 @@ export default function ResultsPage() {
                     ))}
                   </div>
                 )}
+                <div className="mt-4 rounded-xl border border-white/10 bg-night/50 p-3 text-xs text-cloud/65">
+                  <p className="font-semibold uppercase tracking-[0.16em] text-cloud/50">
+                    Card-level Attribution Sample
+                  </p>
+                  {projectionAttributionSample ? (
+                    <div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+                      <span className="rounded-lg border border-white/10 bg-white/5 px-2 py-1 font-mono">
+                        projection_raw: {formatDecimal(projectionAttributionSample.projection_raw, 3, { signed: false })}
+                      </span>
+                      <span className="rounded-lg border border-white/10 bg-white/5 px-2 py-1 font-mono">
+                        synthetic_line: {formatDecimal(projectionAttributionSample.synthetic_line, 3, { signed: false })}
+                      </span>
+                      <span className="rounded-lg border border-white/10 bg-white/5 px-2 py-1 font-mono">
+                        edge_distance: {formatDecimal(projectionAttributionSample.edge_distance, 3, { signed: false })}
+                      </span>
+                      <span className="rounded-lg border border-white/10 bg-white/5 px-2 py-1 font-mono">
+                        confidence_band: {projectionAttributionSample.confidence_band || 'UNKNOWN'}
+                      </span>
+                    </div>
+                  ) : (
+                    <p className="mt-2 text-cloud/50">
+                      Awaiting projection_accuracy rows to display card-level bucket attribution details.
+                    </p>
+                  )}
+                </div>
               </div>
             )}
             {projectionSummaryRows.length > 0 && (

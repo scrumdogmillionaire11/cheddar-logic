@@ -2,10 +2,16 @@
 
 Shared data layer for cheddar-logic monorepo.
 
+Canonical DB ownership policy: [`../../docs/decisions/ADR-0002-single-writer-db-contract.md`](../../docs/decisions/ADR-0002-single-writer-db-contract.md).
+
+In this architecture:
+- The worker is the only process allowed to migrate/write/save snapshots.
+- The web app is read-only and must use read-only teardown paths.
+
 Contains:
 - **Schema**: SQLite database with migrations for job_runs, games, odds_snapshots
-- **DB Client**: High-level query functions
-- **Migration Runner**: Applies schema changes on startup
+- **DB Client**: High-level query functions. Mutating helpers are for worker-owned write paths only.
+- **Migration Runner**: Applies schema changes from worker startup or explicit data-package maintenance commands only.
 
 ## Setup
 
@@ -17,13 +23,16 @@ npm install
 
 ### 2. Run Migrations
 
+Set the DB path before running migrations:
+
 ```bash
+export CHEDDAR_DB_PATH=/tmp/cheddar-logic/cheddar.db
 npm run migrate
 ```
 
 This creates the SQLite database at `$CHEDDAR_DB_PATH` (or `packages/data/cheddar.db` by default) and creates all tables.
 
-**Local dev:** Set `CHEDDAR_DB_PATH=/tmp/cheddar-logic/cheddar.db` for consistency across tools.
+**Local dev:** Use `CHEDDAR_DB_PATH=/tmp/cheddar-logic/cheddar.db` for consistency across tools.
 
 **Production:** Set `CHEDDAR_DB_PATH=/opt/data/cheddar-prod.db` and validate:
 
@@ -32,6 +41,8 @@ sqlite3 "$CHEDDAR_DB_PATH" "SELECT COUNT(*) FROM card_payloads;"
 ```
 
 The `card_payloads` table identifies the production database (contains historical card decisions). Set `CHEDDAR_DB_PATH` explicitly in production config.
+
+Do not rely on web-side migrations or snapshot saves; schema ownership remains with worker startup/migrations per ADR-0002. Web routes may import read/query helpers from this package, but must not call mutating helpers, `runMigrations()`, `closeDatabase()`, `db.exec()`, or `stmt.run()`.
 
 `CHEDDAR_DB_PATH` is the canonical database path. `DATABASE_PATH` and `RECORD_DATABASE_PATH` are no longer read by the resolver.
 
@@ -206,6 +217,8 @@ console.log(cards.length); // e.g., 3 cards
 
 ### Job Tracking
 
+These mutating APIs are worker-only under ADR-0002. Web routes must not call them.
+
 #### insertJobRun(jobName, id)
 Insert a new job run with status 'running'.
 
@@ -223,6 +236,8 @@ Boolean check: did this job succeed in the last N minutes?
 
 ### Odds
 
+Insert/update/delete APIs are worker-only under ADR-0002. Web routes may use read/query APIs only.
+
 #### insertOddsSnapshot(snapshot)
 Insert an odds snapshot. `snapshot` object:
 - `id`: unique ID
@@ -239,6 +254,8 @@ Returns the most recent odds snapshot for a game.
 Returns all odds snapshots for a sport since a given timestamp.
 
 ### Model Outputs
+
+Insert/update/delete APIs are worker-only under ADR-0002. Web routes may use read/query APIs only.
 
 #### insertModelOutput(output)
 Insert a model output. `output` object:
@@ -264,6 +281,8 @@ Returns all model outputs for a game.
 Returns all model outputs for a sport since a timestamp.
 
 ### Card Payloads
+
+Insert/update/delete APIs are worker-only under ADR-0002. Web routes may use read/query APIs only.
 
 #### insertCardPayload(card)
 Insert a card payload. `card` object:
@@ -302,10 +321,10 @@ The client uses SQLite with a singleton connection.
 
 **Environment variables:**
 
-- `CHEDDAR_DB_PATH`: Canonical SQLite DB path (single source of truth)
-- `DATABASE_URL`: SQLite URL format (`sqlite:///...`) supported for compatibility
-- `CHEDDAR_DATA_DIR`: Fallback directory if explicit file path env vars are not set
-- `CHEDDAR_DB_AUTODISCOVER`: Optional emergency fallback (`true` enables scanning alternate DB files; default strict single-path mode)
+- `CHEDDAR_DB_PATH`: Canonical SQLite DB path (single source of truth). Production must set `CHEDDAR_DB_PATH=/opt/data/cheddar-prod.db`.
+- `DATABASE_URL`: SQLite URL format (`sqlite:///...`) supported for local compatibility only; do not use for production guidance.
+- `CHEDDAR_DATA_DIR`: Local fallback directory if explicit file path env vars are not set; do not use for production.
+- `CHEDDAR_DB_AUTODISCOVER`: Optional emergency/local fallback (`true` enables scanning alternate DB files; default strict single-path mode). Do not use for production.
 
 ## Datetime Standard
 

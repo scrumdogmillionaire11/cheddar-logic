@@ -63,3 +63,7 @@ Web routes that query tables managed exclusively by migrations (e.g. `run_state`
 - Quick Task 23 implementation: `.planning/quick/23-single-writer-architecture-worker-owns-d/`
 - `packages/data/src/db.js` — `closeDatabaseReadOnly` function
 - `web/src/lib/db-init.ts` — read-only init
+- `README.md` — repository-level runtime and ownership summary
+- `packages/data/README.md` — DB path and migration/runtime notes
+- `web/README.md` — web read-only runtime contract
+- Production DB path contract: `CHEDDAR_DB_PATH=/opt/data/cheddar-prod.db`
