@@ -22,6 +22,10 @@ const {
   sendEspnNullDiscordAlert,
   computeNbaRollingBias,
   applyNbaTeamContext,
+  computeVolEnvSigmaMultipliers,
+  applyVolEnvSigmaMultiplier,
+  formatVolEnvSigmaLog,
+  deriveVolEnv,
 } = require('../run_nba_model');
 const {
   publishDecisionForCard,
@@ -188,7 +192,345 @@ describe('WI-1020: NBA rolling bias calibration', () => {
   });
 });
 
-describe('run_nba_model job', () => {
+describe('WI-1023: NBA Phase 2C — vol_env sigma multipliers', () => {
+  function fakeVolEnvDb(rows) {
+    return {
+      prepare: jest.fn((sql) => ({
+        all: jest.fn(() => sql.includes('GROUP BY vol_env') ? rows : []),
+        get: jest.fn(() => {
+          if (sql.includes('COUNT(*) AS n')) {
+            return { n: rows[0]?.n ?? 0 };
+          }
+          return rows[0] ?? null;
+        }),
+      })),
+    };
+  }
+
+  test('computeVolEnvSigmaMultipliers with all buckets empirical: returns ratios vs MED', () => {
+    const rows = [
+      { vol_env: 'HIGH', rmse: 4.33, n: 23 },
+      { vol_env: 'MED', rmse: 3.33, n: 45 },
+      { vol_env: 'LOW', rmse: 2.73, n: 18 },
+    ];
+
+    const result = computeVolEnvSigmaMultipliers({ db: fakeVolEnvDb(rows) });
+
+    expect(result.mode).toBe('empirical');
+    expect(result.multipliers.HIGH).toBeCloseTo(1.3, 1);
+    expect(result.multipliers.MED).toBe(1);
+    expect(result.multipliers.LOW).toBeCloseTo(0.82, 1);
+    expect(result.sourceByBucket.HIGH).toBe('empirical');
+    expect(result.sourceByBucket.MED).toBe('empirical');
+    expect(result.sourceByBucket.LOW).toBe('empirical');
+    expect(result.sampleByBucket).toEqual({ HIGH: 23, MED: 45, LOW: 18 });
+  });
+
+  test('computeVolEnvSigmaMultipliers with MED sparse: returns all fallback', () => {
+    const rows = [
+      { vol_env: 'HIGH', rmse: 4.5, n: 20 },
+      { vol_env: 'LOW', rmse: 2.5, n: 20 },
+    ];
+
+    const result = computeVolEnvSigmaMultipliers({ db: fakeVolEnvDb(rows) });
+
+    expect(result.mode).toBe('fallback');
+    expect(result.multipliers).toEqual({ HIGH: 1.25, MED: 1.0, LOW: 0.85 });
+    expect(result.sourceByBucket).toEqual({
+      HIGH: 'fallback',
+      MED: 'fallback',
+      LOW: 'fallback',
+    });
+  });
+
+  test('computeVolEnvSigmaMultipliers with HIGH missing: uses fallback for HIGH', () => {
+    const rows = [
+      { vol_env: 'MED', rmse: 3.5, n: 50 },
+      { vol_env: 'LOW', rmse: 2.8, n: 20 },
+    ];
+
+    const result = computeVolEnvSigmaMultipliers({ db: fakeVolEnvDb(rows) });
+
+    expect(result.mode).toBe('mixed');
+    expect(result.multipliers.HIGH).toBe(1.25);
+    expect(result.multipliers.MED).toBe(1);
+    expect(result.multipliers.LOW).toBeCloseTo(0.8, 1);
+    expect(result.sourceByBucket.HIGH).toBe('fallback');
+    expect(result.sourceByBucket.MED).toBe('empirical');
+    expect(result.sourceByBucket.LOW).toBe('empirical');
+  });
+
+  test('computeVolEnvSigmaMultipliers with LOW missing: uses fallback for LOW', () => {
+    const rows = [
+      { vol_env: 'HIGH', rmse: 4.2, n: 30 },
+      { vol_env: 'MED', rmse: 3.0, n: 45 },
+    ];
+
+    const result = computeVolEnvSigmaMultipliers({ db: fakeVolEnvDb(rows) });
+
+    expect(result.mode).toBe('mixed');
+    expect(result.multipliers.HIGH).toBeCloseTo(1.4, 1);
+    expect(result.multipliers.MED).toBe(1);
+    expect(result.multipliers.LOW).toBe(0.85);
+    expect(result.sourceByBucket.HIGH).toBe('empirical');
+    expect(result.sourceByBucket.MED).toBe('empirical');
+    expect(result.sourceByBucket.LOW).toBe('fallback');
+  });
+
+  test('computeVolEnvSigmaMultipliers clamps extreme ratios to [0.75, 1.5]', () => {
+    const rows = [
+      { vol_env: 'HIGH', rmse: 10, n: 20 },
+      { vol_env: 'MED', rmse: 3, n: 50 },
+      { vol_env: 'LOW', rmse: 0.5, n: 20 },
+    ];
+
+    const result = computeVolEnvSigmaMultipliers({ db: fakeVolEnvDb(rows) });
+
+    expect(result.multipliers.HIGH).toBe(1.5);
+    expect(result.multipliers.MED).toBe(1);
+    expect(result.multipliers.LOW).toBe(0.75);
+  });
+
+  test('formatVolEnvSigmaLog renders empirical config', () => {
+    const config = {
+      mode: 'empirical',
+      multipliers: { HIGH: 1.3, MED: 1.0, LOW: 0.82 },
+      sourceByBucket: { HIGH: 'empirical', MED: 'empirical', LOW: 'empirical' },
+      sampleByBucket: { HIGH: 23, MED: 45, LOW: 18 },
+    };
+
+    const log = formatVolEnvSigmaLog(config);
+
+    expect(log).toContain('[NBAModel] [VOL_ENV_SIGMA]');
+    expect(log).toContain('HIGH=1.30x(n=23,empirical)');
+    expect(log).toContain('MED=1.00x(n=45,empirical)');
+    expect(log).toContain('LOW=0.82x(n=18,empirical)');
+  });
+
+  test('formatVolEnvSigmaLog renders mixed config', () => {
+    const config = {
+      mode: 'mixed',
+      multipliers: { HIGH: 1.25, MED: 1.0, LOW: 0.8 },
+      sourceByBucket: { HIGH: 'fallback', MED: 'empirical', LOW: 'empirical' },
+      sampleByBucket: { HIGH: null, MED: 50, LOW: 20 },
+    };
+
+    const log = formatVolEnvSigmaLog(config);
+
+    expect(log).toContain('HIGH=1.25x(fallback)');
+    expect(log).toContain('MED=1.00x(n=50,empirical)');
+    expect(log).toContain('LOW=0.80x(n=20,empirical)');
+  });
+
+  test('formatVolEnvSigmaLog renders fallback config', () => {
+    const config = {
+      mode: 'fallback',
+      multipliers: { HIGH: 1.25, MED: 1.0, LOW: 0.85 },
+      medSamples: 9,
+    };
+
+    const log = formatVolEnvSigmaLog(config);
+
+    expect(log).toContain('using hardcoded defaults');
+    expect(log).toContain('insufficient MED samples (n=9)');
+  });
+
+  test('applyVolEnvSigmaMultiplier modifies sigma fields by vol_env bucket', () => {
+    const sigma = {
+      margin: 2.4,
+      total: 12.0,
+      spread: 1.8,
+      sigma_source: 'computed',
+    };
+
+    const result = applyVolEnvSigmaMultiplier(sigma, 'HIGH', {
+      multipliers: { HIGH: 1.3, MED: 1.0, LOW: 0.85 },
+      sourceByBucket: { HIGH: 'empirical', MED: 'empirical', LOW: 'fallback' },
+    });
+
+    expect(result.margin).toBeCloseTo(3.12, 1);
+    expect(result.total).toBeCloseTo(15.6, 1);
+    expect(result.spread).toBeCloseTo(2.34, 1);
+    expect(result.vol_env_sigma_multiplier).toBe(1.3);
+    expect(result.vol_env_sigma_source).toBe('empirical');
+    expect(result.vol_env_bucket).toBe('HIGH');
+    expect(result.sigma_source).toBe('computed');
+  });
+
+  test('applyVolEnvSigmaMultiplier on LOW: multiplier < 1 reduces sigma', () => {
+    const sigma = {
+      margin: 2.4,
+      total: 12.0,
+      spread: 1.8,
+    };
+
+    const result = applyVolEnvSigmaMultiplier(sigma, 'LOW', {
+      multipliers: { HIGH: 1.25, MED: 1.0, LOW: 0.82 },
+      sourceByBucket: { HIGH: 'fallback', MED: 'empirical', LOW: 'empirical' },
+    });
+
+    expect(result.margin).toBeCloseTo(1.968, 1);
+    expect(result.total).toBeCloseTo(9.84, 1);
+    expect(result.vol_env_sigma_multiplier).toBe(0.82);
+    expect(result.vol_env_bucket).toBe('LOW');
+  });
+
+  test('applyVolEnvSigmaMultiplier on MED: multiplier = 1.0 identity', () => {
+    const sigma = {
+      margin: 2.4,
+      total: 12.0,
+      spread: 1.8,
+    };
+
+    const result = applyVolEnvSigmaMultiplier(sigma, 'MED', {
+      multipliers: { HIGH: 1.25, MED: 1.0, LOW: 0.85 },
+      sourceByBucket: { HIGH: 'empirical', MED: 'empirical', LOW: 'empirical' },
+    });
+
+    expect(result.margin).toBe(2.4);
+    expect(result.total).toBe(12.0);
+    expect(result.spread).toBe(1.8);
+    expect(result.vol_env_sigma_multiplier).toBe(1.0);
+  });
+
+  test('applyVolEnvSigmaMultiplier with unknown vol_env defaults to MED', () => {
+    const sigma = { margin: 2.4, total: 12.0, spread: 1.8 };
+
+    const result = applyVolEnvSigmaMultiplier(sigma, null, {
+      multipliers: { HIGH: 1.25, MED: 1.0, LOW: 0.85 },
+      sourceByBucket: { HIGH: 'empirical', MED: 'empirical', LOW: 'fallback' },
+    });
+
+    expect(result.vol_env_bucket).toBe('MED');
+    expect(result.vol_env_sigma_multiplier).toBe(1.0);
+    expect(result.vol_env_sigma_source).toBe('empirical');
+  });
+
+  test('deriveVolEnv buckets total sigma correctly', () => {
+    expect(deriveVolEnv(10.5)).toBe('LOW');
+    expect(deriveVolEnv(11)).toBe('MED');
+    expect(deriveVolEnv(13.9)).toBe('MED');
+    expect(deriveVolEnv(14)).toBe('HIGH');
+    expect(deriveVolEnv(20)).toBe('HIGH');
+    expect(deriveVolEnv(null)).toBeNull();
+    expect(deriveVolEnv(undefined)).toBeNull();
+  });
+});
+
+describe('WI-1020: NBA rolling bias calibration', () => {
+  function fakeBiasDb(row, sqlSink = []) {
+    return {
+      prepare: jest.fn((sql) => {
+        sqlSink.push(sql);
+        return { get: jest.fn(() => row) };
+      }),
+    };
+  }
+
+  test('computeNbaRollingBias returns computed mean error and enforces anti-leak query', () => {
+    const sqlSeen = [];
+    const logger = { log: jest.fn(), warn: jest.fn() };
+
+    const result = computeNbaRollingBias({
+      db: fakeBiasDb({ mean_error: 2.25, n: 50 }, sqlSeen),
+      windowGames: 50,
+      logger,
+    });
+
+    expect(result).toEqual({ bias: 2.25, games_sampled: 50, source: 'computed' });
+    expect(sqlSeen[0]).toContain('settled_at < datetime(\'now\')');
+    expect(sqlSeen[0]).toContain('ORDER BY settled_at DESC');
+    expect(sqlSeen[0]).toContain('LIMIT 50');
+    expect(sqlSeen[0]).toContain('raw_total');
+    expect(sqlSeen[0]).toContain('actual_total');
+    expect(sqlSeen[0]).not.toContain('created_at');
+    expect(sqlSeen[0]).not.toContain('updated_at');
+    expect(logger.log).toHaveBeenCalledWith(
+      '[NBAModel] [BIAS_CORRECTION] rolling_bias=+2.3 games_sampled=50',
+    );
+  });
+
+  test('computeNbaRollingBias hard-gates fallback when settled rows are below 50', () => {
+    const logger = { log: jest.fn(), warn: jest.fn() };
+
+    const result = computeNbaRollingBias({
+      db: fakeBiasDb({ mean_error: 3.5, n: 49 }),
+      logger,
+    });
+
+    expect(result).toEqual({ bias: 0, games_sampled: 49, source: 'fallback' });
+    expect(logger.warn).toHaveBeenCalledWith(
+      '[NBAModel] [CALIBRATION_INACTIVE] 49 settled games - minimum 50 required before correction activates',
+    );
+    expect(logger.log).not.toHaveBeenCalled();
+  });
+
+  test('computeNbaRollingBias returns zero fallback when no settled rows exist', () => {
+    const logger = { log: jest.fn(), warn: jest.fn() };
+
+    const result = computeNbaRollingBias({
+      db: fakeBiasDb({ mean_error: null, n: 0 }),
+      logger,
+    });
+
+    expect(result).toEqual({ bias: 0, games_sampled: 0, source: 'fallback' });
+    expect(logger.warn).toHaveBeenCalledWith(
+      '[NBAModel] [CALIBRATION_INACTIVE] 0 settled games - minimum 50 required before correction activates',
+    );
+  });
+
+  test('computeNbaRollingBias clamps outlier correction to +/-4 points', () => {
+    const logger = { log: jest.fn(), warn: jest.fn() };
+
+    const result = computeNbaRollingBias({
+      db: fakeBiasDb({ mean_error: 8, n: 50 }),
+      logger,
+    });
+
+    expect(result).toEqual({ bias: 4, games_sampled: 50, source: 'computed' });
+    expect(logger.warn).toHaveBeenCalledWith(
+      '[NBAModel] [BIAS_CORRECTION] bias_raw=8.0 clamped to +/-4.0 - investigate outlier',
+    );
+  });
+
+  test('applyNbaTeamContext subtracts rolling bias before blending with market total', async () => {
+    const oddsSnapshot = {
+      home_team: 'Boston Celtics',
+      away_team: 'Miami Heat',
+      total: 220,
+      raw_data: {},
+    };
+    const getTeamMetricsWithGamesFn = jest.fn(async (team) => ({
+      metrics: team === 'Boston Celtics'
+        ? { avgPoints: 120, avgPointsAllowed: 110 }
+        : { avgPoints: 114, avgPointsAllowed: 106 },
+      impactContext: null,
+    }));
+
+    const result = await applyNbaTeamContext('nba-bias-game', oddsSnapshot, {
+      rollingBias: { bias: 4, games_sampled: 50, source: 'computed' },
+      getTeamMetricsWithGamesFn,
+    });
+
+    expect(result.available).toBe(true);
+    expect(result.rawPaceAnchorTotal).toBe(225);
+    expect(result.paceAnchorTotal).toBe(221);
+    expect(result.blendedTotal).toBe(220.25);
+    expect(oddsSnapshot.raw_data).toMatchObject({
+      pace_anchor_total_raw: 225,
+      pace_anchor_total: 221,
+      blended_total: 220.25,
+      calibration_state: {
+        bias: 4,
+        games_sampled: 50,
+        source: 'computed',
+        correction_applied: true,
+      },
+    });
+  });
+});
+
+describe('WI-1020: NBA rolling bias calibration (section 2)', () => {
   beforeAll(async () => {
     process.env.DATABASE_PATH = TEST_DB_PATH;
     process.env.CHEDDAR_DB_PATH = '';
