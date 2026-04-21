@@ -350,50 +350,68 @@ export default function ResultsPage() {
 
   useEffect(() => {
     let cancelled = false;
-    async function loadProjectionSettled() {
+    let fallbackTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const loadProjectionResearchPanels = async () => {
       try {
         setProjectionSettledLoading(true);
-        const res = await fetch('/api/results/projection-settled');
-        if (!res.ok) return;
-        const payload = (await res.json()) as {
-          success: boolean;
-          data?: {
-            settledRows: ProjectionProxyRow[];
-            totalSettled: number;
-            actualsReady: boolean;
+        const [settledResult, accuracyResult] = await Promise.allSettled([
+          fetch('/api/results/projection-settled'),
+          fetch('/api/results/projection-accuracy'),
+        ]);
+
+        if (
+          !cancelled &&
+          settledResult.status === 'fulfilled' &&
+          settledResult.value.ok
+        ) {
+          const payload = (await settledResult.value.json()) as {
+            success: boolean;
+            data?: {
+              settledRows: ProjectionProxyRow[];
+              totalSettled: number;
+              actualsReady: boolean;
+            };
           };
-        };
-        if (!cancelled && payload.success && payload.data) {
-          setProjectionSettledRows(payload.data.settledRows);
-          setProjectionActualsReady(payload.data.actualsReady);
+          if (payload.success && payload.data) {
+            setProjectionSettledRows(payload.data.settledRows);
+            setProjectionActualsReady(payload.data.actualsReady);
+          }
+        }
+
+        if (
+          !cancelled &&
+          accuracyResult.status === 'fulfilled' &&
+          accuracyResult.value.ok
+        ) {
+          const payload = (await accuracyResult.value.json()) as ProjectionAccuracyResponse;
+          setProjectionAccuracy(payload);
         }
       } catch {
-        // non-critical — fail silently
+        // research-only surfaces should never block the betting ledger path
       } finally {
         if (!cancelled) setProjectionSettledLoading(false);
       }
-    }
-    void loadProjectionSettled();
-    return () => {
-      cancelled = true;
     };
-  }, []);
 
-  useEffect(() => {
-    let cancelled = false;
-    async function loadProjectionAccuracy() {
-      try {
-        const res = await fetch('/api/results/projection-accuracy');
-        if (!res.ok) return;
-        const payload = (await res.json()) as ProjectionAccuracyResponse;
-        if (!cancelled) setProjectionAccuracy(payload);
-      } catch {
-        // research-only surface; the main results ledger should still render
-      }
+    const runWhenIdle = () => {
+      if (cancelled) return;
+      void loadProjectionResearchPanels();
+    };
+
+    if (typeof window !== 'undefined' && 'requestIdleCallback' in window) {
+      const idleId = window.requestIdleCallback(runWhenIdle, { timeout: 1500 });
+      return () => {
+        cancelled = true;
+        window.cancelIdleCallback(idleId);
+        if (fallbackTimer) clearTimeout(fallbackTimer);
+      };
     }
-    void loadProjectionAccuracy();
+
+    fallbackTimer = setTimeout(runWhenIdle, 700);
     return () => {
       cancelled = true;
+      if (fallbackTimer) clearTimeout(fallbackTimer);
     };
   }, []);
 

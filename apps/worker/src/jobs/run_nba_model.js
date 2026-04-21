@@ -52,6 +52,7 @@ const {
   determineTier,
   buildMarketCallCard,
 } = require('../models');
+const { analyzePaceSynergy } = require('../models/nba-pace-synergy');
 const { assessProjectionInputs } = require('../models/projections');
 const {
   buildRecommendationFromPrediction,
@@ -99,6 +100,147 @@ const TEAM_CONTEXT_WEIGHT = 0.25;
 const ESPN_NULL_ALERT_WINDOW_MINUTES = 60;
 const ESPN_NULL_ALERT_THRESHOLD_DEFAULT = 2;
 const ESPN_NULL_NO_GAMES_PERSIST_WINDOW_MINUTES_DEFAULT = 20;
+
+const NBA_PROJECTION_ACCURACY_CARD_TYPES = new Set([
+  'nba-total-projection',
+  'nba-totals-call',
+]);
+
+function toFiniteNumberOrNull(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function deriveTotalBand(marketTotal) {
+  if (!Number.isFinite(marketTotal)) return null;
+  if (marketTotal < 220) return '<220';
+  if (marketTotal < 230) return '220-230';
+  if (marketTotal < 240) return '230-240';
+  return '240+';
+}
+
+function deriveVolEnv(totalSigma) {
+  const sigma = toFiniteNumberOrNull(totalSigma);
+  if (sigma === null) return null;
+  if (sigma < 11) return 'LOW';
+  if (sigma < 14) return 'MED';
+  return 'HIGH';
+}
+
+function derivePaceTier(rawData) {
+  const metrics = rawData?.espn_metrics;
+  const paceHome = toFiniteNumberOrNull(
+    metrics?.home?.metrics?.paceHome ?? metrics?.home?.metrics?.pace,
+  );
+  const paceAway = toFiniteNumberOrNull(
+    metrics?.away?.metrics?.paceAway ?? metrics?.away?.metrics?.pace,
+  );
+  const avgPtsHome = toFiniteNumberOrNull(
+    metrics?.home?.metrics?.avgPtsHome ?? metrics?.home?.metrics?.avgPoints,
+  );
+  const avgPtsAway = toFiniteNumberOrNull(
+    metrics?.away?.metrics?.avgPtsAway ?? metrics?.away?.metrics?.avgPoints,
+  );
+
+  if (!Number.isFinite(paceHome) || !Number.isFinite(paceAway)) return null;
+  return analyzePaceSynergy(paceHome, paceAway, avgPtsHome, avgPtsAway)?.synergyType ?? null;
+}
+
+function computeInjuryPointImpact(availabilityFlags) {
+  if (!Array.isArray(availabilityFlags) || availabilityFlags.length === 0) return 0;
+  let total = 0;
+  for (const flag of availabilityFlags) {
+    if (!flag?.is_impact_player) continue;
+    const status = String(flag.status || '').trim().toUpperCase();
+    const avgPoints = toFiniteNumberOrNull(flag.avg_points_last5);
+    if (avgPoints === null) continue;
+    if (status === 'OUT' || status === 'INACTIVE' || status === 'DOUBTFUL') {
+      total += avgPoints;
+    } else if (status === 'QUESTIONABLE') {
+      total += avgPoints * 0.5;
+    }
+  }
+  return Number(total.toFixed(2));
+}
+
+function deriveInjuryCloud(pointImpact) {
+  const impact = toFiniteNumberOrNull(pointImpact) ?? 0;
+  if (impact <= 0) return 'NONE';
+  if (impact < 15) return 'MODERATE';
+  return 'SEVERE';
+}
+
+function normalizeDriverContributions(payloadData) {
+  const summaryWeights = Array.isArray(payloadData?.driver_summary?.weights)
+    ? payloadData.driver_summary.weights
+    : [];
+
+  const normalized = summaryWeights
+    .map((entry) => ({
+      driver: entry?.driver ? String(entry.driver).trim() : null,
+      weight: toFiniteNumberOrNull(entry?.weight),
+      signal: toFiniteNumberOrNull(entry?.signal ?? entry?.score),
+    }))
+    .filter((entry) => entry.driver && entry.weight !== null && entry.signal !== null);
+
+  if (normalized.length > 0) return normalized;
+
+  const fallbackDriver = payloadData?.driver?.key ? String(payloadData.driver.key) : null;
+  const fallbackSignal = toFiniteNumberOrNull(payloadData?.driver?.score);
+  const fallbackWeight = fallbackDriver ? toFiniteNumberOrNull(NBA_DRIVER_WEIGHTS[fallbackDriver]) : null;
+  if (fallbackDriver && fallbackSignal !== null && fallbackWeight !== null) {
+    return [{ driver: fallbackDriver, weight: fallbackWeight, signal: fallbackSignal }];
+  }
+
+  return null;
+}
+
+function resolveProjectionRawForAccuracy(payloadData) {
+  const projectionTotal = toFiniteNumberOrNull(payloadData?.projection?.total);
+  if (projectionTotal !== null) return projectionTotal;
+
+  const projectionComparison = payloadData?.odds_context?.projection_comparison;
+  const comparisonScalar = toFiniteNumberOrNull(projectionComparison);
+  if (comparisonScalar !== null) return comparisonScalar;
+
+  return toFiniteNumberOrNull(projectionComparison?.fair_line_from_projection);
+}
+
+function stampNbaProjectionAccuracyFields(card, {
+  oddsSnapshot,
+  effectiveSigma,
+  availabilityGate,
+} = {}) {
+  if (!card?.cardType || !NBA_PROJECTION_ACCURACY_CARD_TYPES.has(card.cardType)) return;
+  if (!card.payloadData || typeof card.payloadData !== 'object') return;
+
+  const payloadData = card.payloadData;
+  if (!payloadData.raw_data || typeof payloadData.raw_data !== 'object') payloadData.raw_data = {};
+
+  const projectionRaw = resolveProjectionRawForAccuracy(payloadData);
+  if (projectionRaw !== null) {
+    if (!payloadData.projection_accuracy || typeof payloadData.projection_accuracy !== 'object') {
+      payloadData.projection_accuracy = {};
+    }
+    payloadData.projection_accuracy.projection_raw = projectionRaw;
+  }
+
+  const marketTotal =
+    toFiniteNumberOrNull(oddsSnapshot?.total) ??
+    toFiniteNumberOrNull(payloadData?.line) ??
+    toFiniteNumberOrNull(payloadData?.odds_context?.total);
+  const injuryPointImpact = computeInjuryPointImpact(
+    availabilityGate?.availabilityFlags ?? payloadData.raw_data?.availability_flags,
+  );
+
+  payloadData.raw_data.market_total = marketTotal;
+  payloadData.raw_data.pace_tier = derivePaceTier(oddsSnapshot?.raw_data ?? payloadData.raw_data);
+  payloadData.raw_data.vol_env = deriveVolEnv(effectiveSigma?.total);
+  payloadData.raw_data.total_band = deriveTotalBand(marketTotal);
+  payloadData.raw_data.injury_cloud = deriveInjuryCloud(injuryPointImpact);
+  payloadData.raw_data.driver_contributions = normalizeDriverContributions(payloadData);
+}
 
 function stampNbaFeatureTimestamps(rawData, capturedAt) {
   if (!capturedAt || !rawData || typeof rawData !== 'object') return;
@@ -453,12 +595,13 @@ function applyNbaImpactGateToCard(card, availabilityGate) {
 }
 
 const NBA_DRIVER_WEIGHTS = {
-  baseProjection: 0.35,
-  restAdvantage: 0.15,
-  welcomeHomeV2: 0.1,
-  matchupStyle: 0.2,
-  blowoutRisk: 0.07,
-  totalProjection: 0.13,
+  // WI-1018: rebalanced — base↑ to dampen additive driver compounding.
+  baseProjection: 0.55,
+  restAdvantage: 0.1,
+  welcomeHomeV2: 0.07,
+  matchupStyle: 0.14,
+  blowoutRisk: 0.05,
+  totalProjection: 0.09,
 };
 
 const NBA_DRIVER_CARD_TYPES = [
@@ -2135,6 +2278,11 @@ async function runNBAModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
             if (!entry.card.payloadData.raw_data) entry.card.payloadData.raw_data = {};
             entry.card.payloadData.raw_data.sigma_source = computedSigma.sigma_source;
             entry.card.payloadData.raw_data.sigma_games_sampled = computedSigma.games_sampled ?? null;
+            stampNbaProjectionAccuracyFields(entry.card, {
+              oddsSnapshot,
+              effectiveSigma,
+              availabilityGate,
+            });
           }
 
           // WI-0831: apply isotonic calibration to fair_prob before Kelly and card write.
@@ -2296,4 +2444,6 @@ module.exports = {
   applyExecutionGateToNbaCard,
   applyPlayoffSigmaMultiplier,
   applyNbaFeatureTimelinessGuardToCards,
+  stampNbaProjectionAccuracyFields,
+  deriveTotalBand,
 };

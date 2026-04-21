@@ -1,0 +1,16 @@
+ALTER TABLE projection_accuracy_line_evals ADD COLUMN game_id TEXT;
+ALTER TABLE projection_accuracy_line_evals ADD COLUMN settled_at TEXT;
+ALTER TABLE projection_accuracy_line_evals ADD COLUMN snapshot_time TEXT;
+ALTER TABLE projection_accuracy_line_evals ADD COLUMN market_total REAL;
+ALTER TABLE projection_accuracy_line_evals ADD COLUMN raw_total REAL;
+ALTER TABLE projection_accuracy_line_evals ADD COLUMN calibrated_total REAL;
+ALTER TABLE projection_accuracy_line_evals ADD COLUMN actual_total REAL;
+ALTER TABLE projection_accuracy_line_evals ADD COLUMN total_error_raw REAL;
+ALTER TABLE projection_accuracy_line_evals ADD COLUMN total_error_calibrated REAL;
+ALTER TABLE projection_accuracy_line_evals ADD COLUMN pace_tier TEXT;
+ALTER TABLE projection_accuracy_line_evals ADD COLUMN vol_env TEXT;
+ALTER TABLE projection_accuracy_line_evals ADD COLUMN total_band TEXT;
+ALTER TABLE projection_accuracy_line_evals ADD COLUMN injury_cloud TEXT;
+ALTER TABLE projection_accuracy_line_evals ADD COLUMN driver_contributions_json TEXT;
+ALTER TABLE projection_accuracy_line_evals ADD COLUMN regime_tags_json TEXT;
+ALTER TABLE projection_accuracy_line_evals ADD COLUMN confidence_tier TEXT;

@@ -246,6 +246,56 @@ describe('projection accuracy confidence engine', () => {
     expect(computeMarketTrustStatus({ wins: 13, losses: 12, calibrationGap: 0.1 })).toBe('WATCH');
   });
 
+  test('resolves projection keys for nba-totals-call fixture payload', () => {
+    const { deriveProjectionAccuracyCapture } = require('../src/db/projection-accuracy');
+
+    const capture = deriveProjectionAccuracyCapture({
+      id: 'card-nba-total-call-1',
+      gameId: 'nba-proj-accuracy-1',
+      sport: 'NBA',
+      cardType: 'nba-totals-call',
+      createdAt: '2026-04-20T18:00:00.000Z',
+      payloadData: {
+        sport: 'NBA',
+        card_type: 'nba-totals-call',
+        line: 228.5,
+        projection: { total: 231.2 },
+        projection_accuracy: { projection_raw: 231.2 },
+        odds_context: {
+          total: 228.5,
+          projection_comparison: {
+            fair_line_from_projection: 231.2,
+          },
+        },
+        raw_data: {
+          market_total: 228.5,
+          pace_tier: 'FASTxFAST',
+          vol_env: 'MED',
+          total_band: '220-230',
+          injury_cloud: 'MODERATE',
+          driver_contributions: [
+            { driver: 'totalProjection', weight: 0.45, signal: 0.33 },
+          ],
+        },
+      },
+    });
+
+    expect(capture).toMatchObject({
+      cardType: 'nba-totals-call',
+      marketFamily: 'NBA_TOTAL',
+      projectionRaw: 231.2,
+      projectionValue: 231.2,
+      marketTotal: 228.5,
+      paceTier: 'FASTxFAST',
+      volEnv: 'MED',
+      totalBand: '220-230',
+      injuryCloud: 'MODERATE',
+      driverContributions: [
+        { driver: 'totalProjection', weight: 0.45, signal: 0.33 },
+      ],
+    });
+  });
+
   test('DIRECTION_TOO_WEAK excludes synthetic W/L but keeps error metrics', () => {
     const {
       deriveProjectionAccuracyCapture,
@@ -611,7 +661,10 @@ describe('migration 081 — projection_accuracy_line_evals unique constraint rep
     const allMigFiles = fs.readdirSync(path.join(__dirname, '../db/migrations'))
       .filter(f => f.endsWith('.sql'))
       .sort()
-      .filter(f => f !== '081_repair_projection_accuracy_line_evals_unique.sql');
+      .filter((f) => ![
+        '081_repair_projection_accuracy_line_evals_unique.sql',
+        '084_projection_accuracy_nba_total_context.sql',
+      ].includes(f));
     for (const f of allMigFiles) {
       db.prepare('INSERT OR IGNORE INTO migrations (name) VALUES (?)').run(f);
     }

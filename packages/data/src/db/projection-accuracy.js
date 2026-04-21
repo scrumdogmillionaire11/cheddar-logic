@@ -9,6 +9,30 @@
  */
 
 const TRACKED_PROJECTION_ACCURACY_CARD_TYPES = Object.freeze({
+  'nba-totals-call': Object.freeze({
+    marketFamily: 'NBA_TOTAL',
+    actualKeys: ['total_score'],
+    defaultPeriod: 'FULL_GAME',
+    projectionKeys: [
+      'projection_accuracy.projection_raw',
+      'projection.total',
+      'odds_context.projection_comparison',
+      'odds_context.projection_comparison.fair_line_from_projection',
+    ],
+    propType: 'game_total',
+    identity: 'game',
+  }),
+  'nba-total-projection': Object.freeze({
+    marketFamily: 'NBA_TOTAL',
+    actualKeys: ['total_score'],
+    defaultPeriod: 'FULL_GAME',
+    projectionKeys: [
+      'projection_accuracy.projection_raw',
+      'projection.total',
+    ],
+    propType: 'game_total',
+    identity: 'game',
+  }),
   'mlb-f5': Object.freeze({
     marketFamily: 'MLB_F5_TOTAL',
     actualKeys: ['runs_f5'],
@@ -78,6 +102,7 @@ const TRACKED_PROJECTION_ACCURACY_CARD_TYPES = Object.freeze({
 });
 
 const COMMON_LINES_BY_MARKET_FAMILY = Object.freeze({
+  NBA_TOTAL: Object.freeze([219.5, 229.5, 239.5]),
   MLB_F5_TOTAL: Object.freeze([3.5, 4.5, 5.5]),
   MLB_PITCHER_K: Object.freeze([4.5, 5.5, 6.5, 7.5]),
   NHL_PLAYER_SHOTS: Object.freeze([1.5, 2.5, 3.5, 4.5]),
@@ -86,6 +111,7 @@ const COMMON_LINES_BY_MARKET_FAMILY = Object.freeze({
 });
 
 const MARKET_CONFIDENCE_DEFAULTS = Object.freeze({
+  NBA_TOTAL: Object.freeze({ marketEdgeScale: 1.25, marketVarianceCap: 6.0 }),
   MLB_F5_TOTAL: Object.freeze({ marketEdgeScale: 0.75, marketVarianceCap: 3.0 }),
   MLB_PITCHER_K: Object.freeze({ marketEdgeScale: 1.0, marketVarianceCap: 3.5 }),
   NHL_PLAYER_SHOTS: Object.freeze({ marketEdgeScale: 0.75, marketVarianceCap: 2.5 }),
@@ -97,6 +123,7 @@ const WEAK_DIRECTION_EDGE_THRESHOLD = 0.15;
 const SYNTHETIC_RULE_NEAREST_HALF = 'nearest_half';
 const MIN_MARKET_TRUST_SAMPLE = 25;
 const PROJECTION_ACCURACY_MARKET_FAMILIES = Object.freeze([
+  'NBA_TOTAL',
   'MLB_F5_TOTAL',
   'MLB_PITCHER_K',
   'NHL_PLAYER_SHOTS',
@@ -175,6 +202,25 @@ function pickFirstString(payload, keys) {
     }
   }
   return null;
+}
+
+function normalizeDriverContributions(value) {
+  if (!Array.isArray(value)) return null;
+
+  const normalized = value
+    .map((entry) => ({
+      driver: entry?.driver ? String(entry.driver).trim() : null,
+      weight: toFiniteNumberOrNull(entry?.weight),
+      signal: toFiniteNumberOrNull(entry?.signal ?? entry?.score),
+    }))
+    .filter((entry) => entry.driver && entry.weight !== null && entry.signal !== null)
+    .map((entry) => ({
+      driver: entry.driver,
+      weight: roundMetric(entry.weight, 6),
+      signal: roundMetric(entry.signal, 6),
+    }));
+
+  return normalized.length > 0 ? normalized : null;
 }
 
 function normalizeConfidenceScore(value) {
@@ -658,6 +704,66 @@ function arrayFromJson(value) {
   }
 }
 
+function jsonArrayStringOrNull(value) {
+  if (Array.isArray(value)) return value.length > 0 ? JSON.stringify(value) : null;
+  if (!value || typeof value !== 'string') return null;
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) && parsed.length > 0 ? JSON.stringify(parsed) : null;
+  } catch {
+    return null;
+  }
+}
+
+function buildLineEvalSettlementContext(parent, payload = {}, actualValue, gradedAt) {
+  const rawData = payload?.raw_data && typeof payload.raw_data === 'object'
+    ? payload.raw_data
+    : {};
+  const rawTotal = toFiniteNumberOrNull(parent?.projection_raw) ?? toFiniteNumberOrNull(parent?.projection_value);
+  const calibratedTotal = pickFirstFinite(payload, [
+    'projection_accuracy.calibrated_total',
+    'projection_accuracy.projection_calibrated',
+    'projection.calibrated_total',
+  ]);
+
+  return {
+    gameId: parent?.game_id ?? null,
+    settledAt: gradedAt ?? null,
+    snapshotTime: pickFirstString(payload, [
+      'raw_data.captured_at',
+      'snapshot_timestamp.captured_at',
+      'odds_context.captured_at',
+      '_pricing_state.captured_at',
+      'captured_at',
+    ]) ?? parent?.captured_at ?? null,
+    marketTotal: pickFirstFinite(payload, [
+      'raw_data.market_total',
+      'odds_context.total',
+      'line',
+    ]),
+    rawTotal,
+    calibratedTotal,
+    actualTotal: actualValue,
+    totalErrorRaw:
+      rawTotal !== null && actualValue !== null
+        ? roundMetric(rawTotal - actualValue, 6)
+        : null,
+    totalErrorCalibrated:
+      calibratedTotal !== null && actualValue !== null
+        ? roundMetric(calibratedTotal - actualValue, 6)
+        : null,
+    paceTier: pickFirstString(payload, ['raw_data.pace_tier']),
+    volEnv: pickFirstString(payload, ['raw_data.vol_env']),
+    totalBand: pickFirstString(payload, ['raw_data.total_band']),
+    injuryCloud: pickFirstString(payload, ['raw_data.injury_cloud']),
+    driverContributionsJson: jsonArrayStringOrNull(rawData.driver_contributions),
+    regimeTagsJson:
+      jsonArrayStringOrNull(rawData.regime_tags) ??
+      jsonArrayStringOrNull(rawData.regime_tags_json),
+    confidenceTier: pickFirstString(payload, ['tier']),
+  };
+}
+
 function mergeFailureFlags(existing, additions = []) {
   return [...new Set([
     ...arrayFromJson(existing),
@@ -1037,6 +1143,9 @@ function deriveProjectionAccuracyCapture(card = {}) {
       : parseJsonObject(card.payload_data);
   const projectionValue = pickFirstFinite(payloadData, config.projectionKeys);
   if (projectionValue === null) return null;
+  const rawData = payloadData?.raw_data && typeof payloadData.raw_data === 'object'
+    ? payloadData.raw_data
+    : {};
 
   const selectedLine = resolveSelectedLine(payloadData);
   const nearestHalfLine = roundToNearestHalf(projectionValue);
@@ -1070,6 +1179,8 @@ function deriveProjectionAccuracyCapture(card = {}) {
     : (card.gameId ?? card.game_id ?? payloadData.game_id ?? null);
   const expectedOverProb = expectedOverProbability(projectionValue, nearestHalfLine);
   const expectedDirProb = expectedDirectionProbability(projectionValue, nearestHalfLine, syntheticDirection);
+  const marketTotal = pickFirstFinite(payloadData, ['raw_data.market_total', 'odds_context.total', 'line']);
+  const driverContributions = normalizeDriverContributions(rawData.driver_contributions);
 
   return {
     cardId: card.id ?? card.card_id,
@@ -1105,6 +1216,12 @@ function deriveProjectionAccuracyCapture(card = {}) {
     expectedOverProb,
     expectedDirectionProb: expectedDirProb,
     calibrationBucket: calibrationBucketForProjection(projectionValue),
+    marketTotal,
+    paceTier: pickFirstString(payloadData, ['raw_data.pace_tier']),
+    volEnv: pickFirstString(payloadData, ['raw_data.vol_env']),
+    totalBand: pickFirstString(payloadData, ['raw_data.total_band']),
+    injuryCloud: pickFirstString(payloadData, ['raw_data.injury_cloud']),
+    driverContributions,
     capturedAt: card.createdAt ?? card.created_at ?? payloadData.generated_at ?? new Date().toISOString(),
     generatedAt: payloadData.generated_at ?? null,
     payloadData,
@@ -1132,7 +1249,8 @@ function captureProjectionAccuracyEval(db, capture) {
         projection_confidence, confidence_score, confidence_band,
         market_trust, market_trust_status, market_trust_flags, failure_flags,
         line_source, basis, expected_over_prob, expected_direction_prob,
-        calibration_bucket, captured_at, generated_at, metadata, updated_at
+        calibration_bucket, market_total, pace_tier, vol_env, total_band,
+        injury_cloud, driver_contributions, captured_at, generated_at, metadata, updated_at
       ) VALUES (
         ?, ?, ?, ?, ?, ?,
         ?, ?, ?, ?, ?,
@@ -1142,7 +1260,8 @@ function captureProjectionAccuracyEval(db, capture) {
         ?, ?, ?,
         ?, ?, ?, ?,
         ?, ?, ?, ?,
-        ?, ?, ?, ?, CURRENT_TIMESTAMP
+        ?, ?, ?, ?, ?,
+        ?, ?, ?, ?, ?, CURRENT_TIMESTAMP
       )
     `).run(
       capture.cardId,
@@ -1178,6 +1297,12 @@ function captureProjectionAccuracyEval(db, capture) {
       capture.expectedOverProb,
       capture.expectedDirectionProb,
       capture.calibrationBucket,
+      capture.marketTotal,
+      capture.paceTier,
+      capture.volEnv,
+      capture.totalBand,
+      capture.injuryCloud,
+      capture.driverContributions ? JSON.stringify(capture.driverContributions) : null,
       capture.capturedAt,
       capture.generatedAt,
       JSON.stringify(capture.metadata ?? {}),
@@ -1262,10 +1387,11 @@ function gradeProjectionAccuracyEval(db, { cardId, actualResult, gradedAt = new 
   if (Number.isFinite(Number(parent.nearest_half_line)) && roundToNearestHalf(projectionRaw) !== syntheticLine) {
     failureFlags.add('SYNTHETIC_LINE_OVERWRITTEN');
   }
+  let payload = {};
   try {
     const payloadRow = db.prepare('SELECT payload_data FROM card_payloads WHERE id = ? LIMIT 1').get(cardId);
     if (payloadRow?.payload_data) {
-      const payload = parseJsonObject(payloadRow.payload_data);
+      payload = parseJsonObject(payloadRow.payload_data);
       const config = TRACKED_PROJECTION_ACCURACY_CARD_TYPES[normalizeCardType(parent.card_type)];
       const currentProjection = config ? pickFirstFinite(payload, config.projectionKeys) : null;
       if (
@@ -1301,6 +1427,7 @@ function gradeProjectionAccuracyEval(db, { cardId, actualResult, gradedAt = new 
   });
   const expectedOverProb = expectedOverProbability(parent.projection_value, syntheticLine);
   const expectedDirProb = expectedDirectionProbability(parent.projection_value, syntheticLine, syntheticDirection);
+  const lineEvalSettlementContext = buildLineEvalSettlementContext(parent, payload, actualValue, gradedAt);
 
   const write = () => {
     db.prepare(`
@@ -1358,6 +1485,22 @@ function gradeProjectionAccuracyEval(db, { cardId, actualResult, gradedAt = new 
       db.prepare(`
         UPDATE projection_accuracy_line_evals
         SET actual_value = ?,
+            game_id = ?,
+            settled_at = ?,
+            snapshot_time = ?,
+            market_total = ?,
+            raw_total = ?,
+            calibrated_total = ?,
+            actual_total = ?,
+            total_error_raw = ?,
+            total_error_calibrated = ?,
+            pace_tier = ?,
+            vol_env = ?,
+            total_band = ?,
+            injury_cloud = ?,
+            driver_contributions_json = ?,
+            regime_tags_json = ?,
+            confidence_tier = ?,
             grade_status = 'GRADED',
             graded_result = ?,
             hit_flag = ?,
@@ -1370,6 +1513,22 @@ function gradeProjectionAccuracyEval(db, { cardId, actualResult, gradedAt = new 
         WHERE id = ?
       `).run(
         actualValue,
+        lineEvalSettlementContext.gameId,
+        lineEvalSettlementContext.settledAt,
+        lineEvalSettlementContext.snapshotTime,
+        lineEvalSettlementContext.marketTotal,
+        lineEvalSettlementContext.rawTotal,
+        lineEvalSettlementContext.calibratedTotal,
+        lineEvalSettlementContext.actualTotal,
+        lineEvalSettlementContext.totalErrorRaw,
+        lineEvalSettlementContext.totalErrorCalibrated,
+        lineEvalSettlementContext.paceTier,
+        lineEvalSettlementContext.volEnv,
+        lineEvalSettlementContext.totalBand,
+        lineEvalSettlementContext.injuryCloud,
+        lineEvalSettlementContext.driverContributionsJson,
+        lineEvalSettlementContext.regimeTagsJson,
+        lineEvalSettlementContext.confidenceTier,
         lineGrade.gradedResult,
         lineGrade.hitFlag,
         lineConfidence,
