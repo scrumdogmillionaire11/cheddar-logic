@@ -777,6 +777,15 @@ function gradeLine({ actualValue, line, direction }) {
   return { gradedResult: won ? 'WIN' : 'LOSS', hitFlag: won ? 1 : 0 };
 }
 
+function gradeMoneylineBaseline(actualValue) {
+  const actual = toFiniteNumberOrNull(actualValue);
+  if (actual === null) return { gradedResult: 'PENDING', hitFlag: null };
+  if (actual === MONEYLINE_BASELINE) return { gradedResult: 'PUSH', hitFlag: null };
+  return actual > MONEYLINE_BASELINE
+    ? { gradedResult: 'WIN', hitFlag: 1 }
+    : { gradedResult: 'LOSS', hitFlag: 0 };
+}
+
 function arrayFromJson(value) {
   if (Array.isArray(value)) return value.map(String);
   if (!value) return [];
@@ -1256,23 +1265,35 @@ function deriveProjectionAccuracyCapture(card = {}) {
     card.payloadData && typeof card.payloadData === 'object'
       ? card.payloadData
       : parseJsonObject(card.payload_data);
-  const projectionValue = pickFirstFinite(payloadData, config.projectionKeys);
+  const isMoneyline = isMoneylineMarketFamily(config.marketFamily);
+  const selectedMoneylineSide = isMoneyline
+    ? resolveMoneylineSelectedSide(payloadData)
+    : null;
+  const projectionValue = isMoneyline
+    ? resolveMoneylineWinProbability(payloadData, selectedMoneylineSide)
+    : pickFirstFinite(payloadData, config.projectionKeys);
   if (projectionValue === null) return null;
   const rawData = payloadData?.raw_data && typeof payloadData.raw_data === 'object'
     ? payloadData.raw_data
     : {};
 
-  const selectedLine = resolveSelectedLine(payloadData);
-  const nearestHalfLine = roundToNearestHalf(projectionValue);
+  const selectedLine = isMoneyline ? MONEYLINE_BASELINE : resolveSelectedLine(payloadData);
+  const nearestHalfLine = isMoneyline ? MONEYLINE_BASELINE : roundToNearestHalf(projectionValue);
   if (nearestHalfLine === null) return null;
 
   const { marketTrust, flags, lineSource, basis } = resolveProjectionMarketTrust(payloadData);
-  const syntheticDirection = directionFromProjectionLine(projectionValue, nearestHalfLine);
-  const selectedDirection = resolveSelectedDirection(payloadData, projectionValue, nearestHalfLine);
+  const syntheticDirection = isMoneyline
+    ? selectedMoneylineSide
+    : directionFromProjectionLine(projectionValue, nearestHalfLine);
+  const selectedDirection = isMoneyline
+    ? selectedMoneylineSide
+    : resolveSelectedDirection(payloadData, projectionValue, nearestHalfLine);
   const primaryEdge = roundMetric(projectionValue - nearestHalfLine, 6);
   const weakDirectionFlag =
-    syntheticDirection === 'NO_EDGE' ||
-    Math.abs(primaryEdge ?? 0) < WEAK_DIRECTION_EDGE_THRESHOLD
+    isMoneyline
+      ? 0
+      : syntheticDirection === 'NO_EDGE' ||
+        Math.abs(primaryEdge ?? 0) < WEAK_DIRECTION_EDGE_THRESHOLD
       ? 1
       : 0;
   const failureFlags = weakDirectionFlag ? ['DIRECTION_TOO_WEAK'] : [];
@@ -1292,10 +1313,18 @@ function deriveProjectionAccuracyCapture(card = {}) {
   const playerOrGameId = config.identity === 'player'
     ? (playerId || playerName || null)
     : (card.gameId ?? card.game_id ?? payloadData.game_id ?? null);
-  const expectedOverProb = expectedOverProbability(projectionValue, nearestHalfLine);
-  const expectedDirProb = expectedDirectionProbability(projectionValue, nearestHalfLine, syntheticDirection);
+  const expectedOverProb = isMoneyline
+    ? roundMetric(projectionValue, 6)
+    : expectedOverProbability(projectionValue, nearestHalfLine);
+  const expectedDirProb = isMoneyline
+    ? roundMetric(projectionValue, 6)
+    : expectedDirectionProbability(projectionValue, nearestHalfLine, syntheticDirection);
   const marketTotal = pickFirstFinite(payloadData, ['raw_data.market_total', 'odds_context.total', 'line']);
   const driverContributions = normalizeDriverContributions(rawData.driver_contributions);
+  const trackingRole = isMoneyline ? 'SELECTED_SIDE' : null;
+  const expectedOutcomeLabel = isMoneyline
+    ? moneylineExpectedOutcomeLabel(selectedMoneylineSide)
+    : null;
 
   return {
     cardId: card.id ?? card.card_id,
@@ -1314,7 +1343,7 @@ function deriveProjectionAccuracyCapture(card = {}) {
     selectedLine,
     nearestHalfLine,
     syntheticLine: nearestHalfLine,
-    syntheticRule: SYNTHETIC_RULE_NEAREST_HALF,
+    syntheticRule: isMoneyline ? SYNTHETIC_RULE_MONEYLINE_BASELINE : SYNTHETIC_RULE_NEAREST_HALF,
     syntheticDirection,
     selectedDirection,
     directionStrength: weakDirectionFlag ? 'WEAK' : 'STRONG',
@@ -1330,6 +1359,11 @@ function deriveProjectionAccuracyCapture(card = {}) {
     basis,
     expectedOverProb,
     expectedDirectionProb: expectedDirProb,
+    winProbability: isMoneyline ? roundMetric(projectionValue, 6) : null,
+    edgePp: isMoneyline ? moneylineEdgePp(projectionValue) : null,
+    brierScore: null,
+    trackingRole,
+    expectedOutcomeLabel,
     calibrationBucket: calibrationBucketForProjection(projectionValue),
     marketTotal,
     paceTier: pickFirstString(payloadData, ['raw_data.pace_tier']),
@@ -1342,7 +1376,9 @@ function deriveProjectionAccuracyCapture(card = {}) {
     payloadData,
     metadata: {
       prop_type: config.propType,
-      selected_line_source: selectedLine === null ? 'nearest_half' : 'payload',
+      selected_line_source: isMoneyline
+        ? SYNTHETIC_RULE_MONEYLINE_BASELINE
+        : selectedLine === null ? 'nearest_half' : 'payload',
     },
   };
 }
@@ -1364,6 +1400,7 @@ function captureProjectionAccuracyEval(db, capture) {
         projection_confidence, confidence_score, confidence_band,
         market_trust, market_trust_status, market_trust_flags, failure_flags,
         line_source, basis, expected_over_prob, expected_direction_prob,
+        win_probability, edge_pp, brier_score, tracking_role, expected_outcome_label,
         calibration_bucket, market_total, pace_tier, vol_env, total_band,
         injury_cloud, driver_contributions, captured_at, generated_at, metadata, updated_at
       ) VALUES (
@@ -1375,6 +1412,7 @@ function captureProjectionAccuracyEval(db, capture) {
         ?, ?, ?,
         ?, ?, ?, ?,
         ?, ?, ?, ?,
+        ?, ?, ?, ?, ?,
         ?, ?, ?, ?, ?,
         ?, ?, ?, ?, ?, CURRENT_TIMESTAMP
       )
@@ -1411,6 +1449,11 @@ function captureProjectionAccuracyEval(db, capture) {
       capture.basis,
       capture.expectedOverProb,
       capture.expectedDirectionProb,
+      capture.winProbability,
+      capture.edgePp,
+      capture.brierScore,
+      capture.trackingRole,
+      capture.expectedOutcomeLabel,
       capture.calibrationBucket,
       capture.marketTotal,
       capture.paceTier,
@@ -1433,8 +1476,9 @@ function captureProjectionAccuracyEval(db, capture) {
           eval_id, card_id, line_role, line, eval_line, projection_value,
           direction, weak_direction_flag, edge_vs_line,
           confidence_score, confidence_band, market_trust,
-          expected_over_prob, expected_direction_prob, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+          expected_over_prob, expected_direction_prob,
+          edge_pp, brier_score, tracking_role, expected_outcome_label, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
       `).run(
         parent?.id ?? null,
         row.card_id,
@@ -1450,6 +1494,10 @@ function captureProjectionAccuracyEval(db, capture) {
         row.market_trust,
         row.expected_over_prob,
         row.expected_direction_prob,
+        row.edge_pp ?? null,
+        row.brier_score ?? null,
+        row.tracking_role ?? null,
+        row.expected_outcome_label ?? null,
       );
     }
   };
@@ -1498,8 +1546,9 @@ function gradeProjectionAccuracyEval(db, { cardId, actualResult, gradedAt = new 
   const syntheticLine = parent.synthetic_line ?? parent.nearest_half_line;
   const syntheticDirection = parent.synthetic_direction ?? parent.selected_direction;
   const projectionRaw = parent.projection_raw ?? parent.projection_value;
+  const isMoneyline = isMoneylineMarketFamily(parent.market_family);
   const failureFlags = new Set(arrayFromJson(parent.failure_flags));
-  if (Number.isFinite(Number(parent.nearest_half_line)) && roundToNearestHalf(projectionRaw) !== syntheticLine) {
+  if (!isMoneyline && Number.isFinite(Number(parent.nearest_half_line)) && roundToNearestHalf(projectionRaw) !== syntheticLine) {
     failureFlags.add('SYNTHETIC_LINE_OVERWRITTEN');
   }
   let payload = {};
@@ -1520,11 +1569,13 @@ function gradeProjectionAccuracyEval(db, { cardId, actualResult, gradedAt = new 
     // Mutation audit is best-effort; grading should still complete.
   }
 
-  const parentGrade = gradeLine({
-    actualValue,
-    line: syntheticLine,
-    direction: parent.weak_direction_flag ? 'NO_EDGE' : syntheticDirection,
-  });
+  const parentGrade = isMoneyline
+    ? gradeMoneylineBaseline(actualValue)
+    : gradeLine({
+        actualValue,
+        line: syntheticLine,
+        direction: parent.weak_direction_flag ? 'NO_EDGE' : syntheticDirection,
+      });
   const absoluteError = roundMetric(Math.abs(actualValue - parent.projection_value), 6);
   const signedError = roundMetric(parent.projection_value - actualValue, 6);
   const historicalBucketHitRate = getHistoricalBucketHitRate(
@@ -1540,8 +1591,15 @@ function gradeProjectionAccuracyEval(db, { cardId, actualResult, gradedAt = new 
     varianceOfMarket,
     marketFamily: parent.market_family,
   });
-  const expectedOverProb = expectedOverProbability(parent.projection_value, syntheticLine);
-  const expectedDirProb = expectedDirectionProbability(parent.projection_value, syntheticLine, syntheticDirection);
+  const expectedOverProb = isMoneyline
+    ? roundMetric(parent.projection_value, 6)
+    : expectedOverProbability(parent.projection_value, syntheticLine);
+  const expectedDirProb = isMoneyline
+    ? roundMetric(parent.projection_value, 6)
+    : expectedDirectionProbability(parent.projection_value, syntheticLine, syntheticDirection);
+  const brierScore = isMoneyline
+    ? roundMetric((parent.projection_value - actualValue) ** 2, 6)
+    : null;
   const lineEvalSettlementContext = buildLineEvalSettlementContext(parent, payload, actualValue, gradedAt);
 
   const write = () => {
@@ -1560,6 +1618,11 @@ function gradeProjectionAccuracyEval(db, { cardId, actualResult, gradedAt = new 
           confidence_band = ?,
           expected_over_prob = ?,
           expected_direction_prob = ?,
+          win_probability = COALESCE(win_probability, ?),
+          edge_pp = COALESCE(edge_pp, ?),
+          brier_score = ?,
+          tracking_role = COALESCE(tracking_role, ?),
+          expected_outcome_label = COALESCE(expected_outcome_label, ?),
           failure_flags = ?,
           updated_at = CURRENT_TIMESTAMP
       WHERE card_id = ?
@@ -1576,6 +1639,11 @@ function gradeProjectionAccuracyEval(db, { cardId, actualResult, gradedAt = new 
       confidenceBand(confidence),
       expectedOverProb,
       expectedDirProb,
+      isMoneyline ? parent.projection_value : null,
+      isMoneyline ? moneylineEdgePp(parent.projection_value) : null,
+      brierScore,
+      isMoneyline ? 'SELECTED_SIDE' : null,
+      isMoneyline ? moneylineExpectedOutcomeLabel(syntheticDirection) : null,
       JSON.stringify(Array.from(failureFlags).sort()),
       cardId,
     );
@@ -1584,19 +1652,25 @@ function gradeProjectionAccuracyEval(db, { cardId, actualResult, gradedAt = new 
       .prepare('SELECT id, eval_line, direction, edge_vs_line, weak_direction_flag FROM projection_accuracy_line_evals WHERE card_id = ?')
       .all(cardId);
     for (const row of lineRows) {
-      const lineExpectedOver = expectedOverProbability(parent.projection_value, row.eval_line);
-      const lineExpectedDir = expectedDirectionProbability(parent.projection_value, row.eval_line, row.direction);
+      const lineExpectedOver = isMoneyline
+        ? roundMetric(parent.projection_value, 6)
+        : expectedOverProbability(parent.projection_value, row.eval_line);
+      const lineExpectedDir = isMoneyline
+        ? roundMetric(parent.projection_value, 6)
+        : expectedDirectionProbability(parent.projection_value, row.eval_line, row.direction);
       const lineConfidence = deriveProjectionConfidence({
         edgeDistance: Math.abs(row.edge_vs_line ?? 0),
         historicalBucketHitRate,
         varianceOfMarket,
         marketFamily: parent.market_family,
       });
-      const lineGrade = gradeLine({
-        actualValue,
-        line: row.eval_line,
-        direction: row.weak_direction_flag ? 'NO_EDGE' : row.direction,
-      });
+      const lineGrade = isMoneyline
+        ? gradeMoneylineBaseline(actualValue)
+        : gradeLine({
+            actualValue,
+            line: row.eval_line,
+            direction: row.weak_direction_flag ? 'NO_EDGE' : row.direction,
+          });
       db.prepare(`
         UPDATE projection_accuracy_line_evals
         SET actual_value = ?,
@@ -1623,6 +1697,10 @@ function gradeProjectionAccuracyEval(db, { cardId, actualResult, gradedAt = new 
             confidence_band = ?,
             expected_over_prob = ?,
             expected_direction_prob = ?,
+            edge_pp = COALESCE(edge_pp, ?),
+            brier_score = ?,
+            tracking_role = COALESCE(tracking_role, ?),
+            expected_outcome_label = COALESCE(expected_outcome_label, ?),
             graded_at = ?,
             updated_at = CURRENT_TIMESTAMP
         WHERE id = ?
@@ -1650,6 +1728,10 @@ function gradeProjectionAccuracyEval(db, { cardId, actualResult, gradedAt = new 
         confidenceBand(lineConfidence),
         lineExpectedOver,
         lineExpectedDir,
+        isMoneyline ? moneylineEdgePp(parent.projection_value) : null,
+        brierScore,
+        isMoneyline ? 'SELECTED_SIDE' : null,
+        isMoneyline ? moneylineExpectedOutcomeLabel(row.direction) : null,
         gradedAt,
         row.id,
       );
@@ -1719,23 +1801,30 @@ function backfillProjectionAccuracyEvals(db, {
   const write = () => {
     for (const row of rows) {
       const projectionRaw = toFiniteNumberOrNull(row.projection_raw) ?? toFiniteNumberOrNull(row.projection_value);
+      const isMoneyline = isMoneylineMarketFamily(row.market_family);
       const syntheticLine =
-        toFiniteNumberOrNull(row.synthetic_line) ??
-        toFiniteNumberOrNull(row.nearest_half_line) ??
-        roundToNearestHalf(projectionRaw);
+        isMoneyline
+          ? MONEYLINE_BASELINE
+          : toFiniteNumberOrNull(row.synthetic_line) ??
+            toFiniteNumberOrNull(row.nearest_half_line) ??
+            roundToNearestHalf(projectionRaw);
       const failureAdditions = [];
       if (projectionRaw === null || syntheticLine === null) {
         failureAdditions.push('BACKFILL_UNABLE_TO_RECONSTRUCT');
         unableToReconstruct += 1;
       }
 
-      const syntheticDirection = projectionRaw === null || syntheticLine === null
-        ? 'NO_EDGE'
-        : directionFromProjectionLine(projectionRaw, syntheticLine);
+      const syntheticDirection = isMoneyline
+        ? (normalizeMoneylineSide(row.synthetic_direction) ?? normalizeMoneylineSide(row.selected_direction))
+        : projectionRaw === null || syntheticLine === null
+          ? 'NO_EDGE'
+          : directionFromProjectionLine(projectionRaw, syntheticLine);
       const edgeDistance = projectionRaw === null || syntheticLine === null
         ? 0
         : Math.abs(projectionRaw - syntheticLine);
-      const weakDirectionFlag = syntheticDirection === 'NO_EDGE' || edgeDistance < WEAK_DIRECTION_EDGE_THRESHOLD ? 1 : 0;
+      const weakDirectionFlag = isMoneyline
+        ? 0
+        : syntheticDirection === 'NO_EDGE' || edgeDistance < WEAK_DIRECTION_EDGE_THRESHOLD ? 1 : 0;
       if (weakDirectionFlag) failureAdditions.push('DIRECTION_TOO_WEAK');
       const actualValue = toFiniteNumberOrNull(row.actual_value ?? row.actual);
       const confidence = deriveProjectionConfidence({
@@ -1744,14 +1833,21 @@ function backfillProjectionAccuracyEvals(db, {
         varianceOfMarket: null,
         marketFamily: row.market_family,
       });
-      const expectedOverProb = expectedOverProbability(projectionRaw, syntheticLine);
-      const expectedDirProb = expectedDirectionProbability(projectionRaw, syntheticLine, syntheticDirection);
+      const expectedOverProb = isMoneyline
+        ? roundMetric(projectionRaw, 6)
+        : expectedOverProbability(projectionRaw, syntheticLine);
+      const expectedDirProb = isMoneyline
+        ? roundMetric(projectionRaw, 6)
+        : expectedDirectionProbability(projectionRaw, syntheticLine, syntheticDirection);
       const absError = actualValue === null || projectionRaw === null
         ? null
         : roundMetric(Math.abs(projectionRaw - actualValue), 6);
       const signedError = actualValue === null || projectionRaw === null
         ? null
         : roundMetric(projectionRaw - actualValue, 6);
+      const brierScore = isMoneyline && actualValue !== null && projectionRaw !== null
+        ? roundMetric((projectionRaw - actualValue) ** 2, 6)
+        : null;
       const playerOrGameId = row.player_or_game_id || row.player_id || row.player_name || row.game_id || null;
 
       db.prepare(`
@@ -1777,6 +1873,11 @@ function backfillProjectionAccuracyEvals(db, {
             absolute_error = COALESCE(absolute_error, ?),
             expected_over_prob = COALESCE(expected_over_prob, ?),
             expected_direction_prob = COALESCE(expected_direction_prob, ?),
+            win_probability = COALESCE(win_probability, ?),
+            edge_pp = COALESCE(edge_pp, ?),
+            brier_score = COALESCE(brier_score, ?),
+            tracking_role = COALESCE(tracking_role, ?),
+            expected_outcome_label = COALESCE(expected_outcome_label, ?),
             calibration_bucket = COALESCE(calibration_bucket, ?),
             updated_at = CURRENT_TIMESTAMP
         WHERE id = ?
@@ -1799,6 +1900,11 @@ function backfillProjectionAccuracyEvals(db, {
         absError,
         expectedOverProb,
         expectedDirProb,
+        isMoneyline ? projectionRaw : null,
+        isMoneyline ? moneylineEdgePp(projectionRaw) : null,
+        brierScore,
+        isMoneyline ? 'SELECTED_SIDE' : null,
+        isMoneyline ? moneylineExpectedOutcomeLabel(syntheticDirection) : null,
         calibrationBucketForProjection(projectionRaw),
         row.id,
       );
@@ -1812,6 +1918,11 @@ function backfillProjectionAccuracyEvals(db, {
           selectedLine: toFiniteNumberOrNull(row.selected_line),
           marketFamily: row.market_family,
           marketTrust: row.market_trust || 'UNVERIFIED',
+          syntheticLine,
+          selectedDirection: syntheticDirection,
+          winProbability: isMoneyline ? projectionRaw : null,
+          trackingRole: isMoneyline ? 'SELECTED_SIDE' : null,
+          expectedOutcomeLabel: isMoneyline ? moneylineExpectedOutcomeLabel(syntheticDirection) : null,
           historicalBucketHitRate: 0.5,
           varianceOfMarket: null,
         };
@@ -1822,8 +1933,9 @@ function backfillProjectionAccuracyEvals(db, {
               eval_id, card_id, line_role, line, eval_line, projection_value,
               direction, weak_direction_flag, edge_vs_line,
               confidence_score, confidence_band, market_trust,
-              expected_over_prob, expected_direction_prob, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+              expected_over_prob, expected_direction_prob,
+              edge_pp, brier_score, tracking_role, expected_outcome_label, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
           `).run(
             parent.id,
             lineRow.card_id,
@@ -1839,6 +1951,10 @@ function backfillProjectionAccuracyEvals(db, {
             lineRow.market_trust,
             lineRow.expected_over_prob,
             lineRow.expected_direction_prob,
+            lineRow.edge_pp ?? null,
+            lineRow.brier_score ?? null,
+            lineRow.tracking_role ?? null,
+            lineRow.expected_outcome_label ?? null,
           );
           lineRowsInserted += Number(info?.changes || 0);
         }
