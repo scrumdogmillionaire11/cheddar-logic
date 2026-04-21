@@ -34,7 +34,11 @@ const {
 } = require('../models/nhl-player-shots');
 const { fetchMoneyPuckSnapshot } = require('../moneypuck');
 const { applyNhlDecisionBasisMeta } = require('../utils/nhl-shots-patch');
-const { twoSidedFairProb } = require('@cheddar-logic/models').edgeCalculator;
+const {
+  deriveLegacyDecisionEnvelope,
+  edgeCalculator,
+} = require('@cheddar-logic/models');
+const { twoSidedFairProb } = edgeCalculator;
 
 const JOB_NAME = 'run-nhl-player-shots-model';
 
@@ -308,29 +312,10 @@ function formatThresholdOutcome(leanSide, marketLine) {
   return `${target}+ shots`;
 }
 
-function deriveLegacyActionFromVerdict(verdict) {
-  if (verdict === 'PLAY') {
-    return {
-      action: 'FIRE',
-      status: 'FIRE',
-      classification: 'BASE',
-      officialStatus: 'PLAY',
-    };
-  }
-  if (verdict === 'WATCH') {
-    return {
-      action: 'HOLD',
-      status: 'WATCH',
-      classification: 'LEAN',
-      officialStatus: 'LEAN',
-    };
-  }
-  return {
-    action: 'PASS',
-    status: 'PASS',
-    classification: 'PASS',
-    officialStatus: 'PASS',
-  };
+function resolveOfficialStatusFromPropVerdict(verdict) {
+  if (verdict === 'PLAY') return 'PLAY';
+  if (verdict === 'WATCH') return 'LEAN';
+  return 'PASS';
 }
 
 function extractLegacyDecisionFields(decision) {
@@ -3144,14 +3129,16 @@ async function runNHLPlayerShotsModel() {
                 flags: mergedPropDecisionFlags,
                 usingRealLine,
               });
-            const legacyDecisionFromProp = deriveLegacyActionFromVerdict(
+            const fullOfficialStatus = resolveOfficialStatusFromPropVerdict(
               fullPropDecision.verdict,
             );
+            const legacyDecisionFromProp =
+              deriveLegacyDecisionEnvelope(fullOfficialStatus);
             const fullLegacyFields = extractLegacyDecisionFields(
               legacyDecisionFromProp,
             );
             const fullDecisionV2 = buildDecisionV2Payload({
-              officialStatus: legacyDecisionFromProp.officialStatus,
+              officialStatus: fullOfficialStatus,
               direction: fullPropDecision.lean_side ?? fullGameEdge.direction,
               projection: effectiveMuContract,
               marketLine: syntheticLine,
@@ -3808,14 +3795,16 @@ async function runNHLPlayerShotsModel() {
                   };
                 }
 
-                const blkLegacyDecision = deriveLegacyActionFromVerdict(
+                const blkOfficialStatus = resolveOfficialStatusFromPropVerdict(
                   blkPropDecision.verdict,
                 );
+                const blkLegacyDecision =
+                  deriveLegacyDecisionEnvelope(blkOfficialStatus);
                 const blkLegacyFields = extractLegacyDecisionFields(blkLegacyDecision);
                 const blkResolvedLean = blkPropDecision.lean_side || blkLeanSide;
                 const blkFairLine = roundToHalfLine(blkProjection.blk_mu) ?? blkMarket.line;
                 const blkDecisionV2 = buildDecisionV2Payload({
-                  officialStatus: blkLegacyDecision.officialStatus,
+                  officialStatus: blkOfficialStatus,
                   direction: blkResolvedLean,
                   projection: blkProjection.blk_mu,
                   marketLine: blkMarket.line,
@@ -4017,11 +4006,14 @@ async function runNHLPlayerShotsModel() {
                       flags: blkFlags,
                       usingRealLine: true,
                     });
-                    const extraLegacy = deriveLegacyActionFromVerdict(extraPropDecision.verdict);
+                    const extraOfficialStatus =
+                      resolveOfficialStatusFromPropVerdict(extraPropDecision.verdict);
+                    const extraLegacy =
+                      deriveLegacyDecisionEnvelope(extraOfficialStatus);
                     const extraLegacyFields = extractLegacyDecisionFields(extraLegacy);
                     const extraFairLine = roundToHalfLine(blkProjection.blk_mu) ?? extraLine;
                     const extraDecisionV2 = buildDecisionV2Payload({
-                      officialStatus: extraLegacy.officialStatus,
+                      officialStatus: extraOfficialStatus,
                       direction: extraLeanSide,
                       projection: blkProjection.blk_mu,
                       marketLine: extraLine,
