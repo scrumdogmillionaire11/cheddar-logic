@@ -58,7 +58,7 @@ import {
   isWelcomeHomePlay,
   normalizeCardType,
   resolveSourceModelProb,
-} from './legacy-repair';
+} from './adapters/v1-legacy-repair';
 import { isWelcomeHomeCardType } from '../welcome-home';
 import {
   NO_ACTIONABLE_IGNORE_REASON_CODES,

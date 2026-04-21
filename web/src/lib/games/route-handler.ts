@@ -149,6 +149,13 @@ import {
   buildOptionalOddsSelect,
 } from '@/lib/games/query-builder';
 import { isProjectionSurfaceCardType } from '@/lib/games/projection-surface';
+import {
+  resolveMlbFallbackOfficialStatus,
+  hasMlbFallbackDropReason,
+  hasMlbFallbackActionableSelection,
+  hasMlbFallbackMarketContext,
+  getMlbFallbackSnapshotEpoch,
+} from '@/lib/game-card/transform/adapters/v1-legacy-repair';
 
 const { getDatabaseReadOnly, closeReadOnlyInstance } = cheddarData as {
   getDatabaseReadOnly: typeof import('@cheddar-logic/data').getDatabaseReadOnly;
@@ -863,102 +870,12 @@ export function dedupeProjectionSurfacePlays(plays: Play[]): Play[] {
   return [...passthrough, ...byKey.values()];
 }
 
-function toRecord(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === 'object'
-    ? (value as Record<string, unknown>)
-    : null;
-}
-
 function parseCardPayloadData(payloadData: string): Record<string, unknown> | null {
   try {
     return JSON.parse(payloadData) as Record<string, unknown>;
   } catch {
     return null;
   }
-}
-
-function resolveMlbFallbackOfficialStatus(
-  payload: Record<string, unknown>,
-): 'PLAY' | 'LEAN' | 'PASS' | null {
-  const decisionV2 = toRecord(payload.decision_v2);
-  const canonicalEnvelope = toRecord(decisionV2?.canonical_envelope_v2);
-  const envelopeStatus = firstString(canonicalEnvelope?.official_status);
-  if (envelopeStatus === 'PLAY' || envelopeStatus === 'LEAN' || envelopeStatus === 'PASS') {
-    return envelopeStatus;
-  }
-  const official = firstString(decisionV2?.official_status);
-  if (official === 'PLAY' || official === 'LEAN' || official === 'PASS') return official;
-  return null;
-}
-
-function hasMlbFallbackDropReason(payload: Record<string, unknown>): boolean {
-  const executionGate = toRecord(payload.execution_gate);
-  return Boolean(executionGate?.drop_reason);
-}
-
-function hasMlbFallbackActionableSelection(payload: Record<string, unknown>): boolean {
-  const decisionV2 = toRecord(payload.decision_v2);
-  const canonicalEnvelope = toRecord(decisionV2?.canonical_envelope_v2);
-  const selectionObj = toRecord(payload.selection);
-  const side = normalizeSelectionSide(
-    firstString(
-      canonicalEnvelope?.selection_side,
-      decisionV2?.selection_side,
-      selectionObj?.side,
-      payload.prediction,
-    ),
-  );
-  return Boolean(side && side !== 'NONE');
-}
-
-function hasMlbFallbackMarketContext(
-  payload: Record<string, unknown>,
-  cardType: string,
-): boolean {
-  const marketContext = toRecord(payload.market_context);
-  const wager = toRecord(marketContext?.wager);
-  const oddsContext = toRecord(payload.odds_context);
-  if (cardType === 'mlb-full-game') {
-    const line = firstNumber(
-      payload.line,
-      payload.total_line,
-      wager?.called_line,
-      oddsContext?.total,
-    );
-    const price = firstNumber(payload.price, payload.juice, wager?.called_price);
-    return Number.isFinite(line) && Number.isFinite(price);
-  }
-  if (cardType === 'mlb-full-game-ml') {
-    const homePrice = firstNumber(
-      payload.ml_home,
-      payload.h2h_home,
-      oddsContext?.h2h_home,
-      oddsContext?.ml_home,
-    );
-    const awayPrice = firstNumber(
-      payload.ml_away,
-      payload.h2h_away,
-      oddsContext?.h2h_away,
-      oddsContext?.ml_away,
-    );
-    return Number.isFinite(homePrice) && Number.isFinite(awayPrice);
-  }
-  return false;
-}
-
-function getMlbFallbackSnapshotEpoch(
-  row: CardPayloadRow,
-  payload: Record<string, unknown>,
-): number {
-  const snapshotCandidate = firstString(
-    payload.snapshot_at,
-    payload.captured_at,
-    payload.created_at,
-    row.created_at,
-  );
-  if (!snapshotCandidate) return Number.NaN;
-  const parsed = Date.parse(snapshotCandidate);
-  return Number.isFinite(parsed) ? parsed : Number.NaN;
 }
 
 function isEligibleMlbGameLineFallbackRow(params: {
