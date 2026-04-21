@@ -513,7 +513,8 @@ describe('runNBAModel', () => {
           {
             is_impact_player: true,
             status: 'OUT',
-            avg_points_last5: 11,
+            avg_points_last5: 40,
+            point_impact: 6,
           },
         ],
       },

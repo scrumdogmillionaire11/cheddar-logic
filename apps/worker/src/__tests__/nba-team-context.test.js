@@ -102,6 +102,8 @@ function loadNBATeamContextModule({
   },
   homeMetricsAvailable = true,
   awayMetricsAvailable = true,
+  homeImpactContext = null,
+  awayImpactContext = null,
   oddsSnapshots = [buildOddsSnapshot()],
   driverCards = [],
   projectionComplete = true,
@@ -130,6 +132,7 @@ function loadNBATeamContextModule({
         metrics: homeMetricsAvailable ? homeMetrics : neutralMetrics,
         teamInfo: null,
         games: [],
+        impactContext: homeImpactContext,
         resolution: { status: homeMetricsAvailable ? 'ok' : 'espn_no_data' },
       };
     }
@@ -137,6 +140,7 @@ function loadNBATeamContextModule({
       metrics: awayMetricsAvailable ? awayMetrics : neutralMetrics,
       teamInfo: null,
       games: [],
+      impactContext: awayImpactContext,
       resolution: { status: awayMetricsAvailable ? 'ok' : 'espn_no_data' },
     };
   });
@@ -295,6 +299,7 @@ function loadNBATeamContextModule({
     finalizeDecisionFields: jest.fn((p) => p),
     capturePublishedDecisionState: jest.fn(() => null),
     assertNoDecisionMutation: jest.fn(() => []),
+    syncCanonicalDecisionEnvelope: jest.fn(),
   }));
 
   jest.doMock('../utils/playoff-detection', () => ({
@@ -323,6 +328,28 @@ afterEach(() => {
   jest.resetModules();
   jest.restoreAllMocks();
 });
+
+function makeImpactContext(players) {
+  return {
+    available: true,
+    generatedAt: '2026-04-09T18:00:00.000Z',
+    players,
+  };
+}
+
+function makeImpactPlayer(overrides = {}) {
+  return {
+    playerId: overrides.playerId ?? 'nba-player-1',
+    playerName: overrides.playerName ?? 'NBA Player',
+    teamAbbr: overrides.teamAbbr ?? 'BOS',
+    rawStatus: overrides.rawStatus ?? 'OUT',
+    avgPointsLast5: overrides.avgPointsLast5 ?? 10,
+    startsLast5: overrides.startsLast5 ?? 5,
+    isImpactPlayer: overrides.isImpactPlayer ?? true,
+    impactReasons: overrides.impactReasons ?? ['starter'],
+    ...overrides,
+  };
+}
 
 describe('WI-0768: NBA model team_metrics_cache consumption', () => {
   // -----------------------------------------------------------------------
@@ -404,6 +431,80 @@ describe('WI-0768: NBA model team_metrics_cache consumption', () => {
       }
       // Note: if no nba-totals-call card was inserted (no FIRE decision in the
       // mock), we just verify pace_anchor_total was set — covered by earlier test.
+    });
+
+    it('applies injury reduction once and stamps role-class audit details', async () => {
+      const snap = buildOddsSnapshot({ total: 220.0, raw_data: {} });
+      const fakeDriverDescriptor = {
+        driverKey: 'baseProjection',
+        signal: 0.6,
+        eligible: true,
+        outcome: 'HOME',
+      };
+      const { runNBAModel, mocks } = loadNBATeamContextModule({
+        oddsSnapshots: [snap],
+        homeMetricsAvailable: true,
+        awayMetricsAvailable: true,
+        driverCards: [fakeDriverDescriptor],
+        homeImpactContext: makeImpactContext([
+          makeImpactPlayer({
+            playerId: 'hub-1',
+            playerName: 'Home Hub',
+            teamAbbr: 'BOS',
+            avgPointsLast5: 10,
+            startsLast5: 5,
+            assistsLast5: 6,
+          }),
+        ]),
+        awayImpactContext: makeImpactContext([]),
+      });
+
+      await runNBAModel();
+
+      const insertedCards = mocks.insertCardPayload.mock.calls.map(
+        ([card]) => card,
+      );
+      const totalsCard = insertedCards.find(
+        (card) => card.cardType === 'nba-totals-call',
+      );
+
+      expect(totalsCard).toBeDefined();
+      const { payloadData } = totalsCard;
+      const audit = payloadData.raw_data.injury_projection_reduction;
+      expect(audit).toBeDefined();
+      const originalBlendedTotal = 220.63;
+      const expectedAdjustedTotal = Number(
+        (originalBlendedTotal - audit.reduction_applied).toFixed(2),
+      );
+
+      expect(audit.home_impact).toMatchObject({
+        raw_team_impact: 12,
+        pace_surge_offset: 0.5,
+        team_impact_after_redistribution: 11.5,
+        capped_team_impact: 11.5,
+      });
+      expect(audit.away_impact).toMatchObject({
+        raw_team_impact: 0,
+        pace_surge_offset: 0,
+        team_impact_after_redistribution: 0,
+        capped_team_impact: 0,
+      });
+      expect(audit.reduction_applied).toBe(5.75);
+      expect(audit.role_classes.home).toEqual([
+        {
+          player_name: 'Home Hub',
+          player_id: 'hub-1',
+          role_class: 'OFFENSIVE_HUB',
+          role_multiplier: 1.2,
+          start_ratio: 1,
+          point_impact: 12,
+        },
+      ]);
+      expect(audit.role_classes.away).toEqual([]);
+      expect(payloadData.projection.total).toBe(
+        payloadData.market_context.projection.total,
+      );
+      expect(payloadData.projection.total).toBeCloseTo(expectedAdjustedTotal, 2);
     });
 
     it('getTeamMetricsWithGames is called with sport=NBA for both teams', async () => {
