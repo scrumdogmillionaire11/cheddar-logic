@@ -140,8 +140,8 @@ function evaluateFreshnessTier(snapshotAgeMs, contract) {
  * @param {string|null} [params.cardType]
  * @param {string|null} [params.lineSource]
  * @param {string|null} [params.priceSource]
- * @param {number} [params.vigCost]
- * @param {number} [params.slippageCost]
+ * @param {number} [params.vigCost] Deprecated no-op, accepted for backward compatibility.
+ * @param {number} [params.slippageCost] Deprecated no-op, accepted for backward compatibility.
  * @param {number} [params.minNetEdge]
  * @param {number} [params.minConfidence]
  * @returns {{ shouldBet: boolean, should_bet: boolean, reason: string, block_reason: string|null, netEdge: number|null, blocked_by: string[], hard_blocked_by: string[], advisory_by: string[], freshness_decision: object }}
@@ -160,8 +160,6 @@ function evaluateExecution(params) {
     cardType = null,
     lineSource = null,
     priceSource = null,
-    vigCost = VIG_COST_STANDARD,
-    slippageCost = SLIPPAGE_ESTIMATE,
     minNetEdge = 0.025,
     minConfidence = 0.55,
   } = params;
