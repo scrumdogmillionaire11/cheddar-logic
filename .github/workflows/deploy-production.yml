@@ -453,11 +453,33 @@ jobs:
               fi
               exit 1
             }
+            restart_web_with_diagnostics() {
+              if sudo systemctl restart cheddar-web; then
+                return 0
+              fi
+              echo "cheddar-web restart failed on first attempt; collecting diagnostics"
+              sudo systemctl status cheddar-web --no-pager || true
+              sudo journalctl -u cheddar-web -n 120 --no-pager || true
+              echo "Port 3000 listeners before retry:"
+              sudo ss -ltnp '( sport = :3000 )' || true
+              echo "Attempting one-time port 3000 cleanup before retry"
+              sudo fuser -k 3000/tcp 2>/dev/null || true
+              sleep 2
+              if sudo systemctl restart cheddar-web; then
+                echo "cheddar-web restart succeeded on retry"
+                return 0
+              fi
+              echo "ERROR: cheddar-web restart failed after retry"
+              sudo systemctl status cheddar-web --no-pager || true
+              sudo journalctl -u cheddar-web -n 160 --no-pager || true
+              sudo ss -ltnp '( sport = :3000 )' || true
+              return 1
+            }
             # Belt-and-suspenders: remove any lock file that may have re-appeared since
             # the earlier cleanup (e.g. from a migration run or a crash-loop restart).
             rm -f "${CANONICAL_DB_PATH}.lock" || true
             sudo systemctl restart cheddar-worker
-            sudo systemctl restart cheddar-web
+            restart_web_with_diagnostics
             sudo systemctl restart cheddar-fpl-sage || { echo "WARNING: cheddar-fpl-sage failed to restart — continuing deploy (web/worker unaffected)"; true; }
             sleep 5
             if ! sudo systemctl is-active --quiet cheddar-worker; then
