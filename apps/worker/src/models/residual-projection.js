@@ -179,6 +179,12 @@ async function computeNbaResidualCorrection({
   const effectiveGlobalBias = noBias ? 0 : globalBias;
   const hasGlobal = !noBias;
 
+  // Guard: db must be available (WI-1027 table accessible)
+  if (!db || typeof db.prepare !== 'function') {
+    logger.warn?.('[NBAModel] [RESIDUAL] db query failed: db unavailable or missing prepare method');
+    return { correction: 0, source: 'none', samples: 0, segment: 'none', shrinkage_factor: 0 };
+  }
+
   const params = { homeTeam, awayTeam, paceTier, totalBand, month };
 
   // Attempt each segment level in hierarchy order.
