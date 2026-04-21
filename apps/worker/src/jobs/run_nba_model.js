@@ -96,6 +96,10 @@ const {
   assertFeatureTimeliness,
   applyFeatureTimelinessEnforcement,
 } = require('../models/feature-time-guard');
+const {
+  computeNbaResidualCorrection,
+  applyNbaResidualCombinedCeiling,
+} = require('../models/residual-projection');
 
 const ENABLE_WELCOME_HOME = process.env.ENABLE_WELCOME_HOME === 'true';
 
@@ -2454,6 +2458,35 @@ async function runNBAModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
             }
           }
 
+          // WI-1024: Compute per-game residual correction after rolling bias.
+          // Guard: rollingBias must be a number (WI-1020 active) before calling residual.
+          let nbaResidualResult = { correction: 0, source: 'none', samples: 0, segment: 'none', shrinkage_factor: 0 };
+          const rollingBiasValue = rollingBias?.bias;
+          if (!Number.isFinite(rollingBiasValue)) {
+            console.log('[NBAModel] [RESIDUAL] skipped: WI-1020 rolling bias unavailable');
+          } else {
+            const residualPaceTier = derivePaceTier(oddsSnapshot.raw_data, leagueBaselines);
+            const residualTotalBand = deriveTotalBand(toFiniteNumberOrNull(oddsSnapshot?.total));
+            const residualMonth = oddsSnapshot.game_time_utc
+              ? String(new Date(oddsSnapshot.game_time_utc).getUTCMonth() + 1).padStart(2, '0')
+              : null;
+            nbaResidualResult = await computeNbaResidualCorrection({
+              db,
+              homeTeam: oddsSnapshot.home_team,
+              awayTeam: oddsSnapshot.away_team,
+              paceTier: residualPaceTier,
+              totalBand: residualTotalBand,
+              month: residualMonth,
+              globalBias: rollingBiasValue,
+            });
+            // Enforce combined ceiling: scale only residual, preserve rollingBias
+            const combinedBeforeCeiling = rollingBiasValue + nbaResidualResult.correction;
+            if (Math.abs(combinedBeforeCeiling) > 6.0) {
+              const bounded = applyNbaResidualCombinedCeiling(rollingBiasValue, nbaResidualResult.correction);
+              nbaResidualResult = { ...nbaResidualResult, correction: bounded };
+            }
+          }
+
           // WI-0646: Detect playoff game and apply threshold overrides
           const isPlayoff = isPlayoffGame(oddsSnapshot);
           if (isPlayoff) console.log(`[PLAYOFF_MODE] gameId: ${gameId}`);
@@ -2714,13 +2747,25 @@ async function runNBAModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
               teamCtx.available &&
               Number.isFinite(teamCtx.blendedTotal)
             ) {
+              // WI-1024: Apply residual correction exactly once, after rolling bias.
+              // adjustedTotal = blendedTotal (which incorporates rolling bias) + residualCorrection
+              const residualCorrection = nbaResidualResult.correction;
+              const adjustedTotal = teamCtx.blendedTotal + residualCorrection;
               if (card.payloadData?.projection) {
-                card.payloadData.projection.total = teamCtx.blendedTotal;
+                card.payloadData.projection.total = adjustedTotal;
               }
               if (card.payloadData?.market_context?.projection) {
-                card.payloadData.market_context.projection.total =
-                  teamCtx.blendedTotal;
+                card.payloadData.market_context.projection.total = adjustedTotal;
               }
+              // Stamp residual metadata for observability and accuracy tracking
+              if (!card.payloadData.raw_data) card.payloadData.raw_data = {};
+              card.payloadData.raw_data.residual_correction = {
+                correction: nbaResidualResult.correction,
+                source: nbaResidualResult.source,
+                samples: nbaResidualResult.samples,
+                segment: nbaResidualResult.segment,
+                shrinkage_factor: nbaResidualResult.shrinkage_factor,
+              };
             }
             applyNbaSettlementMarketContext(card);
             assignExecutionStatus(card, { withoutOddsMode });
