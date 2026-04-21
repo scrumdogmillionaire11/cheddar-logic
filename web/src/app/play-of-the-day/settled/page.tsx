@@ -10,20 +10,12 @@ export const dynamic = 'force-dynamic';
 export const metadata: Metadata = {
   title: 'POTD Settled Games | Cheddar Logic',
   description:
-    'Full settled Play of the Day history with outcomes, wagers, and P&L.',
+    'Near-Miss settled game history behind POTD Settled tracking.',
 };
 
-function formatCurrency(value: number | null | undefined): string {
-  if (value === null || value === undefined || Number.isNaN(value)) return '$0.00';
-  return new Intl.NumberFormat('en-US', {
-    style: 'currency',
-    currency: 'USD',
-  }).format(value);
-}
-
-function formatSignedDollars(value: number | null | undefined): string {
-  if (value === null || value === undefined || Number.isNaN(value)) return '$0.00';
-  const absolute = formatCurrency(Math.abs(value));
+function formatSignedUnits(value: number | null | undefined): string {
+  if (value === null || value === undefined || Number.isNaN(value)) return '0.00u';
+  const absolute = `${Math.abs(value).toFixed(2)}u`;
   if (value > 0) return `+${absolute}`;
   if (value < 0) return `-${absolute}`;
   return absolute;
@@ -81,12 +73,12 @@ export default async function PotdSettledGamesPage() {
                   Settled Games
                 </h1>
                 <p className="mt-3 text-sm text-cloud/65">
-                  Full settled history for POTD picks.
+                  Near-Miss settled history (source of the Settled metric on POTD).
                 </p>
               </div>
               <div className="flex items-center gap-3">
                 <span className="rounded-full border border-teal/35 bg-teal/10 px-4 py-2 text-sm font-semibold text-teal-100">
-                  {settledCount} settled
+                  {settledCount} near-miss settled
                 </span>
                 <Link
                   href="/play-of-the-day"
@@ -100,7 +92,7 @@ export default async function PotdSettledGamesPage() {
 
           {settled.length === 0 ? (
             <section className="rounded-[28px] border border-dashed border-white/15 bg-surface/70 p-8 text-sm text-cloud/65">
-              No settled POTD games found yet.
+              No settled Near-Miss games found yet.
             </section>
           ) : (
             <section className="space-y-3">
@@ -144,13 +136,13 @@ export default async function PotdSettledGamesPage() {
                         <div className="mt-1">{formatPercent(row.edgePct)}</div>
                       </div>
                       <div>
-                        <div className="text-[11px] uppercase tracking-[0.18em] text-cloud/45">Wager</div>
-                        <div className="mt-1">{formatCurrency(row.wagerAmount)}</div>
+                        <div className="text-[11px] uppercase tracking-[0.18em] text-cloud/45">Stake</div>
+                        <div className="mt-1">{row.virtualStakeUnits === null ? 'N/A' : `${row.virtualStakeUnits.toFixed(2)}u`}</div>
                       </div>
                       <div>
-                        <div className="text-[11px] uppercase tracking-[0.18em] text-cloud/45">P&L</div>
-                        <div className={`mt-1 font-medium ${metricTone(row.pnlDollars)}`}>
-                          {formatSignedDollars(row.pnlDollars)}
+                        <div className="text-[11px] uppercase tracking-[0.18em] text-cloud/45">P&L (u)</div>
+                        <div className={`mt-1 font-medium ${metricTone(row.pnlUnits)}`}>
+                          {formatSignedUnits(row.pnlUnits)}
                         </div>
                       </div>
                     </div>

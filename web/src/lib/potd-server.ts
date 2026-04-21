@@ -242,7 +242,38 @@ export type PotdResponseData = {
 
 export type PotdSettledHistoryData = {
   settledCount: number;
-  settled: PotdApiPlay[];
+  settled: PotdNearMissSettledPlay[];
+};
+
+type PotdNearMissSettledRow = {
+  id: number;
+  play_date: string;
+  sport: string | null;
+  home_team: string | null;
+  away_team: string | null;
+  market_type: string | null;
+  selection_label: string | null;
+  game_time_utc: string | null;
+  result: string | null;
+  pnl_units: number | null;
+  virtual_stake_units: number | null;
+  edge_pct: number | null;
+};
+
+export type PotdNearMissSettledPlay = {
+  id: string;
+  playDate: string;
+  sport: string;
+  homeTeam: string;
+  awayTeam: string;
+  marketType: string;
+  selectionLabel: string;
+  gameTimeUtc: string | null;
+  gameTimeEtLabel: string;
+  result: string | null;
+  pnlUnits: number | null;
+  virtualStakeUnits: number | null;
+  edgePct: number | null;
 };
 
 function splitNomineesByPresentation(
@@ -704,12 +735,46 @@ export async function getPotdSettledHistoryData(): Promise<PotdSettledHistoryDat
 
     const settledRows = (db
       .prepare(
-        `SELECT *
-         FROM potd_plays
-         WHERE result IS NOT NULL
-         ORDER BY play_date DESC, datetime(COALESCE(settled_at, posted_at)) DESC`,
+        `SELECT
+           sr.id,
+           sr.play_date,
+           COALESCE(sr.sport, sc.sport) AS sport,
+           sc.home_team,
+           sc.away_team,
+           COALESCE(sr.market_type, sc.market_type) AS market_type,
+           COALESCE(sr.selection_label, sc.selection_label) AS selection_label,
+           COALESCE(sr.game_time_utc, sc.game_time_utc) AS game_time_utc,
+           sr.result,
+           sr.pnl_units,
+           sr.virtual_stake_units,
+           sc.edge_pct
+         FROM potd_shadow_results sr
+         LEFT JOIN potd_shadow_candidates sc
+           ON (
+                sr.shadow_candidate_id = sc.id
+              )
+              OR (
+                sr.play_date = sc.play_date
+                AND sr.candidate_identity_key = sc.candidate_identity_key
+              )
+         WHERE sr.status = 'settled'
+         ORDER BY sr.play_date DESC, datetime(COALESCE(sr.settled_at, sr.updated_at, sr.created_at)) DESC`,
       )
-      .all() as PotdPlayRow[]).map(mapPlayRow);
+      .all() as PotdNearMissSettledRow[]).map((row) => ({
+        id: String(row.id),
+        playDate: row.play_date,
+        sport: row.sport || '--',
+        homeTeam: row.home_team || '--',
+        awayTeam: row.away_team || '--',
+        marketType: row.market_type || '--',
+        selectionLabel: row.selection_label || '--',
+        gameTimeUtc: row.game_time_utc || null,
+        gameTimeEtLabel: formatEtDateTime(row.game_time_utc),
+        result: row.result || null,
+        pnlUnits: row.pnl_units,
+        virtualStakeUnits: row.virtual_stake_units,
+        edgePct: row.edge_pct,
+      }));
 
     return {
       settledCount: settledRows.length,
