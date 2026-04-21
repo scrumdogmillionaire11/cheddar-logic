@@ -22,6 +22,39 @@ const SNAPSHOT_STATUS = {
   UNGRADABLE: 'UNGRADABLE',
 };
 
+const MLB_TEAM_ABBR_BY_NAME = Object.freeze({
+  ARIZONADIAMONDBACKS: 'ARI',
+  ATHLETICS: 'ATH',
+  ATLANTABRAVES: 'ATL',
+  BALTIMOREORIOLES: 'BAL',
+  BOSTONREDSOX: 'BOS',
+  CHICAGOCUBS: 'CHC',
+  CHICAGOWHITESOX: 'CWS',
+  CINCINNATIREDS: 'CIN',
+  CLEVELANDGUARDIANS: 'CLE',
+  COLORADOROCKIES: 'COL',
+  DETROITTIGERS: 'DET',
+  HOUSTONASTROS: 'HOU',
+  KANSASCITYROYALS: 'KC',
+  LOSANGELESANGELS: 'LAA',
+  LOSANGELESDODGERS: 'LAD',
+  MIAMIMARLINS: 'MIA',
+  MILWAUKEEBREWERS: 'MIL',
+  MINNESOTATWINS: 'MIN',
+  NEWYORKMETS: 'NYM',
+  NEWYORKYANKEES: 'NYY',
+  PHILADELPHIAPHILLIES: 'PHI',
+  PITTSBURGHPIRATES: 'PIT',
+  SANDIEGOPADRES: 'SD',
+  SANFRANCISCOGIANTS: 'SF',
+  SEATTLEMARINERS: 'SEA',
+  STLOUISCARDINALS: 'STL',
+  TAMPABAYRAYS: 'TB',
+  TEXASRANGERS: 'TEX',
+  TORONTOBLUEJAYS: 'TOR',
+  WASHINGTONNATIONALS: 'WSH',
+});
+
 const REASON_CODES = {
   HOME_LEADING: 'F5_ML_HOME_LEADING_AFTER_5',
   AWAY_LEADING: 'F5_ML_AWAY_LEADING_AFTER_5',
@@ -619,17 +652,27 @@ function resolveMlbGamePk(db, card) {
 
 function buildGamePkLookupCandidates(card) {
   const gameDate = card.game_time_utc?.slice(0, 10);
+  const homeTeamAbbr = resolveMlbTeamAbbreviation(card.home_team);
+  const awayTeamAbbr = resolveMlbTeamAbbreviation(card.away_team);
   const scheduledStartKey = card.game_time_utc && card.home_team && card.away_team
     ? `${card.game_time_utc}|${card.home_team}|${card.away_team}`
     : null;
+  const scheduledStartAbbrKey = card.game_time_utc && homeTeamAbbr && awayTeamAbbr
+    ? `${card.game_time_utc}|${homeTeamAbbr}|${awayTeamAbbr}`
+    : null;
   const matchupDateKey = gameDate && card.home_team && card.away_team
     ? `${gameDate}|${card.home_team}|${card.away_team}`
+    : null;
+  const matchupDateAbbrKey = gameDate && homeTeamAbbr && awayTeamAbbr
+    ? `${gameDate}|${homeTeamAbbr}|${awayTeamAbbr}`
     : null;
 
   return [
     { table: 'mlb_game_pk_map', key: card.game_id },
     { table: 'mlb_probable_starter_map', key: scheduledStartKey },
+    { table: 'mlb_probable_starter_map', key: scheduledStartAbbrKey },
     { table: 'mlb_game_pk_map', key: matchupDateKey },
+    { table: 'mlb_game_pk_map', key: matchupDateAbbrKey },
   ];
 }
 
@@ -720,6 +763,13 @@ function normalizeTeamToken(value) {
     .trim()
     .toUpperCase()
     .replace(/[^A-Z0-9]/g, '');
+}
+
+function resolveMlbTeamAbbreviation(value) {
+  const compact = normalizeTeamToken(value);
+  if (!compact) return null;
+  if (compact.length === 3) return compact;
+  return MLB_TEAM_ABBR_BY_NAME[compact] || null;
 }
 
 function parseCliArgs(argv = process.argv.slice(2)) {

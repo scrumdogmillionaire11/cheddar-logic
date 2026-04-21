@@ -36,6 +36,36 @@ function directionBadgeClass(side: 'OVER' | 'UNDER' | 'PASS' | null): string {
   return 'border-white/20 bg-white/5 text-cloud/50';
 }
 
+function isMoneylineFamily(cardFamily: string | null | undefined): boolean {
+  const family = String(cardFamily || '').toUpperCase();
+  return family === 'MLB_F5_ML' || family === 'MLB_F5_MONEYLINE';
+}
+
+function moneylineProjectedSide(
+  row: ProjectionProxyRow,
+): 'HOME' | 'AWAY' | 'PASS' {
+  if (row.recommendedSide === 'OVER') return 'HOME';
+  if (row.recommendedSide === 'UNDER') return 'AWAY';
+  return 'PASS';
+}
+
+function moneylineDirectionLabel(row: ProjectionProxyRow): string {
+  const side = moneylineProjectedSide(row);
+  if (side === 'HOME') return row.homeTeam || 'HOME';
+  if (side === 'AWAY') return row.awayTeam || 'AWAY';
+  return 'PASS';
+}
+
+function projectionRowKey(row: ProjectionProxyRow, index: number): string {
+  if (row.id !== null && row.id !== undefined) {
+    return String(row.id);
+  }
+  if (row.cardId) {
+    return `${row.cardId}-${index}`;
+  }
+  return `${row.gameId || 'unknown-game'}-${index}`;
+}
+
 function tierBadgeClass(tier: 'PLAY' | 'LEAN' | 'STRONG' | 'PASS'): string {
   if (tier === 'PLAY')
     return 'border-blue-500/60 bg-blue-500/25 text-blue-100 font-semibold';
@@ -62,10 +92,14 @@ interface ProjectionRowProps {
 
 function ProjectionRow({ row }: ProjectionRowProps) {
   const date = fmtDate(row.gameDateUtc);
-  const projected = fmtNum(row.projValue, 3);
+  const moneylineFamily = isMoneylineFamily(row.cardFamily);
+  const projected = moneylineFamily
+    ? moneylineProjectedSide(row)
+    : fmtNum(row.projValue, 3);
   const edge = (row.edgeVsLine >= 0 ? '+' : '') + fmtNum(row.edgeVsLine, 2);
   const actual = fmtNum(row.actualValue, 3);
   const direction = row.recommendedSide;
+  const directionLabel = moneylineFamily ? moneylineDirectionLabel(row) : direction;
   const tier = row.tier;
   const outcome = row.gradedResult;
 
@@ -82,7 +116,7 @@ function ProjectionRow({ row }: ProjectionRowProps) {
               direction,
             )}`}
           >
-            {direction}
+            {directionLabel}
           </span>
         </span>
         <span className="flex justify-center">
@@ -120,7 +154,7 @@ function ProjectionRow({ row }: ProjectionRowProps) {
         </div>
         <div className="flex flex-wrap gap-1">
           <span className={`rounded-full border px-2 py-0.5 text-xs ${directionBadgeClass(direction)}`}>
-            {direction}
+            {directionLabel}
           </span>
           <span className={`rounded-full border px-2 py-0.5 text-xs ${tierBadgeClass(tier)}`}>
             {tier}
@@ -207,8 +241,8 @@ function CardFamilySection({ cardFamily, rows }: CardFamilySectionProps) {
           </div>
         ) : (
           <div className="divide-y divide-white/10 md:divide-y-0">
-            {rows.map((row) => (
-              <ProjectionRow key={row.id} row={row} />
+            {rows.map((row, index) => (
+              <ProjectionRow key={projectionRowKey(row, index)} row={row} />
             ))}
           </div>
         )}

@@ -300,6 +300,64 @@ export default function ResultsPage() {
       ),
     [projectionSummariesWithActuals, projectionSettlementFamilies],
   );
+  const projectionSummaryRows = useMemo(() => {
+    const existingByFamily = new Map(
+      mappedProjectionSummaries.map((row) => [String(row.cardFamily || '').toUpperCase(), row]),
+    );
+
+    for (const family of projectionSettlementFamilies) {
+      if (existingByFamily.has(family)) continue;
+
+      const familyRows = mappedProjectionSettledRows.filter(
+        (row) => String(row.cardFamily || '').toUpperCase() === family,
+      );
+      if (familyRows.length === 0) continue;
+
+      const gradedRows = familyRows.filter(
+        (row) => row.gradedResult === 'WIN' || row.gradedResult === 'LOSS',
+      );
+      const directionalWins = gradedRows.filter((row) => row.gradedResult === 'WIN').length;
+      const directionalLosses = gradedRows.filter((row) => row.gradedResult === 'LOSS').length;
+      const overRows = gradedRows.filter((row) => row.recommendedSide === 'OVER');
+      const underRows = gradedRows.filter((row) => row.recommendedSide === 'UNDER');
+      const absoluteErrors = familyRows.map((row) => Math.abs(row.projValue - row.actualValue));
+      const signedErrors = familyRows.map((row) => row.projValue - row.actualValue);
+      const mae =
+        absoluteErrors.length > 0
+          ? absoluteErrors.reduce((sum, value) => sum + value, 0) / absoluteErrors.length
+          : null;
+      const bias =
+        signedErrors.length > 0
+          ? signedErrors.reduce((sum, value) => sum + value, 0) / signedErrors.length
+          : null;
+
+      existingByFamily.set(family, {
+        actualsAvailable: true,
+        bias,
+        cardFamily: family,
+        directionalAccuracy:
+          directionalWins + directionalLosses > 0
+            ? directionalWins / (directionalWins + directionalLosses)
+            : null,
+        directionalWins,
+        directionalLosses,
+        overWins: overRows.filter((row) => row.gradedResult === 'WIN').length,
+        overLosses: overRows.filter((row) => row.gradedResult === 'LOSS').length,
+        underWins: underRows.filter((row) => row.gradedResult === 'WIN').length,
+        underLosses: underRows.filter((row) => row.gradedResult === 'LOSS').length,
+        familyLabel:
+          family === 'MLB_F5_ML' || family === 'MLB_F5_MONEYLINE'
+            ? 'MLB F5 Moneyline Projections'
+            : family.replaceAll('_', ' '),
+        mae,
+        rowsSeen: familyRows.length,
+        sampleSize: familyRows.length,
+        segments: [],
+      });
+    }
+
+    return Array.from(existingByFamily.values());
+  }, [mappedProjectionSettledRows, mappedProjectionSummaries, projectionSettlementFamilies]);
 
   // Filter state
   const [filterSport, setFilterSport] = useState<string>('');
@@ -968,7 +1026,7 @@ export default function ResultsPage() {
                 )}
               </div>
             )}
-            {mappedProjectionSummaries.length > 0 && (
+            {projectionSummaryRows.length > 0 && (
             <div className="mt-6 overflow-hidden rounded-xl border border-white/10">
               <div className="grid grid-cols-8 gap-4 bg-night/70 px-4 py-3 text-xs font-semibold uppercase tracking-[0.2em] text-cloud/60">
                 <span>Model</span>
@@ -977,11 +1035,11 @@ export default function ResultsPage() {
                 <span>Bias</span>
                 <span>Dir. Acc.</span>
                 <span>Record</span>
-                <span>Over</span>
-                <span>Under</span>
+                <span>Over/Home</span>
+                <span>Under/Away</span>
               </div>
               <div className="divide-y divide-white/10">
-                {mappedProjectionSummaries.map((row) => {
+                {projectionSummaryRows.map((row) => {
                   const isExpanded = expandedProjectionFamilies.has(row.cardFamily);
                   const hasSegments = row.segments && row.segments.length > 0;
 
