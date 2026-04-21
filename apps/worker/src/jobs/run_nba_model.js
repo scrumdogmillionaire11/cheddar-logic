@@ -96,6 +96,11 @@ const {
   assertFeatureTimeliness,
   applyFeatureTimelinessEnforcement,
 } = require('../models/feature-time-guard');
+const {
+  computeNbaResidualCorrection,
+  applyNbaResidualCombinedCeiling,
+} = require('../models/residual-projection');
+const { detectNbaRegime } = require('../utils/nba-regime-detection');
 
 const ENABLE_WELCOME_HOME = process.env.ENABLE_WELCOME_HOME === 'true';
 
@@ -1242,6 +1247,26 @@ function clamp(value, min, max) {
   return Math.min(Math.max(value, min), max);
 }
 
+function applyRegimePaceToBlendedTotal({
+  marketTotal,
+  paceAnchorTotal,
+  regimePaceMultiplier,
+  teamContextWeight = TEAM_CONTEXT_WEIGHT,
+  injuryProjectionReduction = 0,
+} = {}) {
+  const anchor = toFiniteNumberOrNull(paceAnchorTotal);
+  if (anchor === null) return null;
+
+  const multiplier = toFiniteNumberOrNull(regimePaceMultiplier) ?? 1;
+  const adjustedAnchor = anchor * multiplier;
+  const market = toFiniteNumberOrNull(marketTotal);
+  const blended = market === null
+    ? adjustedAnchor
+    : market * (1 - teamContextWeight) + adjustedAnchor * teamContextWeight;
+  const reduction = toFiniteNumberOrNull(injuryProjectionReduction) ?? 0;
+  return Math.max(0, blended - reduction);
+}
+
 function computePricedCallCardConfidence({ edgePct, conflictScore }) {
   const normalizedEdgePct = hasFiniteNumber(edgePct) ? edgePct : 0;
   const normalizedConflictScore = hasFiniteNumber(conflictScore)
@@ -1256,6 +1281,70 @@ function computePricedCallCardConfidence({ edgePct, conflictScore }) {
     proxyUsed: false,
     conflictScore: normalizedConflictScore,
   });
+}
+
+function applyMarketIntelligenceModifier({
+  baseConfidence,
+  sharpDivergence,
+  splitsDivergence,
+  edge,
+}) {
+  const candidates = [];
+
+  if (sharpDivergence === 'SHARP_VS_PUBLIC') {
+    candidates.push({
+      multiplier: 0.85,
+      reasonCode: 'SHARP_VS_MODEL_CONFLICT',
+    });
+  }
+
+  if (
+    (splitsDivergence === 'PUBLIC_HEAVY_HOME' ||
+      splitsDivergence === 'PUBLIC_HEAVY_AWAY') &&
+    hasFiniteNumber(edge) &&
+    edge < 0.04
+  ) {
+    candidates.push({
+      multiplier: 0.88,
+      reasonCode: 'PUBLIC_TRAP_RISK',
+    });
+  }
+
+  if (sharpDivergence === 'SHARP_ALIGNED') {
+    candidates.push({
+      multiplier: 1.05,
+      reasonCode: 'SHARP_CONFIRMATION',
+    });
+  }
+
+  const selected =
+    candidates.length > 0
+      ? candidates.reduce((mostConservative, candidate) =>
+          candidate.multiplier < mostConservative.multiplier
+            ? candidate
+            : mostConservative,
+        )
+      : { multiplier: 1.0, reasonCode: null };
+  const normalizedBaseConfidence = hasFiniteNumber(baseConfidence)
+    ? baseConfidence
+    : 0.5;
+
+  return {
+    adjustedConfidence: clamp(
+      normalizedBaseConfidence * selected.multiplier,
+      0.45,
+      0.90,
+    ),
+    multiplier: selected.multiplier,
+    reasonCodes: selected.reasonCode ? [selected.reasonCode] : [],
+  };
+}
+
+function buildMarketIntelModifierPayload(marketIntel) {
+  return {
+    multiplier: marketIntel.multiplier,
+    reason_codes: [...marketIntel.reasonCodes],
+  };
 }
 
 function buildMarketLineContext({
@@ -1758,6 +1847,8 @@ async function applyNbaTeamContext(
       availabilityGate: { missingFlags: [], uncertainFlags: [], availabilityFlags: [] },
       nullMetricTeams: [],
       calibrationState,
+      teamMetricsHome: null,
+      teamMetricsAway: null,
     };
   }
 
@@ -1801,6 +1892,8 @@ async function applyNbaTeamContext(
         availabilityGate,
         nullMetricTeams,
         calibrationState,
+        teamMetricsHome: homeResult?.metrics ?? null,
+        teamMetricsAway: awayResult?.metrics ?? null,
       };
     }
 
@@ -1859,6 +1952,8 @@ async function applyNbaTeamContext(
       availabilityGate,
       nullMetricTeams,
       calibrationState,
+      teamMetricsHome: homeResult?.metrics ?? null,
+      teamMetricsAway: awayResult?.metrics ?? null,
     };
   } catch (err) {
     console.warn(
@@ -1872,6 +1967,8 @@ async function applyNbaTeamContext(
       availabilityGate: { missingFlags: [], uncertainFlags: [], availabilityFlags: [] },
       nullMetricTeams: [],
       calibrationState,
+      teamMetricsHome: null,
+      teamMetricsAway: null,
     };
   }
 }
@@ -1900,6 +1997,10 @@ function generateNBAMarketCallCards(
   const market = buildMarketFromOdds(oddsSnapshot);
   const totalLineContext = lineContexts?.TOTAL || null;
   const spreadLineContext = lineContexts?.SPREAD || null;
+  const rawMarketIntel =
+    oddsSnapshot?.raw_data && typeof oddsSnapshot.raw_data === 'object'
+      ? oddsSnapshot.raw_data
+      : {};
 
   const cards = [];
 
@@ -1917,12 +2018,19 @@ function generateNBAMarketCallCards(
   ) {
     const rawStatus = totalDecision.status || 'PASS';
     const status = withoutOddsMode && rawStatus === 'PASS' ? 'LEAN' : rawStatus;
-    const confidence = withoutOddsMode
+    const baseConfidence = withoutOddsMode
       ? 0.52
       : computePricedCallCardConfidence({
           edgePct: totalDecision.edge,
           conflictScore: totalDecision.conflict,
         });
+    const marketIntel = applyMarketIntelligenceModifier({
+      baseConfidence,
+      sharpDivergence: rawMarketIntel.sharp_divergence ?? null,
+      splitsDivergence: rawMarketIntel.splits_divergence ?? null,
+      edge: totalDecision.edge,
+    });
+    const confidence = marketIntel.adjustedConfidence;
     const tier = determineTier(confidence);
     const { side, line: marketLine } = totalDecision.best_candidate;
     // In Without Odds Mode there is no market line — fall back to projection.
@@ -1981,6 +2089,9 @@ function generateNBAMarketCallCards(
         tags: withoutOddsMode ? ['no_odds_mode'] : [],
         consistency: {
           total_bias: totalBias,
+        },
+        raw_data: {
+          market_intel_modifier: buildMarketIntelModifierPayload(marketIntel),
         },
         reasoning: `${pickText}: ${totalDecision.reasoning}`,
         execution_status: withoutOddsMode ? 'PROJECTION_ONLY' : 'EXECUTABLE',
@@ -2114,10 +2225,17 @@ function generateNBAMarketCallCards(
     (spreadDecision.status === 'FIRE' || spreadDecision.status === 'WATCH') &&
     (spreadDecision.edge == null || spreadDecision.edge > SPREAD_LEAN_MIN)
   ) {
-    const confidence = computePricedCallCardConfidence({
+    const baseConfidence = computePricedCallCardConfidence({
       edgePct: spreadDecision.edge,
       conflictScore: spreadDecision.conflict,
     });
+    const marketIntel = applyMarketIntelligenceModifier({
+      baseConfidence,
+      sharpDivergence: rawMarketIntel.sharp_divergence ?? null,
+      splitsDivergence: rawMarketIntel.splits_divergence ?? null,
+      edge: spreadDecision.edge,
+    });
+    const confidence = marketIntel.adjustedConfidence;
     const tier = determineTier(confidence);
     const { side, line } = spreadDecision.best_candidate;
     const spreadPrice =
@@ -2171,6 +2289,9 @@ function generateNBAMarketCallCards(
         tags: [],
         consistency: {
           total_bias: totalBias,
+        },
+        raw_data: {
+          market_intel_modifier: buildMarketIntelModifierPayload(marketIntel),
         },
         reasoning: `${pickText}: ${spreadDecision.reasoning}`,
         execution_status: 'EXECUTABLE',
@@ -2454,6 +2575,40 @@ async function runNBAModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
             }
           }
 
+          // WI-1024: Compute per-game residual correction after rolling bias.
+          // Guard: rollingBias must be a number (WI-1020 active) before calling residual.
+          let nbaResidualResult = { correction: 0, source: 'none', samples: 0, segment: 'none', shrinkage_factor: 0 };
+          const rollingBiasValue = rollingBias?.bias;
+          if (!Number.isFinite(rollingBiasValue)) {
+            console.log('[NBAModel] [RESIDUAL] skipped: WI-1020 rolling bias unavailable');
+          } else {
+            const residualPaceTier = derivePaceTier(oddsSnapshot.raw_data, leagueBaselines);
+            const residualTotalBand = deriveTotalBand(toFiniteNumberOrNull(oddsSnapshot?.total));
+            const residualMonth = oddsSnapshot.game_time_utc
+              ? String(new Date(oddsSnapshot.game_time_utc).getUTCMonth() + 1).padStart(2, '0')
+              : null;
+            nbaResidualResult = await computeNbaResidualCorrection({
+              db,
+              homeTeam: oddsSnapshot.home_team,
+              awayTeam: oddsSnapshot.away_team,
+              paceTier: residualPaceTier,
+              totalBand: residualTotalBand,
+              month: residualMonth,
+              globalBias: rollingBiasValue,
+            });
+            // Enforce combined ceiling: scale only residual, preserve rollingBias
+            const combinedBeforeCeiling = rollingBiasValue + nbaResidualResult.correction;
+            if (Math.abs(combinedBeforeCeiling) > 6.0) {
+              const bounded = applyNbaResidualCombinedCeiling(rollingBiasValue, nbaResidualResult.correction);
+              nbaResidualResult = { ...nbaResidualResult, correction: bounded };
+            }
+          }
+
+          // WI-1025: Compute rest days here so regime detection can use them in sigma chain
+          // (moved earlier than WI-0836 original placement to enable pre-sigma regime detection)
+          const _homeRestResult = computeRestDays(oddsSnapshot.home_team, 'nba', oddsSnapshot.game_time_utc);
+          const _awayRestResult = computeRestDays(oddsSnapshot.away_team, 'nba', oddsSnapshot.game_time_utc);
+
           // WI-0646: Detect playoff game and apply threshold overrides
           const isPlayoff = isPlayoffGame(oddsSnapshot);
           if (isPlayoff) console.log(`[PLAYOFF_MODE] gameId: ${gameId}`);
@@ -2469,6 +2624,48 @@ async function runNBAModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
               volEnvSigmaConfig,
             );
           }
+          // WI-1025: Regime detection — apply after vol_env sigma, before effectiveSigma is used downstream
+          const nbaRegime = detectNbaRegime({
+            homeTeam: oddsSnapshot.home_team,
+            awayTeam: oddsSnapshot.away_team,
+            restDaysHome: _homeRestResult.restDays,
+            restDaysAway: _awayRestResult.restDays,
+            availabilityGate: teamCtx.availabilityGate ?? null,
+            teamMetricsHome: teamCtx.teamMetricsHome ?? null,
+            teamMetricsAway: teamCtx.teamMetricsAway ?? null,
+            gameDate: oddsSnapshot.game_time_utc,
+          });
+          // Clamp combined sigma chain (playoff x vol_env x regime) to [0.60, 2.00] of computedSigma
+          const SIGMA_CHAIN_MIN = 0.60;
+          const SIGMA_CHAIN_MAX = 2.00;
+          const rawRegimeSigmaMultiplier = nbaRegime.modifiers.sigmaMultiplier;
+          const chainMultiplierTotal = computedSigma.total > 0
+            ? (effectiveSigma.total / computedSigma.total) * rawRegimeSigmaMultiplier
+            : rawRegimeSigmaMultiplier;
+          const chainMultiplierMargin = computedSigma.margin > 0
+            ? (effectiveSigma.margin / computedSigma.margin) * rawRegimeSigmaMultiplier
+            : rawRegimeSigmaMultiplier;
+          const clampedMultiplierTotal = Math.min(SIGMA_CHAIN_MAX, Math.max(SIGMA_CHAIN_MIN, chainMultiplierTotal));
+          const clampedMultiplierMargin = Math.min(SIGMA_CHAIN_MAX, Math.max(SIGMA_CHAIN_MIN, chainMultiplierMargin));
+          effectiveSigma = {
+            ...effectiveSigma,
+            total: computedSigma.total * clampedMultiplierTotal,
+            margin: computedSigma.margin * clampedMultiplierMargin,
+          };
+          console.log(`  [NBA_REGIME] ${gameId}: regime=${nbaRegime.regime} tags=[${nbaRegime.tags.join(',')}] sigmaMultiplier=${rawRegimeSigmaMultiplier} clampedTotal=${clampedMultiplierTotal.toFixed(3)}`);
+          // WI-1025: Apply paceMultiplier to paceAnchorTotal before market blending.
+          const regimePaceMultiplier = nbaRegime.modifiers.paceMultiplier;
+          const injuryReductionApplied =
+            toFiniteNumberOrNull(teamCtx?.availabilityGate?.injuryProjectionReduction?.reduction_applied) ?? 0;
+          const preBlendRegimeTotal = applyRegimePaceToBlendedTotal({
+            marketTotal: oddsSnapshot?.total,
+            paceAnchorTotal: teamCtx?.paceAnchorTotal,
+            regimePaceMultiplier,
+            injuryProjectionReduction: injuryReductionApplied,
+          });
+          const effectiveBlendedTotal = teamCtx.available && Number.isFinite(preBlendRegimeTotal)
+            ? Number(preBlendRegimeTotal.toFixed(2))
+            : teamCtx.blendedTotal;
           const effectiveSpreadLeanMin = isPlayoff
             ? (resolveThresholdProfile({ sport: 'NBA', marketType: 'SPREAD' }).edge.lean_edge_min + PLAYOFF_EDGE_MIN_INCREMENT)
             : null; // null = use default from generateNBAMarketCallCards
@@ -2549,8 +2746,7 @@ async function runNBAModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
           ];
 
           // WI-0836: Enrich oddsSnapshot with computed rest days before market decisions
-          const _homeRestResult = computeRestDays(oddsSnapshot.home_team, 'nba', oddsSnapshot.game_time_utc);
-          const _awayRestResult = computeRestDays(oddsSnapshot.away_team, 'nba', oddsSnapshot.game_time_utc);
+          // Note: _homeRestResult and _awayRestResult computed earlier (WI-1025 moved them pre-sigma)
           const enrichedSnapshot = {
             ...oddsSnapshot,
             rest_days_home: _homeRestResult.restDays,
@@ -2681,6 +2877,19 @@ async function runNBAModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
             card.payloadData.raw_data.rest_days_away = _awayRestResult.restDays;
             card.payloadData.raw_data.rest_source_home = _homeRestResult.restSource;
             card.payloadData.raw_data.rest_source_away = _awayRestResult.restSource;
+            // WI-1025: Stamp regime context for observability and downstream traceability
+            card.payloadData.raw_data.nba_regime = {
+              regime: nbaRegime.regime,
+              tags: nbaRegime.tags,
+              modifiers: nbaRegime.modifiers,
+            };
+            card.payloadData.raw_data.residual_correction = {
+              correction: nbaResidualResult.correction,
+              source: nbaResidualResult.source,
+              samples: nbaResidualResult.samples,
+              segment: nbaResidualResult.segment,
+              shrinkage_factor: nbaResidualResult.shrinkage_factor,
+            };
             const tierLabel = card.payloadData.tier
               ? ` [${card.payloadData.tier}]`
               : '';
@@ -2712,16 +2921,27 @@ async function runNBAModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
             if (
               card.cardType === 'nba-totals-call' &&
               teamCtx.available &&
-              Number.isFinite(teamCtx.blendedTotal)
+              Number.isFinite(effectiveBlendedTotal)
             ) {
+              // WI-1024: Apply residual correction exactly once, after rolling bias.
+              // WI-1025: Use effectiveBlendedTotal (pace-adjusted pre-blend total) as the base.
+              const residualCorrection = nbaResidualResult.correction;
+              const adjustedTotal = effectiveBlendedTotal + residualCorrection;
               if (card.payloadData?.projection) {
-                card.payloadData.projection.total = teamCtx.blendedTotal;
+                card.payloadData.projection.total = adjustedTotal;
               }
               if (card.payloadData?.market_context?.projection) {
-                card.payloadData.market_context.projection.total =
-                  teamCtx.blendedTotal;
+                card.payloadData.market_context.projection.total = adjustedTotal;
               }
             }
+            if (!card.payloadData.raw_data) card.payloadData.raw_data = {};
+            card.payloadData.raw_data.residual_correction = {
+              correction: nbaResidualResult.correction,
+              source: nbaResidualResult.source,
+              samples: nbaResidualResult.samples,
+              segment: nbaResidualResult.segment,
+              shrinkage_factor: nbaResidualResult.shrinkage_factor,
+            };
             applyNbaSettlementMarketContext(card);
             assignExecutionStatus(card, { withoutOddsMode });
             // WI-0768: cap execution_status at PROJECTION_ONLY when nba_team_context absent
@@ -2827,6 +3047,12 @@ async function runNBAModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
             card.payloadData.raw_data.rest_days_away = _awayRestResult.restDays;
             card.payloadData.raw_data.rest_source_home = _homeRestResult.restSource;
             card.payloadData.raw_data.rest_source_away = _awayRestResult.restSource;
+            // WI-1025: Stamp regime context for observability and downstream traceability
+            card.payloadData.raw_data.nba_regime = {
+              regime: nbaRegime.regime,
+              tags: nbaRegime.tags,
+              modifiers: nbaRegime.modifiers,
+            };
             const tierLabel = card.payloadData.tier
               ? ` [${card.payloadData.tier}]`
               : '';
@@ -3039,6 +3265,7 @@ module.exports = {
   recordEspnNullTeams,
   sendEspnNullDiscordAlert,
   generateNBAMarketCallCards,
+  applyMarketIntelligenceModifier,
   deriveExecutionStatusForCard,
   applyExecutionGateToNbaCard,
   applyPlayoffSigmaMultiplier,
@@ -3046,6 +3273,7 @@ module.exports = {
   stampNbaProjectionAccuracyFields,
   applyNbaTeamContext,
   computeNbaRollingBias,
+  applyRegimePaceToBlendedTotal,
   deriveTotalBand,
   computeVolEnvSigmaMultipliers,
   applyVolEnvSigmaMultiplier,
