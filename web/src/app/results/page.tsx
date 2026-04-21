@@ -272,10 +272,92 @@ export default function ResultsPage() {
   const [projectionActualsReady, setProjectionActualsReady] = useState(false);
   const [projectionSettledLoading, setProjectionSettledLoading] = useState(true);
   const [expandedProjectionFamilies, setExpandedProjectionFamilies] = useState<Set<string>>(new Set());
+  const projectionSettlementFamilies = useMemo(
+    () =>
+      new Set([
+        'NHL_1P_TOTAL',
+        'MLB_F5_ML',
+        'MLB_F5_MONEYLINE',
+        'MLB_F5_TOTAL',
+      ]),
+    [],
+  );
   const projectionSummariesWithActuals = useMemo(
     () => projectionSummaries.filter((row) => row.actualsAvailable),
     [projectionSummaries],
   );
+  const mappedProjectionSettledRows = useMemo(
+    () =>
+      projectionSettledRows.filter((row) =>
+        projectionSettlementFamilies.has(String(row.cardFamily || '').toUpperCase()),
+      ),
+    [projectionSettledRows, projectionSettlementFamilies],
+  );
+  const mappedProjectionSummaries = useMemo(
+    () =>
+      projectionSummariesWithActuals.filter((row) =>
+        projectionSettlementFamilies.has(String(row.cardFamily || '').toUpperCase()),
+      ),
+    [projectionSummariesWithActuals, projectionSettlementFamilies],
+  );
+  const projectionSummaryRows = useMemo(() => {
+    const existingByFamily = new Map(
+      mappedProjectionSummaries.map((row) => [String(row.cardFamily || '').toUpperCase(), row]),
+    );
+
+    for (const family of projectionSettlementFamilies) {
+      if (existingByFamily.has(family)) continue;
+
+      const familyRows = mappedProjectionSettledRows.filter(
+        (row) => String(row.cardFamily || '').toUpperCase() === family,
+      );
+      if (familyRows.length === 0) continue;
+
+      const gradedRows = familyRows.filter(
+        (row) => row.gradedResult === 'WIN' || row.gradedResult === 'LOSS',
+      );
+      const directionalWins = gradedRows.filter((row) => row.gradedResult === 'WIN').length;
+      const directionalLosses = gradedRows.filter((row) => row.gradedResult === 'LOSS').length;
+      const overRows = gradedRows.filter((row) => row.recommendedSide === 'OVER');
+      const underRows = gradedRows.filter((row) => row.recommendedSide === 'UNDER');
+      const absoluteErrors = familyRows.map((row) => Math.abs(row.projValue - row.actualValue));
+      const signedErrors = familyRows.map((row) => row.projValue - row.actualValue);
+      const mae =
+        absoluteErrors.length > 0
+          ? absoluteErrors.reduce((sum, value) => sum + value, 0) / absoluteErrors.length
+          : null;
+      const bias =
+        signedErrors.length > 0
+          ? signedErrors.reduce((sum, value) => sum + value, 0) / signedErrors.length
+          : null;
+
+      existingByFamily.set(family, {
+        actualsAvailable: true,
+        bias,
+        cardFamily: family,
+        directionalAccuracy:
+          directionalWins + directionalLosses > 0
+            ? directionalWins / (directionalWins + directionalLosses)
+            : null,
+        directionalWins,
+        directionalLosses,
+        overWins: overRows.filter((row) => row.gradedResult === 'WIN').length,
+        overLosses: overRows.filter((row) => row.gradedResult === 'LOSS').length,
+        underWins: underRows.filter((row) => row.gradedResult === 'WIN').length,
+        underLosses: underRows.filter((row) => row.gradedResult === 'LOSS').length,
+        familyLabel:
+          family === 'MLB_F5_ML' || family === 'MLB_F5_MONEYLINE'
+            ? 'MLB F5 Moneyline Projections'
+            : family.replaceAll('_', ' '),
+        mae,
+        rowsSeen: familyRows.length,
+        sampleSize: familyRows.length,
+        segments: [],
+      });
+    }
+
+    return Array.from(existingByFamily.values());
+  }, [mappedProjectionSettledRows, mappedProjectionSummaries, projectionSettlementFamilies]);
 
   // Filter state
   const [filterSport, setFilterSport] = useState<string>('');
@@ -865,8 +947,9 @@ export default function ResultsPage() {
                 <div>
                   <h2 className="text-2xl font-semibold">Projection Settlement</h2>
                   <p className="mt-2 text-sm text-cloud/70">
-                    Settled projection-only cards graded against actual game
-                    outcomes. No P&amp;L — model accuracy only.
+                    Settled projection-only cards for NHL 1P totals and MLB F5
+                    ML graded against actual game outcomes. No P&amp;L — model
+                    accuracy only.
                   </p>
                 </div>
                 <span className="rounded-full border border-cyan-400/25 bg-cyan-400/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-cyan-200">
@@ -875,22 +958,12 @@ export default function ResultsPage() {
               </div>
               <div className="mt-3 flex flex-wrap gap-4 text-xs text-cloud/50">
                 <span>
-                  Results are grouped by projection family as actuals arrive.
+                  Results are mapped into one settlement panel as actuals arrive.
                 </span>
                 <span>HIT = model direction correct. Error = |projected − actual|.</span>
               </div>
             </div>
-            <ProjectionResultsTable rows={projectionSettledRows} />
-          </section>
-        )}
-
-        {(projectionSummariesWithActuals.length > 0 || projectionAccuracy) && (
-          <section className="mt-12 rounded-2xl border border-white/10 bg-surface/80 p-8">
-            <h2 className="text-2xl font-semibold">Projection Models (Research Only)</h2>
-            <p className="mt-2 text-sm text-cloud/70">
-              Model Projection — No Line Applied. Projection-only markets tracked
-              separately — no P&amp;L, just model accuracy versus actuals. Click a model row to see performance by projection value range.
-            </p>
+            <ProjectionResultsTable rows={mappedProjectionSettledRows} />
             {projectionAccuracy && (
               <div className="mt-6 rounded-xl border border-white/10 bg-night/40 p-4">
                 <div className="flex flex-wrap items-center justify-between gap-3">
@@ -953,7 +1026,7 @@ export default function ResultsPage() {
                 )}
               </div>
             )}
-            {projectionSummariesWithActuals.length > 0 && (
+            {projectionSummaryRows.length > 0 && (
             <div className="mt-6 overflow-hidden rounded-xl border border-white/10">
               <div className="grid grid-cols-8 gap-4 bg-night/70 px-4 py-3 text-xs font-semibold uppercase tracking-[0.2em] text-cloud/60">
                 <span>Model</span>
@@ -962,11 +1035,11 @@ export default function ResultsPage() {
                 <span>Bias</span>
                 <span>Dir. Acc.</span>
                 <span>Record</span>
-                <span>Over</span>
-                <span>Under</span>
+                <span>Over/Home</span>
+                <span>Under/Away</span>
               </div>
               <div className="divide-y divide-white/10">
-                {projectionSummariesWithActuals.map((row) => {
+                {projectionSummaryRows.map((row) => {
                   const isExpanded = expandedProjectionFamilies.has(row.cardFamily);
                   const hasSegments = row.segments && row.segments.length > 0;
 

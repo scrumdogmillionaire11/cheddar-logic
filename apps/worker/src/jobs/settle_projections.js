@@ -16,7 +16,7 @@ const {
 } = require('@cheddar-logic/data');
 const { buildProjectionProxyMarketRows, CARD_TYPE_TO_FAMILY } = require('../audit/projection_evaluator');
 const { fetchNhlSettlementSnapshot, resolveNhlFullGamePlayerShots } = require('./nhl-settlement-source');
-const { fetchF5Total } = require('./settle_mlb_f5');
+const { fetchF5Total, fetchF5GameState, resolveF5Snapshot } = require('./settle_mlb_f5');
 
 const JOB_NAME = 'settle_projections';
 const PITCHER_K_PROJECTION_SETTLEMENT_CODES = Object.freeze({
@@ -316,6 +316,67 @@ async function settleProjections({ jobKey = null, dryRun = false } = {}) {
                 }
               }
             }
+
+            settled++;
+            continue;
+          }
+
+          // ── MLB mlb-f5-ml ────────────────────────────────────────────────
+          if (card.card_type === 'mlb-f5-ml') {
+            const gameDate = card.game_time_utc?.slice(0, 10);
+            const homeTeam = card.home_team;
+            const awayTeam = card.away_team;
+            const gamePkKey =
+              gameDate && homeTeam && awayTeam
+                ? `${gameDate}|${homeTeam}|${awayTeam}`
+                : null;
+
+            const pkRow = gamePkKey
+              ? db
+                  .prepare(
+                    'SELECT game_pk FROM mlb_game_pk_map WHERE game_pk_key = ?',
+                  )
+                  .get(gamePkKey)
+              : null;
+
+            if (!pkRow?.game_pk) {
+              console.warn(
+                `  [${JOB_NAME}] mlb ${card.game_id}: no gamePk in mlb_game_pk_map for key=${gamePkKey ?? `(missing date/teams)`}`,
+              );
+              skipped++;
+              continue;
+            }
+
+            const gameState = await fetchF5GameState(pkRow.game_pk);
+            if (!gameState) {
+              skipped++;
+              continue;
+            }
+
+            const snapshot = resolveF5Snapshot(gameState);
+            if (snapshot.status !== 'READY') {
+              skipped++;
+              continue;
+            }
+
+            const winner =
+              snapshot.home_runs > snapshot.away_runs
+                ? 'HOME'
+                : snapshot.away_runs > snapshot.home_runs
+                  ? 'AWAY'
+                  : 'PUSH';
+
+            if (!dryRun) {
+              setProjectionActualResult(card.card_id, {
+                f5_home_runs: snapshot.home_runs,
+                f5_away_runs: snapshot.away_runs,
+                f5_winner: winner,
+              });
+            }
+
+            console.log(
+              `  [${JOB_NAME}] mlb ${card.game_id}: f5_ml home=${snapshot.home_runs} away=${snapshot.away_runs} winner=${winner}`,
+            );
 
             settled++;
             continue;
