@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Model Integrity & Betting Execution Hardening
 status: active
-last_updated: "2026-04-21T00:18:00Z"
-last_activity: "2026-04-21 - Completed quick task 169: WI-1024: NBA Phase 3A — Residual learning layer for total projection"
+last_updated: "2026-04-21T18:30:00Z"
+last_activity: "2026-04-21 - Completed quick task 170: WI-1025: NBA Phase 3B — Regime detection with measurable triggers"
 ---
 
 # Project State
@@ -215,6 +215,7 @@ Notable: WI-0797 (pipeline health Discord watchdog), WI-0798 (NHL season key fix
 
 | # | Description | Date | Commit | Directory |
 |---|-------------|------|--------|-----------|
+| 170 | WI-1025: NBA Phase 3B — Regime detection with measurable triggers | 2026-04-21 | 630feeb9 | [170-wi-1025](./quick/170-wi-1025/) |
 | 169 | WI-1024: NBA Phase 3A — Residual learning layer for total projection | 2026-04-21 | 7818c7e3 | [169-wi-1024-nba-phase-3a-residual-learning-l](./quick/169-wi-1024-nba-phase-3a-residual-learning-l/) |
 | 168 | Document and gate initDualDb activation path | 2026-04-20 | cc9b8167 | [168-document-and-gate-initdualdb-activation-](./quick/168-document-and-gate-initdualdb-activation-/) |
 | 167 | WI-1015: Complete status→action migration in card transform | 2026-04-20 | 3b62cb2d | [167-wi-1015](./quick/167-wi-1015/) |
