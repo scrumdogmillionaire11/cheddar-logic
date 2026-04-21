@@ -939,8 +939,10 @@ const PROJECTION_ONLY_CARD_TYPES = Object.freeze([
 ]);
 
 function isProjectionOnlyNoMarketKeyRow(row) {
-  return PROJECTION_ONLY_CARD_TYPES.includes(
-    String(row?.card_type || '').trim().toLowerCase(),
+  return (
+    PROJECTION_ONLY_CARD_TYPES.includes(
+      String(row?.card_type || '').trim().toLowerCase(),
+    ) && !row?.market_key
   );
 }
 
