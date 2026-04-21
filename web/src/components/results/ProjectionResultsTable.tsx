@@ -160,6 +160,8 @@ function familyLabel(cardFamily: string): string {
   const labels: Record<string, string> = {
     NHL_1P_TOTAL: 'NHL 1P Total Projections',
     MLB_F5_TOTAL: 'MLB F5 Total Projections',
+    MLB_F5_ML: 'MLB F5 Moneyline Projections',
+    MLB_F5_MONEYLINE: 'MLB F5 Moneyline Projections',
     MLB_PITCHER_K: 'MLB Pitcher K Projections',
     NHL_PLAYER_SHOTS: 'NHL Player Shots Projections',
     NHL_PLAYER_SHOTS_1P: 'NHL 1P Player Shots Projections',

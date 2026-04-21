@@ -123,10 +123,10 @@ async function validateResultsSourceContract(assert) {
   );
   assert.ok(
     pageSource.includes('Betting Record') &&
-      pageSource.includes('Projection Models (Research Only)') &&
-      pageSource.includes('Model Projection — No Line Applied') &&
+      pageSource.includes('Projection Settlement') &&
+      pageSource.includes('NHL 1P totals and MLB F5') &&
       pageSource.includes('Awaiting settled outcome data'),
-    'results page must render split betting/projection lanes with hard projection-only labeling',
+    'results page must render a single projection settlement lane for mapped projection families',
   );
 }
 

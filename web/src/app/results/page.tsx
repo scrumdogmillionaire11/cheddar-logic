@@ -272,9 +272,33 @@ export default function ResultsPage() {
   const [projectionActualsReady, setProjectionActualsReady] = useState(false);
   const [projectionSettledLoading, setProjectionSettledLoading] = useState(true);
   const [expandedProjectionFamilies, setExpandedProjectionFamilies] = useState<Set<string>>(new Set());
+  const projectionSettlementFamilies = useMemo(
+    () =>
+      new Set([
+        'NHL_1P_TOTAL',
+        'MLB_F5_ML',
+        'MLB_F5_MONEYLINE',
+        'MLB_F5_TOTAL',
+      ]),
+    [],
+  );
   const projectionSummariesWithActuals = useMemo(
     () => projectionSummaries.filter((row) => row.actualsAvailable),
     [projectionSummaries],
+  );
+  const mappedProjectionSettledRows = useMemo(
+    () =>
+      projectionSettledRows.filter((row) =>
+        projectionSettlementFamilies.has(String(row.cardFamily || '').toUpperCase()),
+      ),
+    [projectionSettledRows, projectionSettlementFamilies],
+  );
+  const mappedProjectionSummaries = useMemo(
+    () =>
+      projectionSummariesWithActuals.filter((row) =>
+        projectionSettlementFamilies.has(String(row.cardFamily || '').toUpperCase()),
+      ),
+    [projectionSummariesWithActuals, projectionSettlementFamilies],
   );
 
   // Filter state
@@ -865,8 +889,9 @@ export default function ResultsPage() {
                 <div>
                   <h2 className="text-2xl font-semibold">Projection Settlement</h2>
                   <p className="mt-2 text-sm text-cloud/70">
-                    Settled projection-only cards graded against actual game
-                    outcomes. No P&amp;L — model accuracy only.
+                    Settled projection-only cards for NHL 1P totals and MLB F5
+                    ML graded against actual game outcomes. No P&amp;L — model
+                    accuracy only.
                   </p>
                 </div>
                 <span className="rounded-full border border-cyan-400/25 bg-cyan-400/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-cyan-200">
@@ -875,22 +900,12 @@ export default function ResultsPage() {
               </div>
               <div className="mt-3 flex flex-wrap gap-4 text-xs text-cloud/50">
                 <span>
-                  Results are grouped by projection family as actuals arrive.
+                  Results are mapped into one settlement panel as actuals arrive.
                 </span>
                 <span>HIT = model direction correct. Error = |projected − actual|.</span>
               </div>
             </div>
-            <ProjectionResultsTable rows={projectionSettledRows} />
-          </section>
-        )}
-
-        {(projectionSummariesWithActuals.length > 0 || projectionAccuracy) && (
-          <section className="mt-12 rounded-2xl border border-white/10 bg-surface/80 p-8">
-            <h2 className="text-2xl font-semibold">Projection Models (Research Only)</h2>
-            <p className="mt-2 text-sm text-cloud/70">
-              Model Projection — No Line Applied. Projection-only markets tracked
-              separately — no P&amp;L, just model accuracy versus actuals. Click a model row to see performance by projection value range.
-            </p>
+            <ProjectionResultsTable rows={mappedProjectionSettledRows} />
             {projectionAccuracy && (
               <div className="mt-6 rounded-xl border border-white/10 bg-night/40 p-4">
                 <div className="flex flex-wrap items-center justify-between gap-3">
@@ -953,7 +968,7 @@ export default function ResultsPage() {
                 )}
               </div>
             )}
-            {projectionSummariesWithActuals.length > 0 && (
+            {mappedProjectionSummaries.length > 0 && (
             <div className="mt-6 overflow-hidden rounded-xl border border-white/10">
               <div className="grid grid-cols-8 gap-4 bg-night/70 px-4 py-3 text-xs font-semibold uppercase tracking-[0.2em] text-cloud/60">
                 <span>Model</span>
@@ -966,7 +981,7 @@ export default function ResultsPage() {
                 <span>Under</span>
               </div>
               <div className="divide-y divide-white/10">
-                {projectionSummariesWithActuals.map((row) => {
+                {mappedProjectionSummaries.map((row) => {
                   const isExpanded = expandedProjectionFamilies.has(row.cardFamily);
                   const hasSegments = row.segments && row.segments.length > 0;
 
