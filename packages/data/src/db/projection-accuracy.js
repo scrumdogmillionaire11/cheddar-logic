@@ -704,6 +704,66 @@ function arrayFromJson(value) {
   }
 }
 
+function jsonArrayStringOrNull(value) {
+  if (Array.isArray(value)) return value.length > 0 ? JSON.stringify(value) : null;
+  if (!value || typeof value !== 'string') return null;
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) && parsed.length > 0 ? JSON.stringify(parsed) : null;
+  } catch {
+    return null;
+  }
+}
+
+function buildLineEvalSettlementContext(parent, payload = {}, actualValue, gradedAt) {
+  const rawData = payload?.raw_data && typeof payload.raw_data === 'object'
+    ? payload.raw_data
+    : {};
+  const rawTotal = toFiniteNumberOrNull(parent?.projection_raw) ?? toFiniteNumberOrNull(parent?.projection_value);
+  const calibratedTotal = pickFirstFinite(payload, [
+    'projection_accuracy.calibrated_total',
+    'projection_accuracy.projection_calibrated',
+    'projection.calibrated_total',
+  ]);
+
+  return {
+    gameId: parent?.game_id ?? null,
+    settledAt: gradedAt ?? null,
+    snapshotTime: pickFirstString(payload, [
+      'raw_data.captured_at',
+      'snapshot_timestamp.captured_at',
+      'odds_context.captured_at',
+      '_pricing_state.captured_at',
+      'captured_at',
+    ]) ?? parent?.captured_at ?? null,
+    marketTotal: pickFirstFinite(payload, [
+      'raw_data.market_total',
+      'odds_context.total',
+      'line',
+    ]),
+    rawTotal,
+    calibratedTotal,
+    actualTotal: actualValue,
+    totalErrorRaw:
+      rawTotal !== null && actualValue !== null
+        ? roundMetric(rawTotal - actualValue, 6)
+        : null,
+    totalErrorCalibrated:
+      calibratedTotal !== null && actualValue !== null
+        ? roundMetric(calibratedTotal - actualValue, 6)
+        : null,
+    paceTier: pickFirstString(payload, ['raw_data.pace_tier']),
+    volEnv: pickFirstString(payload, ['raw_data.vol_env']),
+    totalBand: pickFirstString(payload, ['raw_data.total_band']),
+    injuryCloud: pickFirstString(payload, ['raw_data.injury_cloud']),
+    driverContributionsJson: jsonArrayStringOrNull(rawData.driver_contributions),
+    regimeTagsJson:
+      jsonArrayStringOrNull(rawData.regime_tags) ??
+      jsonArrayStringOrNull(rawData.regime_tags_json),
+    confidenceTier: pickFirstString(payload, ['tier']),
+  };
+}
+
 function mergeFailureFlags(existing, additions = []) {
   return [...new Set([
     ...arrayFromJson(existing),
@@ -1327,10 +1387,11 @@ function gradeProjectionAccuracyEval(db, { cardId, actualResult, gradedAt = new 
   if (Number.isFinite(Number(parent.nearest_half_line)) && roundToNearestHalf(projectionRaw) !== syntheticLine) {
     failureFlags.add('SYNTHETIC_LINE_OVERWRITTEN');
   }
+  let payload = {};
   try {
     const payloadRow = db.prepare('SELECT payload_data FROM card_payloads WHERE id = ? LIMIT 1').get(cardId);
     if (payloadRow?.payload_data) {
-      const payload = parseJsonObject(payloadRow.payload_data);
+      payload = parseJsonObject(payloadRow.payload_data);
       const config = TRACKED_PROJECTION_ACCURACY_CARD_TYPES[normalizeCardType(parent.card_type)];
       const currentProjection = config ? pickFirstFinite(payload, config.projectionKeys) : null;
       if (
@@ -1366,6 +1427,7 @@ function gradeProjectionAccuracyEval(db, { cardId, actualResult, gradedAt = new 
   });
   const expectedOverProb = expectedOverProbability(parent.projection_value, syntheticLine);
   const expectedDirProb = expectedDirectionProbability(parent.projection_value, syntheticLine, syntheticDirection);
+  const lineEvalSettlementContext = buildLineEvalSettlementContext(parent, payload, actualValue, gradedAt);
 
   const write = () => {
     db.prepare(`
@@ -1423,6 +1485,22 @@ function gradeProjectionAccuracyEval(db, { cardId, actualResult, gradedAt = new 
       db.prepare(`
         UPDATE projection_accuracy_line_evals
         SET actual_value = ?,
+            game_id = ?,
+            settled_at = ?,
+            snapshot_time = ?,
+            market_total = ?,
+            raw_total = ?,
+            calibrated_total = ?,
+            actual_total = ?,
+            total_error_raw = ?,
+            total_error_calibrated = ?,
+            pace_tier = ?,
+            vol_env = ?,
+            total_band = ?,
+            injury_cloud = ?,
+            driver_contributions_json = ?,
+            regime_tags_json = ?,
+            confidence_tier = ?,
             grade_status = 'GRADED',
             graded_result = ?,
             hit_flag = ?,
@@ -1435,6 +1513,22 @@ function gradeProjectionAccuracyEval(db, { cardId, actualResult, gradedAt = new 
         WHERE id = ?
       `).run(
         actualValue,
+        lineEvalSettlementContext.gameId,
+        lineEvalSettlementContext.settledAt,
+        lineEvalSettlementContext.snapshotTime,
+        lineEvalSettlementContext.marketTotal,
+        lineEvalSettlementContext.rawTotal,
+        lineEvalSettlementContext.calibratedTotal,
+        lineEvalSettlementContext.actualTotal,
+        lineEvalSettlementContext.totalErrorRaw,
+        lineEvalSettlementContext.totalErrorCalibrated,
+        lineEvalSettlementContext.paceTier,
+        lineEvalSettlementContext.volEnv,
+        lineEvalSettlementContext.totalBand,
+        lineEvalSettlementContext.injuryCloud,
+        lineEvalSettlementContext.driverContributionsJson,
+        lineEvalSettlementContext.regimeTagsJson,
+        lineEvalSettlementContext.confidenceTier,
         lineGrade.gradedResult,
         lineGrade.hitFlag,
         lineConfidence,
