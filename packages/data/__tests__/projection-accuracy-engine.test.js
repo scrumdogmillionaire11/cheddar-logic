@@ -252,6 +252,101 @@ describe('projection accuracy confidence engine', () => {
     expect(computeMarketTrustStatus({ wins: 13, losses: 12, calibrationGap: 0.1 })).toBe('WATCH');
   });
 
+  test('captures and grades MLB F5 moneyline as selected-side probability', () => {
+    const {
+      deriveProjectionAccuracyCapture,
+      captureProjectionAccuracyEval,
+      gradeProjectionAccuracyEval,
+      getProjectionAccuracyEvals,
+      getProjectionAccuracyLineEvals,
+    } = require('../src/db/projection-accuracy');
+    const { getDatabase } = require('../src/db/connection');
+    const db = getDatabase();
+
+    const capture = deriveProjectionAccuracyCapture({
+      id: 'card-mlb-f5-ml-pa-1',
+      gameId: 'mlb-f5-ml-pa-1',
+      sport: 'MLB',
+      cardType: 'mlb-f5-ml',
+      createdAt: '2026-04-17T18:00:00.000Z',
+      payloadData: {
+        sport: 'MLB',
+        card_type: 'mlb-f5-ml',
+        prediction: 'HOME',
+        selection: { side: 'HOME' },
+        p_fair: 0.62,
+        confidence_score: 72,
+        confidence_band: 'HIGH',
+        projection: { projected_win_prob_home: 0.62 },
+      },
+    });
+
+    expect(capture).toMatchObject({
+      cardType: 'mlb-f5-ml',
+      marketFamily: 'MLB_F5_ML',
+      projectionValue: 0.62,
+      projectionRaw: 0.62,
+      selectedLine: 0.5,
+      syntheticLine: 0.5,
+      syntheticRule: 'moneyline_baseline',
+      selectedDirection: 'HOME',
+      syntheticDirection: 'HOME',
+      winProbability: 0.62,
+      edgePp: 0.12,
+      confidenceScore: 72,
+      confidenceBand: 'HIGH',
+      trackingRole: 'CALIBRATION_ONLY',
+      expectedOutcomeLabel: null,
+    });
+
+    expect(captureProjectionAccuracyEval(db, capture)).toBe(true);
+    expect(gradeProjectionAccuracyEval(db, {
+      cardId: 'card-mlb-f5-ml-pa-1',
+      actualResult: {
+        f5_home_runs: 3,
+        f5_away_runs: 1,
+        f5_winner: 'HOME',
+        f5_ml_actual: 1,
+        selected_side: 'HOME',
+      },
+      gradedAt: '2026-04-17T22:00:00.000Z',
+    })).toBe(true);
+
+    const row = getProjectionAccuracyEvals(db, { cardId: 'card-mlb-f5-ml-pa-1' })[0];
+    expect(row).toMatchObject({
+      market_family: 'MLB_F5_ML',
+      actual_value: 1,
+      graded_result: 'WIN',
+      win_probability: 0.62,
+      edge_pp: 0.12,
+      confidence_score: 72,
+      confidence_band: 'HIGH',
+      brier_score: 0.1444,
+      tracking_role: 'CALIBRATION_ONLY',
+      expected_outcome_label: 'EXPECTED_WIN',
+    });
+    expect(row.absolute_error).toBeCloseTo(0.38);
+
+    const lineRows = getProjectionAccuracyLineEvals(db, {
+      cardId: 'card-mlb-f5-ml-pa-1',
+      lineRole: 'SYNTHETIC',
+    });
+    expect(lineRows).toHaveLength(1);
+    expect(lineRows[0]).toMatchObject({
+      eval_line: 0.5,
+      direction: 'HOME',
+      edge_vs_line: 0.12,
+      edge_pp: 0.12,
+      confidence_score: 72,
+      confidence_band: 'HIGH',
+      brier_score: 0.1444,
+      tracking_role: 'CALIBRATION_ONLY',
+      expected_outcome_label: 'EXPECTED_WIN',
+      graded_result: 'WIN',
+      hit_flag: 1,
+    });
+  });
+
   test('resolves projection keys for nba-totals-call fixture payload', () => {
     const { deriveProjectionAccuracyCapture } = require('../src/db/projection-accuracy');
 
@@ -670,6 +765,7 @@ describe('migration 081 — projection_accuracy_line_evals unique constraint rep
       .filter((f) => ![
         '081_repair_projection_accuracy_line_evals_unique.sql',
         '084_projection_accuracy_nba_total_context.sql',
+        '086_projection_accuracy_f5_ml_calibration.sql',
       ].includes(f));
     for (const f of allMigFiles) {
       db.prepare('INSERT OR IGNORE INTO migrations (name) VALUES (?)').run(f);

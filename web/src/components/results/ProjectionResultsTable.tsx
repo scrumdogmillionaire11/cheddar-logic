@@ -147,6 +147,7 @@ function ProjectionRow({ row, attribution }: ProjectionRowProps) {
   const attributionEdgeDistance = moneylineFamily
     ? fmtPct(row.edgePp ?? attribution?.edge_pp ?? null, 1, { signed: true })
     : fmtNum(attribution?.edge_distance, 3);
+  const attributionEdgeLabel = moneylineFamily ? 'edge_pp:' : 'edge_distance:';
   const attributionBand = row.confidenceBand || attribution?.confidence_band || 'UNKNOWN';
   const confidenceLabel = row.confidenceScore !== null && row.confidenceScore !== undefined
     ? `${attributionBand} (${Math.round(row.confidenceScore)})`
@@ -196,7 +197,7 @@ function ProjectionRow({ row, attribution }: ProjectionRowProps) {
             synthetic_line: {attributionSyntheticLine}
           </span>
           <span className="rounded-lg border border-white/10 bg-white/5 px-2 py-1 font-mono">
-            {moneylineFamily ? 'edge_pp' : 'edge_distance'}: {attributionEdgeDistance}
+            {attributionEdgeLabel} {attributionEdgeDistance}
           </span>
           <span className="rounded-lg border border-white/10 bg-white/5 px-2 py-1 font-mono">
             confidence_band: {attributionBand}
@@ -263,7 +264,7 @@ function ProjectionRow({ row, attribution }: ProjectionRowProps) {
             synthetic_line: {attributionSyntheticLine}
           </span>
           <span className="rounded-lg border border-white/10 bg-white/5 px-2 py-1 font-mono">
-            {moneylineFamily ? 'edge_pp' : 'edge_distance'}: {attributionEdgeDistance}
+            {attributionEdgeLabel} {attributionEdgeDistance}
           </span>
           <span className="rounded-lg border border-white/10 bg-white/5 px-2 py-1 font-mono">
             confidence_band: {attributionBand}

@@ -28,6 +28,8 @@ jest.mock('../nhl-settlement-source', () => ({
 // Mock settle_mlb_f5 (imported for fetchF5Total, not used in player-prop handlers)
 jest.mock('../settle_mlb_f5', () => ({
   fetchF5Total: jest.fn(),
+  fetchF5GameState: jest.fn(),
+  resolveF5Snapshot: jest.fn(),
   resolveMlbGamePk: jest.fn(),
 }));
 
@@ -200,6 +202,7 @@ function makeCard(cardType, playerId, gameId = null) {
 describe('settleProjections — nhl-player-shots actual_result shape', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    batchInsertProjectionProxyEvals.mockImplementation(() => undefined);
     getDatabase.mockReturnValue({
       prepare: jest.fn().mockReturnValue({ get: jest.fn().mockReturnValue(null) }),
     });
@@ -588,11 +591,17 @@ function makeProjectionCard(cardType, projection) {
 }
 
 describe('settleProjections — proxy eval integration', () => {
-  const { fetchF5Total, resolveMlbGamePk: resolveMlbGamePkFn } = require('../settle_mlb_f5');
+  const {
+    fetchF5Total,
+    fetchF5GameState,
+    resolveF5Snapshot,
+    resolveMlbGamePk: resolveMlbGamePkFn,
+  } = require('../settle_mlb_f5');
   const { fetchNhlSettlementSnapshot: fetchNhlSnapshot } = require('../nhl-settlement-source');
 
   beforeEach(() => {
     jest.clearAllMocks();
+    batchInsertProjectionProxyEvals.mockImplementation(() => undefined);
     getDatabase.mockReturnValue({
       prepare: jest.fn().mockReturnValue({
         get: jest.fn().mockReturnValue({ game_pk: '745340' }),
@@ -668,6 +677,55 @@ describe('settleProjections — proxy eval integration', () => {
     );
 
     consoleSpy.mockRestore();
+  });
+
+  test('mlb-f5-ml writes selected-side actual and one moneyline proxy eval row', async () => {
+    getUnsettledProjectionCards.mockReturnValue([{
+      ...makeProjectionCard('mlb-f5-ml', null),
+      payload_data: JSON.stringify({
+        prediction: 'AWAY',
+        selection: { side: 'AWAY' },
+        p_fair: 0.61,
+        confidence_score: 74,
+        confidence_band: 'HIGH',
+        projection: { projected_win_prob_home: 0.39 },
+      }),
+    }]);
+    fetchF5GameState.mockResolvedValue({ gamePk: '745340' });
+    resolveF5Snapshot.mockReturnValue({
+      status: 'READY',
+      home_runs: 1,
+      away_runs: 3,
+    });
+
+    const result = await settleProjections({ dryRun: false });
+
+    expect(result.settled).toBe(1);
+    expect(setProjectionActualResult).toHaveBeenCalledWith(
+      'card-mlb-f5-ml-proj',
+      {
+        f5_home_runs: 1,
+        f5_away_runs: 3,
+        f5_winner: 'AWAY',
+        f5_ml_actual: 1,
+        selected_side: 'AWAY',
+      },
+    );
+    expect(batchInsertProjectionProxyEvals).toHaveBeenCalledTimes(1);
+    const [, rows] = batchInsertProjectionProxyEvals.mock.calls[0];
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      card_family: 'MLB_F5_ML',
+      proj_value: 0.61,
+      actual_value: 1,
+      proxy_line: 0.5,
+      edge_vs_line: 0.11,
+      recommended_side: 'UNDER',
+      confidence_bucket: 'HIGH',
+      graded_result: 'WIN',
+      hit_flag: 1,
+      agreement_group: 'DIRECT_SELECTION',
+    });
   });
 });
 

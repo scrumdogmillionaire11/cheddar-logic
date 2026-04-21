@@ -24,6 +24,8 @@ const {
   buildCandidates,
   confidenceMultiplier,
   confidenceThreshold,
+  hasRequiredEdgeInputs,
+  normalizeEdgeSource,
   resolveEdgeSourceContract,
   resolveNoiseFloor,
   scoreCandidate,
@@ -35,6 +37,21 @@ const { formatPotdDiscordMessage } = require('./format-discord');
 const { sendDiscordMessages } = require('../post_discord_cards');
 
 function isFiniteNumber(v) { return typeof v === 'number' && Number.isFinite(v); }
+
+function hasEdgeFormulaMismatch(candidate) {
+  if (!hasRequiredEdgeInputs(candidate)) return true;
+  const expected = candidate.modelWinProb - candidate.impliedProb;
+  return !isFiniteNumber(expected) || Math.abs(expected - candidate.edgePct) > 1e-6;
+}
+
+function isModelBackedCandidate(candidate) {
+  return Boolean(
+    candidate &&
+    candidate.edgeSourceTag === 'MODEL' &&
+    hasRequiredEdgeInputs(candidate) &&
+    !hasEdgeFormulaMismatch(candidate)
+  );
+}
 
 function canonicalizeShadowSelection(candidate) {
   const explicit = String(candidate?.selection || '').toUpperCase();
@@ -358,6 +375,12 @@ function writeShadowCandidates(db, { playDate, capturedAt, minEdgePct, candidate
 function writeNominees(db, { playDate, capturedAt, winnerStatus, nominees }) {
   db.prepare(`DELETE FROM potd_nominees WHERE play_date = ?`).run(playDate);
   if (!Array.isArray(nominees) || nominees.length === 0) return;
+  const sanitizedNominees = nominees.filter((candidate) =>
+    isModelBackedCandidate(candidate) &&
+    isFiniteNumber(candidate.edgePct) &&
+    candidate.edgePct > 0
+  );
+  if (sanitizedNominees.length === 0) return;
   const stmt = db.prepare(`
     INSERT INTO potd_nominees (
       play_date, nominee_rank, winner_status, sport, game_id,
@@ -371,7 +394,7 @@ function writeNominees(db, { playDate, capturedAt, winnerStatus, nominees }) {
       @game_time_utc, @source_type, @created_at
     )
   `);
-  nominees.forEach((c, i) => {
+  sanitizedNominees.forEach((c, i) => {
     stmt.run({
       play_date: playDate,
       nominee_rank: i + 1,
@@ -483,6 +506,12 @@ function loadModelHealthGates(db) {
  */
 function buildCandidateAuditEntry(candidate, noiseFloor, minScore) {
   const edge = candidate.edgePct;
+  const modelProb = candidate.modelWinProb;
+  const impliedProb = candidate.impliedProb;
+  const sourceTag = candidate.edgeSourceTag ?? null;
+  const source = normalizeEdgeSource(sourceTag);
+  const hasInputs = hasRequiredEdgeInputs(candidate);
+  const edgeFormulaMismatch = hasEdgeFormulaMismatch(candidate);
   const totalScore = candidate.totalScore;
   const confidenceLabel = String(candidate.confidenceLabel || '').toUpperCase();
   const passesPositive = isFiniteNumber(edge) && edge > 0;
@@ -491,7 +520,13 @@ function buildCandidateAuditEntry(candidate, noiseFloor, minScore) {
   const passesConfidence = confidenceLabel !== 'LOW';
 
   let rejectedReason = 'VIABLE';
-  if (!isFiniteNumber(edge)) {
+  if (source !== 'MODEL') {
+    rejectedReason = 'NON_MODEL_SOURCE';
+  } else if (!hasInputs) {
+    rejectedReason = 'MISSING_EDGE_INPUTS';
+  } else if (edgeFormulaMismatch) {
+    rejectedReason = 'EDGE_FORMULA_MISMATCH';
+  } else if (!isFiniteNumber(edge)) {
     rejectedReason = 'NO_EDGE_COMPUTED';
   } else if (!passesPositive) {
     rejectedReason = 'NEGATIVE_EDGE';
@@ -510,7 +545,13 @@ function buildCandidateAuditEntry(candidate, noiseFloor, minScore) {
     selectionLabel: candidate.selectionLabel ?? null,
     price: candidate.price ?? null,
     gameId: candidate.gameId ?? null,
+    modelProb: isFiniteNumber(modelProb) ? modelProb : null,
+    impliedProb: isFiniteNumber(impliedProb) ? impliedProb : null,
     edgePct: isFiniteNumber(edge) ? edge : null,
+    source,
+    sourceTag,
+    hasRequiredEdgeInputs: hasInputs,
+    edgeFormulaMismatch,
     noiseFloor,
     passesNoise,
     totalScore: isFiniteNumber(totalScore) ? totalScore : null,
@@ -786,6 +827,7 @@ async function gatherBestCandidate({
   }
 
   const viableCandidates = scoredCandidates.filter(c => {
+    if (!isModelBackedCandidate(c)) return false;
     const noiseFloor = resolveNoiseFloor(c.sport, c.marketType, POTD_MIN_EDGE);
     return (
       isFiniteNumber(c.edgePct) &&
@@ -816,6 +858,7 @@ async function gatherBestCandidate({
     return modelHealthGates.has(sportKey);
   }
   const noisePassed = scoredCandidates.filter(c => {
+    if (!isModelBackedCandidate(c)) return false;
     if (isSportModelGated(c)) {
       if (POTD_AUDIT_LOG_ENABLED) {
         console.log(JSON.stringify({
@@ -841,38 +884,12 @@ async function gatherBestCandidate({
     requirePositiveEdge: true,
   });
 
-  // Cross-ranking warning (WI-1032): if the top fireable nominee is CONSENSUS_FALLBACK
-  // and any other nominee is MODEL, the ranking may be mixing incompatible edge scales.
-  if (POTD_AUDIT_LOG_ENABLED && fireableNominees.length > 1) {
-    const topNominee = fireableNominees[0];
-    if (topNominee?.edgeSourceTag === 'CONSENSUS_FALLBACK') {
-      const displacedModel = fireableNominees.slice(1).find(n => n.edgeSourceTag === 'MODEL');
-      if (displacedModel) {
-        console.log(JSON.stringify({
-          type: 'POTD_CROSS_RANKING_WARNING',
-          winner: {
-            sport: topNominee.sport,
-            marketType: topNominee.marketType,
-            edgePct: topNominee.edgePct,
-            totalScore: topNominee.totalScore,
-          },
-          displaced_model_candidate: {
-            sport: displacedModel.sport,
-            marketType: displacedModel.marketType,
-            edgePct: displacedModel.edgePct,
-            totalScore: displacedModel.totalScore,
-          },
-          note: 'CONSENSUS_FALLBACK candidate ranked above MODEL candidate — verify edge scale parity',
-        }));
-      }
-    }
-  }
-  // diagnosticNominees are for no-pick diagnostics only — they include
-  // sub-threshold and negative-edge candidates and must never select a POTD.
-  const diagnosticNominees = selectTopPlaysFn(scoredCandidates, {
+  // diagnosticNominees are for no-pick diagnostics only and remain model-backed.
+  const diagnosticNominees = selectTopPlaysFn(noisePassed, {
     minConfidence: POTD_MIN_TOTAL_SCORE,
+    minEdgePct: 0,
     maxNominees: POTD_MAX_NOMINEES,
-    requirePositiveEdge: false,
+    requirePositiveEdge: true,
   });
   // rankedNominees = only fireable (positive-edge, above threshold) candidates.
   // When fireableNominees is empty, rankedNominees is empty — POTD must return NO_PICK.
@@ -981,6 +998,7 @@ async function runPotdEngine({
 
       if (!bestCandidate) {
         const topByEdge = allScoredCandidates
+          .filter(c => isModelBackedCandidate(c))
           .filter(c => typeof c.edgePct === 'number' && isFinite(c.edgePct) && typeof c.totalScore === 'number' && isFinite(c.totalScore))
           .sort((a, b) => b.edgePct - a.edgePct)[0] || null;
         const nearMissCandidates = selectNearMissShadowCandidates({

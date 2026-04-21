@@ -990,8 +990,9 @@ export default function ResultsPage() {
                   <h2 className="text-2xl font-semibold">Projection Settlement</h2>
                   <p className="mt-2 text-sm text-cloud/70">
                     Settled projection-only cards graded against actual game
-                    outcomes. F5 moneyline rows use stored win probability,
-                    edge, confidence, and calibration fields when available.
+                    outcomes, including NHL 1P totals and MLB F5. F5
+                    moneyline rows use stored win probability, edge,
+                    confidence, and calibration fields when available.
                   </p>
                 </div>
                 <span className="rounded-full border border-cyan-400/25 bg-cyan-400/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-cyan-200">
@@ -1075,7 +1076,8 @@ export default function ResultsPage() {
                     <span className="rounded-lg border border-white/10 bg-night/50 px-2 py-1 font-mono">STRONG: &gt;= 63%</span>
                   </div>
                   <p className="mt-3 text-cloud/60">
-                    FRAGILE is a presentation label for weak/no-edge directions (weak_direction_flag=1 or edge_distance &lt; 0.15). It is not a native confidence_band value.
+                    Rows with weak_direction_flag=1 or edge_distance &lt; 0.15 are excluded from directional W/L and still included in MAE and bias auditing.
+                    FRAGILE is a presentation label for weak/no-edge directions, not a native confidence_band value.
                   </p>
                 </div>
                 <div className="mt-4 grid gap-3 md:grid-cols-5">

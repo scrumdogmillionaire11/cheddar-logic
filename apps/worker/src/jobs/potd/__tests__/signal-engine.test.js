@@ -2,8 +2,10 @@
 
 const {
   buildCandidates,
+  hasRequiredEdgeInputs,
   isNhlSport,
   kellySize,
+  normalizeEdgeSource,
   resolveNHLModelSignal,
   scoreCandidate,
   selectBestPlay,
@@ -284,7 +286,8 @@ describe('potd signal engine', () => {
     const result = scoreCandidate(candidate);
     expect(result).not.toBeNull();
     expect(result.modelWinProb).toBe(0.58);
-    expect(result.edgePct).toBe(0.06);
+    expect(result.impliedProb).toBeCloseTo(130 / 230, 6);
+    expect(result.edgePct).toBeCloseTo(0.58 - (130 / 230), 6);
     expect(result.scoreBreakdown.model_win_prob).toBe(0.58);
     expect(result.scoreBreakdown.projection_source).toBe('FULL_MODEL');
   });
@@ -735,7 +738,35 @@ describe('scoreCandidate - NHL moneyline override', () => {
     const scored = scoreCandidate(mlbCandidate);
     expect(scored).not.toBeNull();
     expect(scored.modelWinProb).toBe(0.61);
-    expect(scored.edgePct).toBeCloseTo(0.04, 4);
+    expect(scored.impliedProb).toBeCloseTo(150 / 250, 6);
+    expect(scored.edgePct).toBeCloseTo(0.61 - (150 / 250), 6);
+  });
+});
+
+describe('edge input helpers', () => {
+  test('hasRequiredEdgeInputs requires finite price/modelProb/impliedProb/edgePct', () => {
+    expect(
+      hasRequiredEdgeInputs({
+        price: -110,
+        modelWinProb: 0.57,
+        impliedProb: 0.52381,
+        edgePct: 0.04619,
+      }),
+    ).toBe(true);
+    expect(
+      hasRequiredEdgeInputs({
+        price: -110,
+        modelWinProb: null,
+        impliedProb: 0.52381,
+        edgePct: 0.04619,
+      }),
+    ).toBe(false);
+  });
+
+  test('normalizeEdgeSource maps MODEL and CONSENSUS_FALLBACK to stable labels', () => {
+    expect(normalizeEdgeSource('MODEL')).toBe('MODEL');
+    expect(normalizeEdgeSource('CONSENSUS_FALLBACK')).toBe('CONSENSUS');
+    expect(normalizeEdgeSource('UNKNOWN')).toBe('UNKNOWN');
   });
 });
 

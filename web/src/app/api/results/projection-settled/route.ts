@@ -350,7 +350,7 @@ export async function GET(
       const resultToken = gradedResultToken(row.result);
       const actualValue =
         resultToken === 'WIN' ? 1 : resultToken === 'LOSS' ? 0 : 0.5;
-      const recommendedSide =
+      const recommendedSide: 'OVER' | 'UNDER' | 'PASS' =
         selection === 'HOME' ? 'OVER' : selection === 'AWAY' ? 'UNDER' : 'PASS';
       const payloadEdge = toNumberOrNull(payload?.edge_pp);
       const edgeVsLine = row.accuracy_edge_pp ?? payloadEdge ?? (projValue === null ? null : projValue - 0.5);

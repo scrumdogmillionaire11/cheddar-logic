@@ -323,6 +323,22 @@ describe('buildProjectionProxyMarketRows', () => {
       ...overrides,
     };
   }
+  function mlbMlRow(proj, actual, overrides = {}) {
+    return {
+      card_id: 'test-card-ml',
+      game_id: 'test-game-ml',
+      game_date: '2026-04-10',
+      sport: 'baseball_mlb',
+      card_family: 'MLB_F5_ML',
+      model_projection: proj,
+      actual_value: actual,
+      selected_side: 'HOME',
+      confidence_bucket: 'HIGH',
+      confidence_score: 74,
+      actual_result: JSON.stringify({ f5_ml_actual: actual, selected_side: 'HOME' }),
+      ...overrides,
+    };
+  }
 
   it('MLB F5: proj=4.82, actual=6 → 2 rows, both WIN, CONSENSUS_OVER', () => {
     const rows = buildProjectionProxyMarketRows(mlbRow(4.82, 6));
@@ -375,6 +391,38 @@ describe('buildProjectionProxyMarketRows', () => {
     const rows = buildProjectionProxyMarketRows(nhlRow(1.38, 2));
     expect(rows).toHaveLength(1);
     expect(rows[0].tier).toBe('PASS');
+  });
+
+  it('MLB F5 ML: selected-side probability writes one baseline row without side placeholders', () => {
+    const rows = buildProjectionProxyMarketRows(mlbMlRow(0.62, 1));
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      card_family: 'MLB_F5_ML',
+      proj_value: 0.62,
+      actual_value: 1,
+      proxy_line: 0.5,
+      edge_vs_line: 0.12,
+      recommended_side: 'OVER',
+      tier: 'STRONG',
+      confidence_bucket: 'HIGH',
+      agreement_group: 'DIRECT_SELECTION',
+      graded_result: 'WIN',
+      hit_flag: 1,
+    });
+  });
+
+  it('MLB F5 ML: tied F5 result is persisted as a push against the selected side', () => {
+    const rows = buildProjectionProxyMarketRows(mlbMlRow(0.58, 0.5, {
+      selected_side: 'AWAY',
+      actual_result: JSON.stringify({ f5_ml_actual: 0.5, selected_side: 'AWAY' }),
+    }));
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      actual_value: 0.5,
+      recommended_side: 'UNDER',
+      graded_result: 'PUSH',
+      hit_flag: 0,
+    });
   });
 
   it('unknown family → []', () => {

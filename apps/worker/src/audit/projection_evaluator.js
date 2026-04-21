@@ -16,6 +16,12 @@ const PROJECTION_FAMILY_THRESHOLDS = Object.freeze({
     min_directional_accuracy: 0.53,
     min_sample_count: 25,
   }),
+  MLB_F5_ML: Object.freeze({
+    max_mae: 0.25,
+    max_abs_bias: 0.12,
+    min_directional_accuracy: 0.53,
+    min_sample_count: 25,
+  }),
   MLB_PITCHER_K: Object.freeze({
     max_mae: 2.25,
     max_abs_bias: 0.9,
@@ -49,6 +55,7 @@ const PROJECTION_FAMILY_THRESHOLDS = Object.freeze({
  */
 const PROXY_LINES_BY_FAMILY = Object.freeze({
   MLB_F5_TOTAL: [3.5, 4.5],
+  MLB_F5_ML: [0.5],
   NHL_1P_TOTAL: [1.5],
 });
 
@@ -68,12 +75,20 @@ const PROXY_TIER_WEIGHTS = Object.freeze({
   STRONG: 2.0,
 });
 
+const MONEYLINE_PROXY_TIER_BANDS = [
+  { min: 0,    max: 0.02,       tier: 'PASS',   bucket: 'MICRO'  },
+  { min: 0.02, max: 0.05,       tier: 'LEAN',   bucket: 'SMALL'  },
+  { min: 0.05, max: 0.08,       tier: 'PLAY',   bucket: 'MEDIUM' },
+  { min: 0.08, max: Infinity,   tier: 'STRONG', bucket: 'LARGE'  },
+];
+
 /**
  * Maps card_type (DB column in card_payloads) to card_family (PROXY_LINES_BY_FAMILY key).
  * WI-0866 must import this and use CARD_TYPE_TO_FAMILY[card.card_type] to derive card_family.
  */
 const CARD_TYPE_TO_FAMILY = Object.freeze({
   'mlb-f5':      'MLB_F5_TOTAL',
+  'mlb-f5-ml':   'MLB_F5_ML',
   'nhl-pace-1p': 'NHL_1P_TOTAL',
 });
 
@@ -87,6 +102,31 @@ function toNumber(value, fallback = null) {
   if (value === null || value === undefined || value === '') return fallback;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function normalizeProbability(value) {
+  const parsed = toNumber(value);
+  if (parsed === null) return null;
+  const probability = parsed > 1 && parsed <= 100 ? parsed / 100 : parsed;
+  return probability >= 0 && probability <= 1 ? probability : null;
+}
+
+function normalizeMoneylineSide(value) {
+  const token = toUpperToken(value);
+  if (token === 'HOME' || token === 'H') return 'HOME';
+  if (token === 'AWAY' || token === 'A') return 'AWAY';
+  return null;
+}
+
+function normalizeMoneylineConfidenceBucket(value, score = null) {
+  const token = toUpperToken(value);
+  if (token === 'HIGH' || token === 'MED' || token === 'LOW') return token;
+  const parsedScore = toNumber(score);
+  if (parsedScore === null) return null;
+  const pct = parsedScore <= 1 ? parsedScore * 100 : parsedScore;
+  if (pct >= 70) return 'HIGH';
+  if (pct >= 55) return 'MED';
+  return 'LOW';
 }
 
 function round(value, decimals = 4) {
@@ -121,8 +161,61 @@ function getPayloadValue(payload, path, fallback = null) {
   return current === undefined ? fallback : current;
 }
 
+function resolveMoneylineSelectedSideFromPayload(payload = {}) {
+  return normalizeMoneylineSide(
+    getPayloadValue(payload, ['selection', 'side']) ||
+      getPayloadValue(payload, ['play', 'selection', 'side']) ||
+      getPayloadValue(payload, ['market_context', 'selection_side']) ||
+      getPayloadValue(payload, ['canonical_envelope_v2', 'selection_side']) ||
+      getPayloadValue(payload, ['decision_v2', 'selection_side']) ||
+      payload.prediction,
+  );
+}
+
+function resolveSelectedSideWinProbability(payload = {}, selectedSide = null) {
+  const selectedProbability = normalizeProbability(firstFiniteNumber(
+    getPayloadValue(payload, ['projection_accuracy', 'win_probability']),
+    payload.win_probability,
+    payload.p_fair,
+    payload.fair_prob,
+    payload.model_prob,
+  ));
+  if (selectedProbability !== null) return selectedProbability;
+
+  const homeProbability = normalizeProbability(firstFiniteNumber(
+    getPayloadValue(payload, ['projection', 'projected_win_prob_home']),
+    getPayloadValue(payload, ['drivers', '0', 'projected_win_prob_home']),
+    getPayloadValue(payload, ['drivers', '0', 'win_prob_home']),
+  ));
+  if (homeProbability === null) return null;
+  const side = normalizeMoneylineSide(selectedSide);
+  if (side === 'HOME') return homeProbability;
+  if (side === 'AWAY') return round(1 - homeProbability, 6);
+  return null;
+}
+
+function resolveMoneylineConfidenceBucket(row = {}) {
+  const payload = row?.payload || {};
+  return normalizeMoneylineConfidenceBucket(
+    row.confidence_bucket ??
+      row.confidence_band ??
+      payload.confidence_bucket ??
+      payload.confidence_band ??
+      getPayloadValue(payload, ['projection_accuracy', 'confidence_band']),
+    row.confidence_score ??
+      payload.confidence_score ??
+      getPayloadValue(payload, ['projection_accuracy', 'confidence_score']),
+  ) ?? 'LOW';
+}
+
 function resolvePredictionValue(row) {
   const payload = row?.payload || {};
+  if (row?.card_family === 'MLB_F5_ML') {
+    return resolveSelectedSideWinProbability(
+      payload,
+      resolveMoneylineSelectedSideFromPayload(payload),
+    );
+  }
   return firstFiniteNumber(
     payload.numeric_projection,
     getPayloadValue(payload, ['projection', 'k_mean']),
@@ -135,6 +228,9 @@ function resolvePredictionValue(row) {
 
 function resolveDirection(row) {
   const payload = row?.payload || {};
+  if (row?.card_family === 'MLB_F5_ML') {
+    return resolveMoneylineSelectedSideFromPayload(payload);
+  }
   const token = toUpperToken(
     payload.recommended_direction ||
       getPayloadValue(payload, ['play', 'selection', 'side']) ||
@@ -223,6 +319,26 @@ function resolveMlbF5ActualValue(row) {
   return toNumber(row?.game_result_metadata?.f5_total);
 }
 
+function resolveMlbF5MlActualValue(row) {
+  const direct = toNumber(row?.actual_value);
+  if (direct !== null) return direct;
+  try {
+    const parsed = JSON.parse(row?.actual_result || '{}');
+    const actual = toNumber(parsed?.f5_ml_actual);
+    if (actual !== null) return actual;
+    const winner = toUpperToken(parsed?.f5_winner);
+    const selectedSide = normalizeMoneylineSide(parsed?.selected_side) ??
+      resolveMoneylineSelectedSideFromPayload(row?.payload || {});
+    if (winner === 'PUSH') return 0.5;
+    if ((winner === 'HOME' || winner === 'AWAY') && selectedSide) {
+      return winner === selectedSide ? 1 : 0;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 function resolveMlbPitcherKActualValue(row) {
   try {
     const parsed = JSON.parse(row?.actual_result || '{}');
@@ -241,6 +357,8 @@ function resolveActualValue(row) {
       return resolvePlayerShotsActualValue(row);
     case 'MLB_F5_TOTAL':
       return resolveMlbF5ActualValue(row);
+    case 'MLB_F5_ML':
+      return resolveMlbF5MlActualValue(row);
     case 'MLB_PITCHER_K':
       return resolveMlbPitcherKActualValue(row);
     default:
@@ -325,7 +443,14 @@ function evaluateProjectionRows(rows = [], cardFamily = null) {
     signedBiasSum += projection - actual;
 
     const direction = resolveDirection(row);
-    if (direction === 'OVER' || direction === 'UNDER') {
+    if (row?.card_family === 'MLB_F5_ML' && (direction === 'HOME' || direction === 'AWAY')) {
+      if (actual !== 0.5) {
+        metrics.directional_sample_count += 1;
+      }
+      if (actual > 0.5) {
+        directionCorrectCount += 1;
+      }
+    } else if (direction === 'OVER' || direction === 'UNDER') {
       metrics.directional_sample_count += 1;
       if (
         (direction === 'OVER' && actual >= projection) ||
@@ -449,6 +574,23 @@ function classifyProxyEdge(edgeVsLine) {
   };
 }
 
+function classifyMoneylineProxyEdge(edgeVsLine, selectedSide, confidenceBucket = 'LOW') {
+  const side = normalizeMoneylineSide(selectedSide);
+  const absEdge = Math.abs(edgeVsLine);
+  const band = MONEYLINE_PROXY_TIER_BANDS.find(
+    (b) => absEdge >= b.min && absEdge < b.max,
+  ) || MONEYLINE_PROXY_TIER_BANDS[MONEYLINE_PROXY_TIER_BANDS.length - 1];
+
+  if (!side || band.tier === 'PASS') {
+    return { recommended_side: 'PASS', tier: 'PASS', confidence_bucket: confidenceBucket };
+  }
+  return {
+    recommended_side: side === 'HOME' ? 'OVER' : 'UNDER',
+    tier: band.tier,
+    confidence_bucket: confidenceBucket,
+  };
+}
+
 /**
  * Grade a proxy market recommendation against actual result.
  * Returns { graded_result, hit_flag }.
@@ -463,6 +605,16 @@ function gradeProxyMarket(recommended_side, actual_value, proxy_line) {
       ? actual_value > proxy_line
       : actual_value < proxy_line;
   return { graded_result: win ? 'WIN' : 'LOSS', hit_flag: win ? 1 : 0 };
+}
+
+function gradeMoneylineProxyMarket(recommendedSide, actualValue) {
+  if (recommendedSide === 'PASS') {
+    return { graded_result: 'NO_BET', hit_flag: 0 };
+  }
+  if (actualValue === 0.5) return { graded_result: 'PUSH', hit_flag: 0 };
+  return actualValue > 0.5
+    ? { graded_result: 'WIN', hit_flag: 1 }
+    : { graded_result: 'LOSS', hit_flag: 0 };
 }
 
 /**
@@ -538,6 +690,7 @@ function buildProjectionProxyMarketRows(row) {
     try {
       const p = JSON.parse(r?.actual_result || '{}');
       if (r.card_family === 'MLB_F5_TOTAL') return toNumber(p.runs_f5);
+      if (r.card_family === 'MLB_F5_ML') return toNumber(p.f5_ml_actual);
       if (r.card_family === 'NHL_1P_TOTAL') return toNumber(p.goals_1p);
       return null;
     } catch { return null; }
@@ -545,6 +698,41 @@ function buildProjectionProxyMarketRows(row) {
   const actualValue = resolveProxyActualValue(row);
 
   if (projValue === null || actualValue === null) return [];
+
+  if (row.card_family === 'MLB_F5_ML') {
+    const proxyLine = 0.5;
+    const selectedSide = normalizeMoneylineSide(row.selected_side ?? row.recommended_side);
+    const edgeVsLine = round(projValue - proxyLine, 4);
+    const confidenceBucket = resolveMoneylineConfidenceBucket(row);
+    const { recommended_side, tier, confidence_bucket } = classifyMoneylineProxyEdge(
+      edgeVsLine,
+      selectedSide,
+      confidenceBucket,
+    );
+    const { graded_result, hit_flag } = gradeMoneylineProxyMarket(
+      recommended_side,
+      actualValue,
+    );
+    return [{
+      card_id: row.card_id || row.id,
+      game_id: row.game_id,
+      game_date: row.game_date,
+      sport: row.sport,
+      card_family: row.card_family,
+      proj_value: projValue,
+      actual_value: actualValue,
+      proxy_line: proxyLine,
+      edge_vs_line: edgeVsLine,
+      recommended_side,
+      tier,
+      confidence_bucket,
+      agreement_group: 'DIRECT_SELECTION',
+      graded_result,
+      hit_flag,
+      tier_score: scoreTierResult(tier, graded_result),
+      consensus_bonus: 0,
+    }];
+  }
 
   // Classify each proxy line
   const classifiedMarkets = proxyLines.map((proxyLine) => {

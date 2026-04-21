@@ -247,9 +247,19 @@ function splitNomineesByPresentation(
   nominees: PotdNominee[];
   diagnosticNominees: PotdNominee[];
 } {
+  const sanitized = nominees.filter((nominee) =>
+    typeof nominee.edgePct === 'number' &&
+    Number.isFinite(nominee.edgePct) &&
+    nominee.edgePct > 0 &&
+    typeof nominee.modelWinProb === 'number' &&
+    Number.isFinite(nominee.modelWinProb) &&
+    typeof nominee.price === 'number' &&
+    Number.isFinite(nominee.price),
+  );
+
   if (winnerStatus !== 'NO_PICK') {
     return {
-      nominees,
+      nominees: sanitized,
       diagnosticNominees: [],
     };
   }
@@ -257,7 +267,7 @@ function splitNomineesByPresentation(
   const monitoredCandidates: PotdNominee[] = [];
   const diagnosticNominees: PotdNominee[] = [];
 
-  for (const nominee of nominees) {
+  for (const nominee of sanitized) {
     if (typeof nominee.edgePct === 'number' && nominee.edgePct > 0) {
       monitoredCandidates.push(nominee);
     } else {

@@ -311,7 +311,48 @@ function moneylineExpectedOutcomeLabel(selectedSide) {
 
 function moneylineEdgePp(winProbability) {
   const probability = normalizeProbability(winProbability);
-  return probability === null ? null : roundMetric((probability - MONEYLINE_BASELINE) * 100, 6);
+  return probability === null ? null : roundMetric(probability - MONEYLINE_BASELINE, 6);
+}
+
+function moneylineConfidenceBand(score) {
+  const parsed = toFiniteNumberOrNull(score);
+  if (parsed === null) return 'LOW';
+  const pct = parsed <= 1 ? parsed * 100 : parsed;
+  if (pct >= 70) return 'HIGH';
+  if (pct >= 55) return 'MED';
+  return 'LOW';
+}
+
+function moneylineCalibrationBucket(winProbability) {
+  const probability = normalizeProbability(winProbability);
+  if (probability === null) return 'UNKNOWN';
+  const pct = probability * 100;
+  if (pct >= 65) return '65%+';
+  if (pct >= 60) return '60-64%';
+  if (pct >= 55) return '55-59%';
+  if (pct >= 50) return '50-54%';
+  return '<50%';
+}
+
+function resolveMoneylineTrackingRole(payload = {}) {
+  const explicit = String(payload?.tracking_role || '').trim().toUpperCase();
+  if (explicit === 'OFFICIAL_PICK' || explicit === 'CALIBRATION_ONLY') return explicit;
+  const signalTier = String(payload?.model_signal_tier || '').trim().toUpperCase();
+  if (signalTier === 'PLAY' || signalTier === 'SLIGHT_EDGE') return 'OFFICIAL_PICK';
+  return 'CALIBRATION_ONLY';
+}
+
+function moneylineExpectedVsActualLabel(winProbability, actualValue) {
+  const probability = normalizeProbability(winProbability);
+  const actual = toFiniteNumberOrNull(actualValue);
+  if (actual === MONEYLINE_BASELINE) return 'PUSH';
+  if (probability === null || actual === null) return null;
+  if (actual < MONEYLINE_BASELINE) {
+    if (probability >= 0.65) return 'MODEL_ERROR';
+    if (probability >= 0.56) return 'BAD_VARIANCE';
+    return 'EXPECTED_ISH';
+  }
+  return probability >= 0.56 ? 'EXPECTED_WIN' : 'POSITIVE_VARIANCE';
 }
 
 function confidenceBand(score) {
@@ -947,7 +988,11 @@ function computeMarketTrustStatusForFamily(db, marketFamily) {
             WHEN e.actual_value IS NOT NULL
              AND e.synthetic_line IS NOT NULL
              AND e.expected_over_prob IS NOT NULL
-            THEN ABS(e.expected_over_prob - CASE WHEN e.actual_value > e.synthetic_line THEN 1.0 ELSE 0.0 END)
+            THEN ABS(e.expected_over_prob - CASE
+              WHEN e.market_family = 'MLB_F5_ML' THEN e.actual_value
+              WHEN e.actual_value > e.synthetic_line THEN 1.0
+              ELSE 0.0
+            END)
           END
         ) AS calibration_gap
       FROM projection_accuracy_line_evals l
@@ -1009,7 +1054,11 @@ function computeProjectionAccuracyMarketHealth(db, {
           WHEN e.actual_value IS NOT NULL
            AND e.synthetic_line IS NOT NULL
            AND e.expected_over_prob IS NOT NULL
-          THEN ABS(e.expected_over_prob - CASE WHEN e.actual_value > e.synthetic_line THEN 1.0 ELSE 0.0 END)
+          THEN ABS(e.expected_over_prob - CASE
+            WHEN e.market_family = 'MLB_F5_ML' THEN e.actual_value
+            WHEN e.actual_value > e.synthetic_line THEN 1.0
+            ELSE 0.0
+          END)
         END
       ) AS calibration_gap
     FROM projection_accuracy_line_evals l
@@ -1185,6 +1234,7 @@ function buildProjectionAccuracyLineRows(capture) {
       varianceOfMarket: capture.varianceOfMarket ?? null,
       marketFamily: capture.marketFamily,
     });
+    const moneylineConfidenceScore = toFiniteNumberOrNull(capture.confidenceScore) ?? confidenceScore;
     return [{
       card_id: capture.cardId,
       line_role: 'SYNTHETIC',
@@ -1195,12 +1245,12 @@ function buildProjectionAccuracyLineRows(capture) {
       weak_direction_flag: 0,
       edge_vs_line: edge,
       edge_pp: moneylineEdgePp(probability),
-      confidence_score: confidenceScore,
-      confidence_band: confidenceBand(confidenceScore),
+      confidence_score: moneylineConfidenceScore,
+      confidence_band: moneylineConfidenceBand(moneylineConfidenceScore),
       market_trust: capture.marketTrust,
       expected_over_prob: probability,
       expected_direction_prob: probability,
-      tracking_role: capture.trackingRole ?? 'SELECTED_SIDE',
+      tracking_role: capture.trackingRole ?? 'CALIBRATION_ONLY',
       expected_outcome_label: capture.expectedOutcomeLabel ?? null,
     }];
   }
@@ -1303,6 +1353,10 @@ function deriveProjectionAccuracyCapture(card = {}) {
     varianceOfMarket: null,
     marketFamily: config.marketFamily,
   });
+  const modelConfidenceScore = isMoneyline
+    ? pickFirstFinite(payloadData, ['confidence_score', 'projection_accuracy.confidence_score'])
+    : null;
+  const effectiveConfidenceScore = modelConfidenceScore ?? confidenceScore;
   const period = pickFirstString(payloadData, [
     'period',
     'play.period',
@@ -1321,10 +1375,8 @@ function deriveProjectionAccuracyCapture(card = {}) {
     : expectedDirectionProbability(projectionValue, nearestHalfLine, syntheticDirection);
   const marketTotal = pickFirstFinite(payloadData, ['raw_data.market_total', 'odds_context.total', 'line']);
   const driverContributions = normalizeDriverContributions(rawData.driver_contributions);
-  const trackingRole = isMoneyline ? 'SELECTED_SIDE' : null;
-  const expectedOutcomeLabel = isMoneyline
-    ? moneylineExpectedOutcomeLabel(selectedMoneylineSide)
-    : null;
+  const trackingRole = isMoneyline ? resolveMoneylineTrackingRole(payloadData) : null;
+  const expectedOutcomeLabel = null;
 
   return {
     cardId: card.id ?? card.card_id,
@@ -1348,9 +1400,9 @@ function deriveProjectionAccuracyCapture(card = {}) {
     selectedDirection,
     directionStrength: weakDirectionFlag ? 'WEAK' : 'STRONG',
     weakDirectionFlag,
-    confidenceScore,
-    projectionConfidence: confidenceScore,
-    confidenceBand: confidenceBand(confidenceScore),
+    confidenceScore: effectiveConfidenceScore,
+    projectionConfidence: effectiveConfidenceScore,
+    confidenceBand: isMoneyline ? moneylineConfidenceBand(effectiveConfidenceScore) : confidenceBand(effectiveConfidenceScore),
     marketTrust,
     marketTrustStatus: 'INSUFFICIENT_DATA',
     marketTrustFlags: flags,
@@ -1364,7 +1416,9 @@ function deriveProjectionAccuracyCapture(card = {}) {
     brierScore: null,
     trackingRole,
     expectedOutcomeLabel,
-    calibrationBucket: calibrationBucketForProjection(projectionValue),
+    calibrationBucket: isMoneyline
+      ? moneylineCalibrationBucket(projectionValue)
+      : calibrationBucketForProjection(projectionValue),
     marketTotal,
     paceTier: pickFirstString(payloadData, ['raw_data.pace_tier']),
     volEnv: pickFirstString(payloadData, ['raw_data.vol_env']),
@@ -1557,7 +1611,9 @@ function gradeProjectionAccuracyEval(db, { cardId, actualResult, gradedAt = new 
     if (payloadRow?.payload_data) {
       payload = parseJsonObject(payloadRow.payload_data);
       const config = TRACKED_PROJECTION_ACCURACY_CARD_TYPES[normalizeCardType(parent.card_type)];
-      const currentProjection = config ? pickFirstFinite(payload, config.projectionKeys) : null;
+      const currentProjection = config && isMoneylineMarketFamily(config.marketFamily)
+        ? resolveMoneylineWinProbability(payload, resolveMoneylineSelectedSide(payload))
+        : config ? pickFirstFinite(payload, config.projectionKeys) : null;
       if (
         currentProjection !== null &&
         Math.abs(currentProjection - projectionRaw) > 1e-9
@@ -1591,14 +1647,23 @@ function gradeProjectionAccuracyEval(db, { cardId, actualResult, gradedAt = new 
     varianceOfMarket,
     marketFamily: parent.market_family,
   });
+  const effectiveConfidence = isMoneyline
+    ? (toFiniteNumberOrNull(parent.confidence_score) ?? confidence)
+    : confidence;
   const expectedOverProb = isMoneyline
     ? roundMetric(parent.projection_value, 6)
     : expectedOverProbability(parent.projection_value, syntheticLine);
   const expectedDirProb = isMoneyline
     ? roundMetric(parent.projection_value, 6)
     : expectedDirectionProbability(parent.projection_value, syntheticLine, syntheticDirection);
-  const brierScore = isMoneyline
+  const brierScore = isMoneyline && actualValue !== MONEYLINE_BASELINE
     ? roundMetric((parent.projection_value - actualValue) ** 2, 6)
+    : null;
+  const trackingRole = isMoneyline
+    ? (parent.tracking_role || resolveMoneylineTrackingRole(payload))
+    : null;
+  const expectedOutcomeLabel = isMoneyline
+    ? moneylineExpectedVsActualLabel(parent.projection_value, actualValue)
     : null;
   const lineEvalSettlementContext = buildLineEvalSettlementContext(parent, payload, actualValue, gradedAt);
 
@@ -1634,16 +1699,16 @@ function gradeProjectionAccuracyEval(db, { cardId, actualResult, gradedAt = new 
       absoluteError,
       signedError,
       absoluteError,
-      confidence,
-      confidence,
-      confidenceBand(confidence),
+      effectiveConfidence,
+      effectiveConfidence,
+      isMoneyline ? moneylineConfidenceBand(effectiveConfidence) : confidenceBand(effectiveConfidence),
       expectedOverProb,
       expectedDirProb,
       isMoneyline ? parent.projection_value : null,
       isMoneyline ? moneylineEdgePp(parent.projection_value) : null,
       brierScore,
-      isMoneyline ? 'SELECTED_SIDE' : null,
-      isMoneyline ? moneylineExpectedOutcomeLabel(syntheticDirection) : null,
+      trackingRole,
+      expectedOutcomeLabel,
       JSON.stringify(Array.from(failureFlags).sort()),
       cardId,
     );
@@ -1664,6 +1729,7 @@ function gradeProjectionAccuracyEval(db, { cardId, actualResult, gradedAt = new 
         varianceOfMarket,
         marketFamily: parent.market_family,
       });
+      const effectiveLineConfidence = isMoneyline ? effectiveConfidence : lineConfidence;
       const lineGrade = isMoneyline
         ? gradeMoneylineBaseline(actualValue)
         : gradeLine({
@@ -1724,14 +1790,14 @@ function gradeProjectionAccuracyEval(db, { cardId, actualResult, gradedAt = new 
         lineEvalSettlementContext.confidenceTier,
         lineGrade.gradedResult,
         lineGrade.hitFlag,
-        lineConfidence,
-        confidenceBand(lineConfidence),
+        effectiveLineConfidence,
+        isMoneyline ? moneylineConfidenceBand(effectiveLineConfidence) : confidenceBand(effectiveLineConfidence),
         lineExpectedOver,
         lineExpectedDir,
         isMoneyline ? moneylineEdgePp(parent.projection_value) : null,
         brierScore,
-        isMoneyline ? 'SELECTED_SIDE' : null,
-        isMoneyline ? moneylineExpectedOutcomeLabel(row.direction) : null,
+        trackingRole,
+        expectedOutcomeLabel,
         gradedAt,
         row.id,
       );
@@ -1833,6 +1899,9 @@ function backfillProjectionAccuracyEvals(db, {
         varianceOfMarket: null,
         marketFamily: row.market_family,
       });
+      const effectiveConfidence = isMoneyline
+        ? (toFiniteNumberOrNull(row.confidence_score) ?? confidence)
+        : confidence;
       const expectedOverProb = isMoneyline
         ? roundMetric(projectionRaw, 6)
         : expectedOverProbability(projectionRaw, syntheticLine);
@@ -1846,7 +1915,14 @@ function backfillProjectionAccuracyEvals(db, {
         ? null
         : roundMetric(projectionRaw - actualValue, 6);
       const brierScore = isMoneyline && actualValue !== null && projectionRaw !== null
+        && actualValue !== MONEYLINE_BASELINE
         ? roundMetric((projectionRaw - actualValue) ** 2, 6)
+        : null;
+      const trackingRole = isMoneyline
+        ? (row.tracking_role || 'CALIBRATION_ONLY')
+        : null;
+      const expectedOutcomeLabel = isMoneyline
+        ? moneylineExpectedVsActualLabel(projectionRaw, actualValue)
         : null;
       const playerOrGameId = row.player_or_game_id || row.player_id || row.player_name || row.game_id || null;
 
@@ -1886,13 +1962,13 @@ function backfillProjectionAccuracyEvals(db, {
         playerOrGameId,
         projectionRaw,
         syntheticLine,
-        SYNTHETIC_RULE_NEAREST_HALF,
+        isMoneyline ? SYNTHETIC_RULE_MONEYLINE_BASELINE : SYNTHETIC_RULE_NEAREST_HALF,
         syntheticDirection,
         weakDirectionFlag ? 'WEAK' : 'STRONG',
         weakDirectionFlag,
-        confidence,
-        confidence,
-        confidenceBand(confidence),
+        effectiveConfidence,
+        effectiveConfidence,
+        isMoneyline ? moneylineConfidenceBand(effectiveConfidence) : confidenceBand(effectiveConfidence),
         JSON.stringify(mergeFailureFlags(row.failure_flags, failureAdditions)),
         actualValue,
         absError,
@@ -1903,9 +1979,9 @@ function backfillProjectionAccuracyEvals(db, {
         isMoneyline ? projectionRaw : null,
         isMoneyline ? moneylineEdgePp(projectionRaw) : null,
         brierScore,
-        isMoneyline ? 'SELECTED_SIDE' : null,
-        isMoneyline ? moneylineExpectedOutcomeLabel(syntheticDirection) : null,
-        calibrationBucketForProjection(projectionRaw),
+        trackingRole,
+        expectedOutcomeLabel,
+        isMoneyline ? moneylineCalibrationBucket(projectionRaw) : calibrationBucketForProjection(projectionRaw),
         row.id,
       );
       updated += 1;
@@ -1921,8 +1997,9 @@ function backfillProjectionAccuracyEvals(db, {
           syntheticLine,
           selectedDirection: syntheticDirection,
           winProbability: isMoneyline ? projectionRaw : null,
-          trackingRole: isMoneyline ? 'SELECTED_SIDE' : null,
-          expectedOutcomeLabel: isMoneyline ? moneylineExpectedOutcomeLabel(syntheticDirection) : null,
+          confidenceScore: effectiveConfidence,
+          trackingRole,
+          expectedOutcomeLabel,
           historicalBucketHitRate: 0.5,
           varianceOfMarket: null,
         };
@@ -2136,7 +2213,11 @@ function getProjectionAccuracyEvalSummary(db, opts = {}) {
           WHEN e.actual_value IS NOT NULL
            AND e.synthetic_line IS NOT NULL
            AND e.expected_over_prob IS NOT NULL
-          THEN ABS(e.expected_over_prob - CASE WHEN e.actual_value > e.synthetic_line THEN 1.0 ELSE 0.0 END)
+          THEN ABS(e.expected_over_prob - CASE
+            WHEN e.market_family = 'MLB_F5_ML' THEN e.actual_value
+            WHEN e.actual_value > e.synthetic_line THEN 1.0
+            ELSE 0.0
+          END)
         END
       ) AS calibration_gap
     FROM projection_accuracy_line_evals l
