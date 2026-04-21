@@ -37,6 +37,12 @@ const VERY_FAST_BOOST_FULL = 1.2;
 const VERY_FAST_BOOST_HALF = 0.6;
 const SLOW_SLOW_PENALTY = -0.6;
 const VERY_SLOW_SLOW_PENALTY = -1.2;
+const PACE_ADJUSTMENT_MAX = 1.5;
+
+function clampPaceAdjustment(value) {
+  if (typeof value !== 'number' || Number.isNaN(value)) return 0;
+  return Math.max(-PACE_ADJUSTMENT_MAX, Math.min(PACE_ADJUSTMENT_MAX, value));
+}
 
 /**
  * Convert raw pace value to a percentile [0, 100] using the 2025-26 linear
@@ -64,7 +70,7 @@ function _handleVeryFastFast(homePacePct, awayPacePct, homeOffEff, awayOffEff) {
   if (passesGate) {
     return {
       synergyType: 'VERY_FAST\xd7VERY_FAST',
-      paceAdjustment: VERY_FAST_BOOST_FULL,
+      paceAdjustment: clampPaceAdjustment(VERY_FAST_BOOST_FULL),
       passesEfficiencyGate: true,
       homePacePct,
       awayPacePct,
@@ -75,7 +81,7 @@ function _handleVeryFastFast(homePacePct, awayPacePct, homeOffEff, awayOffEff) {
 
   return {
     synergyType: 'VERY_FAST\xd7VERY_FAST',
-    paceAdjustment: VERY_FAST_BOOST_HALF,
+    paceAdjustment: clampPaceAdjustment(VERY_FAST_BOOST_HALF),
     passesEfficiencyGate: false,
     homePacePct,
     awayPacePct,
@@ -97,7 +103,7 @@ function _handleFastFast(homePacePct, awayPacePct, homeOffEff, awayOffEff) {
   if (passesGate) {
     return {
       synergyType: 'FAST\xd7FAST',
-      paceAdjustment: FAST_FAST_BOOST_FULL,
+      paceAdjustment: clampPaceAdjustment(FAST_FAST_BOOST_FULL),
       passesEfficiencyGate: true,
       homePacePct,
       awayPacePct,
@@ -108,7 +114,7 @@ function _handleFastFast(homePacePct, awayPacePct, homeOffEff, awayOffEff) {
 
   return {
     synergyType: 'FAST\xd7FAST',
-    paceAdjustment: FAST_FAST_BOOST_HALF,
+    paceAdjustment: clampPaceAdjustment(FAST_FAST_BOOST_HALF),
     passesEfficiencyGate: false,
     homePacePct,
     awayPacePct,
@@ -162,7 +168,7 @@ function analyzePaceSynergy(homePace, awayPace, homeOffEff, awayOffEff) {
   ) {
     return {
       synergyType: 'VERY_SLOW\xd7VERY_SLOW',
-      paceAdjustment: VERY_SLOW_SLOW_PENALTY,
+      paceAdjustment: clampPaceAdjustment(VERY_SLOW_SLOW_PENALTY),
       passesEfficiencyGate: true, // No gate required for slow matchups
       homePacePct,
       awayPacePct,
@@ -176,7 +182,7 @@ function analyzePaceSynergy(homePace, awayPace, homeOffEff, awayOffEff) {
   if (homePacePct <= SLOW_THRESHOLD_PCT && awayPacePct <= SLOW_THRESHOLD_PCT) {
     return {
       synergyType: 'SLOW\xd7SLOW',
-      paceAdjustment: SLOW_SLOW_PENALTY,
+      paceAdjustment: clampPaceAdjustment(SLOW_SLOW_PENALTY),
       passesEfficiencyGate: true, // No gate required for slow matchups
       homePacePct,
       awayPacePct,

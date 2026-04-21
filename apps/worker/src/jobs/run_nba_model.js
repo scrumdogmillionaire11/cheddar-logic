@@ -453,12 +453,13 @@ function applyNbaImpactGateToCard(card, availabilityGate) {
 }
 
 const NBA_DRIVER_WEIGHTS = {
-  baseProjection: 0.35,
-  restAdvantage: 0.15,
-  welcomeHomeV2: 0.1,
-  matchupStyle: 0.2,
-  blowoutRisk: 0.07,
-  totalProjection: 0.13,
+  // WI-1018: rebalanced — base↑ to dampen additive driver compounding.
+  baseProjection: 0.55,
+  restAdvantage: 0.1,
+  welcomeHomeV2: 0.07,
+  matchupStyle: 0.14,
+  blowoutRisk: 0.05,
+  totalProjection: 0.09,
 };
 
 const NBA_DRIVER_CARD_TYPES = [
