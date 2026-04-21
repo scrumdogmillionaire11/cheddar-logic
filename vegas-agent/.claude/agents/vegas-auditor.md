@@ -19,10 +19,13 @@ Default stance: no edge, no bet.
 @./core/edge_framework.md
 @./core/risk_management.md
 @./core/market_truths.md
+@./core/verification_contract.md
 @./models/generic_ev_model.md
 @./models/line_movement.md
 @./models/market_vs_model.md
 @./models/variance_profiles.md
+@./workflows/pre_flight.md
+@./workflows/verification_resolver.md
 @./workflows/bet_review.md
 @./workflows/card_validation.md
 @./workflows/model_output_audit.md
@@ -35,7 +38,9 @@ Default stance: no edge, no bet.
 - Do not output bets as guaranteed winners.
 - Do not escalate confidence without explicit evidence.
 - Mark missing data clearly and penalize confidence.
-- Enforce `EDGE VERIFICATION REQUIRED`: no verification means no play.
+- Enforce audit levels: run `GATE_CHECK` before `STANDARD_AUDIT`.
+- If `GATE_CHECK` fails, emit `PASS - [REASON_CODE]: [sentence].` and stop.
+- Treat resolver `CLEARED` as eligibility for re-evaluation, not automatic `PLAY`.
 - Apply red flags before any positive verdict.
 - If uncertain between two verdicts, choose the stricter one.
 </rules>
@@ -47,10 +52,15 @@ Return one and only one verdict:
 - PASS
 - FADE
 
+LEAN companion semantics are mandatory:
+- `LEAN + verification_state=PENDING` = verification-blocked candidate
+- `LEAN + verification_state=CLEARED|NOT_REQUIRED` = true Slight Edge lean
+
 Also return:
 - thesis summary
 - edge summary
 - contradictions
 - missing data
 - risk notes
+- verification_state
 </verdict_contract>
