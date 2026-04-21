@@ -1,6 +1,7 @@
 'use client';
 
 import type { ProjectionProxyRow } from '@/app/api/results/projection-settled/route';
+import type { ProjectionAccuracyRecord } from '@/lib/types/projection-accuracy';
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -88,9 +89,10 @@ function outcomeBadgeClass(outcome: 'WIN' | 'LOSS' | 'NO_BET'): string {
 
 interface ProjectionRowProps {
   row: ProjectionProxyRow;
+  attribution?: ProjectionAccuracyRecord;
 }
 
-function ProjectionRow({ row }: ProjectionRowProps) {
+function ProjectionRow({ row, attribution }: ProjectionRowProps) {
   const date = fmtDate(row.gameDateUtc);
   const moneylineFamily = isMoneylineFamily(row.cardFamily);
   const projected = moneylineFamily
@@ -102,39 +104,59 @@ function ProjectionRow({ row }: ProjectionRowProps) {
   const directionLabel = moneylineFamily ? moneylineDirectionLabel(row) : direction;
   const tier = row.tier;
   const outcome = row.gradedResult;
+  const attributionProjectionRaw = fmtNum(attribution?.projection_raw, 3);
+  const attributionSyntheticLine = fmtNum(attribution?.synthetic_line, 3);
+  const attributionEdgeDistance = fmtNum(attribution?.edge_distance, 3);
+  const attributionBand = attribution?.confidence_band || 'UNKNOWN';
 
   return (
     <>
       {/* Desktop row */}
-      <div className="hidden grid-cols-9 gap-3 px-4 py-3 text-sm text-cloud/70 md:grid">
-        <span>{date}</span>
-        <span className="col-span-2 truncate">{fmtMatchup(row)}</span>
-        <span className="text-right font-mono">{projected}</span>
-        <span className="flex justify-center">
-          <span
-            className={`rounded-full border px-2 py-0.5 text-xs font-semibold ${directionBadgeClass(
-              direction,
-            )}`}
-          >
-            {directionLabel}
+      <div className="hidden px-4 py-3 text-sm text-cloud/70 md:block">
+        <div className="grid grid-cols-9 gap-3">
+          <span>{date}</span>
+          <span className="col-span-2 truncate">{fmtMatchup(row)}</span>
+          <span className="text-right font-mono">{projected}</span>
+          <span className="flex justify-center">
+            <span
+              className={`rounded-full border px-2 py-0.5 text-xs font-semibold ${directionBadgeClass(
+                direction,
+              )}`}
+            >
+              {directionLabel}
+            </span>
           </span>
-        </span>
-        <span className="flex justify-center">
-          <span className={`rounded-full border px-2 py-0.5 text-xs ${tierBadgeClass(tier)}`}>
-            {tier}
+          <span className="flex justify-center">
+            <span className={`rounded-full border px-2 py-0.5 text-xs ${tierBadgeClass(tier)}`}>
+              {tier}
+            </span>
           </span>
-        </span>
-        <span className="text-right font-mono text-cloud/50">{edge}</span>
-        <span className="text-right font-mono">{actual}</span>
-        <span className="flex justify-end">
-          <span
-            className={`rounded-full border px-2 py-0.5 text-xs font-semibold ${outcomeBadgeClass(
-              outcome,
-            )}`}
-          >
-            {outcome}
+          <span className="text-right font-mono text-cloud/50">{edge}</span>
+          <span className="text-right font-mono">{actual}</span>
+          <span className="flex justify-end">
+            <span
+              className={`rounded-full border px-2 py-0.5 text-xs font-semibold ${outcomeBadgeClass(
+                outcome,
+              )}`}
+            >
+              {outcome}
+            </span>
           </span>
-        </span>
+        </div>
+        <div className="mt-2 grid grid-cols-4 gap-2 text-[11px] text-cloud/55">
+          <span className="rounded-lg border border-white/10 bg-white/5 px-2 py-1 font-mono">
+            projection_raw: {attributionProjectionRaw}
+          </span>
+          <span className="rounded-lg border border-white/10 bg-white/5 px-2 py-1 font-mono">
+            synthetic_line: {attributionSyntheticLine}
+          </span>
+          <span className="rounded-lg border border-white/10 bg-white/5 px-2 py-1 font-mono">
+            edge_distance: {attributionEdgeDistance}
+          </span>
+          <span className="rounded-lg border border-white/10 bg-white/5 px-2 py-1 font-mono">
+            confidence_band: {attributionBand}
+          </span>
+        </div>
       </div>
 
       {/* Mobile card */}
@@ -178,6 +200,20 @@ function ProjectionRow({ row }: ProjectionRowProps) {
             <p className="text-cloud/50">Score</p>
           </div>
         </div>
+        <div className="mt-2 grid grid-cols-2 gap-2 text-[11px] text-cloud/55">
+          <span className="rounded-lg border border-white/10 bg-white/5 px-2 py-1 font-mono">
+            projection_raw: {attributionProjectionRaw}
+          </span>
+          <span className="rounded-lg border border-white/10 bg-white/5 px-2 py-1 font-mono">
+            synthetic_line: {attributionSyntheticLine}
+          </span>
+          <span className="rounded-lg border border-white/10 bg-white/5 px-2 py-1 font-mono">
+            edge_distance: {attributionEdgeDistance}
+          </span>
+          <span className="rounded-lg border border-white/10 bg-white/5 px-2 py-1 font-mono">
+            confidence_band: {attributionBand}
+          </span>
+        </div>
       </div>
     </>
   );
@@ -188,6 +224,7 @@ function ProjectionRow({ row }: ProjectionRowProps) {
 interface CardFamilySectionProps {
   cardFamily: string;
   rows: ProjectionProxyRow[];
+  attributionByCardId: Map<string, ProjectionAccuracyRecord>;
 }
 
 function familyLabel(cardFamily: string): string {
@@ -205,7 +242,11 @@ function familyLabel(cardFamily: string): string {
   return `${cardFamily.replaceAll('_', ' ')} Projections`;
 }
 
-function CardFamilySection({ cardFamily, rows }: CardFamilySectionProps) {
+function CardFamilySection({
+  cardFamily,
+  rows,
+  attributionByCardId,
+}: CardFamilySectionProps) {
   const headers = (
     <div className="grid grid-cols-9 gap-3 bg-night/70 px-4 py-3 text-xs font-semibold uppercase tracking-[0.2em] text-cloud/60">
       <span>Date</span>
@@ -242,7 +283,11 @@ function CardFamilySection({ cardFamily, rows }: CardFamilySectionProps) {
         ) : (
           <div className="divide-y divide-white/10 md:divide-y-0">
             {rows.map((row, index) => (
-              <ProjectionRow key={projectionRowKey(row, index)} row={row} />
+              <ProjectionRow
+                key={projectionRowKey(row, index)}
+                row={row}
+                attribution={attributionByCardId.get(String(row.cardId || ''))}
+              />
             ))}
           </div>
         )}
@@ -255,9 +300,13 @@ function CardFamilySection({ cardFamily, rows }: CardFamilySectionProps) {
 
 interface ProjectionResultsTableProps {
   rows: ProjectionProxyRow[];
+  attributionRows?: ProjectionAccuracyRecord[];
 }
 
-export function ProjectionResultsTable({ rows }: ProjectionResultsTableProps) {
+export function ProjectionResultsTable({
+  rows,
+  attributionRows = [],
+}: ProjectionResultsTableProps) {
   if (rows.length === 0) {
     return (
       <div className="rounded-xl border border-white/10 bg-night/30 px-4 py-8 text-center text-sm text-cloud/60">
@@ -278,6 +327,16 @@ export function ProjectionResultsTable({ rows }: ProjectionResultsTableProps) {
     return groups;
   }, new Map());
 
+  const attributionByCardId = attributionRows.reduce<Map<string, ProjectionAccuracyRecord>>(
+    (map, row) => {
+      const cardId = String(row.card_id || '').trim();
+      if (!cardId || map.has(cardId)) return map;
+      map.set(cardId, row);
+      return map;
+    },
+    new Map(),
+  );
+
   return (
     <div className="mt-6 space-y-8">
       {Array.from(groupedRows.entries()).map(([cardFamily, familyRows]) => (
@@ -285,6 +344,7 @@ export function ProjectionResultsTable({ rows }: ProjectionResultsTableProps) {
           key={cardFamily}
           cardFamily={cardFamily}
           rows={familyRows}
+          attributionByCardId={attributionByCardId}
         />
       ))}
     </div>

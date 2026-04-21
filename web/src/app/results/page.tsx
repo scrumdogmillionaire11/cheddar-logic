@@ -300,6 +300,21 @@ export default function ResultsPage() {
       ),
     [projectionSummariesWithActuals, projectionSettlementFamilies],
   );
+  const mappedProjectionAccuracyRows = useMemo(() => {
+    if (!projectionAccuracy?.rows?.length) return [];
+    const settledCardIds = new Set(
+      mappedProjectionSettledRows.map((row) => String(row.cardId || '').trim()),
+    );
+    const inFamily = projectionAccuracy.rows.filter((row) =>
+      projectionSettlementFamilies.has(String(row.market_family || '').toUpperCase()),
+    );
+    const matchingSettled = inFamily.filter((row) =>
+      settledCardIds.has(String(row.card_id || '').trim()),
+    );
+    if (matchingSettled.length > 0) return matchingSettled;
+    return inFamily;
+  }, [projectionAccuracy?.rows, mappedProjectionSettledRows, projectionSettlementFamilies]);
+  const projectionAttributionSample = mappedProjectionAccuracyRows[0] || null;
   const projectionSummaryRows = useMemo(() => {
     const existingByFamily = new Map(
       mappedProjectionSummaries.map((row) => [String(row.cardFamily || '').toUpperCase(), row]),
@@ -963,7 +978,10 @@ export default function ResultsPage() {
                 <span>HIT = model direction correct. Error = |projected − actual|.</span>
               </div>
             </div>
-            <ProjectionResultsTable rows={mappedProjectionSettledRows} />
+            <ProjectionResultsTable
+              rows={mappedProjectionSettledRows}
+              attributionRows={mappedProjectionAccuracyRows}
+            />
             {projectionAccuracy && (
               <div className="mt-6 rounded-xl border border-white/10 bg-night/40 p-4">
                 <div className="flex flex-wrap items-center justify-between gap-3">
@@ -972,11 +990,25 @@ export default function ResultsPage() {
                       Projection Confidence Engine
                     </p>
                     <p className="mt-1 text-sm text-cloud/70">
-                      Synthetic-line W/L excludes weak directions under 0.15 while MAE and bias still audit every settled projection.
+                      Weak directions with edge_distance &lt; 0.15 are excluded from directional W/L and still included in MAE and bias auditing.
                     </p>
                   </div>
                   <p className={`text-sm font-semibold ${marketHealthClass(projectionAccuracy.summary.market_trust_status)}`}>
                     {projectionAccuracy.summary.market_trust_status} — {marketHealthLabel(projectionAccuracy.summary.market_trust_status)}
+                  </p>
+                </div>
+                <div className="mt-4 rounded-xl border border-white/10 bg-white/5 p-3 text-xs text-cloud/65">
+                  <p className="font-semibold uppercase tracking-[0.16em] text-cloud/50">
+                    Bucket Mapping
+                  </p>
+                  <div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+                    <span className="rounded-lg border border-white/10 bg-night/50 px-2 py-1 font-mono">LOW: confidence_score &lt; 52%</span>
+                    <span className="rounded-lg border border-white/10 bg-night/50 px-2 py-1 font-mono">WATCH: 52%-57.99%</span>
+                    <span className="rounded-lg border border-white/10 bg-night/50 px-2 py-1 font-mono">TRUST: 58%-62.99%</span>
+                    <span className="rounded-lg border border-white/10 bg-night/50 px-2 py-1 font-mono">STRONG: &gt;= 63%</span>
+                  </div>
+                  <p className="mt-3 text-cloud/60">
+                    FRAGILE is a presentation label for weak/no-edge directions (weak_direction_flag=1 or edge_distance &lt; 0.15). It is not a native confidence_band value.
                   </p>
                 </div>
                 <div className="mt-4 grid gap-3 md:grid-cols-5">
@@ -1024,6 +1056,31 @@ export default function ResultsPage() {
                     ))}
                   </div>
                 )}
+                <div className="mt-4 rounded-xl border border-white/10 bg-night/50 p-3 text-xs text-cloud/65">
+                  <p className="font-semibold uppercase tracking-[0.16em] text-cloud/50">
+                    Card-level Attribution Sample
+                  </p>
+                  {projectionAttributionSample ? (
+                    <div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+                      <span className="rounded-lg border border-white/10 bg-white/5 px-2 py-1 font-mono">
+                        projection_raw: {formatDecimal(projectionAttributionSample.projection_raw, 3, { signed: false })}
+                      </span>
+                      <span className="rounded-lg border border-white/10 bg-white/5 px-2 py-1 font-mono">
+                        synthetic_line: {formatDecimal(projectionAttributionSample.synthetic_line, 3, { signed: false })}
+                      </span>
+                      <span className="rounded-lg border border-white/10 bg-white/5 px-2 py-1 font-mono">
+                        edge_distance: {formatDecimal(projectionAttributionSample.edge_distance, 3, { signed: false })}
+                      </span>
+                      <span className="rounded-lg border border-white/10 bg-white/5 px-2 py-1 font-mono">
+                        confidence_band: {projectionAttributionSample.confidence_band || 'UNKNOWN'}
+                      </span>
+                    </div>
+                  ) : (
+                    <p className="mt-2 text-cloud/50">
+                      Awaiting projection_accuracy rows to display card-level bucket attribution details.
+                    </p>
+                  )}
+                </div>
               </div>
             )}
             {projectionSummaryRows.length > 0 && (
