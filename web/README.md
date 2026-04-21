@@ -1,26 +1,35 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# web
+
+Next.js web app for cheddarlogic.com.
+
+## DB Contract (Read This First)
+
+This app is read-only with respect to the shared SQLite/sql.js database.
+
+- The worker is the only DB writer and migration owner.
+- Web routes must not run migrations or DB writes.
+- Web DB teardown must use read-only close paths.
+
+Canonical contract: `../docs/decisions/ADR-0002-single-writer-db-contract.md`.
+
+Production DB path contract used by the runtime:
+
+- `CHEDDAR_DB_PATH=/opt/data/cheddar-prod.db`
 
 ## Getting Started
 
-First, run the development server:
+Install dependencies and run the dev server:
 
 ```bash
+npm install
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
-
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+Open <http://localhost:3000>.
 
 ## Tests
 
-UI smoke tests (require the dev server running):
+UI smoke tests (dev server required):
 
 ```bash
 npm run test:ui:cards
@@ -32,18 +41,3 @@ npm run test:ui:results
 - This repository must build in restricted/offline environments.
 - Do not use `next/font/google` or any runtime/build-time remote font fetch.
 - Use local font stacks in CSS (or vendored local font files) only.
-
-## Learn More
-
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.

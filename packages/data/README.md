@@ -2,6 +2,12 @@
 
 Shared data layer for cheddar-logic monorepo.
 
+Canonical DB ownership policy: `docs/decisions/ADR-0002-single-writer-db-contract.md`.
+
+In this architecture:
+- The worker is the only process allowed to migrate/write/save snapshots.
+- The web app is read-only and must use read-only teardown paths.
+
 Contains:
 - **Schema**: SQLite database with migrations for job_runs, games, odds_snapshots
 - **DB Client**: High-level query functions
@@ -32,6 +38,8 @@ sqlite3 "$CHEDDAR_DB_PATH" "SELECT COUNT(*) FROM card_payloads;"
 ```
 
 The `card_payloads` table identifies the production database (contains historical card decisions). Set `CHEDDAR_DB_PATH` explicitly in production config.
+
+Do not rely on web-side migrations or snapshot saves; schema ownership remains with worker startup/migrations per ADR-0002.
 
 `CHEDDAR_DB_PATH` is the canonical database path. `DATABASE_PATH` and `RECORD_DATABASE_PATH` are no longer read by the resolver.
 

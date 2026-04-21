@@ -2,6 +2,16 @@
 
 This repository powers **cheddarlogic.com**.
 
+## Database Ownership Contract (Canonical)
+
+Cheddar Logic uses a single shared SQLite/sql.js database file.
+
+- **Worker (`apps/worker`) is the only writer**: runs migrations, writes model outputs, writes card payloads, and saves DB snapshots.
+- **Web (`web/`) is read-only**: serves API responses and UI from worker-produced data.
+- **Production DB path is fixed**: `CHEDDAR_DB_PATH=/opt/data/cheddar-prod.db`.
+
+Authoritative rules and rationale: `docs/decisions/ADR-0002-single-writer-db-contract.md`.
+
 ## Identity + Naming (do not improvise)
 - GitHub repo: `cheddar-logic`
 - Production domain: `cheddarlogic.com`
@@ -23,7 +33,7 @@ This monorepo runs:
 1) **Web app**: UI + lightweight API (`web/`)
 2) **Worker**: scheduler + ingestion + sport runners (`apps/worker`)
 3) **FPL Sage**: Fantasy Premier League analysis engine (`cheddar-fpl-sage/`)
-4) **Database**: shared persistence (Postgres recommended)
+4) **Database**: shared SQLite/sql.js persistence (single-writer contract)
 
 **Rule:** the web app does not run heavy models.  
 The worker generates outputs and stores them. The web reads and renders.
@@ -95,20 +105,21 @@ See **[docs/DEPLOY_GITHUB.md](docs/DEPLOY_GITHUB.md)** for cloud setup.
 
 - `npm --prefix packages/data install`
 - `npm --prefix packages/data run migrate`
+- `export CHEDDAR_DB_PATH=/tmp/cheddar-logic/cheddar.db` (local)
 
 To populate with real odds data, run:
 - `npm --prefix apps/worker run job:pull-odds` (fetches live games from The Odds API)
 
 ### 2) Run worker
 
-- `cd apps/worker`
-- run the worker (see `apps/worker/README.md` once created)
+- `npm --prefix apps/worker run scheduler`
 
 ### 3) Run web
 
-- `cd web`
-- `npm install`
-- `npm run dev`
+- `npm --prefix web install`
+- `npm --prefix web run dev`
+
+Web reads from the shared DB but must never perform DB writes or migrations.
 
 ### 4) Run FPL Sage (optional)
 
@@ -159,9 +170,9 @@ Copy `.env.example` to `.env` and set required values.
 
 - Web uses:
   - `PUBLIC_DOMAIN`
-  - `DATABASE_URL` (or calls internal API depending on your design)
+  - app/UI env vars as needed (no web-side DB migrations or snapshot writes)
 - Worker uses:
-  - `DATABASE_URL`
+  - `CHEDDAR_DB_PATH` (required in production: `/opt/data/cheddar-prod.db`)
   - provider keys (`ODDS_API_KEY`, etc.)
 
 ---
@@ -178,6 +189,7 @@ Copy `.env.example` to `.env` and set required values.
 ## Docs
 - `docs/IDENTITY.md` — naming contract (repo/domain/namespace)
 - `docs/ARCHITECTURE.md` — data flow + job model + storage model
+- `docs/decisions/ADR-0002-single-writer-db-contract.md` — worker-only DB write ownership and web read-only contract
 - `docs/WORKING_AGREEMENTS.md` — guardrails for agents + contributors
 - `docs/DATA_PIPELINE_TROUBLESHOOTING.md` — inefficient-model replacement runbook (triggers/action matrix/rollback)
 - `docs/ARCHITECTURE_SEPARATION.md` — phased rollout flags and production-safe rollback sequence
