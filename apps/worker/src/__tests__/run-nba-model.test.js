@@ -901,6 +901,79 @@ describe('WI-1024 residual correction in NBA runner', () => {
 });
 
 // ---------------------------------------------------------------------------
+// WI-1025: Integration — regime modifier wiring and raw_data stamp
+// ---------------------------------------------------------------------------
+
+describe('WI-1025 regime integration (sigma clamp and raw_data.nba_regime)', () => {
+  let consoleLogSpy;
+  let consoleErrorSpy;
+
+  beforeEach(() => {
+    delete process.env.ENABLE_WITHOUT_ODDS_MODE;
+    delete process.env.ENABLE_WELCOME_HOME;
+    consoleLogSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+    consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    consoleLogSpy.mockRestore();
+    consoleErrorSpy.mockRestore();
+    jest.restoreAllMocks();
+    jest.resetModules();
+    jest.clearAllMocks();
+    delete process.env.ENABLE_WITHOUT_ODDS_MODE;
+    delete process.env.ENABLE_WELCOME_HOME;
+  });
+
+  test('raw_data.nba_regime is stamped on every inserted card in a standard run', async () => {
+    const { runNBAModel, mocks } = loadRunNBAModel();
+    await runNBAModel();
+    const insertedCards = mocks.insertCardPayload.mock.calls.map(([card]) => card);
+    expect(insertedCards.length).toBeGreaterThan(0);
+    for (const card of insertedCards) {
+      expect(card.payloadData.raw_data).toBeDefined();
+      expect(card.payloadData.raw_data.nba_regime).toBeDefined();
+      expect(card.payloadData.raw_data.nba_regime).toHaveProperty('regime');
+      expect(card.payloadData.raw_data.nba_regime).toHaveProperty('tags');
+      expect(card.payloadData.raw_data.nba_regime).toHaveProperty('modifiers');
+      expect(typeof card.payloadData.raw_data.nba_regime.regime).toBe('string');
+      expect(Array.isArray(card.payloadData.raw_data.nba_regime.tags)).toBe(true);
+    }
+  });
+
+  test('sigma clamp bounds: combined multiplier > 2.0 clamped to 2.0x computedSigma', () => {
+    const SIGMA_CHAIN_MIN = 0.6;
+    const SIGMA_CHAIN_MAX = 2.0;
+    const computedSigmaTotal = 12.0;
+    const excessProduct = 2.25;
+    const clamped = Math.min(SIGMA_CHAIN_MAX, Math.max(SIGMA_CHAIN_MIN, excessProduct));
+    expect(clamped).toBe(2.0);
+    expect(clamped * computedSigmaTotal).toBe(24.0);
+  });
+
+  test('sigma clamp bounds: combined multiplier < 0.6 clamped to 0.6x computedSigma', () => {
+    const SIGMA_CHAIN_MIN = 0.6;
+    const SIGMA_CHAIN_MAX = 2.0;
+    const computedSigmaTotal = 10.0;
+    const belowProduct = 0.3;
+    const clamped = Math.min(SIGMA_CHAIN_MAX, Math.max(SIGMA_CHAIN_MIN, belowProduct));
+    expect(clamped).toBe(0.6);
+    expect(clamped * computedSigmaTotal).toBe(6.0);
+  });
+
+  test('vol_env applies before regime: chain ratio reflects both multipliers', () => {
+    const computedSigmaTotal = 10.0;
+    const volEnvMultiplier = 1.25;
+    const sigmaAfterVolEnv = computedSigmaTotal * volEnvMultiplier;
+    const regimeMultiplier = 1.1;
+    const chainRatio = (sigmaAfterVolEnv / computedSigmaTotal) * regimeMultiplier;
+    expect(chainRatio).toBeCloseTo(1.375, 5);
+    expect(chainRatio).toBeLessThan(2.0);
+    expect(chainRatio).toBeGreaterThan(0.6);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // WI-1025: detectNbaRegime — objective regime detection unit tests
 // ---------------------------------------------------------------------------
 

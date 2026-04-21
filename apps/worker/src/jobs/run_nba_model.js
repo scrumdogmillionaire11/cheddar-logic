@@ -100,6 +100,7 @@ const {
   computeNbaResidualCorrection,
   applyNbaResidualCombinedCeiling,
 } = require('../models/residual-projection');
+const { detectNbaRegime } = require('../utils/nba-regime-detection');
 
 const ENABLE_WELCOME_HOME = process.env.ENABLE_WELCOME_HOME === 'true';
 
@@ -1826,6 +1827,8 @@ async function applyNbaTeamContext(
       availabilityGate: { missingFlags: [], uncertainFlags: [], availabilityFlags: [] },
       nullMetricTeams: [],
       calibrationState,
+      teamMetricsHome: null,
+      teamMetricsAway: null,
     };
   }
 
@@ -1869,6 +1872,8 @@ async function applyNbaTeamContext(
         availabilityGate,
         nullMetricTeams,
         calibrationState,
+        teamMetricsHome: homeResult?.metrics ?? null,
+        teamMetricsAway: awayResult?.metrics ?? null,
       };
     }
 
@@ -1927,6 +1932,8 @@ async function applyNbaTeamContext(
       availabilityGate,
       nullMetricTeams,
       calibrationState,
+      teamMetricsHome: homeResult?.metrics ?? null,
+      teamMetricsAway: awayResult?.metrics ?? null,
     };
   } catch (err) {
     console.warn(
@@ -1940,6 +1947,8 @@ async function applyNbaTeamContext(
       availabilityGate: { missingFlags: [], uncertainFlags: [], availabilityFlags: [] },
       nullMetricTeams: [],
       calibrationState,
+      teamMetricsHome: null,
+      teamMetricsAway: null,
     };
   }
 }
@@ -2575,6 +2584,11 @@ async function runNBAModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
             }
           }
 
+          // WI-1025: Compute rest days here so regime detection can use them in sigma chain
+          // (moved earlier than WI-0836 original placement to enable pre-sigma regime detection)
+          const _homeRestResult = computeRestDays(oddsSnapshot.home_team, 'nba', oddsSnapshot.game_time_utc);
+          const _awayRestResult = computeRestDays(oddsSnapshot.away_team, 'nba', oddsSnapshot.game_time_utc);
+
           // WI-0646: Detect playoff game and apply threshold overrides
           const isPlayoff = isPlayoffGame(oddsSnapshot);
           if (isPlayoff) console.log(`[PLAYOFF_MODE] gameId: ${gameId}`);
@@ -2590,6 +2604,40 @@ async function runNBAModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
               volEnvSigmaConfig,
             );
           }
+          // WI-1025: Regime detection — apply after vol_env sigma, before effectiveSigma is used downstream
+          const nbaRegime = detectNbaRegime({
+            homeTeam: oddsSnapshot.home_team,
+            awayTeam: oddsSnapshot.away_team,
+            restDaysHome: _homeRestResult.restDays,
+            restDaysAway: _awayRestResult.restDays,
+            availabilityGate: teamCtx.availabilityGate ?? null,
+            teamMetricsHome: teamCtx.teamMetricsHome ?? null,
+            teamMetricsAway: teamCtx.teamMetricsAway ?? null,
+            gameDate: oddsSnapshot.game_time_utc,
+          });
+          // Clamp combined sigma chain (playoff x vol_env x regime) to [0.60, 2.00] of computedSigma
+          const SIGMA_CHAIN_MIN = 0.60;
+          const SIGMA_CHAIN_MAX = 2.00;
+          const rawRegimeSigmaMultiplier = nbaRegime.modifiers.sigmaMultiplier;
+          const chainMultiplierTotal = computedSigma.total > 0
+            ? (effectiveSigma.total / computedSigma.total) * rawRegimeSigmaMultiplier
+            : rawRegimeSigmaMultiplier;
+          const chainMultiplierMargin = computedSigma.margin > 0
+            ? (effectiveSigma.margin / computedSigma.margin) * rawRegimeSigmaMultiplier
+            : rawRegimeSigmaMultiplier;
+          const clampedMultiplierTotal = Math.min(SIGMA_CHAIN_MAX, Math.max(SIGMA_CHAIN_MIN, chainMultiplierTotal));
+          const clampedMultiplierMargin = Math.min(SIGMA_CHAIN_MAX, Math.max(SIGMA_CHAIN_MIN, chainMultiplierMargin));
+          effectiveSigma = {
+            ...effectiveSigma,
+            total: computedSigma.total * clampedMultiplierTotal,
+            margin: computedSigma.margin * clampedMultiplierMargin,
+          };
+          console.log(`  [NBA_REGIME] ${gameId}: regime=${nbaRegime.regime} tags=[${nbaRegime.tags.join(',')}] sigmaMultiplier=${rawRegimeSigmaMultiplier} clampedTotal=${clampedMultiplierTotal.toFixed(3)}`);
+          // WI-1025: Apply paceMultiplier from regime to blendedTotal before projection use
+          const regimePaceMultiplier = nbaRegime.modifiers.paceMultiplier;
+          const effectiveBlendedTotal = teamCtx.available && Number.isFinite(teamCtx.blendedTotal)
+            ? Number((teamCtx.blendedTotal * regimePaceMultiplier).toFixed(2))
+            : teamCtx.blendedTotal;
           const effectiveSpreadLeanMin = isPlayoff
             ? (resolveThresholdProfile({ sport: 'NBA', marketType: 'SPREAD' }).edge.lean_edge_min + PLAYOFF_EDGE_MIN_INCREMENT)
             : null; // null = use default from generateNBAMarketCallCards
@@ -2670,8 +2718,7 @@ async function runNBAModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
           ];
 
           // WI-0836: Enrich oddsSnapshot with computed rest days before market decisions
-          const _homeRestResult = computeRestDays(oddsSnapshot.home_team, 'nba', oddsSnapshot.game_time_utc);
-          const _awayRestResult = computeRestDays(oddsSnapshot.away_team, 'nba', oddsSnapshot.game_time_utc);
+          // Note: _homeRestResult and _awayRestResult computed earlier (WI-1025 moved them pre-sigma)
           const enrichedSnapshot = {
             ...oddsSnapshot,
             rest_days_home: _homeRestResult.restDays,
@@ -2802,6 +2849,12 @@ async function runNBAModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
             card.payloadData.raw_data.rest_days_away = _awayRestResult.restDays;
             card.payloadData.raw_data.rest_source_home = _homeRestResult.restSource;
             card.payloadData.raw_data.rest_source_away = _awayRestResult.restSource;
+            // WI-1025: Stamp regime context for observability and downstream traceability
+            card.payloadData.raw_data.nba_regime = {
+              regime: nbaRegime.regime,
+              tags: nbaRegime.tags,
+              modifiers: nbaRegime.modifiers,
+            };
             const tierLabel = card.payloadData.tier
               ? ` [${card.payloadData.tier}]`
               : '';
@@ -2836,9 +2889,9 @@ async function runNBAModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
               Number.isFinite(teamCtx.blendedTotal)
             ) {
               // WI-1024: Apply residual correction exactly once, after rolling bias.
-              // adjustedTotal = blendedTotal (which incorporates rolling bias) + residualCorrection
+              // WI-1025: Use effectiveBlendedTotal (pace-multiplied by regime) as the base.
               const residualCorrection = nbaResidualResult.correction;
-              const adjustedTotal = teamCtx.blendedTotal + residualCorrection;
+              const adjustedTotal = effectiveBlendedTotal + residualCorrection;
               if (card.payloadData?.projection) {
                 card.payloadData.projection.total = adjustedTotal;
               }
@@ -2960,6 +3013,12 @@ async function runNBAModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
             card.payloadData.raw_data.rest_days_away = _awayRestResult.restDays;
             card.payloadData.raw_data.rest_source_home = _homeRestResult.restSource;
             card.payloadData.raw_data.rest_source_away = _awayRestResult.restSource;
+            // WI-1025: Stamp regime context for observability and downstream traceability
+            card.payloadData.raw_data.nba_regime = {
+              regime: nbaRegime.regime,
+              tags: nbaRegime.tags,
+              modifiers: nbaRegime.modifiers,
+            };
             const tierLabel = card.payloadData.tier
               ? ` [${card.payloadData.tier}]`
               : '';

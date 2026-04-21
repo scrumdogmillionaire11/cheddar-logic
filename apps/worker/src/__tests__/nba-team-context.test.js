@@ -605,3 +605,71 @@ describe('WI-0768: NBA model team_metrics_cache consumption', () => {
     });
   });
 });
+
+// ---------------------------------------------------------------------------
+// WI-1025: Dependency boundary tests — graceful degradation
+// ---------------------------------------------------------------------------
+
+describe('WI-1025: dependency boundary — regime detection degrades gracefully', () => {
+  const fakeDriverDescriptor = {
+    driverKey: 'baseProjection',
+    signal: 0.6,
+    eligible: true,
+    outcome: 'HOME',
+  };
+
+  afterEach(() => {
+    jest.resetModules();
+    jest.restoreAllMocks();
+  });
+
+  it('totalPointImpact absent: INJURY_ROTATION is skipped, nba_regime still stamped', async () => {
+    jest.spyOn(console, 'log').mockImplementation(() => {});
+    jest.spyOn(console, 'warn').mockImplementation(() => {});
+    const snap = buildOddsSnapshot({ raw_data: {} });
+    const { runNBAModel, mocks } = loadNBATeamContextModule({
+      oddsSnapshots: [snap],
+      homeMetricsAvailable: true,
+      awayMetricsAvailable: true,
+      driverCards: [fakeDriverDescriptor],
+    });
+
+    await runNBAModel();
+
+    const insertedCards = mocks.insertCardPayload.mock.calls.map(([card]) => card);
+    expect(insertedCards.length).toBeGreaterThan(0);
+    for (const card of insertedCards) {
+      expect(card.payloadData.raw_data?.nba_regime).toBeDefined();
+      const regime = card.payloadData.raw_data.nba_regime.regime;
+      expect(['STANDARD', 'TANK_MODE', 'REST_HEAVY', 'PLAYOFF_PUSH']).toContain(regime);
+    }
+  });
+
+  it('vol_env absent: regime applies without throwing', async () => {
+    jest.spyOn(console, 'log').mockImplementation(() => {});
+    jest.spyOn(console, 'warn').mockImplementation(() => {});
+    const snap = buildOddsSnapshot({
+      raw_data: { nba: {} },
+    });
+    const { runNBAModel, mocks } = loadNBATeamContextModule({
+      oddsSnapshots: [snap],
+      homeMetricsAvailable: true,
+      awayMetricsAvailable: true,
+      driverCards: [fakeDriverDescriptor],
+    });
+
+    let error;
+    try {
+      await runNBAModel();
+    } catch (e) {
+      error = e;
+    }
+    expect(error).toBeUndefined();
+
+    const insertedCards = mocks.insertCardPayload.mock.calls.map(([card]) => card);
+    expect(insertedCards.length).toBeGreaterThan(0);
+    for (const card of insertedCards) {
+      expect(card.payloadData.raw_data?.nba_regime).toBeDefined();
+    }
+  });
+});
