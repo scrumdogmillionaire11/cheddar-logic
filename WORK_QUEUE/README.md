@@ -52,6 +52,12 @@ Execution order:
 
 ---
 
+### Priority A.5 — Governance follow-up
+
+- `WI-1137`: Make dependency ordering rules mandatory for all agents
+
+---
+
 ### Priority 0 — Finish in-progress/claimed items
 
 - `WI-0897`: Replace fragile source-contract tests with behavioral endpoint/transform tests *(claimed; finish by removing remaining source.includes assertions)*
