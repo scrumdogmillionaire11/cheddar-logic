@@ -215,17 +215,29 @@ export async function GET(
     db = getDatabaseReadOnly();
 
     // WI-0967: Query projection_proxy_evals directly.
-    // Every settled projection card has a corresponding row in this table.
-    const countRow = db
-      .prepare(
-        `SELECT COUNT(*) AS cnt
-         FROM projection_proxy_evals`,
-      )
-      .get() as { cnt: number };
 
     const proxyRows = db
       .prepare(
-        `SELECT
+        `WITH accuracy_latest AS (
+           SELECT
+             pae.card_id,
+             pae.projection_value,
+             pae.edge_pp,
+             pae.confidence_score,
+             pae.confidence_band,
+             pae.tracking_role,
+             pae.calibration_bucket,
+             pae.brier_score,
+             pae.expected_outcome_label,
+             ROW_NUMBER() OVER (
+               PARTITION BY pae.card_id
+               ORDER BY
+                 datetime(COALESCE(pae.captured_at, '1970-01-01T00:00:00Z')) DESC,
+                 pae.id DESC
+             ) AS rn
+           FROM projection_accuracy_evals pae
+         )
+         SELECT
            ppe.id,
            ppe.card_id,
            ppe.game_id,
@@ -244,20 +256,20 @@ export async function GET(
            ppe.hit_flag,
            ppe.tier_score,
            ppe.consensus_bonus,
-           pae.projection_value AS win_probability,
-           pae.edge_pp,
-           pae.confidence_score,
-           pae.confidence_band AS accuracy_confidence_band,
-           pae.tracking_role,
-           pae.calibration_bucket,
-           pae.brier_score,
-           pae.expected_outcome_label,
+           al.projection_value AS win_probability,
+           al.edge_pp,
+           al.confidence_score,
+           al.confidence_band AS accuracy_confidence_band,
+           al.tracking_role,
+           al.calibration_bucket,
+           al.brier_score,
+           al.expected_outcome_label,
            cp.card_title,
            g.home_team,
            g.away_team
          FROM projection_proxy_evals ppe
          LEFT JOIN card_payloads cp ON cp.id = ppe.card_id
-         LEFT JOIN projection_accuracy_evals pae ON pae.card_id = ppe.card_id
+         LEFT JOIN accuracy_latest al ON al.card_id = ppe.card_id AND al.rn = 1
          LEFT JOIN games g ON g.game_id = ppe.game_id
          ORDER BY ppe.game_date DESC, ppe.id DESC
          LIMIT 200`,
@@ -308,7 +320,26 @@ export async function GET(
 
     const f5MoneylineRows = db
       .prepare(
-        `SELECT
+        `WITH accuracy_latest AS (
+           SELECT
+             pae.card_id,
+             pae.projection_value,
+             pae.edge_pp,
+             pae.confidence_score,
+             pae.confidence_band,
+             pae.tracking_role,
+             pae.calibration_bucket,
+             pae.brier_score,
+             pae.expected_outcome_label,
+             ROW_NUMBER() OVER (
+               PARTITION BY pae.card_id
+               ORDER BY
+                 datetime(COALESCE(pae.captured_at, '1970-01-01T00:00:00Z')) DESC,
+                 pae.id DESC
+             ) AS rn
+           FROM projection_accuracy_evals pae
+         )
+         SELECT
            cr.id,
            cr.card_id,
            cr.game_id,
@@ -319,20 +350,20 @@ export async function GET(
            cr.card_type,
            cr.selection,
            cp.payload_data,
-           pae.projection_value AS accuracy_projection_value,
-           pae.edge_pp AS accuracy_edge_pp,
-           pae.confidence_score AS accuracy_confidence_score,
-           pae.confidence_band AS accuracy_confidence_band,
-           pae.tracking_role,
-           pae.calibration_bucket,
-           pae.brier_score,
-           pae.expected_outcome_label,
+           al.projection_value AS accuracy_projection_value,
+           al.edge_pp AS accuracy_edge_pp,
+           al.confidence_score AS accuracy_confidence_score,
+           al.confidence_band AS accuracy_confidence_band,
+           al.tracking_role,
+           al.calibration_bucket,
+           al.brier_score,
+           al.expected_outcome_label,
            cp.card_title,
            g.home_team,
            g.away_team
          FROM card_results cr
          JOIN card_payloads cp ON cp.id = cr.card_id
-         LEFT JOIN projection_accuracy_evals pae ON pae.card_id = cr.card_id
+         LEFT JOIN accuracy_latest al ON al.card_id = cr.card_id AND al.rn = 1
          LEFT JOIN games g ON g.game_id = cr.game_id
          WHERE LOWER(cr.card_type) = 'mlb-f5-ml'
            AND LOWER(cr.status) = 'settled'
@@ -405,11 +436,31 @@ export async function GET(
       return b.id - a.id;
     });
 
+    const settledRowsDeduped = Array.from(
+      new Map(
+        settledRows.map((row) => {
+          const key = [
+            row.gameId,
+            row.sport,
+            row.cardFamily,
+            row.recommendedSide,
+            row.gradedResult,
+            row.projValue ?? 'null',
+            row.edgeVsLine ?? 'null',
+            row.confidenceBand ?? 'null',
+            row.homeTeam ?? '',
+            row.awayTeam ?? '',
+          ].join('|');
+          return [key, row] as const;
+        }),
+      ).values(),
+    );
+
     const response = NextResponse.json({
       success: true,
       data: {
-        settledRows,
-        totalSettled: (countRow?.cnt ?? enrichedRows.length) + mappedF5MoneylineRows.length,
+        settledRows: settledRowsDeduped,
+        totalSettled: settledRowsDeduped.length,
         actualsReady: true,
       },
     });
