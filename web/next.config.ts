@@ -13,7 +13,7 @@ const apiBase = (overrideApiBase || defaultApiBase).replace(/\/+$/, "");
 // Do NOT add `turbopack: {}` here — when present, Next.js 16 uses Turbopack
 // for production builds too, and Turbopack on Node <22 fails to parse
 // globals.css ([app-client] context) producing a broken 70-byte CSS bundle.
-// Turbopack is opted-in explicitly for local dev via `next dev --turbo`.
+// Turbopack is opt-in only via `npm run dev:turbo`.
 const nextConfig: NextConfig = {
   // Silence "multiple lockfiles" workspace root warning for monorepo setup.
   outputFileTracingRoot: path.join(__dirname, ".."),
