@@ -582,7 +582,7 @@ export default function ResultsPage() {
   const mobileRecord = summary
     ? `${summary.wins}-${summary.losses}${summary.pushes > 0 ? `-${summary.pushes}` : ''}`
     : '--';
-  const visibleLedger = ledger.filter((row) => !row.payloadMissing);
+  const visibleLedger = ledger;
   const segmentFamilies = useMemo(() => {
     if (!summary) return SEGMENT_DEFINITIONS;
     const counts = new Map<DecisionSegmentId, number>();

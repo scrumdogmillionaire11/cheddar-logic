@@ -8,6 +8,7 @@ import { verifyToken, extractTokenFromHeader, type AuthToken } from './jwt';
 import auditLogger from './audit-logger';
 import { AuditEventType } from './event-types';
 import { getClientIp } from './rate-limiter';
+import { isApiAuthEnforced } from './config';
 
 export interface AuthContext {
   user: AuthToken | null;
@@ -240,6 +241,10 @@ export function requireEntitlementForRequest(
   request: NextRequest,
   resource: ResourceType,
 ): { ok: boolean; error: string; status: number } {
+  if (!isApiAuthEnforced()) {
+    return { ok: true, error: '', status: 200 };
+  }
+
   const context = verifyRequestToken(request);
 
   if (!context.authenticated || !context.user) {

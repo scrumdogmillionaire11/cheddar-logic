@@ -23,6 +23,13 @@ import { NextResponse } from 'next/server';
 
 // Paths that are dev-only. All sub-paths are blocked via prefix matching.
 const DEV_ONLY_PREFIXES = ['/admin', '/api/admin'];
+const INTERNAL_BYPASS_PREFIXES = ['/_next', '/public'];
+const INTERNAL_BYPASS_PATHS = new Set([
+  '/favicon.ico',
+  '/robots.txt',
+  '/sitemap.xml',
+  '/manifest.json',
+]);
 
 // Security headers inlined to avoid any Edge-runtime module resolution issues.
 const cspConnectSrc =
@@ -49,6 +56,22 @@ const SECURITY_HEADERS: Record<string, string> = {
 export function middleware(request: NextRequest): NextResponse {
   const { pathname } = request.nextUrl;
 
+  // Avoid touching Next internals/HMR/static assets. Intercepting these in dev
+  // can stall startup and hot-reload transport.
+  if (
+    INTERNAL_BYPASS_PATHS.has(pathname) ||
+    INTERNAL_BYPASS_PREFIXES.some(
+      (prefix) => pathname === prefix || pathname.startsWith(prefix + '/'),
+    )
+  ) {
+    return NextResponse.next();
+  }
+
+  // WebSocket upgrades (e.g., HMR) should pass through untouched.
+  if (request.headers.get('upgrade')?.toLowerCase() === 'websocket') {
+    return NextResponse.next();
+  }
+
   const isDevOnlyRoute = DEV_ONLY_PREFIXES.some(
     (prefix) => pathname === prefix || pathname.startsWith(prefix + '/'),
   );
@@ -66,5 +89,7 @@ export function middleware(request: NextRequest): NextResponse {
 }
 
 export const config = {
-  matcher: ['/((?!_next/static|_next/image|favicon.ico|public).*)'],
+  matcher: [
+    '/((?!_next|favicon.ico|robots.txt|sitemap.xml|manifest.json|public).*)',
+  ],
 };
