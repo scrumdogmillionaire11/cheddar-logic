@@ -313,12 +313,10 @@ export async function GET(
       return securityCheck.error!;
     }
 
-    if (process.env.ENABLE_AUTH_WALLS === 'true') {
-      const access = requireEntitlementForRequest(request, RESOURCE.CHEDDAR_BOARD);
-      if (!access.ok) {
-        const message = access.status === 403 ? 'Forbidden' : 'Unauthorized';
-        return createOpaqueErrorResponse(request, access.status, message);
-      }
+    const access = requireEntitlementForRequest(request, RESOURCE.CHEDDAR_BOARD);
+    if (!access.ok) {
+      const message = access.status === 403 ? 'Forbidden' : 'Unauthorized';
+      return createOpaqueErrorResponse(request, access.status, message);
     }
 
     const { gameId } = await params;

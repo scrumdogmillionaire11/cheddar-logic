@@ -1709,14 +1709,12 @@ export async function GET(request: NextRequest) {
     perf.dbReadyMs = Date.now() - dbReadyStartedAt;
     budget.assertWithin('db_ready');
 
-    if (process.env.ENABLE_AUTH_WALLS === 'true') {
-      const access = requireEntitlementForRequest(request, RESOURCE.CHEDDAR_BOARD);
-      if (!access.ok) {
-        return NextResponse.json(
-          { success: false, error: access.error },
-          { status: access.status }
-        );
-      }
+    const access = requireEntitlementForRequest(request, RESOURCE.CHEDDAR_BOARD);
+    if (!access.ok) {
+      return NextResponse.json(
+        { success: false, error: access.error },
+        { status: access.status }
+      );
     }
 
     currentStage = 'db_open';

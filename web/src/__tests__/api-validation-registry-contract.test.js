@@ -1,12 +1,15 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
   getValidationRegistryPaths,
   isValidationPathRegistered,
 } from '../lib/api-security/validation.ts';
 
-const API_ROOT = path.resolve(process.cwd(), 'web/src/app/api');
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const API_ROOT = path.resolve(__dirname, '../app/api');
 
 function walkRoutes(dir) {
   const entries = fs.readdirSync(dir, { withFileTypes: true });

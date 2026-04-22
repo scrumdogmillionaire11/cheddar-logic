@@ -19,14 +19,7 @@ export const metadata: Metadata = {
 
 export default async function FPLPage() {
   try {
-    // AUTH DISABLED: Commenting out auth walls to allow public access
-    // const auth = getAccessTokenAuthResult(accessToken, RESOURCE.FPL_SAGE);
-    // if (!auth.isAuthenticated) {
-    //   redirect('/login?next=/fpl');
-    // }
-    // if (!auth.isEntitled) {
-    //   redirect('/subscribe?next=/fpl');
-    // }
+    // PUBLIC_SURFACE: no auth required, explicitly allowlisted in api-security/config PUBLIC_ROUTES.
 
     // Single-surface contract: /fpl always renders the weekly analysis surface.
     // FPL_V2_FEATURES remains a server-side toggle for optional sections.
