@@ -42,6 +42,9 @@ import {
 import { ensureDbReady } from '@/lib/db-init';
 import {
   performSecurityChecks,
+  createCorrelationId,
+  finalizeApiResponse,
+  createOpaqueErrorResponse,
   requireEntitlementForRequest,
   RESOURCE,
 } from '../../../../lib/api-security';
@@ -313,10 +316,8 @@ export async function GET(
     if (process.env.ENABLE_AUTH_WALLS === 'true') {
       const access = requireEntitlementForRequest(request, RESOURCE.CHEDDAR_BOARD);
       if (!access.ok) {
-        return NextResponse.json(
-          { success: false, error: access.error },
-          { status: access.status }
-        );
+        const message = access.status === 403 ? 'Forbidden' : 'Unauthorized';
+        return createOpaqueErrorResponse(request, access.status, message);
       }
     }
 
@@ -332,10 +333,7 @@ export async function GET(
       : 'pregame';
 
     if (!gameId) {
-      return NextResponse.json(
-        { success: false, error: 'gameId is required' },
-        { status: 400 },
-      );
+      return createOpaqueErrorResponse(request, 400, 'Invalid request');
     }
 
     // Open database connection
@@ -454,7 +452,7 @@ export async function GET(
       }];
     });
 
-    return NextResponse.json(
+    const responseJson = NextResponse.json(
       {
         success: true,
         data: response,
@@ -467,13 +465,11 @@ export async function GET(
       },
       { headers: { 'Content-Type': 'application/json' } },
     );
+    return finalizeApiResponse(responseJson, request);
   } catch (error) {
-    console.error('[API] Error fetching cards:', error);
-    const message = error instanceof Error ? error.message : 'Unknown error';
-    return NextResponse.json(
-      { success: false, error: message },
-      { status: 500 },
-    );
+    const correlationId = createCorrelationId();
+    console.error('[API] Error fetching cards:', { correlationId, error });
+    return createOpaqueErrorResponse(request, 500, 'Internal server error');
   } finally {
     if (db) closeReadOnlyInstance(db);
   }

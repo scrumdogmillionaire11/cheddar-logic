@@ -8,7 +8,9 @@ import {
 import { ensureDbReady } from '@/lib/db-init';
 import {
   performSecurityChecks,
-  addRateLimitHeaders,
+  createCorrelationId,
+  finalizeApiResponse,
+  createOpaqueErrorResponse,
 } from '../../../lib/api-security';
 import {
   buildProjectionSummaries,
@@ -297,7 +299,7 @@ function buildSportFilter(
 export async function GET(request: NextRequest) {
   // Without Odds Mode: settlement is disabled, so there are no results to show.
   if (process.env.ENABLE_WITHOUT_ODDS_MODE === 'true') {
-    return NextResponse.json(
+    const response = NextResponse.json(
       {
         success: true,
         withoutOddsMode: true,
@@ -305,6 +307,7 @@ export async function GET(request: NextRequest) {
       },
       { status: 200 },
     );
+    return finalizeApiResponse(response, request);
   }
 
   let db: ReturnType<typeof getDatabaseReadOnly> | null = null;
@@ -353,7 +356,7 @@ export async function GET(request: NextRequest) {
         },
         { headers: { 'Content-Type': 'application/json' } },
       );
-      return addRateLimitHeaders(
+      return finalizeApiResponse(
         addSettlementCoverageHeader(response, 0, 0),
         request,
       );
@@ -457,7 +460,7 @@ export async function GET(request: NextRequest) {
       if (_cached && _cached.expiresAt > Date.now()) {
         const _r = NextResponse.json(_cached.body, { headers: { 'Content-Type': 'application/json' } });
         _r.headers.set('X-Settlement-Coverage', _cached.coverageHeader);
-        return addRateLimitHeaders(_r, request);
+        return finalizeApiResponse(_r, request);
       }
     }
 
@@ -742,7 +745,7 @@ export async function GET(request: NextRequest) {
         },
         { headers: { 'Content-Type': 'application/json' } },
       );
-      return addRateLimitHeaders(
+      return finalizeApiResponse(
         addSettlementCoverageHeader(
           response,
           settledFinalDisplayed,
@@ -1358,20 +1361,11 @@ export async function GET(request: NextRequest) {
     if (!diagnosticsEnabled) _cacheSet(cacheKey, responseBody, coverageHeader);
     const response = NextResponse.json(responseBody, { headers: { 'Content-Type': 'application/json' } });
     response.headers.set('X-Settlement-Coverage', coverageHeader);
-    return addRateLimitHeaders(response, request);
+    return finalizeApiResponse(response, request);
   } catch (error) {
-    console.error('[API] Error fetching results:', error);
-    let errorMessage = 'Unknown error';
-    if (error instanceof Error) {
-      errorMessage = error.message;
-    } else if (typeof error === 'string') {
-      errorMessage = error;
-    }
-    const errorResponse = NextResponse.json(
-      { success: false, error: errorMessage },
-      { status: 500, headers: { 'Content-Type': 'application/json' } },
-    );
-    return addRateLimitHeaders(errorResponse, request);
+    const correlationId = createCorrelationId();
+    console.error('[API] Error fetching results:', { correlationId, error });
+    return createOpaqueErrorResponse(request, 500, 'Internal server error');
   } finally {
     if (db) {
       closeReadOnlyInstance(db);
