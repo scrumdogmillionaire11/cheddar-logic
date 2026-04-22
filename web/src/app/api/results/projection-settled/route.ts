@@ -200,6 +200,95 @@ function gradedResultToken(value: string | null): 'WIN' | 'LOSS' | 'NO_BET' {
   return 'NO_BET';
 }
 
+// Mirrors resolveF5MlConfidenceBand from run_mlb_model.js — confidenceScore is 0–100
+function resolveF5MlConfidenceBand(confidenceScore: number): 'HIGH' | 'MED' | 'LOW' {
+  if (!Number.isFinite(confidenceScore)) return 'LOW';
+  if (confidenceScore >= 70) return 'HIGH';
+  if (confidenceScore >= 55) return 'MED';
+  return 'LOW';
+}
+
+// Last-resort band derivation when confidenceScore is unavailable.
+// Uses distance of winProbability from 0.5 as a proxy for model conviction.
+function resolveF5MlConfidenceBandFromWinProb(winProb: number): 'HIGH' | 'MED' | 'LOW' {
+  const dist = Math.abs(winProb - 0.5);
+  if (dist >= 0.20) return 'HIGH';
+  if (dist >= 0.05) return 'MED';
+  return 'LOW';
+}
+
+function normalizeToken(value: string | null | undefined): string {
+  return String(value ?? '')
+    .trim()
+    .replace(/\s+/g, ' ')
+    .toUpperCase();
+}
+
+function toUtcDayKey(value: string | null | undefined): string {
+  const raw = String(value ?? '').trim();
+  if (!raw) return '';
+  const ts = Date.parse(raw);
+  if (Number.isFinite(ts)) {
+    return new Date(ts).toISOString().slice(0, 10);
+  }
+  return raw.slice(0, 10);
+}
+
+function buildDedupKey(row: ProjectionProxyRow): string {
+  const family = normalizeToken(row.cardFamily);
+  const sport = normalizeToken(row.sport);
+
+  // F5 moneyline rows can arrive through multiple IDs for the same matchup/date
+  // (materialized + fallback pathways). Collapse them to one canonical row.
+  if (family === 'MLB_F5_ML') {
+    const day = toUtcDayKey(row.gameDateUtc);
+    const away = normalizeToken(row.awayTeam);
+    const home = normalizeToken(row.homeTeam);
+    const side = normalizeToken(row.recommendedSide);
+    if (day && away && home) {
+      return [sport, family, day, away, home, side].join('|');
+    }
+  }
+
+  return [
+    normalizeToken(row.gameId),
+    sport,
+    family,
+    normalizeToken(row.recommendedSide),
+    normalizeToken(row.gradedResult),
+    row.projValue ?? 'null',
+    row.edgeVsLine ?? 'null',
+    normalizeToken(row.confidenceBand),
+    normalizeToken(row.homeTeam),
+    normalizeToken(row.awayTeam),
+  ].join('|');
+}
+
+function choosePreferredRow(current: ProjectionProxyRow, candidate: ProjectionProxyRow): ProjectionProxyRow {
+  const quality = (row: ProjectionProxyRow): number => {
+    let score = 0;
+    if (row.predictionSignalMissing !== true && row.winProbability !== null && row.winProbability !== undefined) score += 4;
+    if (row.projValue !== null && row.projValue !== undefined) score += 3;
+    if (row.edgeVsLine !== null && row.edgeVsLine !== undefined) score += 2;
+    if (normalizeToken(row.confidenceBand) && normalizeToken(row.confidenceBand) !== 'MISSING_SIGNAL') score += 1;
+    return score;
+  };
+
+  const currentQuality = quality(current);
+  const candidateQuality = quality(candidate);
+  if (candidateQuality !== currentQuality) {
+    return candidateQuality > currentQuality ? candidate : current;
+  }
+
+  const currentTs = Date.parse(current.gameDateUtc);
+  const candidateTs = Date.parse(candidate.gameDateUtc);
+  if (Number.isFinite(currentTs) && Number.isFinite(candidateTs) && candidateTs !== currentTs) {
+    return candidateTs > currentTs ? candidate : current;
+  }
+
+  return candidate.id > current.id ? candidate : current;
+}
+
 export async function GET(
   request: NextRequest,
 ): Promise<NextResponse<ProjectionSettledResponse>> {
@@ -386,10 +475,21 @@ export async function GET(
       const payloadEdge = toNumberOrNull(payload?.edge_pp);
       const edgeVsLine = row.accuracy_edge_pp ?? payloadEdge ?? (projValue === null ? null : projValue - 0.5);
       const confidenceScore =
-        row.accuracy_confidence_score ?? toNumberOrNull(payload?.confidence_score);
-      const payloadConfidenceBand = String(payload?.confidence_band ?? '').trim();
+        row.accuracy_confidence_score ??
+        toNumberOrNull(payload?.confidence_score);
+      const payloadDriver0 = Array.isArray(payload?.drivers)
+        ? readObject((payload!.drivers as unknown[])[0])
+        : null;
+      const payloadConfidenceBand =
+        String(payload?.confidence_band ?? '').trim() ||
+        String(payloadDriver0?.confidence_band ?? '').trim();
+      const resolvedConfidenceScore =
+        confidenceScore ?? toNumberOrNull(payloadDriver0?.confidence_score);
       const confidenceBand =
-        row.accuracy_confidence_band ?? (payloadConfidenceBand ? payloadConfidenceBand : null);
+        row.accuracy_confidence_band ??
+        (payloadConfidenceBand ? payloadConfidenceBand : null) ??
+        (resolvedConfidenceScore !== null ? resolveF5MlConfidenceBand(resolvedConfidenceScore) : null) ??
+        (projValue !== null ? resolveF5MlConfidenceBandFromWinProb(projValue) : null);
       const trackingRole =
         row.tracking_role ?? String(payload?.tracking_role ?? 'CALIBRATION_ONLY');
       const expectedOutcomeLabel =
@@ -420,7 +520,7 @@ export async function GET(
         awayTeam: row.away_team,
         winProbability: projValue,
         edgePp: edgeVsLine,
-        confidenceScore,
+        confidenceScore: resolvedConfidenceScore,
         confidenceBand,
         trackingRole,
         calibrationBucket: row.calibration_bucket,
@@ -436,25 +536,22 @@ export async function GET(
       return b.id - a.id;
     });
 
-    const settledRowsDeduped = Array.from(
-      new Map(
-        settledRows.map((row) => {
-          const key = [
-            row.gameId,
-            row.sport,
-            row.cardFamily,
-            row.recommendedSide,
-            row.gradedResult,
-            row.projValue ?? 'null',
-            row.edgeVsLine ?? 'null',
-            row.confidenceBand ?? 'null',
-            row.homeTeam ?? '',
-            row.awayTeam ?? '',
-          ].join('|');
-          return [key, row] as const;
-        }),
-      ).values(),
-    );
+    const dedupedByKey = new Map<string, ProjectionProxyRow>();
+    for (const row of settledRows) {
+      const key = buildDedupKey(row);
+      const existing = dedupedByKey.get(key);
+      if (!existing) {
+        dedupedByKey.set(key, row);
+        continue;
+      }
+      dedupedByKey.set(key, choosePreferredRow(existing, row));
+    }
+
+    const settledRowsDeduped = Array.from(dedupedByKey.values()).sort((a, b) => {
+      const dateDiff = Date.parse(b.gameDateUtc) - Date.parse(a.gameDateUtc);
+      if (Number.isFinite(dateDiff) && dateDiff !== 0) return dateDiff;
+      return b.id - a.id;
+    });
 
     const response = NextResponse.json({
       success: true,
