@@ -86,6 +86,46 @@ function projectionRowKey(row: ProjectionProxyRow, index: number): string {
   return `${row.gameId || 'unknown-game'}-${index}`;
 }
 
+function normalizeToken(value: string | null | undefined): string {
+  return String(value ?? '')
+    .trim()
+    .replace(/\s+/g, ' ')
+    .toUpperCase();
+}
+
+function toDayKey(value: string | null | undefined): string {
+  const raw = String(value ?? '').trim();
+  if (!raw) return '';
+  const ts = Date.parse(raw);
+  if (Number.isFinite(ts)) return new Date(ts).toISOString().slice(0, 10);
+  return raw.slice(0, 10);
+}
+
+function projectionDisplayDedupKey(row: ProjectionProxyRow): string {
+  const family = normalizeToken(row.cardFamily);
+  if (family === 'MLB_F5_ML' || family === 'MLB_F5_MONEYLINE') {
+    const day = toDayKey(row.gameDateUtc);
+    const away = normalizeToken(row.awayTeam);
+    const home = normalizeToken(row.homeTeam);
+    const side = normalizeToken(row.recommendedSide);
+    const outcome = normalizeToken(row.gradedResult);
+    if (day && away && home) {
+      return [family, day, away, home, side, outcome].join('|');
+    }
+  }
+
+  return [
+    normalizeToken(row.cardFamily),
+    toDayKey(row.gameDateUtc),
+    normalizeToken(row.awayTeam),
+    normalizeToken(row.homeTeam),
+    normalizeToken(row.recommendedSide),
+    normalizeToken(row.gradedResult),
+    row.projValue ?? 'null',
+    row.edgeVsLine ?? 'null',
+  ].join('|');
+}
+
 function tierBadgeClass(tier: 'PLAY' | 'SLIGHT_EDGE' | 'LEAN' | 'STRONG' | 'PASS'): string {
   if (tier === 'PLAY')
     return 'border-blue-500/60 bg-blue-500/25 text-blue-100 font-semibold';
@@ -377,7 +417,13 @@ export function ProjectionResultsTable({
     );
   }
 
-  const groupedRows = rows.reduce<Map<string, ProjectionProxyRow[]>>((groups, row) => {
+  // Defensive UI dedupe: keep first row for a canonical display key so stale
+  // mixed payloads do not render repeated matchup entries.
+  const dedupedRows = Array.from(
+    new Map(rows.map((row) => [projectionDisplayDedupKey(row), row] as const)).values(),
+  );
+
+  const groupedRows = dedupedRows.reduce<Map<string, ProjectionProxyRow[]>>((groups, row) => {
     const key = row.cardFamily || 'UNKNOWN';
     const group = groups.get(key);
     if (group) {
