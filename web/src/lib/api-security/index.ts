@@ -10,16 +10,60 @@ import {
   validateRequestSize,
   createValidationErrorResponse,
 } from './validation';
+import { SECURITY_HEADERS } from './security-headers';
 
 export interface SecurityCheckResult {
   allowed: boolean;
   error?: NextResponse;
 }
 
+const DEFAULT_PUBLIC_ERROR_MESSAGE = 'Request failed';
+
 const rateLimitCache = new WeakMap<
   Request,
   ReturnType<typeof checkRateLimit>
 >();
+
+export function createCorrelationId(): string {
+  try {
+    return crypto.randomUUID();
+  } catch {
+    return `cid-${Date.now().toString(36)}-${Math.random()
+      .toString(36)
+      .slice(2, 10)}`;
+  }
+}
+
+export function addSecurityHeaders(response: NextResponse): NextResponse {
+  Object.entries(SECURITY_HEADERS).forEach(([key, value]) => {
+    response.headers.set(key, value);
+  });
+  return response;
+}
+
+export function finalizeApiResponse(
+  response: NextResponse,
+  request: NextRequest,
+): NextResponse {
+  return addSecurityHeaders(addRateLimitHeaders(response, request));
+}
+
+export function createOpaqueErrorResponse(
+  request: NextRequest,
+  status: number,
+  message = DEFAULT_PUBLIC_ERROR_MESSAGE,
+): NextResponse {
+  const correlationId = createCorrelationId();
+  const response = NextResponse.json(
+    {
+      success: false,
+      error: message,
+      correlationId,
+    },
+    { status },
+  );
+  return finalizeApiResponse(response, request);
+}
 
 /**
  * Perform all security checks on incoming request
@@ -44,6 +88,7 @@ export function performSecurityChecks(
         success: false,
         error: 'Rate limit exceeded',
         retryAfter: retryAfterSeconds,
+        correlationId: createCorrelationId(),
       },
       { status: 429 },
     );
@@ -54,21 +99,20 @@ export function performSecurityChecks(
     });
     response.headers.set('Retry-After', retryAfterSeconds.toString());
 
-    return { allowed: false, error: response };
+    return { allowed: false, error: finalizeApiResponse(response, request) };
   }
 
   // Check 2: Request size
   if (!validateRequestSize(request)) {
-    return {
-      allowed: false,
-      error: NextResponse.json(
-        {
-          success: false,
-          error: 'Request body too large (max 1MB)',
-        },
-        { status: 413 },
-      ),
-    };
+    const response = NextResponse.json(
+      {
+        success: false,
+        error: 'Request body too large (max 1MB)',
+        correlationId: createCorrelationId(),
+      },
+      { status: 413 },
+    );
+    return { allowed: false, error: finalizeApiResponse(response, request) };
   }
 
   // Check 3: Query parameters validation
@@ -90,12 +134,16 @@ export function performSecurityChecks(
   if (Object.keys(queryParams).length > 0) {
     const validation = validateQueryParams(routePath, queryParams);
     if (!validation.valid) {
+      const response = NextResponse.json(
+        {
+          ...createValidationErrorResponse(validation.errors),
+          correlationId: createCorrelationId(),
+        },
+        { status: 400 },
+      );
       return {
         allowed: false,
-        error: NextResponse.json(
-          createValidationErrorResponse(validation.errors),
-          { status: 400 },
-        ),
+        error: finalizeApiResponse(response, request),
       };
     }
   }

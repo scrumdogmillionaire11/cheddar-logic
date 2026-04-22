@@ -49,7 +49,9 @@ import {
 import { ensureDbReady } from '@/lib/db-init';
 import {
   performSecurityChecks,
-  addRateLimitHeaders,
+  createCorrelationId,
+  finalizeApiResponse,
+  createOpaqueErrorResponse,
   requireEntitlementForRequest,
   RESOURCE,
 } from '../../../lib/api-security';
@@ -316,14 +318,10 @@ export async function GET(request: NextRequest) {
 
     await ensureDbReady();
 
-    if (process.env.ENABLE_AUTH_WALLS === 'true') {
-      const access = requireEntitlementForRequest(request, RESOURCE.CHEDDAR_BOARD);
-      if (!access.ok) {
-        return NextResponse.json(
-          { success: false, error: access.error },
-          { status: access.status }
-        );
-      }
+    const access = requireEntitlementForRequest(request, RESOURCE.CHEDDAR_BOARD);
+    if (!access.ok) {
+      const message = access.status === 403 ? 'Forbidden' : 'Unauthorized';
+      return createOpaqueErrorResponse(request, access.status, message);
     }
 
     const { searchParams } = request.nextUrl;
@@ -365,7 +363,7 @@ export async function GET(request: NextRequest) {
         },
         { headers: { 'Content-Type': 'application/json' } },
       );
-      return addRateLimitHeaders(response, request);
+      return finalizeApiResponse(response, request);
     }
 
     const baseWhere: string[] = [];
@@ -525,15 +523,11 @@ export async function GET(request: NextRequest) {
       },
       { headers: { 'Content-Type': 'application/json' } },
     );
-    return addRateLimitHeaders(apiResponse, request);
+    return finalizeApiResponse(apiResponse, request);
   } catch (error) {
-    console.error('[API] Error fetching cards:', error);
-    const message = error instanceof Error ? error.message : 'Unknown error';
-    const errorResponse = NextResponse.json(
-      { success: false, error: message },
-      { status: 500 },
-    );
-    return addRateLimitHeaders(errorResponse, request);
+    const correlationId = createCorrelationId();
+    console.error('[API] Error fetching cards:', { correlationId, error });
+    return createOpaqueErrorResponse(request, 500, 'Internal server error');
   } finally {
     if (db) closeReadOnlyInstance(db);
   }

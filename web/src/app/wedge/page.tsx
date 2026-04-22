@@ -19,14 +19,7 @@ export const dynamic = 'force-dynamic';
 
 export default async function WedgePage() {
   try {
-    // AUTH DISABLED: Commenting out auth walls to allow public access
-    // const auth = getAccessTokenAuthResult(accessToken, RESOURCE.CHEDDAR_BOARD);
-    // if (!auth.isAuthenticated) {
-    //   redirect('/login?next=/wedge');
-    // }
-    // if (!auth.isEntitled) {
-    //   redirect('/subscribe?next=/wedge');
-    // }
+    // PUBLIC_SURFACE: no auth required, explicitly allowlisted in api-security/config PUBLIC_ROUTES.
 
     return <CardsPageClient />;
   } finally {

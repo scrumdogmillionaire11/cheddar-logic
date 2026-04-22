@@ -21,7 +21,10 @@ import {
 } from '../../../../lib/api-security';
 import auditLogger from '../../../../lib/api-security/audit-logger';
 import { AuditEventType } from '../../../../lib/api-security/event-types';
-import { getClientIp } from '../../../../lib/api-security/rate-limiter';
+import {
+  getClientIp,
+  resolveClientIp,
+} from '../../../../lib/api-security/rate-limiter';
 
 type RoleType = 'ADMIN' | 'PAID' | 'FREE_ACCOUNT';
 type SubscriptionType = 'NONE' | 'TRIAL' | 'ACTIVE' | 'PAST_DUE';
@@ -47,12 +50,15 @@ function createForbiddenResponse() {
   );
 }
 
-function checkTokenRouteAllowlist(request: NextRequest): NextResponse | null {
+export function checkTokenRouteAllowlist(
+  request: NextRequest,
+): NextResponse | null {
   if (process.env.NODE_ENV === 'development') {
     return null;
   }
 
-  const clientIp = getClientIp(request);
+  const ipResolution = resolveClientIp(request);
+  const clientIp = ipResolution.clientIp;
   const allowedIps = parseAllowedTokenRouteIps(
     process.env.TOKEN_ROUTE_ALLOWED_IPS,
   );
@@ -71,7 +77,14 @@ function checkTokenRouteAllowlist(request: NextRequest): NextResponse | null {
     userAgent: request.headers.get('user-agent') || undefined,
     details: {
       allowlistConfigured,
-      reason: allowlistConfigured ? 'ip_not_allowed' : 'allowlist_missing',
+      reason: !allowlistConfigured
+        ? 'allowlist_missing'
+        : ipResolution.forwardedChainRejected
+          ? 'untrusted_forwarded_chain'
+          : clientIpKnown
+            ? 'ip_not_allowed'
+            : 'client_ip_unknown',
+      forwardedChainRejected: ipResolution.forwardedChainRejected,
     },
   });
 

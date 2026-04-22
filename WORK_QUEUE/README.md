@@ -30,7 +30,7 @@ Wave 2 (independent item, can run in parallel with Wave 1 if desired):
 - WI-1130: Patch transitive dependency vulnerability (follow-redirects)
 
 Wave 3 (execute after Wave 1 dependencies are satisfied):
-- WI-1128: Replace source-string tests with behavioral tests (depends on WI-1124 + WI-1126 + WI-1127)
+- WI-1128: Replace source-string tests with behavioral tests (depends on WI-1126 + WI-1127)
 - WI-1129: Consolidate security-header ownership (depends on WI-1127)
 - WI-1131: Standardize auth-secret hardening (depends on WI-1124)
 - WI-1132: Distributed rate limiter migration (depends on WI-1125)
@@ -40,7 +40,7 @@ Wave 3 (execute after Wave 1 dependencies are satisfied):
 - WI-1136: Add production healthz and readyz endpoints (depends on WI-1124)
 
 Dependency arrows:
-- `WI-1124` -> `WI-1128`, `WI-1131`, `WI-1133`, `WI-1134`, `WI-1136`
+- `WI-1124` -> `WI-1131`, `WI-1133`, `WI-1134`, `WI-1136`
 - `WI-1125` -> `WI-1132`, `WI-1134`
 - `WI-1126` -> `WI-1128`, `WI-1134`
 - `WI-1127` -> `WI-1128`, `WI-1129`, `WI-1133`, `WI-1134`, `WI-1135`
@@ -49,6 +49,12 @@ Execution order:
 - Wave 1: WI-1124 -> WI-1125 -> WI-1126 -> WI-1127
 - Wave 2: WI-1130 (independent)
 - Wave 3: WI-1128 + WI-1129 + WI-1131 + WI-1132 + WI-1133 + WI-1134 + WI-1135 + WI-1136
+
+---
+
+### Priority A.5 — Governance follow-up
+
+- `WI-1137`: Make dependency ordering rules mandatory for all agents
 
 ---
 
