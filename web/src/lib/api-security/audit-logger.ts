@@ -39,6 +39,48 @@ interface AuditEventStore {
   [eventId: string]: AuditEvent;
 }
 
+const REDACTED_VALUE = '[REDACTED]';
+const SENSITIVE_KEY_PATTERN = /(authorization|token|secret|password|cookie|api[_-]?key|key)/i;
+const SENSITIVE_VALUE_PATTERN = /(bearer\s+[a-z0-9\-_.]+|eyJ[a-zA-Z0-9._-]+\.[a-zA-Z0-9._-]+\.[a-zA-Z0-9._-]+)/i;
+
+function redactSensitiveValue(value: unknown): unknown {
+  if (typeof value === 'string') {
+    if (SENSITIVE_VALUE_PATTERN.test(value)) {
+      return REDACTED_VALUE;
+    }
+    return value;
+  }
+
+  if (Array.isArray(value)) {
+    return value.map((item) => redactSensitiveValue(item));
+  }
+
+  if (value && typeof value === 'object') {
+    const source = value as Record<string, unknown>;
+    const redacted: Record<string, unknown> = {};
+    for (const [key, nestedValue] of Object.entries(source)) {
+      if (SENSITIVE_KEY_PATTERN.test(key)) {
+        redacted[key] = REDACTED_VALUE;
+      } else {
+        redacted[key] = redactSensitiveValue(nestedValue);
+      }
+    }
+    return redacted;
+  }
+
+  return value;
+}
+
+function sanitizeAuditDetails(
+  details: Record<string, unknown> | undefined,
+): Record<string, unknown> | undefined {
+  if (!details) {
+    return undefined;
+  }
+
+  return redactSensitiveValue(details) as Record<string, unknown>;
+}
+
 /**
  * In-memory audit logger (singleton)
  */
@@ -84,7 +126,7 @@ class AuditLogger {
       endpoint: options?.endpoint,
       method: options?.method,
       userAgent: options?.userAgent,
-      details: options?.details,
+      details: sanitizeAuditDetails(options?.details),
       description,
     };
 
