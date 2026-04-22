@@ -1,9 +1,29 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { spawn } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import net from 'node:net';
 import dataPackage from '../../../packages/data/index.js';
 
 const { closeDatabase, runMigrations } = dataPackage;
+const WEB_ROOT = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  '../..',
+);
+const APP_ROOT_LINKS = [
+  '.env.local',
+  '.env.production',
+  'next-env.d.ts',
+  'next.config.ts',
+  'node_modules',
+  'package.json',
+  'postcss.config.mjs',
+  'public',
+  'scripts',
+  'src',
+  'tsconfig.json',
+];
 
 const AMBIENT_DB_ENV_KEYS = [
   'CHEDDAR_DB_PATH',
@@ -138,4 +158,162 @@ export async function setupIsolatedTestDb(label) {
       exitCleanup();
     },
   };
+}
+
+async function findAvailablePort() {
+  return new Promise((resolve, reject) => {
+    const server = net.createServer();
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', () => {
+      const address = server.address();
+      const port =
+        address && typeof address === 'object' ? address.port : null;
+      server.close((error) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+        if (!port) {
+          reject(new Error('Failed to allocate a test port'));
+          return;
+        }
+        resolve(port);
+      });
+    });
+  });
+}
+
+function createTempNextAppRoot(label) {
+  const tempAppRoot = fs.mkdtempSync(
+    path.join(os.tmpdir(), `cheddar-next-${sanitizeLabel(label)}-`),
+  );
+
+  for (const name of APP_ROOT_LINKS) {
+    const sourcePath = path.join(WEB_ROOT, name);
+    if (!fs.existsSync(sourcePath)) continue;
+    const targetPath = path.join(tempAppRoot, name);
+    if (name === 'node_modules') {
+      fs.symlinkSync(sourcePath, targetPath);
+      continue;
+    }
+
+    const stat = fs.statSync(sourcePath);
+    if (stat.isDirectory()) {
+      fs.cpSync(sourcePath, targetPath, { recursive: true });
+    } else {
+      fs.copyFileSync(sourcePath, targetPath);
+    }
+  }
+
+  return tempAppRoot;
+}
+
+function startNextServer(port, dbPath, appRoot, extraEnv = {}) {
+  const nextBin = path.join(
+    appRoot,
+    'node_modules',
+    'next',
+    'dist',
+    'bin',
+    'next',
+  );
+  const child = spawn(
+    process.execPath,
+    [
+      nextBin,
+      'dev',
+      '--webpack',
+      '--hostname',
+      '127.0.0.1',
+      '--port',
+      String(port),
+    ],
+    {
+      cwd: appRoot,
+      env: {
+        ...process.env,
+        ...extraEnv,
+        CHEDDAR_DB_PATH: dbPath,
+        CHEDDAR_DB_AUTODISCOVER: 'false',
+      },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    },
+  );
+  let output = '';
+  const collectOutput = (chunk) => {
+    output = `${output}${chunk.toString('utf8')}`.slice(-12_000);
+  };
+  child.stdout.on('data', collectOutput);
+  child.stderr.on('data', collectOutput);
+  return { child, getOutput: () => output };
+}
+
+export async function startIsolatedNextServer({
+  dbPath,
+  label = 'web-test',
+  readinessPath = '/',
+  env = {},
+  timeoutMs = 45_000,
+}) {
+  const appRoot = createTempNextAppRoot(label);
+  const port = await findAvailablePort();
+  const baseUrl = `http://127.0.0.1:${port}`;
+  const serverHandle = startNextServer(port, dbPath, appRoot, env);
+  let cleanedUp = false;
+
+  async function stop() {
+    if (cleanedUp) return;
+    cleanedUp = true;
+    if (serverHandle.child.exitCode === null) {
+      await new Promise((resolve) => {
+        serverHandle.child.once('exit', resolve);
+        serverHandle.child.kill('SIGTERM');
+        setTimeout(() => {
+          if (serverHandle.child.exitCode === null) {
+            serverHandle.child.kill('SIGKILL');
+          }
+        }, 5000).unref();
+      });
+    }
+    fs.rmSync(appRoot, { recursive: true, force: true });
+  }
+
+  const deadline = Date.now() + timeoutMs;
+  let lastError = null;
+  while (Date.now() < deadline) {
+    if (serverHandle.child.exitCode !== null) {
+      await stop();
+      throw new Error(
+        `Next dev server exited before readiness (code=${serverHandle.child.exitCode})\n${serverHandle.getOutput()}`,
+      );
+    }
+
+    try {
+      const response = await fetch(`${baseUrl}${readinessPath}`, {
+        signal: AbortSignal.timeout(1500),
+      });
+      if (response.status < 500) {
+        return {
+          baseUrl,
+          appRoot,
+          stop,
+          getOutput: serverHandle.getOutput,
+        };
+      }
+      lastError = new Error(`Readiness probe returned ${response.status}`);
+    } catch (error) {
+      lastError = error;
+    }
+
+    await new Promise((resolve) => {
+      setTimeout(resolve, 250);
+    });
+  }
+
+  const output = serverHandle.getOutput();
+  await stop();
+  throw new Error(
+    `Timed out waiting for isolated Next dev server at ${readinessPath}. ` +
+      `Last error: ${lastError?.message || lastError || 'unknown'}\n${output}`,
+  );
 }
