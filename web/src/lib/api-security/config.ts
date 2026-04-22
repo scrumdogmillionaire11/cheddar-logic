@@ -4,10 +4,13 @@
 
 const ENABLE_RBAC = process.env.ENABLE_RBAC;
 
-if (process.env.NODE_ENV === 'production' && ENABLE_RBAC === 'false') {
-  throw new Error(
-    'ENABLE_RBAC=false is not allowed in production; auth enforcement must remain fail-closed.',
-  );
+/**
+ * Auth wall rollout switch.
+ *
+ * Defaults to disabled in every environment until explicitly enabled.
+ */
+export function isApiAuthEnforced(): boolean {
+  return process.env.ENABLE_API_AUTH === 'true';
 }
 
 export const SECURITY_CONFIG = {
@@ -16,6 +19,7 @@ export const SECURITY_CONFIG = {
   securityHeaders: true,
   auditLogging: process.env.ENABLE_AUDIT_LOGGING !== 'false',
   rbacEnforcement: ENABLE_RBAC !== 'false',
+  apiAuthEnforcement: isApiAuthEnforced(),
 };
 
 // Explicit allowlist for intentionally public routes.

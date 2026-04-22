@@ -26,12 +26,23 @@ function assertUnauthorized(pathname, authHeader) {
 }
 
 function run() {
-  const originalEnableRbac = process.env.ENABLE_RBAC;
+  const originalEnableApiAuth = process.env.ENABLE_API_AUTH;
   const originalNodeEnv = process.env.NODE_ENV;
 
   try {
     process.env.NODE_ENV = 'test';
-    delete process.env.ENABLE_RBAC;
+    delete process.env.ENABLE_API_AUTH;
+
+    // Default behavior: auth wall is disabled until rollout flag is enabled.
+    const publicRequest = buildRequest('/api/cards');
+    const publicAccess = requireEntitlementForRequest(
+      publicRequest,
+      RESOURCE.CHEDDAR_BOARD,
+    );
+    assert.equal(publicAccess.ok, true, 'default should allow without auth');
+    assert.equal(publicAccess.status, 200, 'default should return 200');
+
+    process.env.ENABLE_API_AUTH = 'true';
 
     assertUnauthorized('/api/cards');
     assertUnauthorized('/api/cards/game-123');
@@ -52,15 +63,25 @@ function run() {
     assert.equal(allowed.ok, true, 'valid token should be accepted');
     assert.equal(allowed.status, 200, 'valid token should return 200');
 
-    delete process.env.ENABLE_RBAC;
-    assertUnauthorized('/api/cards');
+    process.env.ENABLE_API_AUTH = 'false';
+    const disabledAgainRequest = buildRequest('/api/cards');
+    const disabledAgain = requireEntitlementForRequest(
+      disabledAgainRequest,
+      RESOURCE.CHEDDAR_BOARD,
+    );
+    assert.equal(
+      disabledAgain.ok,
+      true,
+      'auth wall disabled should allow after toggle-off',
+    );
+    assert.equal(disabledAgain.status, 200, 'toggle-off should return 200');
 
-    console.log('✅ WI-1124 default-deny entitlement checks passed');
+    console.log('✅ API auth feature-flag gating checks passed');
   } finally {
-    if (originalEnableRbac === undefined) {
-      delete process.env.ENABLE_RBAC;
+    if (originalEnableApiAuth === undefined) {
+      delete process.env.ENABLE_API_AUTH;
     } else {
-      process.env.ENABLE_RBAC = originalEnableRbac;
+      process.env.ENABLE_API_AUTH = originalEnableApiAuth;
     }
 
     if (originalNodeEnv === undefined) {
