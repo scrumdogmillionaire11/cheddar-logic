@@ -2,16 +2,38 @@
  * Input validation and sanitization utilities for API endpoints
  */
 
-// List of allowed keys for query parameters per endpoint
+// List of allowed keys for query parameters per endpoint.
+// Keep this in sync with all performSecurityChecks(...) route paths.
 const ALLOWED_QUERY_PARAMS: Record<string, Set<string>> = {
   '/api/games': new Set(['limit', 'offset', 'sport', 'filter', 'lifecycle']),
-  '/api/cards': new Set(['gameId', 'sport', 'card_type', 'game_id', 'include_expired', 'dedupe', 'limit', 'offset', 'lifecycle']),
-  '/api/cards/[gameId]': new Set(['cardType', 'card_type', 'dedupe', 'limit', 'offset', 'lifecycle']),
+  '/api/cards': new Set([
+    'gameId',
+    'sport',
+    'card_type',
+    'game_id',
+    'include_expired',
+    'dedupe',
+    'limit',
+    'offset',
+    'lifecycle',
+    'date',
+  ]),
+  '/api/cards/[gameId]': new Set([
+    'cardType',
+    'card_type',
+    'dedupe',
+    'limit',
+    'offset',
+    'lifecycle',
+  ]),
   '/api/props': new Set(['gameId', 'limit', 'offset']),
   '/api/props/player-shots': new Set(['limit', 'date']),
   '/api/props/player-blk': new Set(['limit', 'date']),
   '/api/props/pitcher-ks': new Set(['limit', 'date']),
   '/api/auth/token': new Set(['role', 'subscription', 'email', 'userId']),
+  '/api/auth/logout': new Set([]),
+  '/api/performance': new Set(['market', 'days']),
+  '/api/model-outputs': new Set(['sport']),
   '/api/results': new Set([
     'limit',
     'offset',
@@ -21,9 +43,29 @@ const ALLOWED_QUERY_PARAMS: Record<string, Set<string>> = {
     'market',
     'include_orphaned',
     'dedupe',
+    '_diag',
   ]),
-  '/api/team-metrics': new Set(['team', 'sport']),
+  '/api/results/projection-settled': new Set([]),
+  '/api/team-metrics': new Set([
+    'team',
+    'sport',
+    'home_team',
+    'away_team',
+    'include_games',
+    'limit',
+  ]),
+  '/api/admin/model-health': new Set([]),
+  '/api/admin/pipeline-health': new Set([]),
+  '/api/potd': new Set([]),
 };
+
+export function getValidationRegistryPaths(): string[] {
+  return Object.keys(ALLOWED_QUERY_PARAMS).sort();
+}
+
+export function isValidationPathRegistered(path: string): boolean {
+  return Object.prototype.hasOwnProperty.call(ALLOWED_QUERY_PARAMS, path);
+}
 
 export interface ValidationResult {
   valid: boolean;
@@ -82,6 +124,18 @@ export function validateQueryParams(
         errors.push(`${key} must be non-negative`);
       } else if (key === 'limit' && num > 1000) {
         errors.push('limit must be <= 1000');
+      } else {
+        sanitized[key] = num;
+      }
+    }
+
+    // Rolling window parameter for /api/performance
+    if (key === 'days') {
+      const num = parseInt(stringValue, 10);
+      if (isNaN(num)) {
+        errors.push(`${key} must be a number`);
+      } else if (num < 1 || num > 365) {
+        errors.push(`${key} must be between 1 and 365`);
       } else {
         sanitized[key] = num;
       }
