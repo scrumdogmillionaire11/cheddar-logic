@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { checkTokenRouteAllowlist } from '../app/api/auth/token/route.ts';
+import { checkTokenRouteAllowlist } from '../lib/api-security/token-route-allowlist.ts';
 
 function restoreEnv(snapshot) {
   process.env.NODE_ENV = snapshot.NODE_ENV;
