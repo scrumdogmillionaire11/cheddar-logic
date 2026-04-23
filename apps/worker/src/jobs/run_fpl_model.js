@@ -160,6 +160,11 @@ async function runFPLModel() {
   console.log(`[FPLSageAdapter] Starting job run: ${jobRunId}`);
   console.log(`[FPLSageAdapter] Time: ${new Date().toISOString()}`);
 
+  if (process.env.ENABLE_FPL_MODEL === 'false') {
+    console.log('[FPLSageAdapter][FROZEN] FPL Sage model runs are disabled — ENABLE_FPL_MODEL=false. Job will not execute.');
+    return { success: true, frozen: true, reason: 'FPL Sage model disabled (ENABLE_FPL_MODEL=false)' };
+  }
+
   return withDb(async () => {
     try {
       // Start job run

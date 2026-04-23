@@ -156,6 +156,11 @@ async function runNFLModel({ jobKey = null, dryRun = false } = {}) {
   }
   console.log(`[NFLModel] Time: ${new Date().toISOString()}`);
 
+  if (process.env.ENABLE_NFL_MODEL === 'false') {
+    console.log('[NFLModel][FROZEN] NFL betting domain is frozen — ENABLE_NFL_MODEL=false. Job will not execute.');
+    return { success: true, frozen: true, reason: 'NFL betting domain frozen (ENABLE_NFL_MODEL=false)' };
+  }
+
   return withDb(async () => {
     if (jobKey && !shouldRunJobKey(jobKey)) {
       console.log(
