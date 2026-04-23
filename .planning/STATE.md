@@ -4,7 +4,7 @@ milestone: v1.1
 milestone_name: Model Integrity & Betting Execution Hardening
 status: active
 last_updated: "2026-04-21T18:30:00Z"
-last_activity: "2026-04-23 - Completed quick task 173: WI-1143 Unify projection confidence tier"
+last_activity: "2026-04-23 - Completed quick task 174: WI-1139 Add Frozen-Domain Fail-Closed Runtime Guards NFL and FPL Sage"
 ---
 
 # Project State
@@ -215,6 +215,7 @@ Notable: WI-0797 (pipeline health Discord watchdog), WI-0798 (NHL season key fix
 
 | # | Description | Date | Commit | Directory |
 |---|-------------|------|--------|-----------|
+| 174 | WI-1139 Add Frozen-Domain Fail-Closed Runtime Guards NFL and FPL Sage | 2026-04-23 | 5ad9ea44 | [174-wi-1139-add-frozen-domain-fail-closed-ru](./quick/174-wi-1139-add-frozen-domain-fail-closed-ru/) |
 | 173 | WI-1143 Unify projection confidence tier — ConfidenceTier type + normalizeToConfidenceTier, confidenceTier field on ProjectionProxyRow | 2026-04-23 | 55b3f9c0 | [173-wi-1143-unify-projection-confidence-tier](./quick/173-wi-1143-unify-projection-confidence-tier/) |
 | 172 | WI-1138 Retire dual-DB runtime paths | 2026-04-23 | 5e2170c0 | [172-wi-1138-retire-dual-db-runtime-paths](./quick/172-wi-1138-retire-dual-db-runtime-paths/) |
 | 171 | WI-1135: Decompose API Results Route And Isolate Reporting Workloads | 2026-04-23 | e0a6b433 | [171-wi-1135-decompose-api-results-route-and-](./quick/171-wi-1135-decompose-api-results-route-and-/) |
