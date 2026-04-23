@@ -1,22 +1,29 @@
 /*
  * Verifies /api/games and transform preserve precise missing-data root causes.
- * Run (from repo root): cd web && node --import tsx/esm src/__tests__/api-games-missing-data-contract.test.js
+ * Run (from repo root): node web/src/__tests__/api-games-missing-data-contract.test.js
  */
 
 import assert from 'node:assert';
 import fs from 'node:fs';
 import path from 'node:path';
-import {
+
+const __dirname = new URL('.', import.meta.url).pathname.replace(/\/$/, '');
+process.chdir(path.resolve(__dirname, '../..'));
+await import('tsx/esm');
+const {
   dedupeProjectionSurfacePlays,
   selectAuthoritativeTruePlay,
   mergeMlbGameLineFallbackRows,
-} from '../lib/games/route-handler.js';
-const __dirname = new URL('.', import.meta.url).pathname.replace(/\/$/, '');
+} = await import('../lib/games/route-handler.ts');
 
 const gamesRoutePath = path.resolve(__dirname, '../../src/app/api/games/route.ts');
 const gamesRouteHandlerPath = path.resolve(
   __dirname,
   '../../src/lib/games/route-handler.ts',
+);
+const gamesPerfMetricsPath = path.resolve(
+  __dirname,
+  '../../src/lib/games/perf-metrics.ts',
 );
 const cardsPagePath = path.resolve(__dirname, '../../src/components/cards/CardsPageContext.tsx');
 const passClassificationPath = path.resolve(
@@ -26,6 +33,7 @@ const passClassificationPath = path.resolve(
 
 const gamesRouteSource = fs.readFileSync(gamesRoutePath, 'utf8');
 const gamesRouteHandlerSource = fs.readFileSync(gamesRouteHandlerPath, 'utf8');
+const gamesPerfMetricsSource = fs.readFileSync(gamesPerfMetricsPath, 'utf8');
 const cardsPageSource = fs.readFileSync(cardsPagePath, 'utf8');
 const passClassificationSource = fs.readFileSync(passClassificationPath, 'utf8');
 
@@ -55,6 +63,22 @@ function buildMlbFallbackPayload(overrides = {}) {
 assert(
   gamesRouteSource.includes("export { GET } from '@/lib/games/route-handler';"),
   '/api/games route.ts should delegate to the shared route-handler implementation',
+);
+
+assert(
+  gamesRouteHandlerSource.includes("from './query-layer'") &&
+    gamesRouteHandlerSource.includes("from './service-layer'") &&
+    gamesRouteHandlerSource.includes("from './transform-layer'") &&
+    gamesRouteHandlerSource.includes("from './perf-metrics'"),
+  '/api/games route-handler should orchestrate through query, service, transform, and perf metric modules',
+);
+
+assert(
+  gamesPerfMetricsSource.includes("'games.query.ms'") &&
+    gamesPerfMetricsSource.includes("'games.service.ms'") &&
+    gamesPerfMetricsSource.includes("'games.transform.ms'") &&
+    gamesRouteHandlerSource.includes('stage_metrics: normalizeGamesStageMetrics'),
+  '/api/games should emit deterministic query/service/transform stage metric keys',
 );
 
 assert(
@@ -568,3 +592,4 @@ assert(
 );
 
 console.log('✅ API games missing-data contract tests passed');
+process.exit(0);

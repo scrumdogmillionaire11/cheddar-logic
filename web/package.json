@@ -45,6 +45,8 @@
     "test:api:rate-limiter-trusted-proxy": "node --import tsx/esm src/__tests__/rate-limiter-trusted-proxy.test.js",
     "test:api:auth:token-allowlist": "node --import tsx/esm src/__tests__/api-auth-token-allowlist.test.js",
     "test:api:audit-log-redaction": "node --import tsx/esm src/__tests__/api-audit-log-redaction.test.js",
+    "test:api:healthz": "node --import tsx/esm src/__tests__/api-healthz.test.js",
+    "test:api:readyz": "node --import tsx/esm src/__tests__/api-readyz.test.js",
     "test:ci:smoke": "npm run test:ui:results && npm run test:api:games:market && npm run test:api:games:repair-budget && npm run test:api:nhl-contract && npm run test:api:results:decision-segmentation"
   },
   "dependencies": {

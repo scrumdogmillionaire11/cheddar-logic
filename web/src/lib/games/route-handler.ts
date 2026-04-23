@@ -114,8 +114,6 @@ import {
   ACTIVE_SPORT_CARD_TYPE_CONTRACT,
   inferMarketFromCardType,
   applyCardTypeKindContract,
-  isCanonicalTotalsCallPlay,
-  isFallbackEvidenceTotalProjectionPlay,
   isWave1EligibleRow,
   deriveNhl1PModelCall,
   normalizeDecisionV2,
@@ -144,10 +142,21 @@ import {
   getRunStatus,
 } from '@/lib/games/validators';
 import {
-  toSqlUtc,
   getTableColumnNames,
   buildOptionalOddsSelect,
 } from '@/lib/games/query-builder';
+import {
+  createGamesStageMetrics,
+  createGamesStageTracker,
+  normalizeGamesStageMetrics,
+  type GamesStageMetricRecord,
+} from './perf-metrics';
+import {
+  resolveGamesQueryStartUtc,
+  resolveGamesQueryWindow,
+} from './query-layer';
+import { prepareGamesServiceRows } from './service-layer';
+import { emitTotalProjectionDriftWarnings } from './transform-layer';
 import { isProjectionSurfaceCardType } from '@/lib/games/projection-surface';
 import {
   resolveMlbFallbackOfficialStatus,
@@ -218,7 +227,6 @@ const API_GAMES_HORIZON_HOURS = Number.isFinite(RAW_API_GAMES_HORIZON_HOURS)
   : 36;
 const HAS_API_GAMES_HORIZON = API_GAMES_HORIZON_HOURS > 0;
 const API_GAMES_INGEST_FAILURE_LOOKBACK_HOURS = 12;
-const TOTAL_PROJECTION_DRIFT_WARN_THRESHOLD = 0.5;
 const RAW_API_GAMES_TIMEOUT_MS = Number.parseInt(
   process.env.API_GAMES_TIMEOUT_MS || '5000',
   10,
@@ -241,7 +249,7 @@ const API_GAMES_BUSY_TIMEOUT_MS =
     ? Math.max(250, API_GAMES_TIMEOUT_MS - 250)
     : API_GAMES_TIMEOUT_MS;
 
-interface GameRow {
+export interface GameRow {
   id: string;
   game_id: string;
   sport: string;
@@ -310,8 +318,8 @@ interface GameRow {
   ingest_failure_reason_detail: string | null;
 }
 
-type LifecycleMode = 'pregame' | 'active';
-type DisplayStatus = 'SCHEDULED' | 'ACTIVE';
+export type LifecycleMode = 'pregame' | 'active';
+export type DisplayStatus = 'SCHEDULED' | 'ACTIVE';
 
 const ACTIVE_EXCLUDED_STATUSES = [
   'POSTPONED',
@@ -362,7 +370,7 @@ interface CardPayloadRow {
   created_at: string;
 }
 
-interface Play {
+export interface Play {
   source_card_id?: string;
   cardType: string;
   cardTitle: string;
@@ -1103,6 +1111,7 @@ type GamesResponseMeta = {
   timeout_fallback: boolean;
   timeout_stage?: GamesTimeoutStage;
   cache_age_ms?: number | null;
+  stage_metrics: GamesStageMetricRecord;
   perf_ms?:
     | {
         total: number;
@@ -1111,6 +1120,7 @@ type GamesResponseMeta = {
         cards_query: number;
         cards_parse: number;
         card_rows: number;
+        stage_metrics: GamesStageMetricRecord;
       }
     | undefined;
   diagnostics?: Record<string, unknown> | undefined;
@@ -1128,6 +1138,7 @@ type GamesPerf = {
   cardsParseMs: number;
   cardRows: number;
   totalMs: number;
+  stageMetrics: GamesStageMetricRecord;
 };
 type GamesPayloadCacheEntry = {
   payload: GamesResponsePayload;
@@ -1354,6 +1365,7 @@ export function buildGamesSuccessPayload(params: {
       timeout_fallback: params.timeoutFallback ?? false,
       timeout_stage: params.timeoutStage,
       cache_age_ms: params.cacheAgeMs ?? null,
+      stage_metrics: normalizeGamesStageMetrics(params.perf.stageMetrics),
       perf_ms: params.isDev
         ? {
             total: params.perf.totalMs,
@@ -1362,6 +1374,7 @@ export function buildGamesSuccessPayload(params: {
             cards_query: params.perf.cardsQueryMs,
             cards_parse: params.perf.cardsParseMs,
             card_rows: params.perf.cardRows,
+            stage_metrics: normalizeGamesStageMetrics(params.perf.stageMetrics),
           }
         : undefined,
       diagnostics: params.diagnostics,
@@ -1410,6 +1423,7 @@ export function buildGamesTimeoutFallbackPayload(params: {
       timeout_fallback: true,
       timeout_stage: params.timeoutStage,
       cache_age_ms: cacheAgeMs,
+      stage_metrics: normalizeGamesStageMetrics(params.perf.stageMetrics),
       perf_ms: params.isDev
         ? {
             total: params.perf.totalMs,
@@ -1418,41 +1432,11 @@ export function buildGamesTimeoutFallbackPayload(params: {
             cards_query: params.perf.cardsQueryMs,
             cards_parse: params.perf.cardsParseMs,
             card_rows: params.perf.cardRows,
+            stage_metrics: normalizeGamesStageMetrics(params.perf.stageMetrics),
           }
         : undefined,
     },
   };
-}
-
-function emitTotalProjectionDriftWarnings(
-  games: Array<{ gameId: string; sport: string; plays: Play[] }>,
-): void {
-  if (process.env.NODE_ENV === 'test') return;
-  for (const game of games) {
-    const canonicalPlay = game.plays.find(isCanonicalTotalsCallPlay);
-    const fallbackPlay = game.plays.find(isFallbackEvidenceTotalProjectionPlay);
-    if (!canonicalPlay || !fallbackPlay) continue;
-
-    const canonicalProjectedTotal = canonicalPlay.projectedTotal as number;
-    const fallbackProjectedTotal = fallbackPlay.projectedTotal as number;
-    const delta = Math.abs(canonicalProjectedTotal - fallbackProjectedTotal);
-    if (delta <= TOTAL_PROJECTION_DRIFT_WARN_THRESHOLD) continue;
-
-    console.warn('[API] /api/games total projection drift warning', {
-      game_id: game.gameId,
-      sport: game.sport,
-      threshold: TOTAL_PROJECTION_DRIFT_WARN_THRESHOLD,
-      delta: Number(delta.toFixed(2)),
-      canonical: {
-        card_type: canonicalPlay.cardType,
-        projected_total: canonicalProjectedTotal,
-      },
-      fallback: {
-        card_type: fallbackPlay.cardType,
-        projected_total: fallbackProjectedTotal,
-      },
-    });
-  }
 }
 
 function normalizeDecisionBasisToken(
@@ -1686,7 +1670,9 @@ export async function GET(request: NextRequest) {
     cardsParseMs: 0,
     cardRows: 0,
     totalMs: 0,
+    stageMetrics: createGamesStageMetrics(),
   };
+  const stageTracker = createGamesStageTracker(perf.stageMetrics);
   const isDev = process.env.NODE_ENV !== 'production';
   let currentStage: GamesTimeoutStage = 'db_ready';
   let lifecycleMode: LifecycleMode = 'pregame';
@@ -1703,6 +1689,7 @@ export async function GET(request: NextRequest) {
       return securityCheck.error!;
     }
 
+    stageTracker.enter('query');
     currentStage = 'db_ready';
     const dbReadyStartedAt = Date.now();
     await ensureDbReady();
@@ -1741,7 +1728,9 @@ export async function GET(request: NextRequest) {
 
     if (!hasGamesTable) {
       // Database is not initialized - return empty data
+      stageTracker.enter('transform');
       perf.totalMs = Date.now() - requestStartedAt;
+      stageTracker.finish();
       const payload = buildGamesSuccessPayload({
         data: [],
         currentRunId,
@@ -1773,66 +1762,25 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    // Compute midnight America/New_York as a UTC string for the SQL param.
-    // en-CA locale gives YYYY-MM-DD; shortOffset gives "GMT-5" / "GMT-4" (DST-aware).
     const now = new Date();
-    const nowUtc = toSqlUtc(now);
-    const etDateStr = new Intl.DateTimeFormat('en-CA', {
-      timeZone: 'America/New_York',
-    }).format(now); // e.g. "2026-02-28"
-    const tzPart = new Intl.DateTimeFormat('en-US', {
-      timeZone: 'America/New_York',
-      timeZoneName: 'shortOffset',
-    })
-      .formatToParts(now)
-      .find((p) => p.type === 'timeZoneName')!.value; // e.g. "GMT-5"
-    const offsetHours = parseInt(tzPart.replace('GMT', '') || '-5', 10);
-    const sign = offsetHours < 0 ? '-' : '+';
-    const absHours = Math.abs(offsetHours).toString().padStart(2, '0');
-    const localMidnight = new Date(
-      `${etDateStr}T00:00:00${sign}${absHours}:00`,
-    );
-    // Truncate to seconds — SQLite datetime() strips sub-second precision, so
-    // "05:00:00.000" would be > "05:00:00" and exclude games at exactly midnight.
-    const todayUtc = localMidnight
-      .toISOString()
-      .substring(0, 19)
-      .replace('T', ' ');
-
     const isNonProd = isDev;
-    const shouldUseDevLookback =
-      isNonProd &&
-      ENABLE_DEV_PAST_GAMES &&
-      Number.isFinite(DEV_GAMES_LOOKBACK_HOURS) &&
-      DEV_GAMES_LOOKBACK_HOURS > 0;
-
-    const lookbackUtc = shouldUseDevLookback
-      ? new Date(now.getTime() - DEV_GAMES_LOOKBACK_HOURS * 60 * 60 * 1000)
-          .toISOString()
-          .substring(0, 19)
-          .replace('T', ' ')
-      : null;
-
-    const gamesStartUtc = lookbackUtc ?? todayUtc;
-    // Active mode uses a rolling 36h lookback so late-night games that started
-    // before today's ET midnight boundary remain visible while in progress.
-    // Pregame mode keeps using todayUtc (already-started games shouldn't appear
-    // as pregame picks anyway).
-    const ACTIVE_LOOKBACK_HOURS = Number(
-      process.env.ACTIVE_GAMES_LOOKBACK_HOURS || 36,
-    );
-    const activeStartUtc =
-      lookbackUtc ??
-      new Date(now.getTime() - ACTIVE_LOOKBACK_HOURS * 60 * 60 * 1000)
-        .toISOString()
-        .substring(0, 19)
-        .replace('T', ' ');
-    const gamesEndUtc = HAS_API_GAMES_HORIZON
-      ? new Date(now.getTime() + API_GAMES_HORIZON_HOURS * 60 * 60 * 1000)
-          .toISOString()
-          .substring(0, 19)
-          .replace('T', ' ')
-      : null;
+    const queryWindow = resolveGamesQueryWindow({
+      now,
+      lifecycleMode,
+      isDev: isNonProd,
+      enableDevPastGames: ENABLE_DEV_PAST_GAMES,
+      devLookbackHours: DEV_GAMES_LOOKBACK_HOURS,
+      hasApiGamesHorizon: HAS_API_GAMES_HORIZON,
+      apiGamesHorizonHours: API_GAMES_HORIZON_HOURS,
+    });
+    const {
+      nowUtc,
+      lookbackUtc,
+      gamesStartUtc,
+      activeStartUtc,
+      gamesEndUtc,
+      shouldUseDevLookback,
+    } = queryWindow;
 
     const lifecycleSql =
       lifecycleMode === 'active'
@@ -2238,8 +2186,11 @@ export async function GET(request: NextRequest) {
     // Active mode uses activeStartUtc (36h rolling lookback) so games started
     // before today's ET midnight boundary stay visible while in progress.
     // Pregame mode continues using gamesStartUtc (today midnight ET).
-    const initialStartUtc =
-      lifecycleMode === 'active' ? activeStartUtc : gamesStartUtc;
+    const initialStartUtc = resolveGamesQueryStartUtc({
+      lifecycleMode,
+      activeStartUtc,
+      gamesStartUtc,
+    });
     rows = loadGamesWithLatestOdds(initialStartUtc, gamesEndUtc);
 
     if (isNonProd && rows.length === 0 && !shouldUseDevLookback) {
@@ -2497,6 +2448,7 @@ function mergePropFallbackRows(params: {
       // evidence and is intentionally excluded from live authority selection.
 
       perf.cardRows = cardRows.length;
+      stageTracker.enter('service');
       currentStage = 'cards_parse';
       const cardsParseStartedAt = Date.now();
 
@@ -3976,6 +3928,8 @@ function mergePropFallbackRows(params: {
       }
     }
 
+    stageTracker.enter('service');
+
     for (const [sport, marketMap] of gamesWithPlayableMarkets.entries()) {
       const allGames = new Set<string>();
       for (const [market, gameIdsForMarket] of marketMap.entries()) {
@@ -3999,86 +3953,19 @@ function mergePropFallbackRows(params: {
       );
     }
 
-    const pregameRowsDroppedNoOddsNoPlays =
-      lifecycleMode === 'pregame'
-        ? rows.reduce((count, row) => {
-            const hasOdds =
-              row.h2h_home !== null ||
-              row.h2h_away !== null ||
-              row.total !== null ||
-              row.spread_home !== null ||
-              row.spread_away !== null;
-            const hasPlays = (playsMap.get(row.game_id)?.length ?? 0) > 0;
-            const hasIngestFailure = Boolean(row.ingest_failure_reason_code);
-            return !hasOdds && !hasPlays && !hasIngestFailure ? count + 1 : count;
-          }, 0)
-        : 0;
+    // Service layer keeps rows where hasOdds || hasPlays || hasIngestFailure,
+    // then deduplicates byMatchup using odds_captured_at recency.
+    const {
+      responseRows,
+      deduplicatedRows,
+      pregameRowsDroppedNoOddsNoPlays,
+    } = prepareGamesServiceRows({
+      rows,
+      lifecycleMode,
+      playsMap,
+    });
 
-    const responseRows =
-      lifecycleMode === 'pregame'
-        ? rows.filter((row) => {
-            const hasOdds =
-              row.h2h_home !== null ||
-              row.h2h_away !== null ||
-              row.total !== null ||
-              row.spread_home !== null ||
-              row.spread_away !== null;
-            const hasPlays = (playsMap.get(row.game_id)?.length ?? 0) > 0;
-            const hasIngestFailure = Boolean(row.ingest_failure_reason_code);
-            return hasOdds || hasPlays || hasIngestFailure;
-          })
-        : rows;
-
-    // Deduplicate: when the schedule ingest seeds games with one game_id and the
-    // odds ingest later creates a second game_id for the same real-world matchup
-    // (same sport + teams + calendar date), both rows survive the filter above —
-    // the stale seed via old card_payloads, the new row via fresh odds.
-    // Resolution: keep the row with the most recent odds_captured_at; merge the
-    // loser's playsMap entries onto the winner so its card decisions are preserved.
-    const deduplicatedRows = (() => {
-      const byMatchup = new Map<string, GameRow[]>();
-      for (const row of responseRows) {
-        const key = `${row.sport}|${row.away_team.toUpperCase()}|${row.home_team.toUpperCase()}|${row.game_time_utc.substring(0, 10)}`;
-        const bucket = byMatchup.get(key);
-        if (bucket) {
-          bucket.push(row);
-        } else {
-          byMatchup.set(key, [row]);
-        }
-      }
-
-      const result: GameRow[] = [];
-      for (const group of byMatchup.values()) {
-        if (group.length === 1) {
-          result.push(group[0]);
-          continue;
-        }
-        // Sort: row with most recent odds first; fall back to created_at
-        group.sort((a, b) => {
-          const aKey = a.odds_captured_at ?? a.created_at;
-          const bKey = b.odds_captured_at ?? b.created_at;
-          return bKey < aKey ? -1 : bKey > aKey ? 1 : 0;
-        });
-        const winner = group[0];
-        // Merge playsMap entries from each loser onto the winner
-        for (let i = 1; i < group.length; i++) {
-          const loserId = group[i].game_id;
-          const loserPlays = playsMap.get(loserId);
-          if (loserPlays && loserPlays.length > 0) {
-            const winnerPlays = playsMap.get(winner.game_id);
-            if (winnerPlays) {
-              winnerPlays.push(...loserPlays);
-            } else {
-              playsMap.set(winner.game_id, [...loserPlays]);
-            }
-            playsMap.delete(loserId);
-          }
-        }
-        result.push(winner);
-      }
-      return result;
-    })();
-
+    stageTracker.enter('transform');
     currentStage = 'response_build';
     const data = buildGamesResponseData(deduplicatedRows, lifecycleMode, {
       gameConsistencyMap,
@@ -4193,6 +4080,7 @@ function mergePropFallbackRows(params: {
       });
     }
 
+    stageTracker.finish();
     const payload = buildGamesSuccessPayload({
       data,
       currentRunId,
@@ -4216,12 +4104,14 @@ function mergePropFallbackRows(params: {
     response.headers.set('X-Games-Count', String(Array.isArray(payload?.data) ? payload.data.length : 0));
     return addRateLimitHeaders(response, request);
   } catch (error) {
+    stageTracker.finish();
     perf.totalMs = Date.now() - requestStartedAt;
     if (
       !isNonRecoverableGamesDbError(error) &&
       isRecoverableGamesTimeoutError(error)
     ) {
       const timeoutStage = deriveTimeoutStage(error, currentStage);
+      stageTracker.enter('transform');
       const fallbackPayload = buildGamesTimeoutFallbackPayload({
         rows,
         lifecycleMode,
@@ -4232,7 +4122,15 @@ function mergePropFallbackRows(params: {
         cacheEntry: cacheKey ? lastGoodGamesPayloadCache.get(cacheKey) : null,
         isDev,
       });
+      stageTracker.finish();
       if (fallbackPayload) {
+        fallbackPayload.meta.stage_metrics = normalizeGamesStageMetrics(
+          perf.stageMetrics,
+        );
+        if (fallbackPayload.meta.perf_ms) {
+          fallbackPayload.meta.perf_ms.stage_metrics =
+            fallbackPayload.meta.stage_metrics;
+        }
         console.warn('[API] /api/games timeout fallback', {
           response_mode: fallbackPayload.meta.response_mode,
           timeout_stage: timeoutStage,

@@ -283,3 +283,16 @@ Plans:
 
 Plans:
 - [ ] WI-1134-01-PLAN.md — Interface-first decomposition of games route handler into query/service/transform layers + stage budget instrumentation + regression verification (Wave 1)
+
+---
+
+### Phase: WI-1135 — Decompose API Results Route And Isolate Reporting Workloads
+
+**Goal**: Decompose `/api/results` route execution into explicit query, transform, and cache layers while keeping diagnostic-only expensive workloads gated and preserving default response contracts.
+
+**Requirements:** [WI-1135-API-01, WI-1135-PERF-01, WI-1135-REG-01]
+
+**Plans:** 1 plan in 1 wave
+
+Plans:
+- [ ] WI-1135-01-PLAN.md — Interface-first decomposition of results route into query/transform/cache layers + explicit diagnostics gating + regression verification (Wave 1)

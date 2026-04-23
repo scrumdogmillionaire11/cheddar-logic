@@ -42,7 +42,7 @@ export const SECURITY_CONFIG = {
 };
 
 // Explicit allowlist for intentionally public routes.
-export const PUBLIC_ROUTES = new Set<string>(['/wedge', '/fpl']);
+export const PUBLIC_ROUTES = new Set<string>(['/wedge', '/fpl', '/api/healthz', '/api/readyz']);
 
 export function isPublicRoute(pathname: string): boolean {
   return PUBLIC_ROUTES.has(pathname);
