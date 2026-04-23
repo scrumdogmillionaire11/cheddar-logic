@@ -130,7 +130,7 @@ console.log(latest.h2h_home); // -120
 ```
 
 ### model_outputs
-Inference outputs from sport models (NHL, NBA, FPL). Each row is a point-in-time model prediction.
+Inference outputs from betting sport models (NHL, NBA, MLB, NFL). Also includes FPL rows written via shared-contract compatibility shim (FPL Sage output). FPL is not a betting sport — rows with sport='FPL' originate from FPL Sage, not from a betting model.
 
 ```sql
 id TEXT PRIMARY KEY

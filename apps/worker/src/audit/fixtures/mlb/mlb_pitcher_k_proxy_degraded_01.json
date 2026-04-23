@@ -51,7 +51,7 @@
   "_baseline_change_note": {
     "changed_by": "codex",
     "reason": "WI-0747 — new FALLBACK fixture representing whiff-proxy + missing opponent contact. Validates INV-007 proxy-exclusion rule.",
-    "approved_at": "2026-04-03T00:00:00Z"
+    "approved_at": "2026-04-23T00:00:00Z"
   },
   "baseline_reviewed": true
 }

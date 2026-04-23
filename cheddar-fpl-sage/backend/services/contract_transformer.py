@@ -142,7 +142,9 @@ def _build_transfer_recommendations(results: Dict[str, Any]) -> List[Dict[str, A
         return recommendations
 
     # Compatibility fallback: use pre-transformed transfer list if canonical plans are unavailable.
-    transfer_recs = results.get("transfer_recommendations") or []
+    transfer_recs = results.get("transfer_recommendations")
+    if not isinstance(transfer_recs, list):
+        transfer_recs = []
     for index, transfer in enumerate(transfer_recs, start=1):
         action_raw = str(transfer.get("action", "")).upper()
         action = "remove" if action_raw == "OUT" else "add" if action_raw == "IN" else str(transfer.get("action", "add")).lower()
@@ -166,7 +168,7 @@ def _build_transfer_recommendations(results: Dict[str, Any]) -> List[Dict[str, A
             recommendation["expected_points"] = _extract_expected_points(transfer)
             recommendation["expected_points_gained"] = transfer.get("expected_points_gained")
         recommendations.append(recommendation)
-    return recommendations
+    return recommendations or []
 
 
 def _build_chip_strategy(results: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
@@ -209,7 +211,7 @@ def _build_chip_strategy(results: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
             "best_window_gw": best_gw,
         },
     }
-    return chips
+    return chips or {}
 
 
 def _build_captain_recommendation(results: Dict[str, Any]) -> Dict[str, Any]:
@@ -218,33 +220,33 @@ def _build_captain_recommendation(results: Dict[str, Any]) -> Dict[str, Any]:
     vice = captain_metrics.get("vice_captain") if isinstance(captain_metrics.get("vice_captain"), dict) else (results.get("vice_captain") or {})
     return {
         "primary": {
-            "player_id": primary.get("player_id"),
-            "player_name": primary.get("name"),
-            "expected_points": _extract_expected_points(primary),
-            "ownership": primary.get("ownership_pct"),
-            "form": primary.get("form_avg"),
-            "fixture": primary.get("fixture"),
-            "fixture_difficulty": primary.get("fixture_difficulty"),
-            "confidence": primary.get("confidence") or 0.85,
-            "rationale": primary.get("rationale"),
+            "player_id": primary.get("player_id") if primary else None,
+            "player_name": primary.get("name") if primary else None,
+            "expected_points": _extract_expected_points(primary) if primary else None,
+            "ownership": primary.get("ownership_pct") if primary else None,
+            "form": primary.get("form_avg") if primary else None,
+            "fixture": primary.get("fixture") if primary else None,
+            "fixture_difficulty": primary.get("fixture_difficulty") if primary else None,
+            "confidence": primary.get("confidence") if primary else 0.85,
+            "rationale": primary.get("rationale") if primary else None,
         },
         "vice": {
-            "player_id": vice.get("player_id"),
-            "player_name": vice.get("name"),
-            "expected_points": _extract_expected_points(vice),
-            "ownership": vice.get("ownership_pct"),
-            "form": vice.get("form_avg"),
-            "fixture": vice.get("fixture"),
-            "fixture_difficulty": vice.get("fixture_difficulty"),
-            "confidence": vice.get("confidence") or 0.75,
-            "rationale": vice.get("rationale"),
+            "player_id": vice.get("player_id") if vice else None,
+            "player_name": vice.get("name") if vice else None,
+            "expected_points": _extract_expected_points(vice) if vice else None,
+            "ownership": vice.get("ownership_pct") if vice else None,
+            "form": vice.get("form_avg") if vice else None,
+            "fixture": vice.get("fixture") if vice else None,
+            "fixture_difficulty": vice.get("fixture_difficulty") if vice else None,
+            "confidence": vice.get("confidence") if vice else 0.75,
+            "rationale": vice.get("rationale") if vice else None,
         },
-    }
+    } or {}
 
 
 def _build_team_weaknesses(results: Dict[str, Any]) -> List[Dict[str, Any]]:
     weaknesses: List[Dict[str, Any]] = []
-    squad_metrics = _card_metrics(results, "squad_state")
+    squad_metrics = _card_metrics(results, "squad_state") or {}
     squad_health = squad_metrics.get("squad_health") if isinstance(squad_metrics.get("squad_health"), dict) else (results.get("squad_health") or {})
     injured = int(squad_health.get("injured", 0) or 0)
     doubtful = int(squad_health.get("doubtful", 0) or 0)
@@ -276,12 +278,12 @@ def _build_team_weaknesses(results: Dict[str, Any]) -> List[Dict[str, Any]]:
                 "severity": "MEDIUM",
             }
         )
-    return weaknesses
+    return weaknesses or []
 
 
 def _build_risk_flags(results: Dict[str, Any]) -> List[Dict[str, Any]]:
     risk_flags: List[Dict[str, Any]] = []
-    for item in results.get("risk_scenarios") or []:
+    for item in (results.get("risk_scenarios") or []):
         scenario = item.get("scenario") or "unknown_risk"
         risk_flags.append(
             {
@@ -293,7 +295,7 @@ def _build_risk_flags(results: Dict[str, Any]) -> List[Dict[str, Any]]:
             }
         )
 
-    weekly_review_metrics = _card_metrics(results, "weekly_review")
+    weekly_review_metrics = _card_metrics(results, "weekly_review") or {}
     drift_flags = weekly_review_metrics.get("drift_flags")
     if isinstance(drift_flags, list):
         for drift in drift_flags:
@@ -308,7 +310,7 @@ def _build_risk_flags(results: Dict[str, Any]) -> List[Dict[str, Any]]:
                         "mitigation": None,
                     }
                 )
-    return risk_flags
+    return risk_flags or []
 
 
 def _summary_confidence(results: Dict[str, Any]) -> float:

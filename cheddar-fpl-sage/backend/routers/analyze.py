@@ -2,7 +2,7 @@
 Analyze endpoints for FPL Sage API.
 Handles triggering analysis and retrieving results.
 """
-from typing import Optional, Dict
+from typing import Optional, Dict, Any, List
 from fastapi import APIRouter, BackgroundTasks, HTTPException, status, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
 import logging
@@ -92,6 +92,68 @@ def _cached_result_meets_fpl_contract(payload: Optional[Dict]) -> bool:
             return False
 
     return True
+
+
+def _titleize_token(value: Any) -> Optional[str]:
+    token = str(value or "").strip()
+    if not token:
+        return None
+    return token.replace("_", " ").replace("-", " ").title()
+
+
+def _followed_label(value: Any, positive: str, negative: str) -> Optional[str]:
+    if value is True:
+        return positive
+    if value is False:
+        return negative
+    return None
+
+
+def _weekly_report_card_payload(weekly_review: Any) -> Optional[Dict[str, Any]]:
+    """Flatten the retrospective card into the frontend's legacy weekly report shape."""
+    if not isinstance(weekly_review, dict):
+        return None
+
+    metrics = weekly_review.get("metrics")
+    if not isinstance(metrics, dict):
+        metrics = {}
+
+    history_available = bool(metrics.get("history_available"))
+    has_any_signal = any(
+        metrics.get(key) is not None
+        for key in ["previous_gw", "points", "points_delta", "rank", "rank_delta"]
+    )
+    if not history_available and not has_any_signal:
+        return None
+
+    drift_flags = metrics.get("drift_flags")
+    if not isinstance(drift_flags, list):
+        drift_flags = []
+
+    scenario_notes = weekly_review.get("highlights")
+    if not isinstance(scenario_notes, list):
+        scenario_notes = []
+
+    return {
+        "gameweek": metrics.get("previous_gw"),
+        "expected_pts": None,
+        "actual_pts": metrics.get("points"),
+        "captain_accuracy": _followed_label(
+            metrics.get("captain_followed"),
+            "Followed recommendation",
+            "Ignored recommendation",
+        ),
+        "transfer_quality": _followed_label(
+            metrics.get("recommendation_followed"),
+            "Followed recommendation",
+            "Ignored recommendation",
+        ),
+        "missed_opportunities": [],
+        "profile_adherence": _titleize_token(metrics.get("process_verdict")),
+        "drift_flags": [str(flag) for flag in drift_flags if flag is not None],
+        "verdict": weekly_review.get("summary"),
+        "scenario_notes": [str(note) for note in scenario_notes if note is not None],
+    }
 
 
 @router.post(
@@ -568,6 +630,18 @@ async def get_detailed_projections(analysis_id: str):
     
     # Extract detailed data from results
     results = job.results or {}
+    weekly_report_card = _weekly_report_card_payload(results.get("weekly_review"))
+    scenario_notes: List[str] = []
+    if isinstance(results.get("scenario_notes"), list):
+        scenario_notes.extend(
+            str(note) for note in results.get("scenario_notes", []) if note is not None
+        )
+    if weekly_report_card and isinstance(weekly_report_card.get("scenario_notes"), list):
+        scenario_notes.extend(
+            str(note) for note in weekly_report_card.get("scenario_notes", []) if note is not None
+        )
+    if not scenario_notes:
+        scenario_notes = None
     
     # Build detailed response - use all transformed result keys
     response = DetailedAnalysisResponse(
@@ -576,9 +650,17 @@ async def get_detailed_projections(analysis_id: str):
         current_gw=results.get("current_gw"),
         overall_rank=results.get("overall_rank"),
         overall_points=results.get("overall_points"),
+        free_transfers=results.get("free_transfers"),
+        risk_posture=results.get("risk_posture"),
         
         # Primary decision
         primary_decision=results.get("primary_decision", "HOLD"),
+        decision_status=results.get("decision_status"),
+        decision_state=results.get("decision_state"),
+        critical_failure_reason=results.get("critical_failure_reason"),
+        chip_instruction=results.get("chip_instruction"),
+        recovery_plan=results.get("recovery_plan"),
+        structural_weakness_summary=results.get("structural_weakness_summary"),
         confidence=results.get("confidence", "MEDIUM"),
         reasoning=results.get("reasoning", "Analysis complete"),
         strategy_mode=results.get("strategy_mode"),
@@ -612,6 +694,11 @@ async def get_detailed_projections(analysis_id: str):
         fixture_planner_reason=results.get("fixture_planner_reason"),
         available_chips=results.get("available_chips", []),
         squad_health=results.get("squad_health"),
+        weekly_report_card=weekly_report_card,
+        confidence_band=results.get("confidence_band"),
+        relative_risk=results.get("relative_risk"),
+        explainability=results.get("explainability"),
+        scenario_notes=scenario_notes,
     )
     
     return response

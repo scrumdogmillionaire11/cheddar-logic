@@ -39,7 +39,7 @@
   "_baseline_change_note": {
     "changed_by": "codex",
     "reason": "First baseline lock accepts the current audit runner's normalized market_type=UNKNOWN for this projection-only MLB pitcher-K fixture.",
-    "approved_at": "2026-04-02T16:50:32Z"
+    "approved_at": "2026-04-23T00:00:00Z"
   },
   "baseline_reviewed": true
 }

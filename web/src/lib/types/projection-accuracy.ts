@@ -99,3 +99,61 @@ export interface ProjectionAccuracyResponse {
   marketHealth: ProjectionAccuracyMarketHealth[];
   rows: ProjectionAccuracyRecord[];
 }
+
+// ---------------------------------------------------------------------------
+// WI-1143: Canonical confidence tier type and normalizer
+// ---------------------------------------------------------------------------
+
+/**
+ * Single canonical confidence tier emitted at the API read boundary.
+ * Consumers receive exactly one of these three values — no legacy vocabulary
+ * leaks into the API contract.
+ */
+export type ConfidenceTier = 'LOW' | 'MED' | 'HIGH';
+
+/**
+ * Normalize any confidence band / bucket value (including legacy vocabulary)
+ * to the canonical {LOW, MED, HIGH} tier.
+ *
+ * Priority order:
+ *  a. Canonical value already in {HIGH, MED, LOW} — return it directly.
+ *  b. Legacy vocabulary mapping: STRONG→HIGH, TRUST→MED, WATCH→LOW.
+ *  c. Confidence score fallback (0–100 scale): >=70 HIGH, >=55 MED, else LOW.
+ *  d. Win-probability distance fallback: |p−0.5| >=0.20 HIGH, >=0.05 MED, else LOW.
+ *  e. Final default → LOW.
+ */
+export function normalizeToConfidenceTier(
+  band: string | null | undefined,
+  confidenceScore?: number | null,
+  winProbability?: number | null,
+): ConfidenceTier {
+  const normalized = String(band ?? '').trim().toUpperCase();
+
+  // a. Canonical pass-through
+  if (normalized === 'HIGH' || normalized === 'MED' || normalized === 'LOW') {
+    return normalized as ConfidenceTier;
+  }
+
+  // b. Legacy vocabulary mapping
+  if (normalized === 'STRONG') return 'HIGH';
+  if (normalized === 'TRUST') return 'MED';
+  if (normalized === 'WATCH') return 'LOW';
+
+  // c. Confidence score fallback
+  if (confidenceScore !== null && confidenceScore !== undefined && Number.isFinite(confidenceScore)) {
+    if (confidenceScore >= 70) return 'HIGH';
+    if (confidenceScore >= 55) return 'MED';
+    return 'LOW';
+  }
+
+  // d. Win-probability distance fallback
+  if (winProbability !== null && winProbability !== undefined && Number.isFinite(winProbability)) {
+    const dist = Math.abs(winProbability - 0.5);
+    if (dist >= 0.20) return 'HIGH';
+    if (dist >= 0.05) return 'MED';
+    return 'LOW';
+  }
+
+  // e. Final default
+  return 'LOW';
+}

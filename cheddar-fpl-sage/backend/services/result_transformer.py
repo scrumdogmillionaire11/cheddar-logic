@@ -378,6 +378,76 @@ def _default_weekly_review_card() -> Dict[str, Any]:
     }
 
 
+def _get_projection_for_player(projection_set: Any, player_id: Optional[int]):
+    """Resolve a canonical projection by player_id when available."""
+    if projection_set is None or player_id is None:
+        return None
+
+    if hasattr(projection_set, "get_by_id"):
+        try:
+            return projection_set.get_by_id(player_id)
+        except Exception:
+            return None
+
+    projections = getattr(projection_set, "projections", None)
+    if not isinstance(projections, list):
+        return None
+
+    for projection in projections:
+        if _to_optional_int(getattr(projection, "player_id", None)) == player_id:
+            return projection
+    return None
+
+
+def _projection_from_squad_player(
+    squad_player: Dict[str, Any],
+    projection_set: Any,
+) -> Dict[str, Any]:
+    """Build a frontend projection row from current_squad, enriched by canonical projections."""
+    player_id = _to_optional_int(
+        squad_player.get("player_id")
+        or squad_player.get("id")
+        or squad_player.get("element")
+    )
+    projection = _get_projection_for_player(projection_set, player_id)
+    transformed_projection = _transform_projection(projection) if projection is not None else {}
+    flags = list(transformed_projection.get("flags") or [])
+    status_flag = str(squad_player.get("status_flag") or "").strip()
+    if status_flag and status_flag.lower() != "available" and status_flag not in flags:
+        flags.append(status_flag)
+
+    price = (
+        _to_price_millions(squad_player.get("price"))
+        or _to_price_millions(squad_player.get("current_price"))
+        or _to_price_millions(squad_player.get("now_cost"))
+        or _to_price_millions(squad_player.get("buy_price"))
+        or _to_price_millions(squad_player.get("sell_price"))
+        or _to_price_millions(squad_player.get("selling_price"))
+        or _to_price_millions(transformed_projection.get("price"))
+        or transformed_projection.get("price")
+    )
+    ownership = (
+        _to_float(squad_player.get("ownership"))
+        or _to_float(squad_player.get("ownership_pct"))
+        or _to_float(transformed_projection.get("ownership"))
+    )
+
+    return {
+        "player_id": player_id if player_id is not None else transformed_projection.get("player_id"),
+        "name": squad_player.get("name") or transformed_projection.get("name") or "Unknown",
+        "team": squad_player.get("team") or transformed_projection.get("team"),
+        "position": squad_player.get("position") or transformed_projection.get("position"),
+        "price": price,
+        "expected_pts": transformed_projection.get("expected_pts"),
+        "expected_minutes": transformed_projection.get("expected_minutes"),
+        "ownership": ownership,
+        "form": transformed_projection.get("form"),
+        "fixture_difficulty": transformed_projection.get("fixture_difficulty"),
+        "injury_status": transformed_projection.get("injury_status") or (status_flag.upper() if status_flag else None),
+        "flags": flags,
+    }
+
+
 def _calculate_captain_delta(captain_data: Optional[Dict], vice_data: Optional[Dict]) -> Dict[str, Any]:
     """
     Calculate the points delta between captain and vice captain.
@@ -1142,6 +1212,8 @@ def transform_analysis_results(
     }
 
     primary_decision = decision_dict.get("primary_decision", "Hold")
+    decision_state = str(decision_dict.get("decision_state") or "NORMAL").upper()
+    is_critical_recovery = decision_state == "CRITICAL_SQUAD_FAILURE"
     normalized_reasoning = _normalize_decision_reasoning(
         decision_dict.get("reasoning", ""),
         primary_decision,
@@ -1160,7 +1232,10 @@ def transform_analysis_results(
     )
     near_threshold_moves = decision_dict.get("near_threshold_moves") or []
     near_threshold_reason = decision_dict.get("near_threshold_reason")
-    if near_threshold_moves:
+    if is_critical_recovery:
+        near_threshold_moves = []
+        near_threshold_reason = None
+    elif near_threshold_moves:
         near_threshold_reason = None
     elif near_threshold_reason is not None:
         near_threshold_reason = str(near_threshold_reason)
@@ -1201,8 +1276,13 @@ def transform_analysis_results(
         "risk_posture": resolved_risk_posture,
         "primary_decision": primary_decision,
         "decision_status": decision_dict.get("decision_status"),
-        "confidence": _map_confidence(decision_dict.get("decision_status")),
+        "confidence": "High" if is_critical_recovery else _map_confidence(decision_dict.get("decision_status")),
         "reasoning": normalized_reasoning,
+        "decision_state": decision_state,
+        "critical_failure_reason": decision_dict.get("critical_failure_reason"),
+        "chip_instruction": decision_dict.get("chip_instruction"),
+        "recovery_plan": decision_dict.get("recovery_plan"),
+        "structural_weakness_summary": decision_dict.get("structural_weakness_summary"),
         "strategy_mode": strategy_mode,
         "manager_state": manager_state,
         "near_threshold_moves": near_threshold_moves,
@@ -1213,7 +1293,7 @@ def transform_analysis_results(
         "chip_timing_outlook": decision_dict.get("chip_timing_outlook") or None,
         "fixture_planner": normalized_fixture_planner,
         "fixture_planner_reason": fixture_planner_reason,
-        "no_transfer_reason": decision_dict.get("no_transfer_reason"),
+        "no_transfer_reason": None if is_critical_recovery else decision_dict.get("no_transfer_reason"),
         "weekly_review": weekly_review if isinstance(weekly_review, dict) else _default_weekly_review_card(),
     }
 
@@ -1253,7 +1333,9 @@ def transform_analysis_results(
     )
     
     # Transfer recommendations - handle both forced and optional
-    transfer_recs = decision_dict.get("transfer_recommendations", [])
+    transfer_recs = decision_dict.get("transfer_recommendations")
+    if not isinstance(transfer_recs, list):
+        transfer_recs = []
     logger.info(f"Transfer recs from decision_dict: {len(transfer_recs)} transfers")
     
     # CRITICAL: Filter out transfers that conflict with manual transfers
@@ -1311,11 +1393,13 @@ def transform_analysis_results(
     logger.warning(f"🔍 DEBUG: overrides passed to transformer: {overrides}")
     if transfer_recs:
         original_count = len(transfer_recs)
-        transfer_recs = filter_transfers_by_risk(transfer_recs, risk_posture)
-        logger.warning(f"🎯 Risk filtering ({risk_posture}): {original_count} → {len(transfer_recs)} recommendations")
-        
+        if not is_critical_recovery:
+            transfer_recs = filter_transfers_by_risk(transfer_recs, risk_posture) or []
+            logger.warning(f"🎯 Risk filtering ({risk_posture}): {original_count} → {len(transfer_recs)} recommendations")
+        else:
+            logger.warning(f"🚨 Critical recovery active: preserving {original_count} forced recommendations without extra risk filtering")
         logger.info(f"First transfer sample: {transfer_recs[0] if transfer_recs else 'None'}")
-        result["transfer_recommendations"] = _transform_transfers(transfer_recs)
+        result["transfer_recommendations"] = _transform_transfers(transfer_recs) or []
         logger.info(f"After transformation: {len(result['transfer_recommendations'])} transfer actions")
         result["forced_transfers"] = [t for t in result["transfer_recommendations"] if t.get("priority") == "URGENT"]
         result["optional_transfers"] = [t for t in result["transfer_recommendations"] if t.get("priority") != "URGENT"]
@@ -1328,8 +1412,8 @@ def transform_analysis_results(
         result["transfer_recommendations"] = []
         result["forced_transfers"] = []
         result["optional_transfers"] = []
-        transfer_audit_reason = decision_dict.get("no_transfer_reason") or normalized_reasoning
-        if not transfer_audit_reason:
+        transfer_audit_reason = None if is_critical_recovery else (decision_dict.get("no_transfer_reason") or normalized_reasoning)
+        if not transfer_audit_reason and not is_critical_recovery:
             transfer_audit_reason = (
                 "No transfer met threshold requirements this gameweek."
             )
@@ -1339,7 +1423,7 @@ def transform_analysis_results(
             "no_transfer_reason": transfer_audit_reason,
         }
 
-    if result.get("transfer_plans"):
+    if result.get("transfer_plans") and not is_critical_recovery:
         audit_reason = decision_dict.get("no_transfer_reason") or normalized_reasoning
         current_reason = result["transfer_plans"].get("no_transfer_reason")
         if (
@@ -1510,13 +1594,14 @@ def transform_analysis_results(
     else:
         logger.warning("No projections found in analysis results")
     
+    projection_set = analysis.get("projections")
+
     # Add canonical lineup decision payload if available
     lineup_decision = decision_dict.get("lineup_decision")
     if isinstance(lineup_decision, dict):
         result["lineup_decision"] = lineup_decision
         result["lineup_confidence"] = lineup_decision.get("lineup_confidence")
 
-        projection_set = analysis.get("projections")
         squad_meta_by_id: Dict[int, Dict[str, Any]] = {}
         squad_meta_by_name: Dict[str, Dict[str, Any]] = {}
         for squad_player in my_team.get("current_squad") or []:
@@ -1629,44 +1714,77 @@ def transform_analysis_results(
             result["starting_xi"] = [_transform_projection(p) for p in optimized_xi.starting_xi]
         if hasattr(optimized_xi, 'bench') and not result.get("bench"):
             result["bench"] = [_transform_projection(p) for p in optimized_xi.bench]
-        
-        # Build projected squad after transfers (manual + recommended)
-        # Extract manual transfers from overrides if provided
-        manual_transfers = overrides.get("manual_transfers", [])
-        
-        if result.get("transfer_plans") or manual_transfers:
-            projected = _build_projected_squad(
-                result.get("starting_xi", []),
-                result.get("bench", []),
-                result.get("transfer_plans", {}),
-                manual_transfers
+
+    # Fallback: when the XI optimizer failed (no lineup_decision / optimized_xi), surface the
+    # raw squad picks from current_squad so the UI always shows the user's team.
+    if not result.get("starting_xi"):
+        raw_starters = sorted(
+            [p for p in (my_team.get("current_squad") or []) if isinstance(p, dict) and p.get("is_starter")],
+            key=lambda p: p.get("bench_order", 0),
+        )
+        if raw_starters:
+            result["starting_xi"] = [
+                {
+                    **_projection_from_squad_player(p, projection_set),
+                    "badges": [],
+                    "start_reason": None,
+                }
+                for p in raw_starters
+            ]
+            logger.info(f"XI optimizer fallback: built starting_xi from current_squad ({len(raw_starters)} players)")
+    if not result.get("bench"):
+        raw_bench = sorted(
+            [p for p in (my_team.get("current_squad") or []) if isinstance(p, dict) and not p.get("is_starter")],
+            key=lambda p: p.get("bench_order", 99),
+        )
+        if raw_bench:
+            result["bench"] = [
+                {
+                    **_projection_from_squad_player(p, projection_set),
+                    "bench_order": p.get("bench_order"),
+                    "bench_reason": None,
+                }
+                for p in raw_bench
+            ]
+            logger.info(f"XI optimizer fallback: built bench from current_squad ({len(raw_bench)} players)")
+
+    # Build projected squad after transfers (manual + recommended)
+    # Extract manual transfers from overrides if provided
+    manual_transfers = overrides.get("manual_transfers", [])
+
+    if result.get("transfer_plans") or manual_transfers:
+        projected = _build_projected_squad(
+            result.get("starting_xi", []),
+            result.get("bench", []),
+            result.get("transfer_plans", {}),
+            manual_transfers
+        )
+        result["projected_xi"] = projected["projected_xi"]
+        result["projected_bench"] = projected["projected_bench"]
+        result["squad_issues"] = _reconcile_squad_issues_with_health(
+            result.get("squad_issues") or [],
+            squad_health,
+            projected_xi=result.get("projected_xi") or [],
+            projected_bench=result.get("projected_bench") or [],
+        )
+
+        logger.warning("🔍 BENCH DEBUG: About to check bench warning")
+        logger.warning(f"🔍 BENCH DEBUG: transfer_plans exists = {bool(result.get('transfer_plans'))}")
+        logger.warning(f"🔍 BENCH DEBUG: transfer_plans.primary = {result.get('transfer_plans', {}).get('primary')}")
+
+        # Detect bench warning if we have transfers
+        if result.get("transfer_plans", {}).get("primary"):
+            logger.warning("🔍 BENCH DEBUG: Checking for bench warning")
+            logger.warning(f"🔍 BENCH DEBUG: projected_bench = {projected['projected_bench']}")
+            logger.warning(f"🔍 BENCH DEBUG: transfer_plans = {result.get('transfer_plans', {})}")
+            bench_warning = _detect_bench_warning(
+                projected["projected_bench"],
+                result.get("transfer_plans", {})
             )
-            result["projected_xi"] = projected["projected_xi"]
-            result["projected_bench"] = projected["projected_bench"]
-            result["squad_issues"] = _reconcile_squad_issues_with_health(
-                result.get("squad_issues") or [],
-                squad_health,
-                projected_xi=result.get("projected_xi") or [],
-                projected_bench=result.get("projected_bench") or [],
-            )
-            
-            logger.warning("🔍 BENCH DEBUG: About to check bench warning")
-            logger.warning(f"🔍 BENCH DEBUG: transfer_plans exists = {bool(result.get('transfer_plans'))}")
-            logger.warning(f"🔍 BENCH DEBUG: transfer_plans.primary = {result.get('transfer_plans', {}).get('primary')}")
-            
-            # Detect bench warning if we have transfers
-            if result.get("transfer_plans", {}).get("primary"):
-                logger.warning("🔍 BENCH DEBUG: Checking for bench warning")
-                logger.warning(f"🔍 BENCH DEBUG: projected_bench = {projected['projected_bench']}")
-                logger.warning(f"🔍 BENCH DEBUG: transfer_plans = {result.get('transfer_plans', {})}")
-                bench_warning = _detect_bench_warning(
-                    projected["projected_bench"],
-                    result.get("transfer_plans", {})
-                )
-                logger.warning(f"🔍 BENCH DEBUG: bench_warning result = {bench_warning}")
-                if bench_warning:
-                    result["bench_warning"] = bench_warning
-                    logger.warning(f"⚠️ Bench warning: {bench_warning['warning_message']}")
+            logger.warning(f"🔍 BENCH DEBUG: bench_warning result = {bench_warning}")
+            if bench_warning:
+                result["bench_warning"] = bench_warning
+                logger.warning(f"⚠️ Bench warning: {bench_warning['warning_message']}")
     
     logger.info(f"Transformed result keys: {list(result.keys())}")
     

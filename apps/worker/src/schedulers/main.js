@@ -68,6 +68,7 @@ const { run: runFitCalibrationModels } = require('../jobs/fit_calibration_models
 const { run: runResidualValidation } = require('../jobs/run_residual_validation');
 
 const { computeFplDueJobs } = require('./fpl');
+const { computeNflDueJobs } = require('./nfl');
 const { computePlayerPropsDueJobs } = require('./player-props');
 const { computeNhlDueJobs } = require('./nhl');
 const { computeNbaDueJobs } = require('./nba');
@@ -273,6 +274,9 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
   jobs.push(...computeNhlDueJobs(nowEt, subCtx));
   jobs.push(...computeNbaDueJobs(nowEt, subCtx));
   jobs.push(...computeMlbDueJobs(nowEt, subCtx));
+  // NFL betting domain is frozen (ENABLE_NFL_MODEL=false by default). computeNflDueJobs
+  // returns [] with an explicit log when frozen — fail-closed guard per WI-1139.
+  jobs.push(...computeNflDueJobs(nowEt, subCtx));
   const settlementJobs = computeSettlementDueJobs(nowEt, { nowUtc, dryRun, ENABLE_WITHOUT_ODDS_MODE });
   jobs.push(...settlementJobs);
 

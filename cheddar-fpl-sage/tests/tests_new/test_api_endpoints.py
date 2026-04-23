@@ -14,6 +14,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'backend'
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'src'))
 
 from backend.main import app
+import backend.routers.analyze as analyze_router
 import backend.routers.dashboard as dashboard_router
 
 
@@ -142,6 +143,65 @@ class TestAnalyzeEndpoint:
             json={}
         )
         assert response.status_code == 422  # Pydantic validation error
+
+    def test_projections_endpoint_serializes_critical_recovery_fields(self, client, monkeypatch):
+        critical_results = {
+            "team_name": "FPL XI",
+            "manager_name": "AJ",
+            "current_gw": 29,
+            "overall_rank": 6448179,
+            "overall_points": 1440,
+            "primary_decision": "FREE_HIT",
+            "decision_status": "BLOCKED",
+            "decision_state": "CRITICAL_SQUAD_FAILURE",
+            "critical_failure_reason": "6 blank players, XI infeasible",
+            "chip_instruction": "FREE_HIT",
+            "recovery_plan": {
+                "mode": "FREE_HIT",
+                "posture": "AGGRESSIVE",
+                "hit_cap": 12,
+                "playable_before": 8,
+                "playable_after": 11,
+                "blanks_before": 6,
+                "blanks_after": 0,
+                "survival_score": 1123.4,
+            },
+            "structural_weakness_summary": {
+                "overall_weak": 3,
+                "tier3_or_tier4_count": 5,
+            },
+            "confidence": "High",
+            "reasoning": "🚨 CRITICAL SQUAD FAILURE DETECTED\nReason: 6 blank players, XI infeasible",
+            "starting_xi": [],
+            "bench": [],
+            "projected_xi": [],
+            "projected_bench": [],
+            "transfer_recommendations": [],
+            "risk_scenarios": [],
+            "available_chips": ["free_hit", "wildcard"],
+        }
+        monkeypatch.setattr(
+            analyze_router.engine_service,
+            "get_job",
+            lambda _analysis_id: SimpleNamespace(
+                analysis_id="critical-001",
+                status="complete",
+                progress=100.0,
+                phase="completed",
+                results=critical_results,
+                error=None,
+                created_at=datetime.now(timezone.utc),
+            ),
+        )
+
+        response = client.get("/api/v1/analyze/critical-001/projections")
+        assert response.status_code == 200
+        body = response.json()
+        assert body["decision_state"] == "CRITICAL_SQUAD_FAILURE"
+        assert body["critical_failure_reason"] == "6 blank players, XI infeasible"
+        assert body["chip_instruction"] == "FREE_HIT"
+        assert body["recovery_plan"]["playable_after"] == 11
+        assert body["structural_weakness_summary"]["overall_weak"] == 3
 
 
 def _dashboard_job(status: str = "complete", results: dict | None = None):

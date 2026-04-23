@@ -46,7 +46,6 @@
 require('dotenv').config();
 
 const { DateTime } = require('luxon');
-const { isFeatureEnabled } = require('@cheddar-logic/data/src/feature-flags');
 const { runFPLModel } = require('../jobs/run_fpl_model');
 
 // ─── Config ──────────────────────────────────────────────────────────────────
@@ -138,7 +137,10 @@ function isFplWindowDue(nowUtc, windowUtc) {
  * @returns {Array<{jobName: string, jobKey: string, execute: Function, args: object, reason: string}>}
  */
 function computeFplDueJobs(nowEt, { dryRun = false } = {}) {
-  if (!isFeatureEnabled('fpl', 'model')) return [];
+  if (process.env.ENABLE_FPL_MODEL === 'false') {
+    console.log('[FPLSage][FROZEN] FPL Sage model runs are disabled — ENABLE_FPL_MODEL=false. No jobs enqueued.');
+    return [];
+  }
 
   const nowUtc = nowEt.toUTC();
   const offsets = getFplWindowOffsets();
