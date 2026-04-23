@@ -58,6 +58,20 @@ Execution order:
 
 ---
 
+### Priority A.6 — Confidence Tier Simplification (Results + Settlement)
+
+- `WI-1143`: Unify projection confidence tier contract at `/api/results/projection-settled` boundary (canonical `LOW|MED|HIGH`)
+- `WI-1144`: Simplify `/results` row segmentation and badges to one confidence vocabulary (depends on `WI-1143`)
+- `WI-1145`: Align worker settlement ingestion confidence derivation and legacy payload fallback paths (depends on `WI-1143`)
+- `WI-1146`: Add behavioral regression coverage for canonical confidence vocabulary in API + UI (depends on `WI-1144`, `WI-1145`)
+
+Execution order:
+- Wave 1: `WI-1143`
+- Wave 2: `WI-1144` + `WI-1145`
+- Wave 3: `WI-1146`
+
+---
+
 ### Priority 0 — Finish in-progress/claimed items
 
 - `WI-0897`: Replace fragile source-contract tests with behavioral endpoint/transform tests *(claimed; finish by removing remaining source.includes assertions)*

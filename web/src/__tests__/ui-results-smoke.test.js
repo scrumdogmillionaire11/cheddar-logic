@@ -1,314 +1,311 @@
 /*
- * UI results smoke test
- * Ensures /api/results returns a well-formed payload for UI display.
- * Live mode: CARDS_API_BASE_URL=http://127.0.0.1:3000 npm --prefix web run test:ui:results
+ * UI results behavioral smoke test.
+ *
+ * Run: npm --prefix web run test:ui:results
  */
 
-const DEFAULT_BASE_URL = 'http://localhost:3000';
-const LIVE_COMMAND =
-  'CARDS_API_BASE_URL=http://127.0.0.1:3000 npm --prefix web run test:ui:results';
+import assert from 'node:assert/strict';
+import db from '../../../packages/data/src/db.js';
+import {
+  setupIsolatedTestDb,
+  startIsolatedNextServer,
+} from './db-test-runtime.js';
 
-function isConnectionIssue(error) {
-  const message = String(error?.message || error || '');
-  return (
-    message.includes('fetch failed') ||
-    message.includes('ECONNREFUSED') ||
-    message.includes('ENOTFOUND')
-  );
-}
+const TEST_PREFIX = 'test-ui-results';
 
-function buildFallbackMessage(baseUrl) {
-  return (
-    `Results API endpoint unavailable at ${baseUrl}; running source fallback checks. ` +
-    `To run live assertions: ${LIVE_COMMAND}`
-  );
-}
+function insertSettledResultFixture(client, sport, suffix, createdAt, overrides = {}) {
+  const sportLower = sport.toLowerCase();
+  const gameId = `${TEST_PREFIX}-${suffix}-game`;
+  const cardId = `${TEST_PREFIX}-${suffix}-card`;
+  const resultId = `${TEST_PREFIX}-${suffix}-result`;
+  const marketType = overrides.marketType || 'total';
+  const selection = overrides.selection || 'OVER';
+  const line = overrides.line ?? 8.5;
+  const lockedPrice = overrides.lockedPrice ?? -110;
+  const cardType = overrides.cardType || `${sportLower}-totals-call`;
+  const metadata = overrides.marketPeriodToken
+    ? JSON.stringify({ market_period_token: overrides.marketPeriodToken })
+    : null;
 
-async function preflightResultsEndpoint(baseUrl, assert) {
-  const response = await fetch(`${baseUrl}/api/results?limit=1`);
-  assert.strictEqual(
-    response.ok,
-    true,
-    `Results API preflight not ok: ${response.status}`,
-  );
-}
-
-async function validateResultsSourceContract(assert) {
-  const fs = await import('node:fs/promises');
-  const routeSource = await fs.readFile(
-    new URL('../app/api/results/route.ts', import.meta.url),
-    'utf8',
-  );
-  const pageSource = await fs.readFile(
-    new URL('../app/results/page.tsx', import.meta.url),
-    'utf8',
-  );
-  const projectionTableSource = await fs.readFile(
-    new URL('../components/results/ProjectionResultsTable.tsx', import.meta.url),
-    'utf8',
-  );
-
-  [
-    'totalCards:',
-    'settledCards:',
-    'wins:',
-    'losses:',
-    'pushes:',
-    'totalPnlUnits:',
-    'winRate:',
-    'avgPnl:',
-    'avgClvPct:',
-  ].forEach((token) => {
-    assert.ok(
-      routeSource.includes(token),
-      `results route summary contract missing ${token}`,
+  client
+    .prepare(
+      `INSERT INTO games
+       (id, sport, game_id, home_team, away_team, game_time_utc, status, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run(
+      `${gameId}-row`,
+      sportLower,
+      gameId,
+      `${sport} Home`,
+      `${sport} Away`,
+      createdAt,
+      'final',
+      createdAt,
+      createdAt,
     );
-  });
-  assert.ok(
-    routeSource.includes("type DecisionSegmentId = 'play' | 'slight_edge';"),
-    'results route must define play/slight_edge decision segments',
-  );
-  assert.ok(
-    routeSource.includes(
-      "{ id: 'play', label: 'PLAY', canonicalStatus: 'PLAY' }",
-    ),
-    'results route must keep PLAY decision segment metadata',
-  );
-  assert.ok(
-    routeSource.includes(
-      "{ id: 'slight_edge', label: 'SLIGHT EDGE', canonicalStatus: 'LEAN' }",
-    ),
-    'results route must keep SLIGHT EDGE decision segment metadata',
-  );
-  assert.ok(
-    routeSource.includes('segmentFamilies: DECISION_SEGMENTS.map'),
-    'results route must derive segmentFamilies from DECISION_SEGMENTS',
-  );
-  assert.ok(
-    routeSource.includes('projectionSummaries: []') &&
-      routeSource.includes('projectionSummaries,'),
-    'results route must expose projectionSummaries in empty and populated responses',
-  );
-  assert.ok(
-    routeSource.includes('ledger: []') &&
-      routeSource.includes('ledger: ledgerRows'),
-    'results route must expose ledger in empty and populated responses',
-  );
-  assert.ok(
-    routeSource.includes('LEFT JOIN clv_ledger clv ON clv.card_id = cr.card_id') &&
-      routeSource.includes('const clv =') &&
-      routeSource.includes('clv,'),
-    'results route must left join clv_ledger and expose optional clv data',
-  );
-  assert.ok(
-    routeSource.includes('END AS market_period_token') &&
-      routeSource.includes('marketPeriodToken: row.market_period_token'),
-    'results route must expose market_period_token on ledger rows as marketPeriodToken',
-  );
-  assert.ok(
-    pageSource.includes("return row.marketPeriodToken === '1P';") &&
-      pageSource.includes('function renderPeriodBadge(row: LedgerRow)') &&
-      pageSource.includes('renderPeriodBadge(row)') &&
-      pageSource.includes('text-cyan-200'),
-    'results page must reference marketPeriodToken and render a 1P badge path',
-  );
-  assert.ok(
-    routeSource.includes("const DEFAULT_EXCLUDED_SPORT = 'NCAAM';") &&
-      routeSource.includes('function buildSportFilter(') &&
-      routeSource.includes(
-        "sql: `AND UPPER(${sportExpr}) != '${DEFAULT_EXCLUDED_SPORT}'`",
-      ),
-    'results route must suppress NCAAM by default',
-  );
-  assert.ok(
-    pageSource.match(/<option value="MLB">MLB<\/option>/g)?.length === 2 &&
-    !pageSource.includes('<option value="NCAAM">NCAAM</option>'),
-    'results page must expose MLB and must not expose NCAAM in sport filters',
-  );
-  assert.ok(
-    pageSource.includes('Betting Record') &&
-      pageSource.includes('Projection Settlement') &&
-      pageSource.includes('NHL 1P totals and MLB F5') &&
-      pageSource.includes('Awaiting settled outcome data'),
-    'results page must render a single projection settlement lane for mapped projection families',
-  );
-  assert.ok(
-    pageSource.includes('Bucket Mapping') &&
-      /LOW:\s+confidence_score\s+(?:<|&lt;)\s+52%/.test(pageSource) &&
-      pageSource.includes('WATCH: 52%-57.99%') &&
-      pageSource.includes('TRUST: 58%-62.99%') &&
-      /STRONG:\s+(?:>=|&gt;=)\s+63%/.test(pageSource),
-    'results page must show explicit LOW/WATCH/TRUST/STRONG bucket threshold mapping',
-  );
-  assert.ok(
-    /edge_distance\s+(?:<|&lt;)\s+0\.15\s+are\s+excluded\s+from\s+directional\s+W\/L\s+and\s+still\s+included\s+in\s+MAE\s+and\s+bias\s+auditing/.test(pageSource) &&
-      pageSource.includes('FRAGILE is a presentation label for weak/no-edge directions') &&
-      pageSource.includes('not a native confidence_band value'),
-    'results page must document weak-direction policy and FRAGILE presentation semantics',
-  );
-  assert.ok(
-    projectionTableSource.includes('attributionRows?: ProjectionAccuracyRecord[]') &&
-      projectionTableSource.includes('projection_raw:') &&
-      projectionTableSource.includes('synthetic_line:') &&
-      projectionTableSource.includes('edge_distance:') &&
-      projectionTableSource.includes('confidence_band:'),
-    'projection results table must render API-backed attribution fields for bucket inspection',
-  );
-}
 
-async function validateLiveResultsPayload(baseUrl, assert) {
-  const response = await fetch(`${baseUrl}/api/results?limit=5`);
-
-  assert.strictEqual(
-    response.ok,
-    true,
-    `API response not ok: ${response.status}`,
-  );
-
-  const payload = await response.json();
-  assert.strictEqual(payload.success, true, 'API returned success=false');
-  assert.ok(payload.data, 'API data is missing');
-
-  const summary = payload.data.summary;
-  assert.ok(summary, 'Summary missing');
-  [
-    'totalCards',
-    'settledCards',
-    'wins',
-    'losses',
-    'pushes',
-    'totalPnlUnits',
-    'winRate',
-    'avgPnl',
-    'avgClvPct',
-  ].forEach((key) => {
-    assert.ok(
-      Object.prototype.hasOwnProperty.call(summary, key),
-      `Summary missing ${key}`,
-    );
-  });
-  ['totalCards', 'settledCards', 'wins', 'losses', 'pushes', 'winRate'].forEach(
-    (key) => {
-      assert.strictEqual(
-        typeof summary[key],
-        'number',
-        `Summary ${key} must be numeric`,
-      );
-    },
-  );
-  assert.ok(
-    summary.totalPnlUnits === null || typeof summary.totalPnlUnits === 'number',
-    'Summary totalPnlUnits must be number|null',
-  );
-  assert.ok(
-    summary.avgPnl === null || typeof summary.avgPnl === 'number',
-    'Summary avgPnl must be number|null',
-  );
-  assert.ok(
-    summary.avgClvPct === null || typeof summary.avgClvPct === 'number',
-    'Summary avgClvPct must be number|null',
-  );
-  assert.ok(
-    summary.wins + summary.losses + summary.pushes <= summary.settledCards,
-    'Summary W/L/P counts cannot exceed settledCards',
-  );
-
-  assert.ok(Array.isArray(payload.data.segments), 'Segments is not an array');
-  payload.data.segments.forEach((row, index) => {
-    assert.notStrictEqual(
-      String(row.sport || '').toUpperCase(),
-      'NCAAM',
-      `Segment row ${index} unexpectedly contains NCAAM`,
-    );
-  });
-  assert.ok(
-    Array.isArray(payload.data.segmentFamilies),
-    'segmentFamilies is not an array',
-  );
-  const segmentFamilies = payload.data.segmentFamilies;
-  ['play', 'slight_edge'].forEach((segmentId) => {
-    assert.ok(
-      segmentFamilies.some((segment) => segment.segmentId === segmentId),
-      `segmentFamilies missing ${segmentId}`,
-    );
-  });
-  assert.ok(
-    Array.isArray(payload.data.projectionSummaries),
-    'projectionSummaries is not an array',
-  );
-  payload.data.projectionSummaries.forEach((row, index) => {
-    [
-      'actualsAvailable',
-      'bias',
-      'cardFamily',
-      'directionalAccuracy',
-      'familyLabel',
-      'mae',
-      'rowsSeen',
-      'sampleSize',
-    ].forEach((key) => {
-      assert.ok(
-        Object.prototype.hasOwnProperty.call(row, key),
-        `projectionSummaries row ${index} missing ${key}`,
-      );
-    });
-    assert.strictEqual(
-      typeof row.actualsAvailable,
-      'boolean',
-      `projectionSummaries row ${index} actualsAvailable must be boolean`,
-    );
-  });
-  assert.ok(Array.isArray(payload.data.ledger), 'Ledger is not an array');
-  payload.data.ledger.forEach((row, index) => {
-    assert.notStrictEqual(
-      String(row.sport || '').toUpperCase(),
-      'NCAAM',
-      `Ledger row ${index} unexpectedly contains NCAAM`,
-    );
-    assert.ok(
-      Object.prototype.hasOwnProperty.call(row, 'marketPeriodToken'),
-      `Ledger row ${index} missing marketPeriodToken field`,
-    );
-    assert.ok(
-      row.marketPeriodToken === null || typeof row.marketPeriodToken === 'string',
-      `Ledger row ${index} marketPeriodToken must be string|null`,
-    );
-    assert.ok(
-      Object.prototype.hasOwnProperty.call(row, 'clv'),
-      `Ledger row ${index} missing clv field`,
-    );
-    if (row.clv !== null) {
-      ['oddsAtPick', 'closingOdds', 'clvPct', 'recordedAt', 'closedAt'].forEach(
-        (key) => {
-          assert.ok(
-            Object.prototype.hasOwnProperty.call(row.clv, key),
-            `Ledger row ${index} clv missing ${key}`,
-          );
+  client
+    .prepare(
+      `INSERT INTO card_payloads
+       (id, game_id, sport, card_type, card_title, created_at, payload_data, run_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run(
+      cardId,
+      gameId,
+      sportLower,
+      cardType,
+      `${sport} ${marketType}`,
+      createdAt,
+      JSON.stringify({
+        confidence_pct: overrides.confidencePct ?? 61.5,
+        decision_basis: 'ODDS_BACKED',
+        play: {
+          decision_v2: {
+            official_status: overrides.officialStatus || 'PLAY',
+          },
+          period: overrides.marketPeriodToken || 'FULL_GAME',
         },
+        recommended_bet_type: marketType,
+        market_type: marketType,
+        selection,
+        line,
+        locked_price: lockedPrice,
+        home_team: `${sport} Home`,
+        away_team: `${sport} Away`,
+      }),
+      `${TEST_PREFIX}-run`,
+    );
+
+  client
+    .prepare(
+      `INSERT INTO card_display_log
+       (pick_id, run_id, game_id, sport, market_type, selection, line, odds, confidence_pct, displayed_at, api_endpoint)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run(
+      cardId,
+      `${TEST_PREFIX}-run`,
+      gameId,
+      sport,
+      marketType,
+      selection,
+      line,
+      lockedPrice,
+      overrides.confidencePct ?? 61.5,
+      createdAt,
+      '/api/cards',
+    );
+
+  client
+    .prepare(
+      `INSERT INTO card_results
+       (id, card_id, game_id, sport, card_type, recommended_bet_type, status,
+        result, settled_at, pnl_units, metadata, market_key, market_type,
+        selection, line, locked_price, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run(
+      resultId,
+      cardId,
+      gameId,
+      sportLower,
+      cardType,
+      marketType,
+      'settled',
+      overrides.result || 'win',
+      createdAt,
+      overrides.pnlUnits ?? 1,
+      metadata,
+      `${sportLower}:${gameId}:${marketType}:${selection}`,
+      marketType,
+      selection,
+      line,
+      lockedPrice,
+      createdAt,
+      createdAt,
+    );
+
+  client
+    .prepare(
+      `INSERT INTO game_results
+       (id, game_id, sport, final_score_home, final_score_away, status, result_source, settled_at, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run(
+      `${gameId}-game-result`,
+      gameId,
+      sportLower,
+      5,
+      4,
+      'final',
+      'manual',
+      createdAt,
+      createdAt,
+      createdAt,
+    );
+
+  if (overrides.clvPct !== undefined) {
+    client
+      .prepare(
+        `INSERT INTO clv_ledger
+         (id, card_id, game_id, sport, market_type, selection, line,
+          odds_at_pick, closing_odds, clv_pct, recorded_at, closed_at, decision_basis)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        `${cardId}-clv`,
+        cardId,
+        gameId,
+        sportLower,
+        marketType,
+        selection,
+        line,
+        lockedPrice,
+        overrides.closingOdds ?? -118,
+        overrides.clvPct,
+        createdAt,
+        createdAt,
+        'ODDS_BACKED',
       );
-    }
+  }
+
+  return { gameId, cardId, resultId };
+}
+
+async function fetchJson(baseUrl, path) {
+  const response = await fetch(`${baseUrl}${path}`, {
+    signal: AbortSignal.timeout(5000),
   });
+  assert.equal(response.status, 200, `${path} should return 200`);
+  assert.match(
+    response.headers.get('content-type') || '',
+    /application\/json/,
+    `${path} should return JSON`,
+  );
+  return {
+    response,
+    payload: await response.json(),
+  };
 }
 
 async function run() {
-  const assertModule = await import('node:assert');
-  const assert = assertModule.default || assertModule;
+  const testRuntime = await setupIsolatedTestDb('ui-results-smoke');
+  let server = null;
 
-  const baseUrl = process.env.CARDS_API_BASE_URL || DEFAULT_BASE_URL;
   try {
-    await preflightResultsEndpoint(baseUrl, assert);
-    await validateLiveResultsPayload(baseUrl, assert);
-  } catch (error) {
-    if (!isConnectionIssue(error)) throw error;
-    console.warn(`⚠️ ${buildFallbackMessage(baseUrl)}`);
-    await validateResultsSourceContract(assert);
-  }
+    const client = db.getDatabase();
+    const createdAt = '2026-04-22T18:00:00.000Z';
 
-  console.log('✅ UI results smoke test passed');
+    insertSettledResultFixture(client, 'NHL', 'nhl-1p', createdAt, {
+      cardType: 'nhl-totals-call',
+      marketPeriodToken: '1P',
+      clvPct: 0.037,
+      confidencePct: 64.2,
+      pnlUnits: 1.05,
+    });
+    insertSettledResultFixture(client, 'MLB', 'mlb-full-game', createdAt, {
+      cardType: 'mlb-totals-call',
+      officialStatus: 'LEAN',
+      result: 'loss',
+      pnlUnits: -1,
+      confidencePct: 55.4,
+    });
+    insertSettledResultFixture(client, 'NCAAM', 'ncaam-default-excluded', createdAt, {
+      cardType: 'ncaam-totals-call',
+      result: 'win',
+      pnlUnits: 1,
+    });
+
+    server = await startIsolatedNextServer({
+      dbPath: testRuntime.dbPath,
+      label: 'ui-results-smoke',
+      readinessPath: '/api/results?limit=5',
+    });
+
+    const { response, payload } = await fetchJson(server.baseUrl, '/api/results?limit=5');
+    assert.equal(payload.success, true, 'results success=false');
+    assert.ok(payload.data, 'results data is missing');
+    assert.equal(
+      response.headers.get('x-settlement-coverage'),
+      '2/2',
+      'settlement coverage should reflect displayed non-NCAAM fixtures',
+    );
+
+    const summary = payload.data.summary;
+    assert.equal(summary.totalCards, 2);
+    assert.equal(summary.settledCards, 2);
+    assert.equal(summary.wins, 1);
+    assert.equal(summary.losses, 1);
+    assert.equal(summary.pushes, 0);
+    assert.equal(summary.totalPnlUnits, 0.050000000000000044);
+    assert.equal(summary.avgClvPct, 0.037);
+
+    assert.deepEqual(
+      payload.data.ledger
+        .map((row) => String(row.sport || '').toUpperCase())
+        .sort(),
+      ['MLB', 'NHL'],
+      'default ledger should exclude NCAAM and include deterministic NHL/MLB rows',
+    );
+    const nhlLedger = payload.data.ledger.find((row) => row.sport === 'nhl');
+    assert.equal(nhlLedger.marketPeriodToken, '1P');
+    assert.equal(nhlLedger.decisionLabel, 'PLAY');
+    assert.equal(nhlLedger.confidencePct, 64.2);
+    assert.equal(nhlLedger.clv.clvPct, 0.037);
+
+    const mlbLedger = payload.data.ledger.find((row) => row.sport === 'mlb');
+    assert.equal(mlbLedger.decisionTier, 'LEAN');
+    assert.equal(mlbLedger.decisionLabel, 'SLIGHT EDGE');
+
+    assert.deepEqual(
+      payload.data.segmentFamilies.map((segment) => [
+        segment.segmentId,
+        segment.settledCards,
+      ]),
+      [
+        ['play', 1],
+        ['slight_edge', 1],
+      ],
+      'segmentFamilies should be derived from runtime decision tiers',
+    );
+    assert.ok(
+      Array.isArray(payload.data.projectionSummaries),
+      'projectionSummaries should be present for the UI projection lane',
+    );
+    assert.equal(payload.data.meta.totalSettled, 2);
+    assert.equal(payload.data.meta.returnedCount, 2);
+    assert.equal(payload.data.filters.sport, null);
+    assert.equal(payload.data.filters.dedupe, true);
+
+    const { payload: ncaamPayload } = await fetchJson(
+      server.baseUrl,
+      '/api/results?limit=5&sport=NCAAM',
+    );
+    assert.equal(ncaamPayload.data.summary.settledCards, 1);
+    assert.deepEqual(
+      ncaamPayload.data.ledger.map((row) => String(row.sport || '').toUpperCase()),
+      ['NCAAM'],
+      'explicit sport=NCAAM should return archival NCAAM rows',
+    );
+
+    const pageResponse = await fetch(`${server.baseUrl}/results`, {
+      signal: AbortSignal.timeout(5000),
+    });
+    assert.equal(pageResponse.status, 200, '/results page should render');
+    const pageHtml = await pageResponse.text();
+    assert.match(pageHtml, /Betting Record/, 'results page should render the betting lane');
+
+    console.log('✅ UI results behavioral smoke test passed');
+  } finally {
+    if (server) await server.stop();
+    testRuntime.cleanup();
+  }
 }
 
 run().catch((error) => {
-  console.error('❌ UI results smoke test failed');
-  console.error(error.message || error);
+  console.error('❌ UI results behavioral smoke test failed');
+  console.error(error);
   process.exit(1);
 });

@@ -286,12 +286,22 @@ export default function ResultsPage() {
     () => projectionSummaries.filter((row) => row.actualsAvailable),
     [projectionSummaries],
   );
+
+  const hasDisplaySignal = useCallback((row: ProjectionProxyRow): boolean => {
+    const family = String(row.cardFamily || '').toUpperCase();
+    const isMoneylineFamily = family === 'MLB_F5_ML' || family === 'MLB_F5_MONEYLINE';
+    if (!isMoneylineFamily) return true;
+    if (row.predictionSignalMissing) return false;
+    return typeof row.winProbability === 'number' && Number.isFinite(row.winProbability);
+  }, []);
+
   const mappedProjectionSettledRows = useMemo(
     () =>
       projectionSettledRows.filter((row) =>
-        projectionSettlementFamilies.has(String(row.cardFamily || '').toUpperCase()),
+        projectionSettlementFamilies.has(String(row.cardFamily || '').toUpperCase()) &&
+        hasDisplaySignal(row),
       ),
-    [projectionSettledRows, projectionSettlementFamilies],
+    [projectionSettledRows, projectionSettlementFamilies, hasDisplaySignal],
   );
   const mappedProjectionSummaries = useMemo(
     () =>
@@ -994,8 +1004,8 @@ export default function ResultsPage() {
                   <p className="mt-2 text-sm text-cloud/70">
                     Settled projection-only cards graded against actual game
                     outcomes, including NHL 1P totals and MLB F5. F5
-                    moneyline rows use stored win probability, edge,
-                    confidence, and calibration fields when available.
+                    moneyline rows are displayed only when signal fields
+                    (win probability/edge confidence telemetry) are present.
                   </p>
                 </div>
                 <span className="rounded-full border border-cyan-400/25 bg-cyan-400/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-cyan-200">

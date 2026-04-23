@@ -270,3 +270,16 @@ Plans:
 
 Plans:
 - [ ] WI-1101-01-PLAN.md — Make Near-Miss Settled metric an accessible anchor link to POTD play log/history section (Wave 1)
+
+---
+
+### Phase: WI-1134 — Decompose API Games Route Handler
+
+**Goal**: Decompose `/api/games` route execution into explicit query, service, and transform layers with deterministic stage timing budgets while preserving output and fallback behavior.
+
+**Requirements:** [WI-1134-API-01, WI-1134-PERF-01, WI-1134-REG-01]
+
+**Plans:** 1 plan in 1 wave
+
+Plans:
+- [ ] WI-1134-01-PLAN.md — Interface-first decomposition of games route handler into query/service/transform layers + stage budget instrumentation + regression verification (Wave 1)
