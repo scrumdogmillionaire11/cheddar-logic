@@ -4,7 +4,7 @@ milestone: v1.1
 milestone_name: Model Integrity & Betting Execution Hardening
 status: active
 last_updated: "2026-04-21T18:30:00Z"
-last_activity: "2026-04-23 - Completed quick task 171: WI-1135: Decompose API Results Route And Isolate Reporting Workloads"
+last_activity: "2026-04-23 - Completed quick task 172: WI-1138 Retire dual-DB runtime paths"
 ---
 
 # Project State
@@ -215,6 +215,7 @@ Notable: WI-0797 (pipeline health Discord watchdog), WI-0798 (NHL season key fix
 
 | # | Description | Date | Commit | Directory |
 |---|-------------|------|--------|-----------|
+| 172 | WI-1138 Retire dual-DB runtime paths | 2026-04-23 | 5e2170c0 | [172-wi-1138-retire-dual-db-runtime-paths](./quick/172-wi-1138-retire-dual-db-runtime-paths/) |
 | 171 | WI-1135: Decompose API Results Route And Isolate Reporting Workloads | 2026-04-23 | e0a6b433 | [171-wi-1135-decompose-api-results-route-and-](./quick/171-wi-1135-decompose-api-results-route-and-/) |
 | 170 | WI-1025: NBA Phase 3B — Regime detection with measurable triggers | 2026-04-21 | 630feeb9 | [170-wi-1025](./quick/170-wi-1025/) |
 | 169 | WI-1024: NBA Phase 3A — Residual learning layer for total projection | 2026-04-21 | 7818c7e3 | [169-wi-1024-nba-phase-3a-residual-learning-l](./quick/169-wi-1024-nba-phase-3a-residual-learning-l/) |
