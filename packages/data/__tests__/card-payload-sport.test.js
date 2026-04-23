@@ -232,6 +232,138 @@ describe('card payload/card_results sport normalization', () => {
     expect(resultRow.sport).toBe('nba');
   });
 
+  test('getLatestNhlModelOutput reads lowercase NHL model-output card payloads by card type', () => {
+    const db = dbModule.getDatabase();
+    const now = new Date();
+    const gameTimeUtc = new Date(now.getTime() + 60 * 60 * 1000).toISOString();
+    const gameId = 'test-nhl-model-output';
+    ensureSettlementTables(db);
+
+    db.prepare(
+      `INSERT INTO games (
+        id, sport, game_id, home_team, away_team, game_time_utc, status
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      'game-nhl-model-output',
+      'nhl',
+      gameId,
+      'Home Team',
+      'Away Team',
+      gameTimeUtc,
+      'scheduled'
+    );
+
+    db.prepare(`
+      INSERT INTO card_payloads (
+        id, game_id, sport, card_type, card_title, created_at, expires_at,
+        payload_data, model_output_ids, metadata, run_id, updated_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      'card-nhl-model-output',
+      gameId,
+      'nhl',
+      'nhl-model-output',
+      'NHL Model Output',
+      now.toISOString(),
+      null,
+      JSON.stringify({
+        goalie_home_save_pct: 0.918,
+        goalie_home_gsax: 7.4,
+        goalie_away_save_pct: 0.905,
+        goalie_away_gsax: -1.2,
+      }),
+      null,
+      null,
+      'run-nhl-model-output',
+      now.toISOString()
+    );
+
+    expect(dbModule.getLatestNhlModelOutput(gameId)).toEqual({
+      homeGoalie: { savePct: 0.918, gsax: 7.4 },
+      awayGoalie: { savePct: 0.905, gsax: -1.2 },
+    });
+    expect(dbModule.getLatestNhlModelOutput('missing-nhl-model-output')).toBeNull();
+  });
+
+  test('getLatestMlbModelOutput reads the latest mlb-full-game driver signal', () => {
+    const db = dbModule.getDatabase();
+    const now = new Date();
+    const gameTimeUtc = new Date(now.getTime() + 60 * 60 * 1000).toISOString();
+    const gameId = 'test-mlb-model-output';
+    ensureSettlementTables(db);
+
+    db.prepare(
+      `INSERT INTO games (
+        id, sport, game_id, home_team, away_team, game_time_utc, status
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      'game-mlb-model-output',
+      'mlb',
+      gameId,
+      'Home Team',
+      'Away Team',
+      gameTimeUtc,
+      'scheduled'
+    );
+
+    db.prepare(`
+      INSERT INTO card_payloads (
+        id, game_id, sport, card_type, card_title, created_at, expires_at,
+        payload_data, model_output_ids, metadata, run_id, updated_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      'card-mlb-model-output-old',
+      gameId,
+      'mlb',
+      'mlb-full-game',
+      'MLB Full Game',
+      new Date(now.getTime() - 60 * 1000).toISOString(),
+      null,
+      JSON.stringify({
+        projection_source: 'OLD_MODEL',
+        drivers: [{ win_prob_home: 0.51, edge: 0.01, side: 'AWAY' }],
+      }),
+      null,
+      null,
+      'run-mlb-model-output-old',
+      new Date(now.getTime() - 60 * 1000).toISOString()
+    );
+
+    db.prepare(`
+      INSERT INTO card_payloads (
+        id, game_id, sport, card_type, card_title, created_at, expires_at,
+        payload_data, model_output_ids, metadata, run_id, updated_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      'card-mlb-model-output-new',
+      gameId,
+      'mlb',
+      'mlb-full-game',
+      'MLB Full Game',
+      now.toISOString(),
+      null,
+      JSON.stringify({
+        projection_source: 'MLB_FULL_GAME_MODEL',
+        drivers: [{ win_prob_home: 0.584, edge: 0.047, side: 'HOME' }],
+      }),
+      null,
+      null,
+      'run-mlb-model-output-new',
+      now.toISOString()
+    );
+
+    expect(dbModule.getLatestMlbModelOutput(gameId)).toEqual({
+      modelWinProbHome: 0.584,
+      edge: 0.047,
+      side: 'HOME',
+      projection_source: 'MLB_FULL_GAME_MODEL',
+    });
+    expect(dbModule.getLatestMlbModelOutput('missing-mlb-model-output')).toBeNull();
+  });
+
   test('backfillCardResultsSportCasing normalizes mixed-case sport values', () => {
     const db = dbModule.getDatabase();
     const now = new Date();

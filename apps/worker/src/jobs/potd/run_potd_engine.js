@@ -11,8 +11,8 @@ const {
   shouldRunJobKey,
   withDb,
   getDatabase,
-  getLatestOdds,
   getLatestNhlModelOutput,
+  getLatestMlbModelOutput,
   getLatestNbaModelOutput,
   insertCardPayload,
   upsertGame,
@@ -829,7 +829,7 @@ async function gatherBestCandidate({
         sport === 'MLB' && game?.gameId
           ? {
               ...game,
-              oddsSnapshot: getLatestOdds(game.gameId) || null,
+              mlbSnapshot: getLatestMlbModelOutput(game.gameId) || null,
             }
           : sport === 'NHL' && game?.gameId
           ? {

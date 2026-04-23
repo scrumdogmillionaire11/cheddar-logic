@@ -6,6 +6,7 @@ const {
   isNhlSport,
   kellySize,
   normalizeEdgeSource,
+  resolveMLBSnapshotSignal,
   resolveNHLModelSignal,
   scoreCandidate,
   selectBestPlay,
@@ -121,6 +122,33 @@ describe('potd signal engine', () => {
       price: 125,
       consensusPrice: 120,
     });
+  });
+
+  test('injects MLB snapshot signal only onto moneyline candidates', () => {
+    const candidates = buildCandidates(
+      buildGame({
+        sport: 'MLB',
+        mlbSnapshot: {
+          modelWinProbHome: 0.584,
+          edge: 0.047,
+          side: 'HOME',
+          projection_source: 'MLB_FULL_GAME_MODEL',
+        },
+      })
+    );
+
+    const moneylineCandidate = candidates.find((c) => c.marketType === 'MONEYLINE');
+    expect(resolveMLBSnapshotSignal({
+      mlbSnapshot: moneylineCandidate.mlbSnapshotSignal,
+    })).toEqual({
+      modelWinProbHome: 0.584,
+      edge: 0.047,
+      side: 'HOME',
+      projection_source: 'MLB_FULL_GAME_MODEL',
+    });
+    expect(candidates.filter((candidate) => candidate.marketType === 'MONEYLINE')).toHaveLength(2);
+    expect(candidates.filter((candidate) => candidate.mlbSnapshotSignal)).toHaveLength(2);
+    expect(candidates.filter((candidate) => candidate.marketType !== 'MONEYLINE' && candidate.mlbSnapshotSignal)).toHaveLength(0);
   });
 
   test('malformed games return no actionable candidates', () => {
@@ -262,7 +290,7 @@ describe('potd signal engine', () => {
     expect(best.totalScore).toBe(0.68);
   });
 
-  test('MLB model signal overrides consensus fair prob in scoreCandidate', () => {
+  test('MLB snapshot signal overrides consensus fair prob in scoreCandidate', () => {
     const candidate = {
       gameId: 'mlb-game-001',
       sport: 'baseball_mlb',
@@ -280,7 +308,12 @@ describe('potd signal engine', () => {
       comparableLines: [],
       comparablePrices: [-132, -130, -128],
       sourceCount: 3,
-      mlbSignal: { modelWinProb: 0.58, edge: 0.06, projection_source: 'FULL_MODEL' },
+      mlbSnapshotSignal: {
+        modelWinProbHome: 0.58,
+        edge: 0.06,
+        side: 'HOME',
+        projection_source: 'MLB_FULL_GAME_MODEL',
+      },
     };
 
     const result = scoreCandidate(candidate);
@@ -289,10 +322,10 @@ describe('potd signal engine', () => {
     expect(result.impliedProb).toBeCloseTo(130 / 230, 6);
     expect(result.edgePct).toBeCloseTo(0.58 - (130 / 230), 6);
     expect(result.scoreBreakdown.model_win_prob).toBe(0.58);
-    expect(result.scoreBreakdown.projection_source).toBe('FULL_MODEL');
+    expect(result.scoreBreakdown.projection_source).toBe('MLB_FULL_GAME_MODEL');
   });
 
-  test('MLB candidate without mlbSignal falls back to consensus path', () => {
+  test('MLB candidate without mlbSnapshotSignal falls back to consensus path', () => {
     const candidate = {
       gameId: 'mlb-game-002',
       sport: 'baseball_mlb',
@@ -310,7 +343,7 @@ describe('potd signal engine', () => {
       comparableLines: [],
       comparablePrices: [-132, -130, -128],
       sourceCount: 3,
-      // no mlbSignal property
+      // no mlbSnapshotSignal property
     };
 
     const result = scoreCandidate(candidate);
@@ -451,10 +484,11 @@ describe('scoreCandidate - reasoning string', () => {
       comparableLines: [],
       comparablePrices: [-155, -158, -160],
       sourceCount: 3,
-      mlbSignal: {
-        modelWinProb: 0.572,
+      mlbSnapshotSignal: {
+        modelWinProbHome: 0.572,
         edge: 0.031,
-        projection_source: 'FULL_MODEL',
+        side: 'HOME',
+        projection_source: 'MLB_FULL_GAME_MODEL',
       },
     };
 
@@ -462,7 +496,7 @@ describe('scoreCandidate - reasoning string', () => {
     expect(scored).not.toBeNull();
     expect(typeof scored.reasoning).toBe('string');
     expect(scored.reasoning.length).toBeGreaterThan(0);
-    // MLB model path references FULL_MODEL, not "Model likes"
+    // MLB model path references the full-game model, not "Model likes"
     expect(scored.reasoning).toContain('Full model projection backs');
     expect(scored.reasoning).not.toContain('Model likes');
     expect(scored.reasoning).toContain('Red Sox');
@@ -727,10 +761,11 @@ describe('scoreCandidate - NHL moneyline override', () => {
       sourceCount: 3,
       line: null,
       consensusLine: null,
-      mlbSignal: {
-        modelWinProb: 0.61,
+      mlbSnapshotSignal: {
+        modelWinProbHome: 0.61,
         edge: 0.04,
-        projection_source: 'FULL_MODEL',
+        side: 'HOME',
+        projection_source: 'MLB_FULL_GAME_MODEL',
       },
       // Should not trigger NHL path
       nhlSignal: null,
@@ -925,7 +960,7 @@ describe('resolveNoiseFloor', () => {
 // WI-1029: edgeSourceTag on scored candidates
 // ---------------------------------------------------------------------------
 describe('edgeSourceTag', () => {
-  test('MLB model path stamps edgeSourceTag = MODEL', () => {
+  test('MLB snapshot model path stamps edgeSourceTag = MODEL', () => {
     const candidate = {
       gameId: 'mlb-tag-001',
       sport: 'baseball_mlb',
@@ -943,14 +978,19 @@ describe('edgeSourceTag', () => {
       comparableLines: [],
       comparablePrices: [-132, -130, -128],
       sourceCount: 3,
-      mlbSignal: { modelWinProb: 0.58, edge: 0.06, projection_source: 'FULL_MODEL' },
+      mlbSnapshotSignal: {
+        modelWinProbHome: 0.58,
+        edge: 0.06,
+        side: 'HOME',
+        projection_source: 'MLB_FULL_GAME_MODEL',
+      },
     };
     const scored = scoreCandidate(candidate);
     expect(scored.edgeSourceTag).toBe('MODEL');
     expect(scored.edgeSourceMeta).toMatchObject({
-      projection_source: 'FULL_MODEL',
+      projection_source: 'MLB_FULL_GAME_MODEL',
       model_win_prob: 0.58,
-      signal_type: 'MLB_PITCHER_MODEL',
+      signal_type: 'MLB_FULL_GAME_MODEL',
     });
   });
 

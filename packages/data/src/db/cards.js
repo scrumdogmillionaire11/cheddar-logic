@@ -1244,7 +1244,7 @@ function getLatestNhlModelOutput(gameId) {
   const db = getDatabase();
   const row = db.prepare(`
     SELECT payload_data FROM card_payloads
-    WHERE game_id = ? AND sport = 'icehockey_nhl'
+    WHERE game_id = ? AND card_type = 'nhl-model-output'
     ORDER BY created_at DESC LIMIT 1
   `).get(gameId);
   if (!row) return null;
@@ -1258,6 +1258,28 @@ function getLatestNhlModelOutput(gameId) {
       savePct: rd.goalie_away_save_pct ?? rd.goalie?.away?.save_pct ?? null,
       gsax:    rd.goalie_away_gsax    ?? rd.goalie?.away?.gsax    ?? null,
     },
+  };
+}
+
+function getLatestMlbModelOutput(gameId) {
+  const db = getDatabase();
+  const row = db.prepare(`
+    SELECT payload_data FROM card_payloads
+    WHERE game_id = ? AND card_type = 'mlb-full-game'
+    ORDER BY created_at DESC LIMIT 1
+  `).get(gameId);
+  if (!row) return null;
+  const rd = JSON.parse(row.payload_data);
+  const driver = Array.isArray(rd.drivers) ? rd.drivers[0] : null;
+  if (!driver) return null;
+  const { win_prob_home, edge, side } = driver;
+  if (!Number.isFinite(win_prob_home) || !Number.isFinite(edge)) return null;
+  if (side !== 'HOME' && side !== 'AWAY') return null;
+  return {
+    modelWinProbHome: win_prob_home,
+    edge,
+    side,
+    projection_source: rd.projection_source ?? 'MLB_FULL_GAME_MODEL',
   };
 }
 
@@ -1300,5 +1322,6 @@ module.exports = {
   setProjectionActualResult,
   getUnsettledProjectionCards,
   getLatestNhlModelOutput,
+  getLatestMlbModelOutput,
   getLatestNbaModelOutput,
 };
