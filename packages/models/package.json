@@ -13,13 +13,6 @@
   "scripts": {
     "test": "jest"
   },
-<<<<<<< Updated upstream
-  "dependencies": {
-    "uuid": "^14.0.0"
-  },
-=======
-  "dependencies": {},  
->>>>>>> Stashed changes
   "devDependencies": {
     "jest": "^29.7.0"
   },
