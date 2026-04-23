@@ -5,6 +5,10 @@ import {
   performSecurityChecks,
   addRateLimitHeaders,
 } from '@/lib/api-security';
+import {
+  type ConfidenceTier,
+  normalizeToConfidenceTier,
+} from '@/lib/types/projection-accuracy';
 
 // WI-0967: Query projection_proxy_evals table for graded projection results.
 // These rows come from settle_projections.js which calls buildProjectionProxyMarketRows().
@@ -86,6 +90,7 @@ export type ProjectionProxyRow = {
   cardTitle: string | null;
   homeTeam: string | null;
   awayTeam: string | null;
+  confidenceTier: ConfidenceTier;
   winProbability?: number | null;
   edgePp?: number | null;
   confidenceScore?: number | null;
@@ -388,6 +393,11 @@ export async function GET(
         cardTitle: row.card_title,
         homeTeam: row.home_team,
         awayTeam: row.away_team,
+        confidenceTier: normalizeToConfidenceTier(
+          row.accuracy_confidence_band ?? row.confidence_bucket,
+          row.confidence_score,
+          row.win_probability,
+        ),
         winProbability: row.win_probability,
         edgePp: row.edge_pp,
         confidenceScore: row.confidence_score,
@@ -518,6 +528,11 @@ export async function GET(
         cardTitle: row.card_title,
         homeTeam: row.home_team,
         awayTeam: row.away_team,
+        confidenceTier: normalizeToConfidenceTier(
+          confidenceBand,
+          resolvedConfidenceScore,
+          projValue,
+        ),
         winProbability: projValue,
         edgePp: edgeVsLine,
         confidenceScore: resolvedConfidenceScore,
