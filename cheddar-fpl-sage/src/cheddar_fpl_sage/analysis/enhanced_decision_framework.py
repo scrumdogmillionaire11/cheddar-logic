@@ -65,9 +65,19 @@ class ChipDecisionContext:
     reason_codes: List[str] = None
     current_window_score: Optional[float] = None
     best_future_window_score: Optional[float] = None
+    best_future_window_gw: Optional[int] = None
     window_rank: Optional[int] = None
     current_window_name: Optional[str] = None
     best_future_window_name: Optional[str] = None
+    recommendation: Optional[str] = None
+    rationale: Optional[str] = None
+    timing: Optional[str] = None
+    status: Optional[str] = None
+    score: Optional[float] = None
+    reason_code: Optional[str] = None
+    forced_by: Optional[str] = None
+    watch_until: Optional[int] = None
+    narrative: Optional[str] = None
 
 
 @dataclass
@@ -108,6 +118,12 @@ class DecisionOutput:
     strategy_paths_reason: Optional[str] = None
     fixture_planner_reason: Optional[str] = None
     lineup_decision: Optional[Dict] = None
+    decision_state: str = "NORMAL"
+    critical_failure_reason: Optional[str] = None
+    chip_instruction: Optional[str] = None
+    recovery_plan: Optional[Dict] = None
+    structural_weakness_summary: Optional[Dict] = None
+    optimized_xi: Any = None
 
     def __post_init__(self):
         """Derive confidence_label and confidence_summary from confidence_score."""
@@ -258,6 +274,691 @@ class EnhancedDecisionFramework:
         except (KeyError, ValueError, TypeError) as e:
             logger.warning(f"Failed to load injury reports: {e}")
             return None
+
+    @staticmethod
+    def _coerce_player_id(value: Any) -> Optional[int]:
+        try:
+            return int(value) if value is not None else None
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _normalized_status_flag(player: Dict[str, Any]) -> str:
+        raw = str(player.get("status_flag") or player.get("status") or "FIT").strip().upper()
+        if raw in {"A", "AVAILABLE", "FIT"}:
+            return "FIT"
+        if raw in {"D", "DOUBT", "DOUBTFUL", "QUESTIONABLE"}:
+            return "DOUBT"
+        if raw in {"I", "U", "OUT", "INJURED", "UNAVAILABLE"}:
+            return "OUT"
+        if raw in {"S", "SUSP", "SUSPENDED", "BANNED"}:
+            return "BANNED"
+        return raw or "FIT"
+
+    def _current_gw_row_for_player(self, player_id: Optional[int], fixture_context: Dict[str, Any]) -> Dict[str, Any]:
+        if player_id is None or not isinstance(fixture_context, dict):
+            return {}
+        start_gw = self._coerce_player_id(fixture_context.get("start_gw"))
+        for key in ("squad_player_windows", "candidate_player_windows", "captain_candidate_windows"):
+            for window in fixture_context.get(key) or []:
+                if not isinstance(window, dict):
+                    continue
+                if self._coerce_player_id(window.get("player_id")) != player_id:
+                    continue
+                for row in window.get("upcoming") or []:
+                    if not isinstance(row, dict):
+                        continue
+                    if start_gw is None or self._coerce_player_id(row.get("gw")) == start_gw:
+                        return row
+        return {}
+
+    def _is_blank_next_gw(
+        self,
+        player: Dict[str, Any],
+        fixture_context: Dict[str, Any],
+        projections: Optional[CanonicalProjectionSet] = None,
+    ) -> bool:
+        player_id = self._coerce_player_id(
+            player.get("player_id") or player.get("id") or player.get("element")
+        )
+        summary_by_id = fixture_context.get("player_summary_by_id", {}) if isinstance(fixture_context, dict) else {}
+        summary = summary_by_id.get(player_id) or summary_by_id.get(str(player_id)) or {}
+        start_gw = self._coerce_player_id(fixture_context.get("start_gw")) if isinstance(fixture_context, dict) else None
+        next_bgw_gw = self._coerce_player_id(summary.get("next_bgw_gw"))
+        if start_gw is not None and next_bgw_gw == start_gw:
+            return True
+
+        row = self._current_gw_row_for_player(player_id, fixture_context)
+        if row:
+            if bool(row.get("is_blank")):
+                return True
+            fixture_count = self._coerce_player_id(row.get("fixture_count"))
+            if fixture_count == 0:
+                return True
+
+        blank_teams = set()
+        if isinstance(fixture_context, dict):
+            timeline = fixture_context.get("gw_timeline") or []
+            if isinstance(timeline, list) and timeline:
+                first_row = timeline[0] if isinstance(timeline[0], dict) else {}
+                blank_teams = {
+                    str(team).strip().upper()
+                    for team in (first_row.get("bgw_teams") or [])
+                    if team is not None
+                }
+        if str(player.get("team") or "").strip().upper() in blank_teams:
+            return True
+
+        if projections is not None and player_id is not None:
+            projection = projections.get_by_id(player_id)
+            if projection is not None:
+                tags = [str(tag).lower() for tag in (getattr(projection, "tags", []) or [])]
+                if "blank" in tags:
+                    return True
+                if float(getattr(projection, "xMins_next", 0.0) or 0.0) <= 0 and float(
+                    getattr(projection, "nextGW_pts", 0.0) or 0.0
+                ) <= 0:
+                    return True
+
+        return False
+
+    def _is_playable_next_gw(
+        self,
+        player: Dict[str, Any],
+        fixture_context: Dict[str, Any],
+        projections: Optional[CanonicalProjectionSet],
+        injury_reports: Optional[Dict[int, InjuryReport]],
+    ) -> bool:
+        player_id = self._coerce_player_id(
+            player.get("player_id") or player.get("id") or player.get("element")
+        )
+        status = self._normalized_status_flag(player)
+        if injury_reports and player_id is not None and player_id in injury_reports:
+            injury_status = injury_reports[player_id].status
+            if injury_status == InjuryStatus.OUT:
+                status = "OUT" if status != "BANNED" else status
+            elif injury_status == InjuryStatus.DOUBT and status == "FIT":
+                status = "DOUBT"
+        if status in {"OUT", "BANNED"}:
+            return False
+        if self._is_blank_next_gw(player, fixture_context, projections):
+            return False
+        chance_next = player.get("chance_of_playing_next_round")
+        try:
+            if chance_next is not None and float(chance_next) <= 0 and status != "FIT":
+                return False
+        except (TypeError, ValueError):
+            pass
+        if projections is not None and player_id is not None:
+            projection = projections.get_by_id(player_id)
+            if projection is not None:
+                xmins = float(getattr(projection, "xMins_next", 0.0) or 0.0)
+                pts = float(getattr(projection, "nextGW_pts", 0.0) or 0.0)
+                if xmins <= 0 and pts <= 0:
+                    return False
+        return True
+
+    def _projection_points(self, player: Dict[str, Any], projections: Optional[CanonicalProjectionSet]) -> float:
+        player_id = self._coerce_player_id(
+            player.get("player_id") or player.get("id") or player.get("element")
+        )
+        if projections is not None and player_id is not None:
+            projection = projections.get_by_id(player_id)
+            if projection is not None:
+                return float(getattr(projection, "nextGW_pts", 0.0) or 0.0)
+        return float(player.get("expected_pts") or player.get("projected_points") or 0.0)
+
+    def _projection_minutes(self, player: Dict[str, Any], projections: Optional[CanonicalProjectionSet]) -> float:
+        player_id = self._coerce_player_id(
+            player.get("player_id") or player.get("id") or player.get("element")
+        )
+        if projections is not None and player_id is not None:
+            projection = projections.get_by_id(player_id)
+            if projection is not None:
+                return float(getattr(projection, "xMins_next", 0.0) or 0.0)
+        return 0.0
+
+    def _build_structural_weakness_summary(
+        self,
+        squad: List[Dict[str, Any]],
+        fixture_context: Dict[str, Any],
+        projections: Optional[CanonicalProjectionSet],
+        injury_reports: Optional[Dict[int, InjuryReport]],
+    ) -> Dict[str, Any]:
+        starters = [player for player in squad if player.get("is_starter")]
+        issue_buckets = set()
+        tier3_count = 0
+        tier4_count = 0
+        weak_starters = []
+        weighted_scores: List[float] = []
+
+        for player in starters:
+            player_id = self._coerce_player_id(
+                player.get("player_id") or player.get("id") or player.get("element")
+            )
+            summary_by_id = fixture_context.get("player_summary_by_id", {}) if isinstance(fixture_context, dict) else {}
+            summary = summary_by_id.get(player_id) or summary_by_id.get(str(player_id)) or {}
+            weighted_score = summary.get("weighted_fixture_score")
+            try:
+                if weighted_score is not None:
+                    weighted_scores.append(float(weighted_score))
+            except (TypeError, ValueError):
+                pass
+
+            status = self._normalized_status_flag(player)
+            chance_next = player.get("chance_of_playing_next_round")
+            try:
+                chance_value = float(chance_next) if chance_next is not None else None
+            except (TypeError, ValueError):
+                chance_value = None
+            blank_next = self._is_blank_next_gw(player, fixture_context, projections)
+            minutes = self._projection_minutes(player, projections)
+            projected_points = self._projection_points(player, projections)
+
+            tier = 0
+            reasons: List[str] = []
+            if blank_next:
+                tier = 4
+                reasons.append("blank_next_gw")
+                issue_buckets.add("blank")
+            if status in {"OUT", "BANNED"}:
+                tier = 4
+                reasons.append(status.lower())
+                issue_buckets.add("availability")
+            elif chance_value is not None and chance_value < 50:
+                tier = max(tier, 3)
+                reasons.append("low_playing_chance")
+                issue_buckets.add("availability")
+            elif status == "DOUBT":
+                tier = max(tier, 3)
+                reasons.append("doubt_status")
+                issue_buckets.add("availability")
+
+            if minutes < 45:
+                tier = max(tier, 3)
+                reasons.append("minutes_risk")
+                issue_buckets.add("minutes")
+
+            if projected_points < 4.0:
+                tier = max(tier, 3)
+                reasons.append("starter_quality")
+                issue_buckets.add("quality")
+
+            if tier >= 4:
+                tier4_count += 1
+            elif tier >= 3:
+                tier3_count += 1
+
+            if tier >= 3:
+                weak_starters.append(
+                    {
+                        "player_id": player_id,
+                        "name": player.get("name"),
+                        "position": player.get("position"),
+                        "team": player.get("team"),
+                        "tier": tier,
+                        "reasons": reasons,
+                        "projected_points": round(projected_points, 2),
+                        "expected_minutes": round(minutes, 1),
+                    }
+                )
+
+        avg_weighted_score = (sum(weighted_scores) / len(weighted_scores)) if weighted_scores else 0.0
+        poor_fixture_horizon = avg_weighted_score < 2.5 or any(
+            "blank" in str(note).lower() for note in (fixture_context.get("key_planning_notes") or [])
+        )
+        return {
+            "tier3_count": tier3_count,
+            "tier4_count": tier4_count,
+            "tier3_or_tier4_count": tier3_count + tier4_count,
+            "overall_weak": len(issue_buckets),
+            "issue_buckets": sorted(issue_buckets),
+            "poor_fixture_horizon": poor_fixture_horizon,
+            "avg_weighted_fixture_score": round(avg_weighted_score, 2),
+            "weak_starters": weak_starters,
+        }
+
+    def _estimate_bank_value(self, team_data: Dict[str, Any]) -> float:
+        team_info = team_data.get("team_info", {}) if isinstance(team_data, dict) else {}
+        for key in ("bank", "bank_value", "bank_millions", "itb"):
+            value = team_info.get(key)
+            try:
+                if value is not None:
+                    parsed = float(value)
+                    return parsed / 10.0 if parsed > 20 else parsed
+            except (TypeError, ValueError):
+                continue
+        return 0.0
+
+    def _survival_score_from_context(self, context: Dict[str, Any]) -> float:
+        playable = int(context.get("playable_count_next_gw") or 0)
+        blanks = int(context.get("blank_starter_count") or 0)
+        low_value = int(context.get("low_value_replacement_count") or 0)
+        minutes = float(context.get("expected_minutes_total") or 0.0)
+        points = float(context.get("projected_points_total") or 0.0)
+        return round((playable * 100.0) - (blanks * 18.0) - (low_value * 10.0) + (minutes * 0.1) + points, 2)
+
+    def _build_critical_recovery_context(
+        self,
+        team_data: Dict[str, Any],
+        projections: CanonicalProjectionSet,
+        injury_reports: Optional[Dict[int, InjuryReport]],
+    ) -> Tuple[Dict[str, Any], Optional[OptimizedXI], Optional[str]]:
+        squad = team_data.get("current_squad", []) or []
+        fixture_context = team_data.get("fixture_horizon_context", {})
+        starters = [player for player in squad if player.get("is_starter")]
+        playable_players = [
+            player for player in squad
+            if self._is_playable_next_gw(player, fixture_context, projections, injury_reports)
+        ]
+        blank_starters = [
+            player for player in starters
+            if self._is_blank_next_gw(player, fixture_context, projections)
+        ]
+
+        optimized_xi: Optional[OptimizedXI] = None
+        optimize_error: Optional[str] = None
+        try:
+            optimized_xi = self._optimize_starting_xi(team_data, projections, injury_reports)
+        except ValueError as exc:
+            optimize_error = str(exc)
+
+        if optimized_xi is not None:
+            low_value_replacement_count = sum(
+                1
+                for player in optimized_xi.starting_xi
+                if float(getattr(player, "nextGW_pts", 0.0) or 0.0) < 4.0
+            )
+            expected_minutes_total = sum(float(getattr(player, "xMins_next", 0.0) or 0.0) for player in optimized_xi.starting_xi)
+            projected_points_total = sum(float(getattr(player, "nextGW_pts", 0.0) or 0.0) for player in optimized_xi.starting_xi)
+        else:
+            playable_projections = []
+            for player in playable_players:
+                player_id = self._coerce_player_id(
+                    player.get("player_id") or player.get("id") or player.get("element")
+                )
+                projection = projections.get_by_id(player_id) if player_id is not None else None
+                if projection is not None:
+                    playable_projections.append(projection)
+            playable_projections.sort(
+                key=lambda projection: (
+                    float(getattr(projection, "xMins_next", 0.0) or 0.0),
+                    float(getattr(projection, "nextGW_pts", 0.0) or 0.0),
+                ),
+                reverse=True,
+            )
+            top_playable = playable_projections[:11]
+            low_value_replacement_count = sum(
+                1 for player in top_playable if float(getattr(player, "nextGW_pts", 0.0) or 0.0) < 4.0
+            )
+            expected_minutes_total = sum(float(getattr(player, "xMins_next", 0.0) or 0.0) for player in top_playable)
+            projected_points_total = sum(float(getattr(player, "nextGW_pts", 0.0) or 0.0) for player in top_playable)
+
+        structural_weakness = self._build_structural_weakness_summary(
+            squad=squad,
+            fixture_context=fixture_context if isinstance(fixture_context, dict) else {},
+            projections=projections,
+            injury_reports=injury_reports,
+        )
+
+        reasons: List[str] = []
+        if optimize_error:
+            reasons.append(optimize_error)
+        if len(playable_players) < 11:
+            reasons.append(f"{len(playable_players)} playable players for next GW")
+        if len(blank_starters) >= 4:
+            reasons.append(f"{len(blank_starters)} blank starters in current XI")
+
+        context = {
+            "playable_count_next_gw": len(playable_players),
+            "xi_feasible": optimized_xi is not None,
+            "blank_starter_count": len(blank_starters),
+            "blank_starter_names": [player.get("name", "Unknown") for player in blank_starters],
+            "critical_failure_reason": "; ".join(reasons) if reasons else None,
+            "structural_weakness_summary": structural_weakness,
+            "low_value_replacement_count": low_value_replacement_count,
+            "expected_minutes_total": round(expected_minutes_total, 1),
+            "projected_points_total": round(projected_points_total, 2),
+            "triggered": bool(optimize_error or len(playable_players) < 11 or len(blank_starters) >= 4),
+        }
+        context["survival_score"] = self._survival_score_from_context(context)
+        return context, optimized_xi, optimize_error
+
+    def _hit_cap_for_posture(self) -> int:
+        posture = str(self.risk_posture or "BALANCED").upper()
+        return {"CONSERVATIVE": 4, "BALANCED": 8, "AGGRESSIVE": 12}.get(posture, 8)
+
+    def _attempt_forced_recovery_transfers(
+        self,
+        team_data: Dict[str, Any],
+        projections: CanonicalProjectionSet,
+        injury_reports: Optional[Dict[int, InjuryReport]],
+        free_transfers: int,
+        critical_context: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        squad = [dict(player) for player in (team_data.get("current_squad", []) or [])]
+        fixture_context = team_data.get("fixture_horizon_context", {})
+        bank_value = self._estimate_bank_value(team_data)
+        hit_cap = self._hit_cap_for_posture()
+        max_transfers = max(0, int(free_transfers or 0) + (hit_cap // 4))
+        if max_transfers <= 0:
+            return {"resolved": False, "hit_cap": hit_cap, "recommendations": []}
+
+        team_aliases = self._transfer_advisor._build_team_aliases(team_data.get("teams", []) or [])
+        self._transfer_advisor._team_aliases = team_aliases
+        team_counts = self._transfer_advisor._build_team_counts(squad)
+
+        starter_issues = []
+        for player in squad:
+            if not player.get("is_starter"):
+                continue
+            status = self._normalized_status_flag(player)
+            blank_next = self._is_blank_next_gw(player, fixture_context, projections)
+            minutes = self._projection_minutes(player, projections)
+            points = self._projection_points(player, projections)
+            tier = 0
+            if blank_next or status in {"OUT", "BANNED"}:
+                tier = 4
+            else:
+                chance_next = player.get("chance_of_playing_next_round")
+                try:
+                    chance_value = float(chance_next) if chance_next is not None else None
+                except (TypeError, ValueError):
+                    chance_value = None
+                if status == "DOUBT" or (chance_value is not None and chance_value < 50) or minutes < 45 or points < 4.0:
+                    tier = 3
+            if tier >= 3:
+                starter_issues.append((tier, points, player))
+
+        starter_issues.sort(key=lambda item: (-item[0], item[1]))
+
+        recommendations: List[Dict[str, Any]] = []
+        used_out_ids = set()
+        for _, _, player in starter_issues:
+            if len(recommendations) >= max_transfers:
+                break
+            player_id = self._coerce_player_id(player.get("player_id") or player.get("id") or player.get("element"))
+            if player_id in used_out_ids:
+                continue
+            position = player.get("position")
+            outgoing_price = float(player.get("current_price") or 0.0)
+            candidate_pool = []
+            for candidate in projections.get_by_position(position):
+                if candidate.player_id == player_id:
+                    continue
+                if any(
+                    self._coerce_player_id(existing.get("player_id") or existing.get("id") or existing.get("element")) == candidate.player_id
+                    for existing in squad
+                ):
+                    continue
+                if candidate.current_price > outgoing_price + bank_value:
+                    continue
+                candidate_stub = {"player_id": candidate.player_id, "team": candidate.team}
+                if self._is_blank_next_gw(candidate_stub, fixture_context, projections):
+                    continue
+                if candidate.is_injury_risk or float(candidate.xMins_next or 0.0) < 60:
+                    continue
+                if not self._transfer_advisor._is_team_limit_legal(team_counts, player.get("team"), candidate.team):
+                    continue
+                candidate_pool.append(candidate)
+
+            if not candidate_pool:
+                continue
+
+            candidate_pool.sort(
+                key=lambda candidate: (
+                    float(candidate.xMins_next or 0.0),
+                    float(candidate.nextGW_pts or 0.0),
+                ),
+                reverse=True,
+            )
+            best_candidate = candidate_pool[0]
+
+            new_player = {
+                "player_id": best_candidate.player_id,
+                "name": best_candidate.name,
+                "team": best_candidate.team,
+                "position": best_candidate.position,
+                "current_price": best_candidate.current_price,
+                "is_starter": player.get("is_starter", False),
+                "status_flag": "a",
+                "news": "",
+                "chance_of_playing_next_round": 100,
+                "bench_order": player.get("bench_order"),
+            }
+
+            for idx, existing in enumerate(squad):
+                existing_id = self._coerce_player_id(existing.get("player_id") or existing.get("id") or existing.get("element"))
+                if existing_id == player_id:
+                    squad[idx] = new_player
+                    break
+
+            used_out_ids.add(player_id)
+            bank_value = round(bank_value - max(0.0, best_candidate.current_price - outgoing_price), 2)
+            team_counts = self._transfer_advisor._build_team_counts(squad)
+            recommendations.append(
+                {
+                    "action": "FORCED_TRANSFER",
+                    "priority": "URGENT",
+                    "transfer_out": {
+                        "player_id": player_id,
+                        "name": player.get("name"),
+                        "team": player.get("team"),
+                        "position": player.get("position"),
+                        "price": outgoing_price,
+                        "reason": "Structural recovery transfer out",
+                    },
+                    "transfer_in": {
+                        "player_id": best_candidate.player_id,
+                        "name": best_candidate.name,
+                        "team": best_candidate.team,
+                        "position": best_candidate.position,
+                        "price": best_candidate.current_price,
+                        "expected_points": round(float(best_candidate.nextGW_pts or 0.0), 2),
+                    },
+                    "in_reason": "Recovery move chosen for minutes security and blank avoidance.",
+                    "reason": "Forced transfer to restore XI legality and reduce blank exposure.",
+                }
+            )
+
+            simulated_team = dict(team_data)
+            simulated_team["current_squad"] = squad
+            simulated_context, simulated_xi, _ = self._build_critical_recovery_context(
+                simulated_team,
+                projections,
+                injury_reports,
+            )
+            if (
+                simulated_context["playable_count_next_gw"] >= 11
+                and simulated_context["blank_starter_count"] < 4
+                and simulated_context["xi_feasible"]
+            ):
+                transfers_used = len(recommendations)
+                hit_cost = max(0, transfers_used - int(free_transfers or 0)) * 4
+                return {
+                    "resolved": True,
+                    "hit_cap": hit_cap,
+                    "recommendations": recommendations,
+                    "optimized_xi": simulated_xi,
+                    "context": simulated_context,
+                    "hit_cost": hit_cost,
+                    "simulated_team": simulated_team,
+                }
+
+        transfers_used = len(recommendations)
+        hit_cost = max(0, transfers_used - int(free_transfers or 0)) * 4
+        return {
+            "resolved": False,
+            "hit_cap": hit_cap,
+            "recommendations": recommendations,
+            "hit_cost": hit_cost,
+        }
+
+    def _critical_reasoning(self, reason: str, action_label: str, resolution_text: str, ignored_text: str) -> str:
+        return "\n".join(
+            [
+                "🚨 CRITICAL SQUAD FAILURE DETECTED",
+                f"Reason: {reason}",
+                "",
+                f"PRIMARY ACTION: {action_label}",
+                "CONFIDENCE: HIGH (forced state)",
+                "",
+                f"Why this resolves the issue: {resolution_text}",
+                f"If ignored: {ignored_text}",
+            ]
+        )
+
+    def _build_critical_decision(
+        self,
+        action_label: str,
+        available_chips: List[ChipType],
+        critical_context: Dict[str, Any],
+        chip_type: ChipType = ChipType.NONE,
+        chip_instruction: Optional[str] = None,
+        transfer_recommendations: Optional[List[Dict[str, Any]]] = None,
+        optimized_xi: Optional[OptimizedXI] = None,
+        resolved_context: Optional[Dict[str, Any]] = None,
+        decision_status: str = "PASS",
+        unresolved: bool = False,
+    ) -> DecisionOutput:
+        after_context = resolved_context or critical_context
+        hit_cap = self._hit_cap_for_posture()
+        before_playable = int(critical_context.get("playable_count_next_gw") or 0)
+        after_playable = int(after_context.get("playable_count_next_gw") or before_playable)
+        before_blanks = int(critical_context.get("blank_starter_count") or 0)
+        after_blanks = int(after_context.get("blank_starter_count") or 0)
+
+        if chip_instruction == "FREE_HIT":
+            resolution_text = "Free Hit is the fastest path to 11 playable starters and removes the current blank concentration in one move."
+            ignored_text = "The squad will carry dead starter slots into the deadline and sacrifice immediate points just to remain functional."
+        elif chip_instruction == "WILDCARD":
+            resolution_text = "Wildcard resets the weak core instead of patching one week, which fixes both immediate legality risk and the poor short horizon."
+            ignored_text = "The squad remains structurally weak and the blank/injury burden will persist beyond this deadline."
+        elif unresolved:
+            resolution_text = f"No legal XI was reachable within the {hit_cap}-point recovery cap for {self.risk_posture} posture."
+            ignored_text = "The current squad is still likely to start short of a legal XI and will leak points from blanks and unavailable players."
+        else:
+            resolution_text = f"Forced transfers restore a legal XI inside the {hit_cap}-point hit cap while prioritizing minutes security over upside."
+            ignored_text = "Keeping the current squad leaves blank or unavailable starters in place and risks an illegal or dead-slot XI."
+
+        decision = DecisionOutput(
+            primary_decision=action_label,
+            reasoning=self._critical_reasoning(
+                critical_context.get("critical_failure_reason") or "XI infeasible",
+                chip_instruction or action_label,
+                resolution_text,
+                ignored_text,
+            ),
+            risk_scenarios=[],
+            risk_posture=self.risk_posture,
+            decision_status=decision_status,
+            confidence_score=1.0 if not unresolved else 0.55,
+            lineup_focus="survival_recovery",
+            transfer_recommendations=transfer_recommendations or [],
+            decision_state="CRITICAL_SQUAD_FAILURE",
+            critical_failure_reason=critical_context.get("critical_failure_reason"),
+            chip_instruction=chip_instruction,
+            recovery_plan={
+                "mode": "UNRESOLVED" if unresolved else (chip_instruction or action_label),
+                "posture": self.risk_posture,
+                "hit_cap": hit_cap,
+                "playable_before": before_playable,
+                "playable_after": after_playable,
+                "blanks_before": before_blanks,
+                "blanks_after": after_blanks,
+                "survival_score": after_context.get("survival_score"),
+            },
+            structural_weakness_summary=critical_context.get("structural_weakness_summary"),
+        )
+        if chip_type != ChipType.NONE:
+            decision.chip_guidance = ChipDecisionContext(
+                current_gw=self._window_context.get("current_gw", 0),
+                chip_type=chip_type,
+                available_chips=available_chips,
+                selected_chip=chip_type,
+                status="FIRE",
+                recommendation=chip_instruction,
+                reason_codes=["critical_squad_failure"],
+                rationale=decision.reasoning,
+            )
+        decision.optimized_xi = optimized_xi
+        return self._finalize_decision(decision, chip_type, available_chips)
+
+    def _resolve_critical_squad_failure(
+        self,
+        team_data: Dict[str, Any],
+        fixture_data: Dict[str, Any],
+        projections: CanonicalProjectionSet,
+        current_gw: int,
+        available_chips: List[ChipType],
+        free_transfers: int,
+        injury_reports: Optional[Dict[int, InjuryReport]],
+        critical_context: Dict[str, Any],
+        optimized_xi: Optional[OptimizedXI],
+    ) -> DecisionOutput:
+        structural = critical_context.get("structural_weakness_summary") or {}
+        playable_count = int(critical_context.get("playable_count_next_gw") or 0)
+        blank_count = int(critical_context.get("blank_starter_count") or 0)
+        low_value = int(critical_context.get("low_value_replacement_count") or 0)
+
+        if ChipType.FREE_HIT in available_chips and (
+            playable_count < 10 or blank_count >= 5 or low_value > 0
+        ):
+            return self._build_critical_decision(
+                action_label="FREE_HIT",
+                available_chips=available_chips,
+                critical_context=critical_context,
+                chip_type=ChipType.FREE_HIT,
+                chip_instruction="FREE_HIT",
+                optimized_xi=optimized_xi if critical_context.get("xi_feasible") else None,
+            )
+
+        if (
+            ChipType.WILDCARD in available_chips
+            and int(structural.get("overall_weak") or 0) >= 3
+            and int(structural.get("tier3_or_tier4_count") or 0) >= 4
+            and bool(structural.get("poor_fixture_horizon"))
+        ):
+            return self._build_critical_decision(
+                action_label="WILDCARD",
+                available_chips=available_chips,
+                critical_context=critical_context,
+                chip_type=ChipType.WILDCARD,
+                chip_instruction="WILDCARD",
+                optimized_xi=optimized_xi if critical_context.get("xi_feasible") else None,
+            )
+
+        forced_result = self._attempt_forced_recovery_transfers(
+            team_data=team_data,
+            projections=projections,
+            injury_reports=injury_reports,
+            free_transfers=free_transfers,
+            critical_context=critical_context,
+        )
+        if forced_result.get("resolved"):
+            resolved_context = forced_result.get("context") or critical_context
+            decision = self._build_critical_decision(
+                action_label="FORCED_TRANSFERS",
+                available_chips=available_chips,
+                critical_context=critical_context,
+                transfer_recommendations=forced_result.get("recommendations") or [],
+                optimized_xi=forced_result.get("optimized_xi"),
+                resolved_context=resolved_context,
+            )
+            decision.recovery_plan["hit_cost"] = forced_result.get("hit_cost")
+            return decision
+
+        decision = self._build_critical_decision(
+            action_label="FORCED_TRANSFERS",
+            available_chips=available_chips,
+            critical_context=critical_context,
+            transfer_recommendations=forced_result.get("recommendations") or [],
+            optimized_xi=None,
+            decision_status="BLOCKED",
+            unresolved=True,
+        )
+        decision.recovery_plan["hit_cost"] = forced_result.get("hit_cost")
+        return decision
     
     def _optimize_starting_xi(self, team_data: Dict, projections: CanonicalProjectionSet, 
                              injury_reports: Optional[Dict[int, InjuryReport]] = None) -> OptimizedXI:
@@ -1015,38 +1716,12 @@ class EnhancedDecisionFramework:
         
         # Load injury reports for OUT player filtering
         injury_reports = self._load_injury_reports(team_data)
-        
-        # CRITICAL: Check squad rule compliance FIRST - violations need URGENT transfer
-        squad_violations = self._validate_squad_composition(team_data)
-        if squad_violations:
-            return self._create_squad_violation_decision(squad_violations, team_data, projections, injury_reports)
-            
-        # MANDATORY: Optimize XI before any decisions with injury filtering
-        try:
-            optimized_xi = self._optimize_starting_xi(team_data, projections, injury_reports)
-            # Store in team_data for later retrieval by API
-            team_data['_optimized_xi'] = optimized_xi
-        except ValueError as e:
-            return DecisionOutput(
-                primary_decision="HOLD",
-                reasoning=f"Cannot optimize valid XI: {str(e)}",
-                decision_status="BLOCKED", 
-                block_reason="Formation constraints violated",
-                confidence_score=0.0,
-                risk_scenarios=[RiskScenario(
-                    condition="Formation optimization failure",
-                    expected_loss_range=(0, 0),
-                    risk_level=RiskLevel.CRITICAL,
-                    mitigation_action="Fix squad composition to allow valid formations"
-                )]
-            )
-            
+
         available_chips = self._get_available_chips(team_data.get('chip_status', {}))
         free_transfers = team_data.get('team_info', {}).get('free_transfers', 0)
         manager_state = self._derive_manager_state(team_data, free_transfers=free_transfers)
         strategy_mode = manager_state.get("strategy_mode", "BALANCED")
 
-        # Expose strategy context across orchestrator + delegates.
         self.strategy_mode = strategy_mode
         self._transfer_advisor.strategy_mode = strategy_mode
         self._captain_selector.strategy_mode = strategy_mode
@@ -1065,6 +1740,62 @@ class EnhancedDecisionFramework:
         manager_context["mode"] = strategy_mode
         manager_context["risk_posture"] = self.risk_posture
         team_data["manager_context"] = manager_context
+        
+        # CRITICAL: Check squad rule compliance FIRST - violations need URGENT transfer
+        squad_violations = self._validate_squad_composition(team_data)
+        if squad_violations:
+            return self._create_squad_violation_decision(squad_violations, team_data, projections, injury_reports)
+
+        critical_context, optimized_xi, optimize_error = self._build_critical_recovery_context(
+            team_data,
+            projections,
+            injury_reports,
+        )
+
+        if critical_context.get("triggered"):
+            decision = self._resolve_critical_squad_failure(
+                team_data=team_data,
+                fixture_data=fixture_data,
+                projections=projections,
+                current_gw=current_gw,
+                available_chips=available_chips,
+                free_transfers=free_transfers,
+                injury_reports=injury_reports,
+                critical_context=critical_context,
+                optimized_xi=optimized_xi,
+            )
+            decision.strategy_mode = strategy_mode
+            decision.rank_bucket = manager_state.get("rank_bucket", "unknown")
+            decision.manager_state = manager_state
+            decision.chip_timing_outlook = self._derive_chip_timing_outlook(manager_state, self._window_context or {})
+            decision.squad_issues = (
+                critical_context.get("structural_weakness_summary", {}).get("weak_starters", []) or []
+            )
+            if getattr(decision, "optimized_xi", None):
+                decision.captaincy = self._recommend_captaincy_from_xi(
+                    decision.optimized_xi, fixture_data, projections, injury_reports
+                )
+                lineup_decision = getattr(decision.optimized_xi, "lineup_decision", None)
+                if isinstance(lineup_decision, dict):
+                    captain = decision.captaincy.get("captain", {}) if isinstance(decision.captaincy, dict) else {}
+                    vice = decision.captaincy.get("vice_captain", {}) if isinstance(decision.captaincy, dict) else {}
+                    lineup_decision["captain_player_id"] = captain.get("player_id")
+                    lineup_decision["vice_captain_player_id"] = vice.get("player_id")
+                    decision.lineup_decision = lineup_decision
+            return decision
+
+        if optimize_error:
+            return DecisionOutput(
+                primary_decision="BLOCKED",
+                reasoning=f"Cannot optimize valid XI: {optimize_error}",
+                decision_status="BLOCKED",
+                block_reason="Formation constraints violated",
+                confidence_score=0.0,
+                risk_scenarios=[],
+                risk_posture=self.risk_posture,
+            )
+
+        team_data['_optimized_xi'] = optimized_xi
 
         window_context = self._build_chip_window_context(team_data, fixture_data, current_gw)
         window_context['available_chips'] = available_chips

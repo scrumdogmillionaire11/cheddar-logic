@@ -114,6 +114,21 @@ def _good_fh_dgw_inputs(**overrides) -> FreeHitInputs:
 # ===========================================================================
 
 class TestWildcardFire:
+    def test_critical_structural_weakness_forces_fire(self):
+        state = _state(current_gw=10)
+        decision = evaluate_wildcard(
+            state,
+            _good_wc_inputs(
+                team_ev_delta=0.1,
+                fixture_run_score=20.0,
+                overall_weak=3,
+                tier3_or_tier4_count=4,
+                poor_fixture_horizon=True,
+            ),
+        )
+        assert decision.action is ChipAction.FIRE
+        assert "critical_structural_weakness" in decision.reason_codes
+
     def test_good_inputs_post_half_season_fire(self):
         state = _state(current_gw=22)
         decision = evaluate_wildcard(state, _good_wc_inputs())
@@ -305,6 +320,18 @@ class TestWildcardEscalation:
 # ===========================================================================
 
 class TestFreeHitBgwFire:
+    def test_critical_squad_failure_forces_fire(self):
+        state = _state(current_gw=22, chips_available=("Free Hit",))
+        decision = evaluate_free_hit(
+            state,
+            _good_fh_bgw_inputs(
+                playable_count_next_gw=9,
+                blank_starter_count=5,
+            ),
+        )
+        assert decision.action is ChipAction.FIRE
+        assert "critical_squad_failure" in decision.reason_codes
+
     def test_bgw_defense_fire(self):
         state = _state(current_gw=22, chips_available=("Free Hit",))
         decision = evaluate_free_hit(state, _good_fh_bgw_inputs())

@@ -120,6 +120,9 @@ class WildcardInputs:
     fixture_run_score: float
     hit_cost_avoided: float = 0.0
     dgw_imminent_gw: Optional[int] = None
+    overall_weak: int = 0
+    tier3_or_tier4_count: int = 0
+    poor_fixture_horizon: bool = False
     notes: str = ""
 
 
@@ -155,6 +158,9 @@ class FreeHitInputs:
     dgw_fixture_quality: float = 0.0
     wildcard_available: bool = False
     permanent_squad_ev_gain: float = 0.0
+    blank_starter_count: int = 0
+    playable_count_next_gw: int = 11
+    low_value_replacement_count: int = 0
     notes: str = ""
 
 
@@ -225,6 +231,21 @@ def evaluate_wildcard(
             action=ChipAction.PASS,
             chip_type=chip_type,
             reason_codes=["chip_unavailable"],
+            confidence="HIGH",
+        )
+        validate_decision(decision, state)
+        return decision
+
+    if (
+        inputs.overall_weak >= 3
+        and inputs.tier3_or_tier4_count >= 4
+        and inputs.poor_fixture_horizon
+    ):
+        decision = ChipDecision(
+            action=ChipAction.FIRE,
+            chip_type=chip_type,
+            reason_codes=["critical_structural_weakness", "poor_fixture_horizon"],
+            current_window_score=100.0,
             confidence="HIGH",
         )
         validate_decision(decision, state)
@@ -431,6 +452,28 @@ def evaluate_free_hit(
             action=ChipAction.PASS,
             chip_type=chip_type,
             reason_codes=["chip_unavailable"],
+            confidence="HIGH",
+        )
+        validate_decision(decision, state)
+        return decision
+
+    if (
+        inputs.playable_count_next_gw < 10
+        or inputs.blank_starter_count >= 5
+        or inputs.low_value_replacement_count > 0
+    ):
+        reason_codes = ["critical_squad_failure"]
+        if inputs.playable_count_next_gw < 10:
+            reason_codes.append("playable_count_below_ten")
+        if inputs.blank_starter_count >= 5:
+            reason_codes.append("blank_starter_overload")
+        if inputs.low_value_replacement_count > 0:
+            reason_codes.append("low_value_replacements_required")
+        decision = ChipDecision(
+            action=ChipAction.FIRE,
+            chip_type=chip_type,
+            reason_codes=reason_codes,
+            current_window_score=100.0,
             confidence="HIGH",
         )
         validate_decision(decision, state)

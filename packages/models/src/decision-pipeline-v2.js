@@ -1779,7 +1779,8 @@ function buildDecisionV2(payload, context = {}) {
       primaryReasonCode: primary_reason_code,
       priceReasonCodes: finalPriceReasonCodes,
       watchdogReasonCodes: watchdog.watchdog_reason_codes,
-      executionStatus: finalOfficialStatus === 'PASS' ? 'BLOCKED' : 'EXECUTABLE',
+      // Only set execution_status to 'BLOCKED' if watchdog_status is 'BLOCKED', else always 'EXECUTABLE'
+      executionStatus: watchdog.watchdog_status === 'BLOCKED' ? 'BLOCKED' : 'EXECUTABLE',
     });
 
     return {

@@ -111,9 +111,17 @@ class DetailedAnalysisResponse(BaseModel):
     current_gw: Optional[int]
     overall_rank: Optional[int]
     overall_points: Optional[int]
+    free_transfers: Optional[int] = None
+    risk_posture: Optional[str] = None
     
     # Decision
     primary_decision: str
+    decision_status: Optional[str] = None
+    decision_state: Optional[str] = None
+    critical_failure_reason: Optional[str] = None
+    chip_instruction: Optional[str] = None
+    recovery_plan: Optional[Dict] = None
+    structural_weakness_summary: Optional[Dict] = None
     confidence: str
     reasoning: str
     strategy_mode: Optional[str] = None
@@ -157,3 +165,8 @@ class DetailedAnalysisResponse(BaseModel):
     
     # Squad health metrics
     squad_health: Optional[Dict] = None
+    weekly_report_card: Optional[Dict] = None
+    confidence_band: Optional[Dict] = None
+    relative_risk: Optional[Dict] = None
+    explainability: Optional[Dict] = None
+    scenario_notes: Optional[List[str]] = None

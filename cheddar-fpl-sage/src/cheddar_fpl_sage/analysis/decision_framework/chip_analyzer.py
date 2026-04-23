@@ -272,9 +272,30 @@ class ChipAnalyzer:
         if "Triple Captain" in candidate_chip_names:
             decisions.append(("Triple Captain", evaluate_triple_captain(state, self._build_triple_captain_inputs(squad, fixture_data, projections, state))))
         if "Free Hit" in candidate_chip_names:
-            decisions.append(("Free Hit", evaluate_free_hit(state, self._build_free_hit_inputs(squad, fixture_data))))
+            decisions.append(
+                (
+                    "Free Hit",
+                    evaluate_free_hit(
+                        state,
+                        self._build_free_hit_inputs(
+                            squad,
+                            fixture_data,
+                            projections,
+                            wildcard_available="Wildcard" in candidate_chip_names,
+                        ),
+                    ),
+                )
+            )
         if "Wildcard" in candidate_chip_names:
-            decisions.append(("Wildcard", evaluate_wildcard(state, self._build_wildcard_inputs(squad, fixture_data, projections))))
+            decisions.append(
+                (
+                    "Wildcard",
+                    evaluate_wildcard(
+                        state,
+                        self._build_wildcard_inputs(squad, fixture_data, projections),
+                    ),
+                )
+            )
 
         if not decisions:
             return ChipDecisionContext(
@@ -484,6 +505,148 @@ class ChipAnalyzer:
         except (TypeError, ValueError):
             return 0.0
 
+    @staticmethod
+    def _projection_minutes_for_player(player: Dict[str, Any], projections: Dict[int, Any]) -> float:
+        player_id = player.get("player_id") or player.get("id") or player.get("element")
+        projection = None
+        if projections is not None and hasattr(projections, "get_by_id") and player_id is not None:
+            projection = projections.get_by_id(player_id)
+        elif isinstance(projections, dict) and player_id in projections:
+            projection = projections.get(player_id)
+
+        if projection is not None:
+            value = getattr(projection, "xMins_next", None)
+            if value is None and isinstance(projection, dict):
+                value = projection.get("xMins_next")
+            try:
+                if value is not None:
+                    return float(value)
+            except (TypeError, ValueError):
+                pass
+
+        fallback = player.get("expected_minutes") or player.get("minutes") or 0.0
+        try:
+            return float(fallback)
+        except (TypeError, ValueError):
+            return 0.0
+
+    @staticmethod
+    def _player_status(player: Dict[str, Any]) -> str:
+        return str(
+            player.get("status_flag")
+            or player.get("status")
+            or player.get("availability")
+            or "FIT"
+        ).strip().upper()
+
+    @staticmethod
+    def _is_blank_next_gw(player: Dict[str, Any], fixture_data: Dict[str, Any]) -> bool:
+        upcoming = player.get("upcoming_fixtures")
+        if isinstance(upcoming, list) and upcoming:
+            row = upcoming[0] if isinstance(upcoming[0], dict) else {}
+            if row.get("is_blank") is True:
+                return True
+            try:
+                if int(row.get("fixture_count", 1)) == 0:
+                    return True
+            except (TypeError, ValueError):
+                pass
+
+        current_gw = fixture_data.get("current_gw") or fixture_data.get("gameweek")
+        next_bgw = player.get("next_bgw_gw")
+        try:
+            if current_gw is not None and next_bgw is not None and int(next_bgw) == int(current_gw):
+                return True
+        except (TypeError, ValueError):
+            pass
+
+        return bool(player.get("is_blank"))
+
+    @classmethod
+    def _build_structural_weakness_summary(
+        cls,
+        squad: List[Dict[str, Any]],
+        fixture_data: Dict[str, Any],
+        projections: Dict[int, Any],
+    ) -> Dict[str, Any]:
+        starters = [p for p in squad if isinstance(p, dict) and p.get("is_starter", True)]
+        tier4 = 0
+        tier3 = 0
+        issue_buckets = set()
+
+        fixtures = fixture_data.get("fixtures", []) if isinstance(fixture_data, dict) else []
+        difficulties: List[float] = []
+        for fixture in fixtures:
+            if not isinstance(fixture, dict):
+                continue
+            raw = fixture.get("difficulty") or fixture.get("team_h_difficulty")
+            try:
+                if raw is not None:
+                    difficulties.append(float(raw))
+            except (TypeError, ValueError):
+                continue
+        poor_fixture_horizon = bool(difficulties) and (sum(difficulties) / len(difficulties)) >= 3.5
+
+        for player in starters:
+            status = cls._player_status(player)
+            blank_next = cls._is_blank_next_gw(player, fixture_data)
+            minutes = cls._projection_minutes_for_player(player, projections)
+            points = cls._projection_points_for_player(player, projections)
+            chance_raw = player.get("chance_of_playing_next_round")
+            try:
+                chance = float(chance_raw) if chance_raw is not None else None
+            except (TypeError, ValueError):
+                chance = None
+
+            if blank_next or status in {"OUT", "BANNED", "SUSP"}:
+                tier4 += 1
+                issue_buckets.add("availability")
+                if blank_next:
+                    issue_buckets.add("blank_exposure")
+                continue
+
+            if status in {"DOUBT", "DOUBTFUL"} or (chance is not None and chance < 50):
+                tier3 += 1
+                issue_buckets.add("availability")
+            if minutes < 45:
+                tier3 += 1
+                issue_buckets.add("minutes_security")
+            elif points < 4.0:
+                tier3 += 1
+                issue_buckets.add("starter_quality")
+
+        if poor_fixture_horizon:
+            issue_buckets.add("fixture_horizon")
+
+        return {
+            "tier3_count": tier3,
+            "tier4_count": tier4,
+            "tier3_or_tier4_count": tier3 + tier4,
+            "overall_weak": len(issue_buckets),
+            "poor_fixture_horizon": poor_fixture_horizon,
+        }
+
+    @staticmethod
+    def _next_dgw_gw(fixture_data: Dict[str, Any]) -> Optional[int]:
+        fixtures = fixture_data.get("fixtures", []) if isinstance(fixture_data, dict) else []
+        candidates: List[int] = []
+        for fixture in fixtures:
+            if not isinstance(fixture, dict):
+                continue
+            if not (
+                fixture.get("is_double")
+                or fixture.get("is_dgw_leg")
+                or (fixture.get("dgw_count") or 0) > 1
+            ):
+                continue
+            event = fixture.get("event")
+            try:
+                if event is not None:
+                    candidates.append(int(event))
+            except (TypeError, ValueError):
+                continue
+        return min(candidates) if candidates else None
+
     def _build_bench_boost_inputs(self, squad: List[Dict[str, Any]], projections: Dict[int, Any]) -> BenchBoostInputs:
         bench_players = [p for p in squad if isinstance(p, dict) and not p.get("is_starter", True)]
         starter_players = [p for p in squad if isinstance(p, dict) and p.get("is_starter", True)]
@@ -590,22 +753,53 @@ class ChipAnalyzer:
             if difficulties:
                 fixture_score = max(0.0, min(100.0, (6.0 - (sum(difficulties) / len(difficulties))) * 20.0))
 
+        structural = self._build_structural_weakness_summary(squad, fixture_data, projections)
+
         return WildcardInputs(
             team_ev_delta=team_ev_delta,
             fixture_run_score=fixture_score,
             hit_cost_avoided=4.0,
-            dgw_imminent_gw=None,
+            dgw_imminent_gw=self._next_dgw_gw(fixture_data),
+            overall_weak=int(structural.get("overall_weak") or 0),
+            tier3_or_tier4_count=int(structural.get("tier3_or_tier4_count") or 0),
+            poor_fixture_horizon=bool(structural.get("poor_fixture_horizon")),
         )
 
-    @staticmethod
-    def _build_free_hit_inputs(squad: List[Dict[str, Any]], fixture_data: Dict[str, Any]) -> FreeHitInputs:
+    def _build_free_hit_inputs(
+        self,
+        squad: List[Dict[str, Any]],
+        fixture_data: Dict[str, Any],
+        projections: Dict[int, Any],
+        wildcard_available: bool,
+    ) -> FreeHitInputs:
         starters = [p for p in squad if isinstance(p, dict) and p.get("is_starter", True)]
+        playable_players = [
+            player for player in squad
+            if isinstance(player, dict)
+            and self._player_status(player) not in {"OUT", "DOUBT", "DOUBTFUL", "SUSP", "BANNED"}
+            and not self._is_blank_next_gw(player, fixture_data)
+        ]
         available_starters = [
             player for player in starters
-            if str(player.get("status_flag") or "FIT").upper() not in {"OUT", "DOUBT", "SUSP"}
+            if self._player_status(player) not in {"OUT", "DOUBT", "DOUBTFUL", "SUSP", "BANNED"}
+            and not self._is_blank_next_gw(player, fixture_data)
         ]
         coverage = len(available_starters) / max(1, len(starters))
         bgw_saved_points = max(0.0, (1.0 - coverage) * 15.0)
+        blank_starter_count = sum(1 for player in starters if self._is_blank_next_gw(player, fixture_data))
+        playable_ranked = sorted(
+            playable_players,
+            key=lambda player: (
+                self._projection_minutes_for_player(player, projections),
+                self._projection_points_for_player(player, projections),
+            ),
+            reverse=True,
+        )
+        low_value_replacement_count = sum(
+            1
+            for player in playable_ranked[:11]
+            if self._projection_points_for_player(player, projections) < 4.0
+        )
 
         fixtures = fixture_data.get("fixtures", []) if isinstance(fixture_data, dict) else []
         has_dgw = any(
@@ -622,8 +816,11 @@ class ChipAnalyzer:
             bgw_saved_points=bgw_saved_points,
             dgw_stack_ev=8.0 if has_dgw else 2.0,
             dgw_fixture_quality=70.0 if has_dgw else 45.0,
-            wildcard_available=True,
+            wildcard_available=wildcard_available,
             permanent_squad_ev_gain=2.0,
+            blank_starter_count=blank_starter_count,
+            playable_count_next_gw=len(playable_players),
+            low_value_replacement_count=low_value_replacement_count,
         )
 
     def _select_best_chip_decision(self, decisions: List[Tuple[str, Any]]) -> Tuple[str, Any]:

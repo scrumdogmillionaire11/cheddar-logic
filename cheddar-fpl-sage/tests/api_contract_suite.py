@@ -972,3 +972,123 @@ def test_transformer_lineup_decision_preserves_price_and_ownership_from_squad_me
     assert starter["name"] == "Trevoh Chalobah"
     assert starter["price"] == 4.6
     assert starter["ownership"] == 8.7
+
+
+def test_transformer_preserves_critical_recovery_fields_and_never_invents_captaincy() -> None:
+    raw_results = {
+        "analysis": {
+            "decision": {
+                "primary_decision": "FREE_HIT",
+                "decision_status": "BLOCKED",
+                "decision_state": "CRITICAL_SQUAD_FAILURE",
+                "critical_failure_reason": "6 blank players, XI infeasible",
+                "chip_instruction": "FREE_HIT",
+                "recovery_plan": {
+                    "mode": "FREE_HIT",
+                    "posture": "AGGRESSIVE",
+                    "hit_cap": 12,
+                    "playable_before": 8,
+                    "playable_after": 11,
+                    "blanks_before": 6,
+                    "blanks_after": 0,
+                    "survival_score": 1123.4,
+                },
+                "structural_weakness_summary": {
+                    "overall_weak": 3,
+                    "tier3_or_tier4_count": 5,
+                },
+                "reasoning": "🚨 CRITICAL SQUAD FAILURE DETECTED\nReason: 6 blank players, XI infeasible",
+                "transfer_recommendations": [],
+                "captaincy": {},
+                "risk_scenarios": [],
+            }
+        },
+        "raw_data": {
+            "my_team": {
+                "team_info": {
+                    "team_name": "FPL XI",
+                    "player_first_name": "AJ",
+                    "player_last_name": "Manager",
+                    "overall_rank": 6_448_179,
+                    "total_points": 1234,
+                    "free_transfers": 1,
+                },
+                "manager_context": {"manager_name": "AJ", "team_name": "FPL XI"},
+                "current_gameweek": 29,
+                "current_squad": [
+                    {"player_id": 1, "name": "Starter A", "is_starter": True, "expected_pts": 2.0},
+                    {"player_id": 2, "name": "Starter B", "is_starter": True, "expected_pts": 1.8},
+                ],
+                "chip_status": {
+                    "bench_boost": False,
+                    "triple_captain": False,
+                    "free_hit": True,
+                    "wildcard": True,
+                },
+            }
+        },
+    }
+
+    module = _load_result_transformer()
+    transformed = module.transform_analysis_results(raw_results, overrides={"risk_posture": "aggressive"})
+
+    assert transformed["decision_state"] == "CRITICAL_SQUAD_FAILURE"
+    assert transformed["critical_failure_reason"] == "6 blank players, XI infeasible"
+    assert transformed["chip_instruction"] == "FREE_HIT"
+    assert transformed["recovery_plan"]["playable_after"] == 11
+    assert transformed["structural_weakness_summary"]["overall_weak"] == 3
+    assert transformed.get("captain") is None
+    assert transformed.get("vice_captain") is None
+    assert "Fallback captaincy derived from highest projected starter" not in str(transformed)
+
+
+def test_projections_endpoint_includes_critical_recovery_fields(client, monkeypatch) -> None:
+    results = {
+        "team_name": "FPL XI",
+        "manager_name": "AJ",
+        "current_gw": 29,
+        "overall_rank": 6448179,
+        "overall_points": 1440,
+        "primary_decision": "FREE_HIT",
+        "decision_status": "BLOCKED",
+        "decision_state": "CRITICAL_SQUAD_FAILURE",
+        "critical_failure_reason": "6 blank players, XI infeasible",
+        "chip_instruction": "FREE_HIT",
+        "recovery_plan": {
+            "mode": "FREE_HIT",
+            "posture": "AGGRESSIVE",
+            "hit_cap": 12,
+            "playable_before": 8,
+            "playable_after": 11,
+            "blanks_before": 6,
+            "blanks_after": 0,
+            "survival_score": 1123.4,
+        },
+        "structural_weakness_summary": {
+            "overall_weak": 3,
+            "tier3_or_tier4_count": 5,
+        },
+        "confidence": "High",
+        "reasoning": "🚨 CRITICAL SQUAD FAILURE DETECTED\nReason: 6 blank players, XI infeasible",
+        "starting_xi": [],
+        "bench": [],
+        "projected_xi": [],
+        "projected_bench": [],
+        "transfer_recommendations": [],
+        "risk_scenarios": [],
+        "available_chips": ["free_hit", "wildcard"],
+    }
+    monkeypatch.setattr(
+        analyze_router.engine_service,
+        "get_job",
+        lambda _analysis_id: _job(status="complete", results=results),
+    )
+
+    response = client.get("/api/v1/analyze/job12345/projections")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["decision_state"] == "CRITICAL_SQUAD_FAILURE"
+    assert body["critical_failure_reason"] == "6 blank players, XI infeasible"
+    assert body["chip_instruction"] == "FREE_HIT"
+    assert body["recovery_plan"]["blanks_after"] == 0
+    assert body["structural_weakness_summary"]["tier3_or_tier4_count"] == 5

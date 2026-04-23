@@ -1846,20 +1846,25 @@ function computeNBADriverCards(_gameId, oddsSnapshot, context = {}) {
  * Mock models (fallback)
  */
 const mockModels = {
+  // === Betting sports ===
   NHL: {
     confidence: 0.65,
   },
   NBA: {
     confidence: 0.62,
   },
-  FPL: {
-    confidence: 0.58,
-  },
   NFL: {
     confidence: 0.67,
   },
   MLB: {
     confidence: 0.64,
+  },
+  // === FPL Sage compatibility shim ===
+  // FPL is NOT a betting sport. run_fpl_model.js routes through this pipeline
+  // temporarily (shared-contract compatibility). The domain engine is FPL Sage.
+  // Do NOT add betting-style odds, spreads, or market logic for FPL.
+  FPL: {
+    confidence: 0.58,
   },
 };
 
@@ -2017,9 +2022,9 @@ async function getInference(sport, gameId, oddsSnapshot) {
     }
   }
 
-  // Remaining sports (NFL, MLB, FPL) — keep mock constant fallback.
-  // Note: For FPL this is a shared-contract compatibility signal only;
-  // the domain strategy engine is FPL Sage.
+  // Remaining betting sports (NFL, MLB) — keep mock constant fallback.
+  // FPL falls through here too via shared-contract compatibility shim (see mockModels comment).
+  // FPL is NOT a betting sport; its real inference engine is FPL Sage.
   const confidence = mockConfig.confidence;
   const predictHome = homeOdds < awayOdds;
 
