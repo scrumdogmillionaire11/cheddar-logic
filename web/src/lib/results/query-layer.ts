@@ -71,12 +71,31 @@ export type LedgerRow = {
   clv_closed_at: string | null;
 };
 
+/**
+ * Scalar fields extracted from card_payloads.payload_data via json_extract() in SQL.
+ * This avoids fetching the full JSON blob (avg ~8KB per row) into the Node.js process
+ * and eliminates the JSON.parse() cost in buildProjectionSummaries (WI-1136 perf fix).
+ */
 export type ProjectionTrackingRow = {
   sport: string;
   card_type: string;
-  payload_data: string | null;
   actual_result: string | null;
   game_result_metadata: string | null;
+  // Projection value candidates (COALESCE'd in SQL; first non-null wins)
+  proj_value: number | null;
+  // Direction signal
+  direction_token: string | null;
+  // Decision tier signals
+  official_status: string | null;
+  fallback_status: string | null;
+  // Period token for 1P vs full-game distinction
+  period_token: string | null;
+  // Player identity (for player prop lookups in game_result_metadata)
+  player_id: string | null;
+  player_name: string | null;
+  // Card family disambiguation
+  canonical_market_key: string | null;
+  prop_type: string | null;
 };
 
 export type ResultsQueryData = {
@@ -575,15 +594,73 @@ function queryProjectionTrackingRows(
     ? 'cp.actual_result AS actual_result'
     : 'NULL AS actual_result';
 
+  // WI-1136: Extract only scalar fields via json_extract() instead of fetching the full
+  // payload_data blob. The old approach transferred ~79MB of JSON text into the Node.js
+  // process (9927 rows × 7.9KB avg) and triggered JSON.parse() on all of them, causing
+  // a 202MB heap spike per request — close to the 614MB production heap cap. With scalar
+  // extraction, SQLite does the parsing and only the needed numeric/string values are
+  // returned, reducing heap pressure to ~14MB for the same row set.
   return db
     .prepare(
       `
       SELECT
         cr.sport,
         cr.card_type,
-        cp.payload_data,
         ${projectionActualSelect},
-        gr.metadata AS game_result_metadata
+        gr.metadata AS game_result_metadata,
+        CAST(COALESCE(
+          json_extract(cp.payload_data, '$.numeric_projection'),
+          json_extract(cp.payload_data, '$.projection.k_mean'),
+          json_extract(cp.payload_data, '$.projection.total'),
+          json_extract(cp.payload_data, '$.projection.projected_total'),
+          json_extract(cp.payload_data, '$.decision.model_projection'),
+          json_extract(cp.payload_data, '$.decision.projection'),
+          json_extract(cp.payload_data, '$.model.expected1pTotal'),
+          json_extract(cp.payload_data, '$.model.expectedTotal'),
+          json_extract(cp.payload_data, '$.first_period_model.projection_final')
+        ) AS REAL) AS proj_value,
+        COALESCE(
+          json_extract(cp.payload_data, '$.recommended_direction'),
+          json_extract(cp.payload_data, '$.play.selection.side'),
+          json_extract(cp.payload_data, '$.selection.side'),
+          json_extract(cp.payload_data, '$.play.decision_v2.direction'),
+          json_extract(cp.payload_data, '$.decision_v2.direction'),
+          json_extract(cp.payload_data, '$.decision.direction'),
+          json_extract(cp.payload_data, '$.prediction')
+        ) AS direction_token,
+        COALESCE(
+          json_extract(cp.payload_data, '$.play.decision_v2.official_status'),
+          json_extract(cp.payload_data, '$.decision_v2.official_status')
+        ) AS official_status,
+        COALESCE(
+          json_extract(cp.payload_data, '$.decision.status'),
+          json_extract(cp.payload_data, '$.status'),
+          json_extract(cp.payload_data, '$.play.status'),
+          json_extract(cp.payload_data, '$.action'),
+          json_extract(cp.payload_data, '$.play.action'),
+          json_extract(cp.payload_data, '$.decision.action')
+        ) AS fallback_status,
+        COALESCE(
+          json_extract(cp.payload_data, '$.play.period'),
+          json_extract(cp.payload_data, '$.period'),
+          json_extract(cp.payload_data, '$.time_period')
+        ) AS period_token,
+        COALESCE(
+          json_extract(cp.payload_data, '$.play.player_id'),
+          json_extract(cp.payload_data, '$.player_id')
+        ) AS player_id,
+        COALESCE(
+          json_extract(cp.payload_data, '$.play.player_name'),
+          json_extract(cp.payload_data, '$.player_name')
+        ) AS player_name,
+        COALESCE(
+          json_extract(cp.payload_data, '$.play.canonical_market_key'),
+          json_extract(cp.payload_data, '$.canonical_market_key')
+        ) AS canonical_market_key,
+        COALESCE(
+          json_extract(cp.payload_data, '$.play.prop_type'),
+          json_extract(cp.payload_data, '$.prop_type')
+        ) AS prop_type
       FROM card_results cr
       LEFT JOIN card_payloads cp ON cp.id = cr.card_id
       INNER JOIN game_results gr ON gr.game_id = cr.game_id

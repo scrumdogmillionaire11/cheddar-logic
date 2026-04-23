@@ -155,12 +155,41 @@ export function buildResultsAggregation(
   actionableRows: ActionableSourceRow[],
   projectionTrackingRows: ProjectionTrackingRow[],
 ) {
+  // WI-1136: ProjectionTrackingRow now carries pre-extracted scalar fields instead
+  // of the full payload_data blob. Reconstruct the minimal payload shape that
+  // buildProjectionSummaries helpers (resolveProjectionValue, resolveProjectionDirection,
+  // hasActionableProjectionCall, deriveProjectionCardFamily) expect, using only the
+  // scalar values already extracted by json_extract() in SQL. This eliminates the
+  // ~202MB heap spike caused by JSON.parse-ing 9927 full payloads per request.
   const projectionSummaries = buildProjectionSummaries(
     projectionTrackingRows.map((row) => ({
       sport: row.sport,
       cardType: row.card_type,
-      payload: safeJsonParse(row.payload_data)
-        .data as Record<string, unknown> | null,
+      payload: {
+        // Projection value (pre-resolved to first non-null candidate in SQL)
+        numeric_projection: row.proj_value,
+        // Direction signal (pre-resolved in SQL)
+        recommended_direction: row.direction_token,
+        // Decision tier signals (pre-resolved in SQL)
+        play: {
+          decision_v2: { official_status: row.official_status },
+          status: row.fallback_status,
+          action: null,
+          period: row.period_token,
+          player_id: row.player_id,
+          player_name: row.player_name,
+          prop_type: row.prop_type,
+          canonical_market_key: row.canonical_market_key,
+        },
+        decision_v2: { official_status: row.official_status },
+        decision: { status: row.fallback_status },
+        status: row.fallback_status,
+        period: row.period_token,
+        player_id: row.player_id,
+        player_name: row.player_name,
+        prop_type: row.prop_type,
+        canonical_market_key: row.canonical_market_key,
+      } as Record<string, unknown>,
       actualResult: row.actual_result,
       gameResultMetadata: safeJsonParse(row.game_result_metadata)
         .data as Record<string, unknown> | null,
