@@ -16,7 +16,7 @@
   "license": "ISC",
   "dependencies": {
     "@cheddar-logic/data": "file:../data",
-    "uuid": "^9.0.0"
+    "uuid": "^14.0.0"
   },
   "devDependencies": {
     "jest": "^29.7.0"
