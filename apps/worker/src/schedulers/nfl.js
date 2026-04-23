@@ -35,7 +35,10 @@ function computeNflDueJobs(nowEt, {
   pullOddsHourly,
   ENABLE_WITHOUT_ODDS_MODE,
 }) {
-  if (process.env.ENABLE_NFL_MODEL === 'false') return [];
+  if (process.env.ENABLE_NFL_MODEL === 'false') {
+    console.log('[NFL][FROZEN] NFL betting domain is frozen — ENABLE_NFL_MODEL=false. No jobs enqueued.');
+    return [];
+  }
 
   const jobs = [];
 
