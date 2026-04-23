@@ -35,6 +35,7 @@
     "test:api:results:decision-segmentation": "node src/__tests__/api-results-decision-segmentation.test.js",
     "test:api:results:flags": "node src/__tests__/api-results-flags.test.js",
     "test:api:results:projection-split": "node --import tsx/esm src/__tests__/api-results-projection-split.test.js",
+    "test:api:results:projection-settled-contract": "node --import tsx/esm src/__tests__/api-results-projection-settled-contract.test.js",
     "test:api:results:sport-filter": "node --import tsx/esm src/__tests__/api-results-sport-filter.test.js",
     "test:decision:canonical": "node src/__tests__/canonical-play-decision.test.js",
     "test:filters:presets": "node src/__tests__/filters-presets-contract.test.js",

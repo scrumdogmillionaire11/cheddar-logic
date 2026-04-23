@@ -1,7 +1,7 @@
 'use client';
 
 import type { ProjectionProxyRow } from '@/app/api/results/projection-settled/route';
-import type { ProjectionAccuracyRecord } from '@/lib/types/projection-accuracy';
+import type { ConfidenceTier, ProjectionAccuracyRecord } from '@/lib/types/projection-accuracy';
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -138,13 +138,12 @@ function tierBadgeClass(tier: 'PLAY' | 'SLIGHT_EDGE' | 'LEAN' | 'STRONG' | 'PASS
   return 'border-white/20 bg-white/5 text-cloud/50';
 }
 
-function confidenceBadgeClass(band: string | null | undefined): string {
-  const token = String(band || '').toUpperCase();
-  if (token === 'HIGH' || token === 'STRONG')
+function confidenceBadgeClass(band: ConfidenceTier): string {
+  if (band === 'HIGH')
     return 'border-emerald-500/40 bg-emerald-500/15 text-emerald-200';
-  if (token === 'MED' || token === 'TRUST' || token === 'WATCH')
+  if (band === 'MED')
     return 'border-amber-500/40 bg-amber-500/15 text-amber-200';
-  if (token === 'LOW')
+  if (band === 'LOW')
     return 'border-white/20 bg-white/5 text-cloud/60';
   return 'border-rose-500/30 bg-rose-500/10 text-rose-200';
 }
@@ -213,7 +212,7 @@ function ProjectionRow({ row, attribution }: ProjectionRowProps) {
             </span>
           </span>
           <span className="flex justify-center">
-            <span className={`rounded-full border px-2 py-0.5 text-xs ${moneylineFamily ? confidenceBadgeClass(row.confidenceBand) : tierBadgeClass(tier)}`}>
+            <span className={`rounded-full border px-2 py-0.5 text-xs ${moneylineFamily ? confidenceBadgeClass(row.confidenceTier) : tierBadgeClass(tier)}`}>
               {moneylineFamily ? confidenceLabel : tier}
             </span>
           </span>
@@ -273,7 +272,7 @@ function ProjectionRow({ row, attribution }: ProjectionRowProps) {
             {tier}
           </span>
           {moneylineFamily && (
-            <span className={`rounded-full border px-2 py-0.5 text-xs ${confidenceBadgeClass(row.confidenceBand)}`}>
+            <span className={`rounded-full border px-2 py-0.5 text-xs ${confidenceBadgeClass(row.confidenceTier)}`}>
               {confidenceLabel}
             </span>
           )}
