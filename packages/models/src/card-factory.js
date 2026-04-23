@@ -1,4 +1,4 @@
-const { v4: uuidV4 } = require('uuid');
+const { randomUUID } = require('crypto');
 const {
   buildRecommendationFromPrediction,
   buildMatchup,
@@ -59,7 +59,7 @@ function generateCard({
     throw new Error(`Unsupported card factory sport: ${normalizedSport}`);
   }
 
-  const cardIdSuffix = `${descriptor.driverKey}${marketType ? `-${marketType}` : ''}-${gameId}-${uuidV4().slice(0, 8)}`;
+  const cardIdSuffix = `${descriptor.driverKey}${marketType ? `-${marketType}` : ''}-${gameId}-${randomUUID().slice(0, 8)}`;  
   const cardId = `card-${normalizedSport.toLowerCase()}-${cardIdSuffix}`;
   const recommendation = buildRecommendationFromPrediction({
     prediction: descriptor.prediction,
