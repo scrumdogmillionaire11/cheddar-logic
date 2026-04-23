@@ -138,6 +138,21 @@ assert(
 );
 console.log('✓ Loading state kept active during retry\n');
 
+// Test 13: Active initial-load keeps polling active through empty responses
+console.log('Test 13: Active lifecycle is not downgraded on empty responses');
+assert(
+  !source.includes('lifecycleFallbackAttemptedRef') &&
+    !source.includes("latestLifecycleModeRef.current = 'pregame';"),
+  'active lifecycle fetches must not silently switch the client back to pregame',
+);
+assert(
+  !source.includes('nextGames.some(hasActionablePlay)') &&
+    !source.includes('hasAnyActionableInRequestedMode') &&
+    !source.includes('hasRowsInRequestedMode'),
+  'active initial-load must render empty active responses and keep polling in active mode',
+);
+console.log('✓ Empty active responses stay in active lifecycle\n');
+
 console.log('✅ All WI-0396 Lifecycle Fetch Race Tests Passed!');
 console.log('\n📋 Summary:');
 console.log('✓ SSR-safe default (pregame) prevents hydration mismatch');
@@ -146,3 +161,4 @@ console.log('✓ Request lifecycle tracked to detect mid-flight changes');
 console.log('✓ Mismatch during in-flight request triggers automatic retry');
 console.log('✓ Retry uses correct lifecycle parameter immediately');
 console.log('✓ No orphaned timeouts or stale state left behind');
+console.log('✓ Empty active responses are not downgraded to pregame');

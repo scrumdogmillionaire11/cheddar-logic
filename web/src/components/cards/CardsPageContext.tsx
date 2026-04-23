@@ -66,7 +66,6 @@ import {
   createProjectionFilterCard,
   deriveOnePModelCallFromReasons,
   hasProjectedTotal,
-  hasActionablePlay,
   filterPropCards,
   isFullGameTotalsCallPlay,
 } from './shared';
@@ -141,7 +140,6 @@ export function CardsPageProvider({
   );
   const initialLoadRetryTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const initialLoadRetryAttemptsRef = useRef(0);
-  const lifecycleFallbackAttemptedRef = useRef(false);
   const hasHydratedUrlStateRef = useRef(false);
   const diagnosticsEnabled =
     process.env.NODE_ENV !== 'production' &&
@@ -603,7 +601,6 @@ export function CardsPageProvider({
 
   useEffect(() => {
     let cancelled = false;
-    lifecycleFallbackAttemptedRef.current = false;
     initialLoadRetryAttemptsRef.current = 0;
 
     const fetchGames = async () => {
@@ -785,23 +782,6 @@ export function CardsPageProvider({
             lifecycle: requestedLifecycleMode,
           });
         }
-        const hasAnyActionableInRequestedMode = nextGames.some(hasActionablePlay);
-        if (
-          requestedLifecycleMode === 'active' &&
-          isInitialLoad.current &&
-          !hasAnyActionableInRequestedMode &&
-          !lifecycleFallbackAttemptedRef.current
-        ) {
-          if (!cancelled) {
-            lifecycleFallbackAttemptedRef.current = true;
-            globalGamesLastFetchAt = 0;
-            latestLifecycleModeRef.current = 'pregame';
-            dispatch({ type: 'set_lifecycle_mode', lifecycleMode: 'pregame' });
-            setLoading(true);
-          }
-          return;
-        }
-
         if (!cancelled) {
           setGames(nextGames);
           setError(null);
@@ -826,7 +806,6 @@ export function CardsPageProvider({
       } finally {
         globalGamesFetchInFlight = false;
         globalGamesRequestLifecycle = null;
-        lifecycleFallbackAttemptedRef.current = false;
         if (!cancelled) {
           const MAX_INITIAL_RETRIES = 4;
           if (
