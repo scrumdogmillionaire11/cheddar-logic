@@ -1,6 +1,5 @@
 'use strict';
 
-const { resolveMLBModelSignal } = require('../../models/mlb-model');
 const { resolveGoalieComposite } = require('../../models/nhl-pace-model');
 
 function isFiniteNumber(value) {
@@ -233,6 +232,19 @@ function resolveNBAModelSignal(game) {
   return {
     totalProjection: snap.totalProjection,
     projection_source: snap.projection_source ?? 'NBA_TOTALS_MODEL',
+  };
+}
+
+function resolveMLBSnapshotSignal(game) {
+  const snap = game?.mlbSnapshot;
+  if (!snap) return null;
+  if (!Number.isFinite(snap.modelWinProbHome) || !Number.isFinite(snap.edge)) return null;
+  if (snap.side !== 'HOME' && snap.side !== 'AWAY') return null;
+  return {
+    modelWinProbHome: snap.modelWinProbHome,
+    edge: snap.edge,
+    side: snap.side,
+    projection_source: snap.projection_source ?? 'MLB_FULL_GAME_MODEL',
   };
 }
 
@@ -626,18 +638,21 @@ function buildCandidates(game) {
         );
       }
     }
+    // MLB model signal block: inject mlbSnapshot onto MONEYLINE candidates only
+    if (isMlbSport(game.sport) && game.mlbSnapshot) {
+      const mlbSnapshotSignal = resolveMLBSnapshotSignal(game);
+      if (mlbSnapshotSignal) {
+        return candidates.map((candidate) =>
+          candidate.marketType === 'MONEYLINE'
+            ? { ...candidate, mlbSnapshotSignal }
+            : candidate
+        );
+      }
+    }
     return candidates;
   }
 
-  const mlbSignal = resolveMLBModelSignal(game);
-  if (!mlbSignal) {
-    return candidates;
-  }
-
-  return candidates.map((candidate) => ({
-    ...candidate,
-    mlbSignal,
-  }));
+  return candidates;
 }
 
 function qualityLabel(score) {
@@ -673,9 +688,10 @@ function buildReasoningString({
     .join(', ');
 
   if (marketType === 'MONEYLINE' && projectionSource) {
-    const sourceLabel = projectionSource.startsWith('FULL_MODEL')
-      ? 'Full model projection'
-      : `Model projection (${projectionSource})`;
+    const sourceLabel =
+      projectionSource === 'MLB_FULL_GAME_MODEL' || projectionSource.startsWith('FULL_MODEL')
+        ? 'Full model projection'
+        : `Model projection (${projectionSource})`;
     return `${sourceLabel} backs ${selectionLabel} at ${priceStr}: ${stats}.`;
   }
 
@@ -750,17 +766,21 @@ function scoreCandidate(candidate) {
 
   if (!isFiniteNumber(modelFairProbability)) return null;
 
-  // MLB model override: replace consensus fair prob + edge with pitcher-quality model signal
-  const mlbSignal = candidate.mlbSignal ?? null;
-  const useMlbModelSignal =
+  const mlbSnapSignal = candidate.mlbSnapshotSignal ?? null;
+  const useMlbSnapshotSignal =
     isMlbSport(candidate.sport) &&
     candidate.marketType === 'MONEYLINE' &&
-    Number.isFinite(mlbSignal?.modelWinProb) &&
-    Number.isFinite(mlbSignal?.edge);
-  if (useMlbModelSignal) {
-    const modelWinProb = round(mlbSignal.modelWinProb, 6);
+    mlbSnapSignal !== null &&
+    Number.isFinite(mlbSnapSignal.modelWinProbHome);
+
+  if (useMlbSnapshotSignal) {
+    const modelWinProb = round(
+      mlbSnapSignal.side === 'HOME'
+        ? mlbSnapSignal.modelWinProbHome
+        : 1 - mlbSnapSignal.modelWinProbHome,
+      6
+    );
     const modelEdge = round(modelWinProb - impliedProb, 6);
-    if (!isFiniteNumber(modelWinProb) || !isFiniteNumber(modelEdge)) return null;
     const totalScore = round((lineValue * 0.625) + (marketConsensus * 0.375), 6);
     return {
       ...candidate,
@@ -773,16 +793,16 @@ function scoreCandidate(candidate) {
       edgeSourceTag: 'MODEL',
       edgeSource: normalizeEdgeSource('MODEL'),
       edgeSourceMeta: {
-        projection_source: mlbSignal.projection_source ?? null,
+        projection_source: mlbSnapSignal.projection_source,
         model_win_prob: modelWinProb,
-        signal_type: 'MLB_PITCHER_MODEL',
+        signal_type: 'MLB_FULL_GAME_MODEL',
       },
       confidenceLabel: confidenceLabel(totalScore),
       scoreBreakdown: {
         lineValue,
         marketConsensus,
         model_win_prob: modelWinProb,
-        projection_source: mlbSignal.projection_source ?? null,
+        projection_source: mlbSnapSignal.projection_source,
       },
       reasoning: buildReasoningString({
         selectionLabel: candidate.selectionLabel,
@@ -792,7 +812,7 @@ function scoreCandidate(candidate) {
         lineValue,
         marketConsensus,
         marketType: candidate.marketType,
-        projectionSource: mlbSignal.projection_source ?? null,
+        projectionSource: mlbSnapSignal.projection_source,
       }),
     };
   }
@@ -1026,6 +1046,7 @@ module.exports = {
   removeVig,
   resolveEdgeSourceContract,
   resolveNHLModelSignal,
+  resolveMLBSnapshotSignal,
   resolveNoiseFloor,
   scoreCandidate,
   selectBestPlay,

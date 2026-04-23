@@ -98,21 +98,21 @@ function insertGameRow({
   db.close();
 }
 
-function insertOddsSnapshotRow({
+function insertCardPayloadRow({
   id,
   gameId,
   sport,
-  capturedAt,
-  h2hHome,
-  h2hAway,
-  rawData,
+  cardType,
+  cardTitle,
+  createdAt,
+  payloadData,
 }) {
   const db = new Database(TEST_DB_PATH);
   db.prepare(`
-    INSERT INTO odds_snapshots (
-      id, game_id, sport, captured_at, h2h_home, h2h_away, raw_data
+    INSERT INTO card_payloads (
+      id, game_id, sport, card_type, card_title, created_at, payload_data
     ) VALUES (?, ?, ?, ?, ?, ?, ?)
-  `).run(id, gameId, sport, capturedAt, h2hHome, h2hAway, rawData);
+  `).run(id, gameId, sport, cardType, cardTitle, createdAt, JSON.stringify(payloadData));
   db.close();
 }
 
@@ -527,7 +527,7 @@ describe('runPotdEngine', () => {
     expect(playRow.discord_posted).toBe(0);
   });
 
-  test('hydrates MLB games from persisted odds snapshots before candidate construction', async () => {
+  test('hydrates MLB games from persisted model-output card payloads before candidate construction', async () => {
     // MLB has active:false in production config, but this test exercises the engine's
     // MLB-specific odds-hydration code path. Mock MLB as active so it enters the pipeline.
     jest.resetModules();
@@ -549,58 +549,17 @@ describe('runPotdEngine', () => {
       awayTeam: 'Rockies',
       gameTimeUtc: '2026-04-12T01:10:00.000Z',
     });
-    insertOddsSnapshotRow({
-      id: 'mlb-potd-001-snapshot',
+    insertCardPayloadRow({
+      id: 'mlb-potd-001-card',
       gameId: 'mlb-potd-001',
       sport: 'mlb',
-      capturedAt: '2026-04-11T18:00:00.000Z',
-      h2hHome: -170,
-      h2hAway: 150,
-      rawData: JSON.stringify({
-        mlb: {
-          home_pitcher: {
-            siera: 2.5,
-            x_fip: 2.6,
-            x_era: 2.55,
-            k_per_9: 11.0,
-            bb_per_9: 1.8,
-            gb_pct: 0.5,
-            hr_per_9: 0.6,
-          },
-          away_pitcher: {
-            siera: 5.8,
-            x_fip: 5.9,
-            x_era: 5.85,
-            k_per_9: 5.5,
-            bb_per_9: 4.2,
-            gb_pct: 0.35,
-            hr_per_9: 1.8,
-          },
-          home_offense_profile: {
-            wrc_plus: 100,
-            xwoba: 0.32,
-            k_pct: 0.225,
-            iso: 0.165,
-            bb_pct: 0.085,
-            hard_hit_pct: 39,
-          },
-          away_offense_profile: {
-            wrc_plus: 70,
-            xwoba: 0.28,
-            k_pct: 0.28,
-            iso: 0.12,
-            bb_pct: 0.07,
-            hard_hit_pct: 30,
-          },
-          park_run_factor: 1,
-          temp_f: 72,
-          wind_mph: 0,
-          wind_dir: 'CALM',
-          roof: 'OPEN',
-          home_bullpen_era: 3.2,
-          away_bullpen_era: 5.8,
-        },
-      }),
+      cardType: 'mlb-full-game',
+      cardTitle: 'MLB Full Game',
+      createdAt: '2026-04-11T18:00:00.000Z',
+      payloadData: {
+        projection_source: 'MLB_FULL_GAME_MODEL',
+        drivers: [{ win_prob_home: 0.665385, edge: 0.05, side: 'HOME' }],
+      },
     });
 
     const result = await runPotdEngine({
@@ -671,10 +630,11 @@ describe('runPotdEngine', () => {
 
     expect(result.success).toBe(true);
     expect(receivedGame).not.toBeNull();
-    expect(receivedGame.oddsSnapshot).toMatchObject({
-      game_id: 'mlb-potd-001',
-      h2h_home: -170,
-      h2h_away: 150,
+    expect(receivedGame.mlbSnapshot).toMatchObject({
+      modelWinProbHome: 0.665385,
+      edge: 0.05,
+      side: 'HOME',
+      projection_source: 'MLB_FULL_GAME_MODEL',
     });
 
     const playRow = readRows(

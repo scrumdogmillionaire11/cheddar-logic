@@ -100,6 +100,7 @@ module.exports = {
   setProjectionActualResult: cards.setProjectionActualResult,
   getUnsettledProjectionCards: cards.getUnsettledProjectionCards,
   getLatestNhlModelOutput: cards.getLatestNhlModelOutput,
+  getLatestMlbModelOutput: cards.getLatestMlbModelOutput,
   getLatestNbaModelOutput: cards.getLatestNbaModelOutput,
   captureProjectionAccuracyForCard: projectionAccuracy.captureProjectionAccuracyForCard,
   captureProjectionAccuracyEval: projectionAccuracy.captureProjectionAccuracyEval,
