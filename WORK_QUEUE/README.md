@@ -14,7 +14,7 @@ See [docs/decisions/ADR-0005-python-research-reference-only.md](../docs/decision
 
 ## Execution-Order Governance
 
-For dependency rules, parallel-safety constraints, and `Depends on` field requirements, see **`AGENTS.md` § Work Item Rules** and **§ Non-Negotiables**. Wave ordering listed in this file is informational; the authoritative execution-order source for any two work items is the `Depends on` field in each work item.
+For dependency rules, parallel-safety constraints, and `Depends on` field requirements, see `AGENTS.md` Work Item Rules and Non-Negotiables. Wave ordering in this file is planning context; the authoritative execution-order source for any two work items is each item's `Depends on` field.
 
 ---
 
@@ -75,6 +75,13 @@ Execution order:
 - Wave 1: `WI-1143`
 - Wave 2: `WI-1144` + `WI-1145`
 - Wave 3: `WI-1146`
+- Independent / parallel-safe: `WI-1148` (no API changes; WI-1143 desirable first for canonical labels)
+
+---
+
+### Priority A.7 — Confidence Band Audit Drilldown
+
+- `WI-1148`: Make each confidence band pill in the Projection Confidence Engine clickable to show a row-by-row game log for that band (audit HIGH and STRONG plays individually)
 
 ---
 
@@ -232,6 +239,7 @@ Execution order for this slice: `WI-0983` first, then `WI-0985`, then `WI-0984`,
 - `Owner agent`
 - `Time window`
 - `Coordination flag`
+- `Depends on`
 - `Tests to run`
 - `Manual validation`
 

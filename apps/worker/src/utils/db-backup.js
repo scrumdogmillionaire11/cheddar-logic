@@ -156,17 +156,24 @@ const backupDatabase = (label = '') => {
   } catch (err) {
     if (err && err.code === 'ENOSPC') {
       console.warn('[DBBackup] ENOSPC during backup, pruning backups and retrying once');
-      pruneBackups(backupDir, { reserveSlots: 1, requiredFreeBytes });
-      fs.copyFileSync(dbPath, backupPath);
-      const stats = fs.statSync(backupPath);
-      console.log(
-        `[DBBackup] ✓ Backed up to ${backupName} after retry (${(stats.size / 1024 / 1024).toFixed(1)}MB)`
-      );
-      pruneBackups(backupDir);
-      return backupPath;
+      try {
+        pruneBackups(backupDir, { reserveSlots: 1, requiredFreeBytes });
+        fs.copyFileSync(dbPath, backupPath);
+        const stats = fs.statSync(backupPath);
+        console.log(
+          `[DBBackup] ✓ Backed up to ${backupName} after retry (${(stats.size / 1024 / 1024).toFixed(1)}MB)`
+        );
+        pruneBackups(backupDir);
+        return backupPath;
+      } catch (retryErr) {
+        console.error(`[DBBackup] ✗ Backup failed after ENOSPC retry: ${retryErr.message}`);
+        return null;
+      }
     }
-    console.error(`[DBBackup] ✗ Backup failed: ${err.message}`);
-    throw err;
+    // Backup is best-effort — a transient filesystem error (e.g. concurrent test cleanup,
+    // ENOENT race, or permission issue) must not abort the calling job.
+    console.error(`[DBBackup] ✗ Backup failed (non-fatal): ${err.message}`);
+    return null;
   }
 };
 

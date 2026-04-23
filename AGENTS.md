@@ -33,6 +33,7 @@ When files conflict, apply this precedence in order:
 ## Work Item Rules
 - Agents may not edit files outside the work item `Scope`.
 - Any scope expansion must be written into the work item before code changes.
+- `Depends on` is mandatory work-item metadata. Use it to record blocking WI IDs and serialization requirements; use `none` only when no dependency or execution-order constraint exists.
 - If two items need the same file, split by file boundary or rescope into one item with a single owner.
 - Required fields in each work item:
   - `ID`
@@ -50,7 +51,7 @@ When files conflict, apply this precedence in order:
 ## Non-Negotiables
 - One agent owns one change-set.
 - No shared ownership of the same files in the same window.
-- Overlapping scoped files or serialized touchpoints (see `needs-sync` list) are **not parallel-safe** unless they are unified into one work item or explicitly serialized via `Depends on`. Ownership lanes do not imply parallel safety — `Depends on` in the work item governs execution order when scopes overlap.
+- Overlapping scoped files or serialized touchpoints (see `needs-sync` list) are **not parallel-safe** unless they are unified into one work item or explicitly serialized via `Depends on`. Ownership lanes do not imply parallel safety; `Depends on` in the work item governs execution order when scopes overlap.
 - Every change is traceable to a single work item ID.
 - No repo-wide formatting, cleanup, or renames outside scope.
 - If a change is not in scope, it does not happen.

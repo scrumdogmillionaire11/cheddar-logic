@@ -3,7 +3,7 @@
 ## Ownership Model
 This file defines default ownership lanes by path. Work item scope always has priority over this table for the active claim window.
 
-**Ownership lanes do not imply parallel safety.** Two work items can share the same lane without conflict only when their file scopes do not overlap. When scopes overlap or a shared touchpoint is involved, use `Depends on` in the work item to establish execution order — the dependency metadata in the work item governs, not lane assignment.
+**Ownership lanes do not imply parallel safety.** Two work items can share the same lane without conflict only when their file scopes do not overlap. When scopes overlap or a shared touchpoint is involved, use `Depends on` in the work item to establish execution order; the dependency metadata in the work item governs, not lane assignment.
 
 If a path is not listed here, create/update `OWNERSHIP.md` before editing that path.
 
