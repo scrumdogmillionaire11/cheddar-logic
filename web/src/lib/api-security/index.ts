@@ -79,10 +79,7 @@ export function performSecurityChecks(
   const rateLimitResult = checkRateLimit(request);
   rateLimitCache.set(request, rateLimitResult);
   if (!rateLimitResult.allowed) {
-    const retryAfterSeconds = Math.max(
-      1,
-      Math.ceil((rateLimitResult.resetTime - Date.now()) / 1000),
-    );
+    const retryAfterSeconds = rateLimitResult.retryAfterSeconds;
     const response = NextResponse.json(
       {
         success: false,
@@ -171,6 +168,7 @@ export function addRateLimitHeaders(
 export * from './jwt';
 export * from './auth';
 export * from './config';
+export * from './rate-limiter';
 
 // Re-export security headers utilities
 export * from './security-headers';
