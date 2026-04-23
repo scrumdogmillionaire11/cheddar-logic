@@ -143,3 +143,56 @@ Then verify in browser:
 - https://cheddarlogic.com/cards
 - https://cheddarlogic.com/fpl
 
+
+## Production Health Probes
+
+The Next.js web app exposes two platform probe endpoints. Both are unauthenticated (registered in `PUBLIC_ROUTES`).
+
+### `/api/healthz` - Liveness
+
+Confirms the Node.js process is alive. No DB or external dependencies. Platform use: liveness probe (restart if this fails).
+
+```bash
+curl -i https://cheddarlogic.com/api/healthz
+# 200 {"status":"ok"}
+```
+
+### `/api/readyz` - Readiness
+
+Validates the read-only DB is accessible before routing traffic to this instance. Platform use: readiness probe (remove from load balancer rotation if this fails, do NOT restart).
+
+```bash
+# Healthy
+curl -i https://cheddarlogic.com/api/readyz
+# 200 {"status":"ok"}
+
+# Unhealthy (DB missing, locked, or malformed)
+curl -i https://cheddarlogic.com/api/readyz
+# 503 {"status":"unavailable","reason":"[DB] getDatabaseReadOnly: database file not accessible at ..."}
+```
+
+### Status Code Semantics
+
+| Endpoint | 200 | 503 |
+|----------|-----|-----|
+| `/api/healthz` | Process alive | Never (unless process is dead) |
+| `/api/readyz`  | DB accessible | DB missing, malformed, or locked |
+
+### Kubernetes / Render / Railway Example
+
+```yaml
+livenessProbe:
+  httpGet:
+    path: /api/healthz
+    port: 3000
+  initialDelaySeconds: 5
+  periodSeconds: 10
+
+readinessProbe:
+  httpGet:
+    path: /api/readyz
+    port: 3000
+  initialDelaySeconds: 10
+  periodSeconds: 15
+  failureThreshold: 3
+```

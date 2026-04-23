@@ -12,6 +12,12 @@ See [docs/decisions/ADR-0005-python-research-reference-only.md](../docs/decision
 
 ---
 
+## Execution-Order Governance
+
+For dependency rules, parallel-safety constraints, and `Depends on` field requirements, see **`AGENTS.md` § Work Item Rules** and **§ Non-Negotiables**. Wave ordering listed in this file is informational; the authoritative execution-order source for any two work items is the `Depends on` field in each work item.
+
+---
+
 ## Active Work Items
 
 **Updated**: 2026-04-21
