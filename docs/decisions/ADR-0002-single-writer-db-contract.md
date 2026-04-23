@@ -67,3 +67,11 @@ Web routes that query tables managed exclusively by migrations (e.g. `run_state`
 - `packages/data/README.md` — DB path and migration/runtime notes
 - `web/README.md` — web read-only runtime contract
 - Production DB path contract: `CHEDDAR_DB_PATH=/opt/data/cheddar-prod.db`
+
+## Implementation Status (WI-1138)
+
+Dual-DB entrypoints retired 2026-04-22:
+
+- `packages/data/src/db-dual-init.js` — all exported functions now throw with ADR-0002 reference
+- `packages/data/src/db-multi.js` — dead code tombstoned; all exports throw
+- `packages/data/index.js` — stale dual-mode header removed; dual-init export JSDoc updated to DISABLED

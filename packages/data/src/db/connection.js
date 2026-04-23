@@ -1,3 +1,8 @@
+/**
+ * Single-writer runtime: this module manages one DB instance per process.
+ * Worker is sole writer; web opens read-only. See ADR-0002.
+ */
+
 const Database = require('better-sqlite3');
 const crypto = require('crypto');
 const fs = require('fs');

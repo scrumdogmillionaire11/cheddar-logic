@@ -4,13 +4,8 @@
  * Entry point for data package
  * Exports database client and migration utilities
  * 
- * DUAL-DATABASE MODE (recommended for prod):
- *   - Record DB: shared reference data (read-only)
- *   - Local DB: environment-specific state (writable)
- *   Usage: await require('.').initDualDb({ recordDbPath, localDbPath })
- * 
- * SINGLE-DATABASE MODE (legacy, default):
- *   - Single DB for all data
+ * Single-writer DB contract: worker is sole writer; web is read-only.
+ * See ADR-0002. Dual-DB mode is disabled — its exports throw on call.
  */
 
 const db = require('./src/db');
@@ -224,9 +219,9 @@ module.exports = {
   pruneExpiredRevokedTokens: db.pruneExpiredRevokedTokens,
 
   /**
-   * Initialize dual-database mode.
-   * Currently unused in production entry points.
-   * Single-DB path via resolveDatabasePath is the active runtime path.
+   * DISABLED (WI-1138) — these functions throw on call.
+   * Dual-DB mode is not supported. See ADR-0002.
+   * Retained as exports so call sites fail loudly rather than silently missing a symbol.
    */
   initDualDb: dbDualInit.initDualDb,
   closeDualDb: dbDualInit.closeDualDb,
