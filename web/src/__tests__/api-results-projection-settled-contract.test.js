@@ -63,6 +63,12 @@ function run() {
     'projection-settled route must use the latest projection_accuracy_evals row per card_id',
   );
   assert.ok(
+    routeSource.includes('PROJECTION_ANALYTICS_CONTRACT_BY_MARKET_FAMILY') &&
+      routeSource.includes('const SUPPORTED_CARD_FAMILIES = Object.keys(PROJECTION_ANALYTICS_CONTRACT_BY_MARKET_FAMILY);') &&
+      routeSource.includes('WHERE ppe.card_family IN (${SUPPORTED_CARD_FAMILY_SQL})'),
+    'projection-settled route must derive supported families from the shared data-layer analytics contract',
+  );
+  assert.ok(
     routeSource.includes('row.accuracy_projection_value === null') &&
       routeSource.includes('row.accuracy_edge_pp === null') &&
       routeSource.includes('row.accuracy_confidence_score === null') &&

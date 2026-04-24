@@ -119,11 +119,9 @@ async function run() {
     'projection accuracy route must read summary and row-level eval data',
   );
   assert.ok(
-    routeSource.includes("'MLB_F5_TOTAL'") &&
-      routeSource.includes("'MLB_PITCHER_K'") &&
-      routeSource.includes("'NHL_PLAYER_SHOTS'") &&
-      routeSource.includes("'NHL_PLAYER_BLOCKS'"),
-    'projection accuracy route must expose the requested market filters',
+    routeSource.includes('PROJECTION_ANALYTICS_CONTRACT_BY_MARKET_FAMILY') &&
+      routeSource.includes('const VALID_MARKETS = new Set(Object.keys(PROJECTION_ANALYTICS_CONTRACT_BY_MARKET_FAMILY));'),
+    'projection accuracy route must derive allowed market filters from the shared data-layer analytics contract',
   );
   assert.ok(
     routeSource.includes("lineRole: 'SYNTHETIC'"),
@@ -161,6 +159,13 @@ async function run() {
   );
   assert.strictEqual(payload.marketHealth.length, 1);
   assert.strictEqual(payload.marketHealth[0].market_family, 'MLB_PITCHER_K');
+
+  const supportedEmptyResponse = await GET(
+    new Request('http://localhost/api/results/projection-accuracy?market_family=NHL_PLAYER_SHOTS_1P&days=365'),
+  );
+  assert.strictEqual(supportedEmptyResponse.status, 200, 'shared contract families must be accepted even when no rows are present');
+  const supportedEmptyPayload = await supportedEmptyResponse.json();
+  assert.ok(Array.isArray(supportedEmptyPayload.rows), 'shared contract family response must still include rows array');
 
   const badResponse = await GET(
     new Request('http://localhost/api/results/projection-accuracy?market_family=BAD_MARKET'),
