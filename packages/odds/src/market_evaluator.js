@@ -224,6 +224,8 @@ function selectSpreadExecution(entries) {
     bestPriceAway.book,
     'home_price',
   );
+  const homeLineSameBookEntry = findEntryByBook(entries, bestPriceHome.book, 'home_line');
+  const awayLineSameBookEntry = findEntryByBook(entries, bestPriceAway.book, 'away_line');
 
   return {
     best_line_home: bestLineHome.value,
@@ -236,6 +238,8 @@ function selectSpreadExecution(entries) {
     best_price_away_book: bestPriceAway.book,
     same_book_away_for_home: homeBookEntry?.away_price ?? null,
     same_book_home_for_away: awayBookEntry?.home_price ?? null,
+    same_book_line_home: homeLineSameBookEntry?.home_line ?? null,
+    same_book_line_away: awayLineSameBookEntry?.away_line ?? null,
   };
 }
 
@@ -250,6 +254,8 @@ function selectTotalExecution(entries) {
   const bestPriceUnder = pickBestValue(entries, 'under');
   const overBookEntry = findEntryByBook(entries, bestPriceOver.book, 'under');
   const underBookEntry = findEntryByBook(entries, bestPriceUnder.book, 'over');
+  const overLineSameBookEntry = findEntryByBook(entries, bestPriceOver.book, 'line');
+  const underLineSameBookEntry = findEntryByBook(entries, bestPriceUnder.book, 'line');
 
   return {
     best_line_over: bestLineOver.value,
@@ -262,6 +268,8 @@ function selectTotalExecution(entries) {
     best_price_under_book: bestPriceUnder.book,
     same_book_under_for_over: overBookEntry?.under ?? null,
     same_book_over_for_under: underBookEntry?.over ?? null,
+    same_book_line_for_over: overLineSameBookEntry?.line ?? null,
+    same_book_line_for_under: underLineSameBookEntry?.line ?? null,
   };
 }
 

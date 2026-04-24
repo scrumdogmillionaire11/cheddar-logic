@@ -493,10 +493,8 @@ export default function GameCardItem({
     displaySelectionSide,
     originalGame.odds,
   );
-  const bestSpreadBook = isSpreadLikeMarket ? oddsPayload.lineBook : null;
-  const bestSpreadPriceBook = isSpreadLikeMarket ? oddsPayload.priceBook : null;
-  const bestTotalBook = isTotalLikeMarket ? oddsPayload.lineBook : null;
-  const bestTotalPriceBook = isTotalLikeMarket ? oddsPayload.priceBook : null;
+  const bestSpreadBook = isSpreadLikeMarket ? oddsPayload.priceBook : null;
+  const bestTotalBook = isTotalLikeMarket ? oddsPayload.priceBook : null;
   const spreadSoftLineFlag =
     isSpreadLikeMarket &&
     originalGame.odds?.spreadIsMispriced === true &&
@@ -926,16 +924,6 @@ export default function GameCardItem({
                               : `(${formatBookName(bestSpreadBook)})`}
                           </span>
                         )}{' '}
-                        {oddsPayload.hasVerifiedBest && bestSpreadPriceBook && (
-                          <span className="text-cloud/45 ml-1">
-                            [price {formatBookName(bestSpreadPriceBook)}]
-                          </span>
-                        )}
-                        {oddsPayload.hasVerifiedBest && oddsPayload.isSplitSource && bestSpreadBook && bestSpreadPriceBook && (
-                          <span className="text-amber-200/70 ml-1">
-                            [split: line {formatBookName(bestSpreadBook)} | price {formatBookName(bestSpreadPriceBook)}]
-                          </span>
-                        )}{' '}
                         {hasProjectionComparison ? (
                           <>
                             {' '}| Edge vs market:{' '}
@@ -1002,17 +990,7 @@ export default function GameCardItem({
                         </span>{' '}
                         {oddsPayload.hasVerifiedBest && bestTotalBook && (
                           <span className="text-cloud/45 ml-1">
-                            [line {formatBookName(bestTotalBook)}]
-                          </span>
-                        )}{' '}
-                        {oddsPayload.hasVerifiedBest && bestTotalPriceBook && (
-                          <span className="text-cloud/45 ml-1">
-                            [price {formatBookName(bestTotalPriceBook)}]
-                          </span>
-                        )}
-                        {oddsPayload.hasVerifiedBest && oddsPayload.isSplitSource && bestTotalBook && bestTotalPriceBook && (
-                          <span className="text-amber-200/70 ml-1">
-                            [split: line {formatBookName(bestTotalBook)} | price {formatBookName(bestTotalPriceBook)}]
+                            [{formatBookName(bestTotalBook)}]
                           </span>
                         )}{' '}
                         {hasProjectionComparison ? (
