@@ -12,6 +12,11 @@ export const PROJECTION_SURFACE_CARD_TYPES = [
   'mlb-pitcher-k',
 ] as const;
 
+// Cards-read projection-surface allowlist. Purpose: these card types are
+// intentionally renderable even when their payload carries projection-only
+// markers, so the generic betting-surface payload gate must not hide them.
+// Failure semantics: non-allowlisted card types remain subject to
+// PROJECTION_ONLY_* / SYNTHETIC_FALLBACK_* drop diagnostics.
 const PROJECTION_SURFACE_CARD_TYPE_SET = new Set<string>(
   PROJECTION_SURFACE_CARD_TYPES,
 );

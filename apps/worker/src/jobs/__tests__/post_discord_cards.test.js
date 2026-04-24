@@ -1570,6 +1570,39 @@ describe('postDiscordCards integration', () => {
     db.close();
   }
 
+  function insertPlayableCard({
+    id,
+    gameId,
+    sport = 'nhl',
+    homeTeam = 'Toronto Maple Leafs',
+    awayTeam = 'Boston Bruins',
+    gameTimeUtc = '2035-04-10T20:00:00.000Z',
+  }) {
+    const db = new Database(TEST_DB_PATH);
+    db.prepare(
+      `INSERT INTO games (id, sport, game_id, home_team, away_team, game_time_utc, status)
+       VALUES (?, ?, ?, ?, ?, ?, 'scheduled')`,
+    ).run(gameId, sport, gameId, homeTeam, awayTeam, gameTimeUtc);
+    db.prepare(
+      `INSERT INTO card_payloads (id, game_id, sport, card_type, card_title, created_at, payload_data)
+       VALUES (?, ?, ?, ?, 'Regular Card', '2026-04-09T18:01:00.000Z', ?)`,
+    ).run(
+      id,
+      gameId,
+      sport,
+      `${sport}-moneyline-call`,
+      JSON.stringify({
+        action: 'FIRE',
+        kind: 'PLAY',
+        market_type: 'MONEYLINE',
+        selection: { side: 'HOME' },
+        price: -115,
+        line: null,
+      }),
+    );
+    db.close();
+  }
+
   beforeAll(async () => {
     process.env.CHEDDAR_DB_PATH = TEST_DB_PATH;
     process.env.CHEDDAR_DB_AUTODISCOVER = 'false';
@@ -1586,6 +1619,10 @@ describe('postDiscordCards integration', () => {
   });
 
   beforeEach(() => {
+    process.env.ENABLE_DISCORD_CARD_WEBHOOKS = 'true';
+    process.env.DISCORD_CARD_WEBHOOK_URL = 'https://discord.example/cards';
+    delete process.env.DISCORD_CARD_WEBHOOK_URL_NHL;
+    delete process.env.DISCORD_CARD_WEBHOOK_URL_NBA;
     dataModule.closeDatabase();
     resetTables();
   });
@@ -1645,6 +1682,125 @@ describe('postDiscordCards integration', () => {
     });
     expect(result.success).toBe(true);
     expect(result.totalCards).toBe(1);
+  });
+
+  test('postDiscordCards returns all-success transport results and operator block', async () => {
+    insertPlayableCard({ id: 'success-card', gameId: 'success-game' });
+    const fakeFetch = jest.fn(async () => ({ ok: true, status: 204, text: async () => '' }));
+
+    const result = await postDiscordCards({
+      now: new Date('2035-04-10T12:00:00.000Z'),
+      fetchImpl: fakeFetch,
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.partialFailure).toBe(false);
+    expect(result.transportResults).toEqual([
+      expect.objectContaining({
+        targetLabel: 'default',
+        status: 'success',
+        attemptCount: 1,
+        retryCount: 0,
+        httpStatus: 204,
+        error: null,
+        postedCardCount: 1,
+      }),
+    ]);
+    expect(result.transportResults[0].elapsedMs).toEqual(expect.any(Number));
+    expect(result.transportSummary).toEqual(expect.objectContaining({
+      successCount: 1,
+      failedCount: 0,
+      retryCount: 0,
+      partialFailure: false,
+    }));
+    expect(result.resultBlock).toContain('Discord transport results');
+    expect(result.resultBlock).toContain('success:1 failed:0 retries:0 partialFailure:no');
+    expect(result.resultBlock).toContain('- default status:success attempts:1 retries:0 postedCards:1');
+  });
+
+  test('postDiscordCards reports partial failure with failed target reason', async () => {
+    process.env.DISCORD_CARD_WEBHOOK_URL_NHL = 'https://discord.example/nhl';
+    process.env.DISCORD_CARD_WEBHOOK_URL_NBA = 'https://discord.example/nba';
+    insertPlayableCard({ id: 'nhl-card', gameId: 'nhl-game', sport: 'nhl' });
+    insertPlayableCard({
+      id: 'nba-card',
+      gameId: 'nba-game',
+      sport: 'nba',
+      homeTeam: 'Boston Celtics',
+      awayTeam: 'New York Knicks',
+      gameTimeUtc: '2035-04-10T21:00:00.000Z',
+    });
+    const fakeFetch = jest.fn(async (url) => {
+      if (url.includes('/nhl')) return { ok: false, status: 500, text: async () => 'upstream broke' };
+      return { ok: true, status: 204, text: async () => '' };
+    });
+
+    const result = await postDiscordCards({
+      now: new Date('2035-04-10T12:00:00.000Z'),
+      fetchImpl: fakeFetch,
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.partialFailure).toBe(true);
+    expect(result.transportSummary).toEqual(expect.objectContaining({
+      successCount: 1,
+      failedCount: 1,
+      partialFailure: true,
+    }));
+    expect(result.transportSummary.failedTargets).toEqual([
+      expect.objectContaining({
+        targetLabel: 'NHL',
+        httpStatus: 500,
+        error: 'Discord webhook failed (500): upstream broke',
+      }),
+    ]);
+    expect(result.resultBlock).toContain('success:1 failed:1 retries:0 partialFailure:yes');
+    expect(result.resultBlock).toContain('- NHL status:failed attempts:1 retries:0 reason:Discord webhook failed (500): upstream broke');
+    expect(result.resultBlock).toContain('- NBA status:success attempts:1 retries:0 postedCards:1');
+  });
+
+  test('postDiscordCards reports retry-then-success without partial failure', async () => {
+    insertPlayableCard({ id: 'retry-card', gameId: 'retry-game' });
+    let callCount = 0;
+    const fakeFetch = jest.fn(async () => {
+      callCount++;
+      if (callCount === 1) {
+        return {
+          ok: false,
+          status: 429,
+          json: async () => ({ retry_after: 0.01 }),
+          text: async () => JSON.stringify({ retry_after: 0.01 }),
+        };
+      }
+      return { ok: true, status: 204, text: async () => '' };
+    });
+    const fakeSleep = jest.fn(async () => {});
+
+    const result = await postDiscordCards({
+      now: new Date('2035-04-10T12:00:00.000Z'),
+      fetchImpl: fakeFetch,
+      sleepFn: fakeSleep,
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.partialFailure).toBe(false);
+    expect(result.transportResults[0]).toEqual(expect.objectContaining({
+      targetLabel: 'default',
+      status: 'success',
+      attemptCount: 2,
+      retryCount: 1,
+      httpStatus: 204,
+      postedCardCount: 1,
+    }));
+    expect(result.transportSummary).toEqual(expect.objectContaining({
+      successCount: 1,
+      failedCount: 0,
+      retryCount: 1,
+      partialFailure: false,
+    }));
+    expect(result.resultBlock).toContain('success:1 failed:0 retries:1 partialFailure:no');
+    expect(result.resultBlock).toContain('- default status:success attempts:2 retries:1 postedCards:1');
+    expect(fakeSleep).toHaveBeenCalledTimes(1);
   });
 });
 

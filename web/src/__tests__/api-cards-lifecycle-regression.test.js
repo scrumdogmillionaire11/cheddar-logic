@@ -498,6 +498,29 @@ async function runTests() {
       process.exit(1);
     }
 
+    // WI-1166: List-route diagnostics must be opt-in and reason-coded so the
+    // default response remains backward-compatible for normal consumers.
+    console.log('Test 8: /api/cards drop diagnostics are opt-in and reason-coded');
+    const cardsHasOptInDiagnostics =
+      cardsRouteSource.includes("const diagnosticsEnabled = searchParams.has('_diag')") &&
+      cardsRouteSource.includes('...(diagnostics ? { diagnostics } : {})');
+    const cardsHasDropReasonInventory =
+      cardsRouteSource.includes('SPORT_EXCLUDED_FPL') &&
+      cardsRouteSource.includes('SPORT_EXCLUDED_NCAAM') &&
+      cardsRouteSource.includes('SETTLED_RESULT') &&
+      cardsRouteSource.includes('WELCOME_HOME_DISABLED') &&
+      cardsRouteSource.includes('LIFECYCLE_STATUS_EXCLUDED') &&
+      cardsRouteSource.includes('LIFECYCLE_NOT_STARTED_OR_MISSING_TIME') &&
+      cardsRouteSource.includes('RUN_SCOPE_EXCLUDED') &&
+      cardsRouteSource.includes('by_reason') &&
+      cardsRouteSource.includes('by_card_type');
+    if (cardsHasOptInDiagnostics && cardsHasDropReasonInventory) {
+      console.log('✓ /api/cards diagnostics are opt-in and expose gate reason counters\n');
+    } else {
+      console.log('✗ Missing opt-in cards drop diagnostics contract\n');
+      process.exit(1);
+    }
+
     // Clean up
     console.log('📝 Cleaning up test data...');
     client

@@ -4,6 +4,12 @@ export const PROJECTION_ONLY_LINE_SOURCES = [
   'synthetic_fallback',
 ];
 
+export type BettingSurfacePayloadDropReason =
+  | 'PROJECTION_ONLY_BASIS'
+  | 'PROJECTION_ONLY_EXECUTION_STATUS'
+  | 'PROJECTION_ONLY_LINE_SOURCE'
+  | 'SYNTHETIC_FALLBACK_PROJECTION_SOURCE';
+
 export function safeJsonParse(payload: string | null) {
   if (!payload) return { data: null, error: true };
   try {
@@ -37,14 +43,22 @@ export function getPayloadString(
 export function isBettingSurfacePayload(
   payload: Record<string, unknown> | null,
 ): boolean {
-  if (!payload) return true;
+  return getBettingSurfacePayloadDropReason(payload) === null;
+}
+
+export function getBettingSurfacePayloadDropReason(
+  payload: Record<string, unknown> | null,
+): BettingSurfacePayloadDropReason | null {
+  // Missing or unparsable payloads stay visible; callers mark parse status
+  // separately instead of hiding historical cards with malformed JSON.
+  if (!payload) return null;
 
   const basis = String(
     getPayloadString(payload, ['decision_basis_meta', 'decision_basis']) ||
       getPayloadString(payload, ['basis']) ||
       '',
   ).toUpperCase();
-  if (basis === 'PROJECTION_ONLY') return false;
+  if (basis === 'PROJECTION_ONLY') return 'PROJECTION_ONLY_BASIS';
 
   const executionStatus = String(
     getPayloadString(payload, ['execution_status']) ||
@@ -53,7 +67,9 @@ export function isBettingSurfacePayload(
       getPayloadString(payload, ['play', 'prop_display_state']) ||
       '',
   ).toUpperCase();
-  if (executionStatus === 'PROJECTION_ONLY') return false;
+  if (executionStatus === 'PROJECTION_ONLY') {
+    return 'PROJECTION_ONLY_EXECUTION_STATUS';
+  }
 
   const lineSource = String(
     getPayloadString(payload, [
@@ -71,7 +87,9 @@ export function isBettingSurfacePayload(
       getPayloadString(payload, ['play', 'line_source']) ||
       '',
   ).toLowerCase();
-  if (PROJECTION_ONLY_LINE_SOURCES.includes(lineSource)) return false;
+  if (PROJECTION_ONLY_LINE_SOURCES.includes(lineSource)) {
+    return 'PROJECTION_ONLY_LINE_SOURCE';
+  }
 
   const projectionSource = String(
     getPayloadString(payload, ['prop_decision', 'projection_source']) ||
@@ -84,7 +102,9 @@ export function isBettingSurfacePayload(
       getPayloadString(payload, ['play', 'projection_source']) ||
       '',
   ).toUpperCase();
-  if (projectionSource === 'SYNTHETIC_FALLBACK') return false;
+  if (projectionSource === 'SYNTHETIC_FALLBACK') {
+    return 'SYNTHETIC_FALLBACK_PROJECTION_SOURCE';
+  }
 
-  return true;
+  return null;
 }

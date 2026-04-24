@@ -199,7 +199,7 @@ Plans:
 **Plans:** 1 plan in 1 wave
 
 Plans:
-- [ ] discord-hook-results-01-PLAN.md — Structured webhook delivery results + operator-facing partial-failure reporting tests (Wave 3)
+- [x] discord-hook-results-01-PLAN.md — Structured webhook delivery results + operator-facing partial-failure reporting tests (Wave 3)
 
 ---
 

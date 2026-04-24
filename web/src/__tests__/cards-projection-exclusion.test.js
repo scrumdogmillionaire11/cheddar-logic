@@ -45,6 +45,18 @@ const gameCardItemSource = fs.readFileSync(
   path.resolve(repoRoot, 'web/src/components/cards/GameCardItem.tsx'),
   'utf8',
 );
+const cardsQuerySource = fs.readFileSync(
+  path.resolve(repoRoot, 'web/src/lib/cards/query.ts'),
+  'utf8',
+);
+const payloadClassifierSource = fs.readFileSync(
+  path.resolve(repoRoot, 'web/src/lib/cards/payload-classifier.ts'),
+  'utf8',
+);
+const projectionSurfaceSource = fs.readFileSync(
+  path.resolve(repoRoot, 'web/src/lib/games/projection-surface.ts'),
+  'utf8',
+);
 
 console.log('🧪 Cards projection exclusion source tests');
 
@@ -52,18 +64,45 @@ for (const [label, source] of [
   ['/api/cards', apiCardsSource],
   ['/api/cards/[gameId]', apiCardsByGameSource],
 ]) {
+  const cardsReadContractSource = [
+    source,
+    cardsQuerySource,
+    payloadClassifierSource,
+  ].join('\n');
   assert.ok(
-    source.includes('buildBettingSurfacePayloadPredicate(') &&
-      source.includes("$.decision_basis_meta.decision_basis") &&
-      source.includes("$.basis") &&
-      source.includes("$.execution_status") &&
-      source.includes("$.prop_display_state") &&
-      source.includes("$.market_context.wager.line_source") &&
-      source.includes("$.prop_decision.projection_source") &&
-      source.includes('!isBettingSurfacePayload(normalizedPayload)'),
+    cardsReadContractSource.includes('buildBettingSurfacePayloadPredicate(') &&
+      cardsReadContractSource.includes("$.decision_basis_meta.decision_basis") &&
+      cardsReadContractSource.includes("$.basis") &&
+      cardsReadContractSource.includes("$.execution_status") &&
+      cardsReadContractSource.includes("$.prop_display_state") &&
+      cardsReadContractSource.includes("$.market_context.wager.line_source") &&
+      cardsReadContractSource.includes("$.prop_decision.projection_source") &&
+      cardsReadContractSource.includes('!isBettingSurfacePayload(normalizedPayload)'),
     `${label} should hard-filter projection-only JSON payloads in SQL and response serialization`,
   );
 }
+
+assert.ok(
+  payloadClassifierSource.includes('getBettingSurfacePayloadDropReason') &&
+    payloadClassifierSource.includes('PROJECTION_ONLY_BASIS') &&
+    payloadClassifierSource.includes('PROJECTION_ONLY_EXECUTION_STATUS') &&
+    payloadClassifierSource.includes('PROJECTION_ONLY_LINE_SOURCE') &&
+    payloadClassifierSource.includes('SYNTHETIC_FALLBACK_PROJECTION_SOURCE') &&
+    payloadClassifierSource.includes(
+      'return getBettingSurfacePayloadDropReason(payload) === null;',
+    ),
+  'payload classifier should expose reason-coded projection-only drops without changing visibility predicate semantics',
+);
+
+assert.ok(
+  apiCardsSource.includes('buildCardsDropDiagnostics') &&
+    apiCardsSource.includes("searchParams.has('_diag')") &&
+    apiCardsSource.includes('by_reason') &&
+    apiCardsSource.includes('by_card_type') &&
+    apiCardsSource.includes('PROJECTION_ONLY_LINE_SOURCE') &&
+    apiCardsSource.includes('SYNTHETIC_FALLBACK_PROJECTION_SOURCE'),
+  '/api/cards should expose internal _diag drop-reason counters for projection-only exclusions',
+);
 
 assert.ok(
   apiGamesSource.includes('function isProjectionOnlyPlayPayload(play: Play): boolean') &&
@@ -71,21 +110,22 @@ assert.ok(
     apiGamesSource.includes("play.execution_status === 'PROJECTION_ONLY'") &&
     apiGamesSource.includes("play.prop_display_state === 'PROJECTION_ONLY'") &&
     apiGamesSource.includes("projectionSource === 'SYNTHETIC_FALLBACK'") &&
-    apiGamesSource.includes('const isProjectionSurfaceCardType =') &&
-    apiGamesSource.includes("cardRow.card_type === 'mlb-f5'") &&
+    apiGamesSource.includes('const isProjectionSurfaceType =') &&
+    apiGamesSource.includes('isProjectionSurfaceCardType(cardRow.card_type)') &&
+    projectionSurfaceSource.includes("'mlb-f5'") &&
     apiGamesSource.includes(
-      'if (isProjectionOnlyPlayPayload(play) && !isPropMarket && !isProjectionSurfaceCardType) {',
+      'if (isProjectionOnlyPlayPayload(play) && !isPropMarket && !isProjectionSurfaceType) {',
     ) &&
     apiGamesSource.includes('continue;'),
   '/api/games should strip generic projection-only rows while preserving designated projection-surface card types',
 );
 
 assert.ok(
-  apiGamesSource.includes('const isProjectionSurfaceCardType =') &&
+  apiGamesSource.includes('const isProjectionSurfaceType =') &&
     !apiGamesSource.includes("cardRow.card_type === 'nhl-moneyline-call'") &&
     !apiGamesSource.includes("cardRow.card_type === 'nhl-totals-call'") &&
     apiGamesSource.includes(
-      'if (isProjectionOnlyPlayPayload(play) && !isPropMarket && !isProjectionSurfaceCardType) {',
+      'if (isProjectionOnlyPlayPayload(play) && !isPropMarket && !isProjectionSurfaceType) {',
     ),
   '/api/games should allow NHL ML/totals through when EXECUTABLE and only drop them when explicitly PROJECTION_ONLY',
 );

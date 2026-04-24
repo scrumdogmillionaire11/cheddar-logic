@@ -32,6 +32,13 @@ export function buildBettingSurfacePayloadPredicate(
     (source) => `'${source}'`,
   ).join(', ');
 
+  // Cards-read payload gate. Purpose: keep generic projection-only rows off
+  // the betting surface while preserving projection-surface card types at the
+  // route layer. Failure semantics are mirrored by
+  // getBettingSurfacePayloadDropReason for diagnostics reason codes:
+  // PROJECTION_ONLY_BASIS, PROJECTION_ONLY_EXECUTION_STATUS,
+  // PROJECTION_ONLY_LINE_SOURCE, SYNTHETIC_FALLBACK_PROJECTION_SOURCE.
+  // Invalid JSON is not a drop reason; the API returns payloadParseError.
   return `
     CASE
       WHEN json_valid(${payloadExpr}) = 0 THEN 1
