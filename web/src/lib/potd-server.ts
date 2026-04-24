@@ -249,15 +249,20 @@ type PotdNearMissSettledRow = {
   id: number;
   play_date: string;
   sport: string | null;
+  game_id: string | null;
   home_team: string | null;
   away_team: string | null;
   market_type: string | null;
+  line: number | null;
   selection_label: string | null;
   game_time_utc: string | null;
   result: string | null;
+  status?: string | null;
   pnl_units: number | null;
   virtual_stake_units: number | null;
   edge_pct: number | null;
+  candidate_identity_key: string | null;
+  settled_sort_at?: string | null;
 };
 
 export type PotdNearMissSettledPlay = {
@@ -492,6 +497,137 @@ function buildNearMissSummary(row: NearMissAggRow): PotdNearMissSummary {
   };
 }
 
+function normalizePotdGroupText(value: string | null | undefined): string {
+  return String(value || '').trim().replace(/\s+/g, ' ').toUpperCase();
+}
+
+function normalizePotdGroupLine(marketType: string | null | undefined, line: number | null | undefined): string {
+  const market = normalizePotdGroupText(marketType);
+  const numericLine = typeof line === 'number' && Number.isFinite(line) ? line : null;
+  if (market === 'MONEYLINE') return 'NA';
+  if (numericLine === null) return 'NA';
+  if (market === 'SPREAD') return Math.abs(numericLine).toFixed(3);
+  return numericLine.toFixed(3);
+}
+
+function parseCandidateIdentityGroup(identityKey: string | null | undefined): string | null {
+  const parts = String(identityKey || '').split('|');
+  if (parts.length < 5) return null;
+  const sport = normalizePotdGroupText(parts[0]);
+  const gameRef = parts[1] || 'UNKNOWN_GAME';
+  const marketType = normalizePotdGroupText(parts[2]);
+  const lineContext = parts.slice(4).join('|') || 'NA';
+  if (!sport || !marketType) return null;
+  const numericLine = Number(lineContext);
+  const normalizedLineContext = Number.isFinite(numericLine)
+    ? (marketType === 'SPREAD' ? Math.abs(numericLine) : numericLine).toFixed(3)
+    : lineContext;
+  return [sport, gameRef, marketType, normalizedLineContext].join('|');
+}
+
+function buildPotdMarketMatchGroup(row: {
+  sport: string | null;
+  market_type: string | null;
+  game_id?: string | null;
+  home_team?: string | null;
+  away_team?: string | null;
+  line?: number | null;
+  candidate_identity_key?: string | null;
+}): string {
+  const sport = normalizePotdGroupText(row.sport);
+  const marketType = normalizePotdGroupText(row.market_type);
+  const gameId = String(row.game_id || '').trim();
+  const teams = [
+    normalizePotdGroupText(row.home_team),
+    normalizePotdGroupText(row.away_team),
+  ].filter(Boolean).sort();
+  const gameRef = gameId || (teams.length > 0 ? teams.join('__') : null);
+  if (!sport || !marketType || !gameRef) {
+    return parseCandidateIdentityGroup(row.candidate_identity_key) || `${sport}|UNKNOWN_GAME|${marketType}|${normalizePotdGroupLine(marketType, row.line)}`;
+  }
+  return [sport, gameRef, marketType, normalizePotdGroupLine(marketType, row.line)].join('|');
+}
+
+function compareNearMissRowsByEdgeThenTime(left: PotdNearMissSettledRow, right: PotdNearMissSettledRow): number {
+  const leftEdge = typeof left.edge_pct === 'number' && Number.isFinite(left.edge_pct)
+    ? left.edge_pct
+    : Number.NEGATIVE_INFINITY;
+  const rightEdge = typeof right.edge_pct === 'number' && Number.isFinite(right.edge_pct)
+    ? right.edge_pct
+    : Number.NEGATIVE_INFINITY;
+  if (rightEdge !== leftEdge) return rightEdge - leftEdge;
+
+  const leftTime = Date.parse(left.settled_sort_at || '');
+  const rightTime = Date.parse(right.settled_sort_at || '');
+  const normalizedLeftTime = Number.isFinite(leftTime) ? leftTime : 0;
+  const normalizedRightTime = Number.isFinite(rightTime) ? rightTime : 0;
+  if (normalizedRightTime !== normalizedLeftTime) return normalizedRightTime - normalizedLeftTime;
+
+  return String(left.candidate_identity_key || left.id).localeCompare(String(right.candidate_identity_key || right.id));
+}
+
+function dedupeNearMissRowsByMarketMatch(rows: PotdNearMissSettledRow[]): PotdNearMissSettledRow[] {
+  const byGroup = new Map<string, PotdNearMissSettledRow>();
+  for (const row of rows) {
+    const group = `${row.play_date}|${buildPotdMarketMatchGroup(row)}`;
+    const current = byGroup.get(group);
+    if (!current || compareNearMissRowsByEdgeThenTime(current, row) > 0) {
+      byGroup.set(group, row);
+    }
+  }
+  return Array.from(byGroup.values());
+}
+
+function compareSettledHistoryRows(left: PotdNearMissSettledRow, right: PotdNearMissSettledRow): number {
+  if (right.play_date !== left.play_date) return right.play_date.localeCompare(left.play_date);
+
+  const leftTime = Date.parse(left.settled_sort_at || '');
+  const rightTime = Date.parse(right.settled_sort_at || '');
+  const normalizedLeftTime = Number.isFinite(leftTime) ? leftTime : 0;
+  const normalizedRightTime = Number.isFinite(rightTime) ? rightTime : 0;
+  if (normalizedRightTime !== normalizedLeftTime) return normalizedRightTime - normalizedLeftTime;
+
+  const leftEdge = typeof left.edge_pct === 'number' && Number.isFinite(left.edge_pct)
+    ? left.edge_pct
+    : Number.NEGATIVE_INFINITY;
+  const rightEdge = typeof right.edge_pct === 'number' && Number.isFinite(right.edge_pct)
+    ? right.edge_pct
+    : Number.NEGATIVE_INFINITY;
+  if (rightEdge !== leftEdge) return rightEdge - leftEdge;
+
+  return String(left.candidate_identity_key || left.id).localeCompare(String(right.candidate_identity_key || right.id));
+}
+
+function buildNearMissSummaryFromRows(rows: PotdNearMissSettledRow[]): PotdNearMissSummary {
+  const deduped = dedupeNearMissRowsByMarketMatch(rows);
+  const aggregate = deduped.reduce<NearMissAggRow>((acc, row) => {
+    const status = String(row.status || '').toLowerCase();
+    const result = String(row.result || '').toLowerCase();
+    acc.sample_size += 1;
+    if (status === 'settled') {
+      acc.settled_count += 1;
+      if (result === 'win') acc.wins += 1;
+      else if (result === 'loss') acc.losses += 1;
+      else if (result === 'push') acc.pushes += 1;
+    } else if (status === 'non_gradeable') {
+      acc.non_gradeable += 1;
+    } else {
+      acc.pending += 1;
+    }
+    return acc;
+  }, {
+    sample_size: 0,
+    settled_count: 0,
+    wins: 0,
+    losses: 0,
+    pushes: 0,
+    pending: 0,
+    non_gradeable: 0,
+  });
+
+  return buildNearMissSummary(aggregate);
+}
+
 function buildSchedule(
   todayPlay: PotdApiPlay | null,
   todayGames: GameRow[],
@@ -617,7 +753,7 @@ export async function getPotdResponseData(now = new Date()): Promise<PotdRespons
         total_wagered: 0,
       };
 
-    let nearMissAggregateRow: NearMissAggRow = {
+    let nearMissSummary: PotdNearMissSummary = buildNearMissSummary({
       sample_size: 0,
       settled_count: 0,
       wins: 0,
@@ -625,33 +761,71 @@ export async function getPotdResponseData(now = new Date()): Promise<PotdRespons
       pushes: 0,
       pending: 0,
       non_gradeable: 0,
-    };
+    });
 
     // Defensive: nearMissAggregateRow query requires tables added in WI-1037.
     // If tables don't exist (e.g., production DB not yet migrated), use fallback.
     try {
-      const result = db
+      const rows = db
         .prepare(
           `SELECT
-             COUNT(sc.id) AS sample_size,
-             SUM(CASE WHEN sr.status = 'settled' THEN 1 ELSE 0 END) AS settled_count,
-             SUM(CASE WHEN sr.status = 'settled' AND LOWER(COALESCE(sr.result, '')) = 'win' THEN 1 ELSE 0 END) AS wins,
-             SUM(CASE WHEN sr.status = 'settled' AND LOWER(COALESCE(sr.result, '')) = 'loss' THEN 1 ELSE 0 END) AS losses,
-             SUM(CASE WHEN sr.status = 'settled' AND LOWER(COALESCE(sr.result, '')) = 'push' THEN 1 ELSE 0 END) AS pushes,
-             SUM(CASE WHEN sr.id IS NULL OR sr.status = 'pending' THEN 1 ELSE 0 END) AS pending,
-             SUM(CASE WHEN sr.status = 'non_gradeable' THEN 1 ELSE 0 END) AS non_gradeable
+             COALESCE(sr.id, sc.id) AS id,
+             COALESCE(sr.play_date, sc.play_date) AS play_date,
+             COALESCE(sr.sport, sc.sport) AS sport,
+             COALESCE(sr.game_id, sc.game_id) AS game_id,
+             sc.home_team,
+             sc.away_team,
+             COALESCE(sr.market_type, sc.market_type) AS market_type,
+             COALESCE(sr.line, sc.line) AS line,
+             COALESCE(sr.selection_label, sc.selection_label) AS selection_label,
+             COALESCE(sr.game_time_utc, sc.game_time_utc) AS game_time_utc,
+             COALESCE(sr.status, 'pending') AS status,
+             sr.result,
+             sr.pnl_units,
+             sr.virtual_stake_units,
+             sc.edge_pct,
+             COALESCE(sr.candidate_identity_key, sc.candidate_identity_key) AS candidate_identity_key,
+             COALESCE(sr.settled_at, sr.updated_at, sr.created_at, sc.captured_at) AS settled_sort_at
            FROM potd_shadow_candidates sc
            LEFT JOIN potd_shadow_results sr
              ON (
                   sr.play_date = sc.play_date
-              AND sr.candidate_identity_key = sc.candidate_identity_key
-                )
+                AND sr.candidate_identity_key = sc.candidate_identity_key
+               )
              OR sr.shadow_candidate_id = sc.id`,
         )
-        .get() as NearMissAggRow | undefined;
-      if (result) {
-        nearMissAggregateRow = result;
-      }
+        .all() as PotdNearMissSettledRow[];
+      const resultOnlyRows = db
+        .prepare(
+          `SELECT
+             sr.id,
+             sr.play_date,
+             sr.sport,
+             sr.game_id,
+             NULL AS home_team,
+             NULL AS away_team,
+             sr.market_type,
+             sr.line,
+             sr.selection_label,
+             sr.game_time_utc,
+             sr.status,
+             sr.result,
+             sr.pnl_units,
+             sr.virtual_stake_units,
+             NULL AS edge_pct,
+             sr.candidate_identity_key,
+             COALESCE(sr.settled_at, sr.updated_at, sr.created_at) AS settled_sort_at
+           FROM potd_shadow_results sr
+           LEFT JOIN potd_shadow_candidates sc
+             ON sr.shadow_candidate_id = sc.id
+             OR (
+               sr.play_date = sc.play_date
+               AND sr.candidate_identity_key = sc.candidate_identity_key
+             )
+           WHERE sc.id IS NULL`,
+        )
+        .all() as PotdNearMissSettledRow[];
+      nearMissSummary = buildNearMissSummaryFromRows([...rows, ...resultOnlyRows]);
     } catch (error) {
       // Tables don't exist yet; use fallback (0 data)
       console.warn(
@@ -708,7 +882,6 @@ export async function getPotdResponseData(now = new Date()): Promise<PotdRespons
       Number(startingLedgerRow?.amount_after || 0),
       aggregateRow,
     );
-    const nearMissSummary = buildNearMissSummary(nearMissAggregateRow);
     const schedule = buildSchedule(todayPlay, todayGames, now);
 
     return {
@@ -733,21 +906,26 @@ export async function getPotdSettledHistoryData(): Promise<PotdSettledHistoryDat
     await ensureDbReady();
     db = getDatabaseReadOnly();
 
-    const settledRows = (db
+    const rawSettledRows = (db
       .prepare(
         `SELECT
            sr.id,
            sr.play_date,
            COALESCE(sr.sport, sc.sport) AS sport,
+           COALESCE(sr.game_id, sc.game_id) AS game_id,
            sc.home_team,
            sc.away_team,
            COALESCE(sr.market_type, sc.market_type) AS market_type,
+           COALESCE(sr.line, sc.line) AS line,
            COALESCE(sr.selection_label, sc.selection_label) AS selection_label,
            COALESCE(sr.game_time_utc, sc.game_time_utc) AS game_time_utc,
+           sr.status,
            sr.result,
            sr.pnl_units,
            sr.virtual_stake_units,
-           sc.edge_pct
+           sc.edge_pct,
+           COALESCE(sr.candidate_identity_key, sc.candidate_identity_key) AS candidate_identity_key,
+           COALESCE(sr.settled_at, sr.updated_at, sr.created_at, sc.captured_at) AS settled_sort_at
          FROM potd_shadow_results sr
          LEFT JOIN potd_shadow_candidates sc
            ON (
@@ -760,7 +938,10 @@ export async function getPotdSettledHistoryData(): Promise<PotdSettledHistoryDat
          WHERE sr.status = 'settled'
          ORDER BY sr.play_date DESC, datetime(COALESCE(sr.settled_at, sr.updated_at, sr.created_at)) DESC`,
       )
-      .all() as PotdNearMissSettledRow[]).map((row) => ({
+      .all() as PotdNearMissSettledRow[]);
+    const settledRows = dedupeNearMissRowsByMarketMatch(rawSettledRows)
+      .sort(compareSettledHistoryRows)
+      .map((row) => ({
         id: String(row.id),
         playDate: row.play_date,
         sport: row.sport || '--',

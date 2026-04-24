@@ -32,7 +32,11 @@ type FamilyOption = {
 
 const FAMILY_OPTIONS: FamilyOption[] = [
   { id: 'ALL', label: 'All', families: [] },
-  { id: 'NHL_1P', label: 'NHL 1P', families: ['NHL_1P_TOTAL'] },
+  {
+    id: 'NHL_1P',
+    label: 'NHL 1P O/U',
+    families: ['NHL_1P_TOTAL', 'NHL_1P_OU', 'NHL_1P_O/U'],
+  },
   { id: 'MLB_F5_TOTAL', label: 'MLB F5 Total', families: ['MLB_F5_TOTAL'] },
   {
     id: 'MLB_F5_MONEYLINE',
@@ -45,8 +49,14 @@ const SUPPORTED_FAMILY_SET = new Set(
   FAMILY_OPTIONS.flatMap((option) => option.families),
 );
 
+const FAMILY_TOKEN_ALIASES: Record<string, string> = {
+  NHL_1P_OU: 'NHL_1P_TOTAL',
+  'NHL_1P_O/U': 'NHL_1P_TOTAL',
+};
+
 function normalizeFamily(value: string | null | undefined) {
-  return String(value || '').trim().toUpperCase();
+  const token = String(value || '').trim().toUpperCase();
+  return FAMILY_TOKEN_ALIASES[token] || token;
 }
 
 function formatPercent(value: number | null | undefined) {
@@ -199,33 +209,12 @@ export function ProjectionAccuracyClient() {
     loadProjectionResults();
   }, [loadProjectionResults]);
 
-  const activeFamilySet = useMemo(() => {
-    const families = new Set<string>();
-    for (const row of settledRows) {
-      const family = normalizeFamily(row.cardFamily);
-      if (SUPPORTED_FAMILY_SET.has(family)) families.add(family);
-    }
-    for (const row of accuracy?.rows || []) {
-      const family = normalizeFamily(row.market_family);
-      if (SUPPORTED_FAMILY_SET.has(family)) families.add(family);
-    }
-    return families;
-  }, [accuracy?.rows, settledRows]);
-
-  const activeFamilyOptions = useMemo(() => {
-    const activeOptions = FAMILY_OPTIONS.filter((option) => {
-      if (option.id === 'ALL') return true;
-      return option.families.some((family) => activeFamilySet.has(family));
-    });
-    return activeOptions.length > 1 ? activeOptions : FAMILY_OPTIONS;
-  }, [activeFamilySet]);
 
   const selectedFamily = useMemo(
     () =>
-      activeFamilyOptions.find((option) => option.id === selectedFamilyId) ||
-      activeFamilyOptions[0] ||
+      FAMILY_OPTIONS.find((option) => option.id === selectedFamilyId) ||
       FAMILY_OPTIONS[0],
-    [activeFamilyOptions, selectedFamilyId],
+    [selectedFamilyId],
   );
 
   const selectedFamilySet = useMemo(() => {
@@ -463,7 +452,7 @@ export function ProjectionAccuracyClient() {
           </div>
 
           <div className="mt-5 flex flex-wrap gap-2">
-            {activeFamilyOptions.map((option) => (
+            {FAMILY_OPTIONS.map((option) => (
               <button
                 key={option.id}
                 type="button"
