@@ -1,4 +1,7 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { normalizeToConfidenceTier } from '../lib/types/projection-accuracy.ts';
 
 const VALID_TIERS = new Set(['LOW', 'MED', 'HIGH']);
@@ -11,6 +14,13 @@ function assertConfidenceTier(value, label) {
 }
 
 function run() {
+  const __filename = fileURLToPath(import.meta.url);
+  const __dirname = path.dirname(__filename);
+  const routeSource = fs.readFileSync(
+    path.join(__dirname, '../app/api/results/projection-settled/route.ts'),
+    'utf8',
+  );
+
   // Canonical pass-through
   assertConfidenceTier(normalizeToConfidenceTier('HIGH'), 'canonical HIGH');
   assertConfidenceTier(normalizeToConfidenceTier('MED'), 'canonical MED');
@@ -46,6 +56,23 @@ function run() {
     const result = normalizeToConfidenceTier(input);
     assertConfidenceTier(result, `normalizeToConfidenceTier(${JSON.stringify(input)})`);
   }
+
+  assert.ok(
+    routeSource.includes('const ACCURACY_LATEST_CTE_SQL = `WITH accuracy_latest AS (') &&
+      routeSource.includes('PARTITION BY pae.card_id'),
+    'projection-settled route must use the latest projection_accuracy_evals row per card_id',
+  );
+  assert.ok(
+    routeSource.includes('row.accuracy_projection_value === null') &&
+      routeSource.includes('row.accuracy_edge_pp === null') &&
+      routeSource.includes('row.accuracy_confidence_score === null') &&
+      routeSource.includes('row.accuracy_confidence_band === null'),
+    'projection-settled route must only probe payload compatibility fields when canonical analytics are null',
+  );
+  assert.ok(
+    routeSource.includes('candidate.canonicalAnalyticsPresent !== current.canonicalAnalyticsPresent'),
+    'projection-settled dedupe must prefer rows with canonical analytics present',
+  );
 
   console.log('api-results-projection-settled-contract: all assertions passed');
 }

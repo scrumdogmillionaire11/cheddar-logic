@@ -112,6 +112,32 @@ export type ProjectionSettledResponse = {
   error?: string;
 };
 
+type ProjectionProxyInternalRow = ProjectionProxyRow & {
+  canonicalAnalyticsPresent: boolean;
+};
+
+const ACCURACY_LATEST_CTE_SQL = `WITH accuracy_latest AS (
+  SELECT
+    pae.card_id,
+    pae.projection_raw,
+    pae.projection_value,
+    pae.win_probability,
+    pae.edge_pp,
+    pae.confidence_score,
+    pae.confidence_band,
+    pae.tracking_role,
+    pae.calibration_bucket,
+    pae.brier_score,
+    pae.expected_outcome_label,
+    ROW_NUMBER() OVER (
+      PARTITION BY pae.card_id
+      ORDER BY
+        datetime(COALESCE(pae.captured_at, '1970-01-01T00:00:00Z')) DESC,
+        pae.id DESC
+    ) AS rn
+  FROM projection_accuracy_evals pae
+)`;
+
 function parsePayload(value: string | null): Record<string, unknown> | null {
   if (!value) return null;
   try {
@@ -269,7 +295,11 @@ function buildDedupKey(row: ProjectionProxyRow): string {
   ].join('|');
 }
 
-function choosePreferredRow(current: ProjectionProxyRow, candidate: ProjectionProxyRow): ProjectionProxyRow {
+function choosePreferredRow(current: ProjectionProxyInternalRow, candidate: ProjectionProxyInternalRow): ProjectionProxyInternalRow {
+  if (candidate.canonicalAnalyticsPresent !== current.canonicalAnalyticsPresent) {
+    return candidate.canonicalAnalyticsPresent ? candidate : current;
+  }
+
   const quality = (row: ProjectionProxyRow): number => {
     let score = 0;
     if (row.predictionSignalMissing !== true && row.winProbability !== null && row.winProbability !== undefined) score += 4;
@@ -312,25 +342,7 @@ export async function GET(
 
     const proxyRows = db
       .prepare(
-        `WITH accuracy_latest AS (
-           SELECT
-             pae.card_id,
-             pae.projection_value,
-             pae.edge_pp,
-             pae.confidence_score,
-             pae.confidence_band,
-             pae.tracking_role,
-             pae.calibration_bucket,
-             pae.brier_score,
-             pae.expected_outcome_label,
-             ROW_NUMBER() OVER (
-               PARTITION BY pae.card_id
-               ORDER BY
-                 datetime(COALESCE(pae.captured_at, '1970-01-01T00:00:00Z')) DESC,
-                 pae.id DESC
-             ) AS rn
-           FROM projection_accuracy_evals pae
-         )
+        `${ACCURACY_LATEST_CTE_SQL}
          SELECT
            ppe.id,
            ppe.card_id,
@@ -370,7 +382,7 @@ export async function GET(
       )
       .all() as DbProxyEvalRow[];
 
-    const enrichedRows = proxyRows.map((row) => {
+    const enrichedRows: ProjectionProxyInternalRow[] = proxyRows.map((row) => {
       return {
         id: row.id,
         cardId: row.card_id,
@@ -409,6 +421,15 @@ export async function GET(
         predictionSignalMissing:
           String(row.card_family || '').toUpperCase() === 'MLB_F5_ML' &&
           row.win_probability === null,
+        canonicalAnalyticsPresent:
+          row.win_probability !== null ||
+          row.edge_pp !== null ||
+          row.confidence_score !== null ||
+          row.accuracy_confidence_band !== null ||
+          row.tracking_role !== null ||
+          row.calibration_bucket !== null ||
+          row.brier_score !== null ||
+          row.expected_outcome_label !== null,
       };
     });
     const materializedF5MoneylineCardIds = new Set(
@@ -419,25 +440,7 @@ export async function GET(
 
     const f5MoneylineRows = db
       .prepare(
-        `WITH accuracy_latest AS (
-           SELECT
-             pae.card_id,
-             pae.projection_value,
-             pae.edge_pp,
-             pae.confidence_score,
-             pae.confidence_band,
-             pae.tracking_role,
-             pae.calibration_bucket,
-             pae.brier_score,
-             pae.expected_outcome_label,
-             ROW_NUMBER() OVER (
-               PARTITION BY pae.card_id
-               ORDER BY
-                 datetime(COALESCE(pae.captured_at, '1970-01-01T00:00:00Z')) DESC,
-                 pae.id DESC
-             ) AS rn
-           FROM projection_accuracy_evals pae
-         )
+        `${ACCURACY_LATEST_CTE_SQL}
          SELECT
            cr.id,
            cr.card_id,
@@ -471,10 +474,13 @@ export async function GET(
       )
       .all() as DbF5MoneylineRow[];
 
-    const mappedF5MoneylineRows: ProjectionProxyRow[] = f5MoneylineRows.map((row) => {
+    const mappedF5MoneylineRows: ProjectionProxyInternalRow[] = f5MoneylineRows.map((row) => {
       const payload = parsePayload(row.payload_data);
       const selection = resolveF5MlSelection(row, payload);
-      const payloadProb = resolvePayloadF5WinProbability(payload, selection);
+      const payloadProb =
+        row.accuracy_projection_value === null
+          ? resolvePayloadF5WinProbability(payload, selection)
+          : null;
       const projProb = row.accuracy_projection_value ?? payloadProb;
       const projValue = projProb;
       const resultToken = gradedResultToken(row.result);
@@ -482,19 +488,28 @@ export async function GET(
         resultToken === 'WIN' ? 1 : resultToken === 'LOSS' ? 0 : 0.5;
       const recommendedSide: 'OVER' | 'UNDER' | 'PASS' =
         selection === 'HOME' ? 'OVER' : selection === 'AWAY' ? 'UNDER' : 'PASS';
-      const payloadEdge = toNumberOrNull(payload?.edge_pp);
+      const payloadEdge =
+        row.accuracy_edge_pp === null ? toNumberOrNull(payload?.edge_pp) : null;
       const edgeVsLine = row.accuracy_edge_pp ?? payloadEdge ?? (projValue === null ? null : projValue - 0.5);
       const confidenceScore =
         row.accuracy_confidence_score ??
-        toNumberOrNull(payload?.confidence_score);
-      const payloadDriver0 = Array.isArray(payload?.drivers)
-        ? readObject((payload!.drivers as unknown[])[0])
-        : null;
+        (row.accuracy_confidence_score === null ? toNumberOrNull(payload?.confidence_score) : null);
+      const payloadDriver0 =
+        row.accuracy_confidence_score === null || row.accuracy_confidence_band === null
+          ? Array.isArray(payload?.drivers)
+            ? readObject((payload!.drivers as unknown[])[0])
+            : null
+          : null;
       const payloadConfidenceBand =
-        String(payload?.confidence_band ?? '').trim() ||
-        String(payloadDriver0?.confidence_band ?? '').trim();
+        row.accuracy_confidence_band === null
+          ? String(payload?.confidence_band ?? '').trim() ||
+            String(payloadDriver0?.confidence_band ?? '').trim()
+          : '';
       const resolvedConfidenceScore =
-        confidenceScore ?? toNumberOrNull(payloadDriver0?.confidence_score);
+        confidenceScore ??
+        (row.accuracy_confidence_score === null
+          ? toNumberOrNull(payloadDriver0?.confidence_score)
+          : null);
       const confidenceBand =
         row.accuracy_confidence_band ??
         (payloadConfidenceBand ? payloadConfidenceBand : null) ??
@@ -542,6 +557,15 @@ export async function GET(
         brierScore: row.brier_score,
         expectedOutcomeLabel,
         predictionSignalMissing: projValue === null,
+        canonicalAnalyticsPresent:
+          row.accuracy_projection_value !== null ||
+          row.accuracy_edge_pp !== null ||
+          row.accuracy_confidence_score !== null ||
+          row.accuracy_confidence_band !== null ||
+          row.tracking_role !== null ||
+          row.calibration_bucket !== null ||
+          row.brier_score !== null ||
+          row.expected_outcome_label !== null,
       };
     }).filter((row) => !materializedF5MoneylineCardIds.has(row.cardId));
 
@@ -551,7 +575,7 @@ export async function GET(
       return b.id - a.id;
     });
 
-    const dedupedByKey = new Map<string, ProjectionProxyRow>();
+    const dedupedByKey = new Map<string, ProjectionProxyInternalRow>();
     for (const row of settledRows) {
       const key = buildDedupKey(row);
       const existing = dedupedByKey.get(key);
@@ -566,7 +590,7 @@ export async function GET(
       const dateDiff = Date.parse(b.gameDateUtc) - Date.parse(a.gameDateUtc);
       if (Number.isFinite(dateDiff) && dateDiff !== 0) return dateDiff;
       return b.id - a.id;
-    });
+    }).map(({ canonicalAnalyticsPresent: _canonicalAnalyticsPresent, ...row }) => row);
 
     const response = NextResponse.json({
       success: true,

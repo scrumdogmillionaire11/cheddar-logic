@@ -1,9 +1,26 @@
+import cheddarData from '@cheddar-logic/data';
+
 export type ProjectionMetricInputRow = {
   sport: string | null;
   cardType: string | null;
   payload: Record<string, unknown> | null;
   gameResultMetadata: Record<string, unknown> | null;
   actualResult?: string | null;
+  periodToken?: string | null;
+  playerId?: string | null;
+  playerName?: string | null;
+  canonicalMarketKey?: string | null;
+  propType?: string | null;
+  directionToken?: string | null;
+  officialStatus?: string | null;
+  fallbackStatus?: string | null;
+  canonicalProjectionRaw?: number | null;
+  canonicalProjectionValue?: number | null;
+  canonicalWinProbability?: number | null;
+  canonicalEdgePp?: number | null;
+  canonicalConfidenceScore?: number | null;
+  canonicalConfidenceBand?: string | null;
+  canonicalTrackingRole?: string | null;
 };
 
 export type ResultCardMode = 'ODDS_BACKED' | 'PROJECTION_ONLY';
@@ -106,6 +123,19 @@ const PROJECTION_LINE_SOURCES = new Set([
   'synthetic_fallback',
 ]);
 
+type ProjectionAnalyticsContract = {
+  materialized: boolean;
+  preferredNumericField: 'projection_raw' | 'projection_value';
+  numericSemantics: 'projected_stat_value' | 'selected_side_win_probability';
+};
+
+const { PROJECTION_ANALYTICS_CONTRACT_BY_MARKET_FAMILY } = cheddarData as {
+  PROJECTION_ANALYTICS_CONTRACT_BY_MARKET_FAMILY?: Record<
+    string,
+    ProjectionAnalyticsContract | undefined
+  >;
+};
+
 function toUpperToken(value: unknown): string | null {
   if (value === null || value === undefined) return null;
   const normalized = String(value).trim().toUpperCase();
@@ -126,6 +156,17 @@ function toNumber(value: unknown): number | null {
 
 function roundNumber(value: number): number {
   return Number(value.toFixed(4));
+}
+
+function getProjectionAnalyticsContract(
+  cardFamily: string,
+): ProjectionAnalyticsContract | null {
+  const contractMap =
+    (PROJECTION_ANALYTICS_CONTRACT_BY_MARKET_FAMILY || {}) as Record<
+      string,
+      ProjectionAnalyticsContract | undefined
+    >;
+  return contractMap[cardFamily] ?? null;
 }
 
 function getPayloadValue(
@@ -169,6 +210,50 @@ function normalizePeriodToken(
     return 'F5';
   }
   return 'FULL_GAME';
+}
+
+function resolvePeriodToken(
+  row: ProjectionMetricInputRow,
+): '1P' | 'FULL_GAME' | 'F5' {
+  const explicit = toUpperToken(row.periodToken);
+  if (explicit === 'FIRST_PERIOD' || explicit === '1ST_PERIOD' || explicit === '1P') {
+    return '1P';
+  }
+  if (explicit === 'F5' || explicit === 'FIRST_5') return 'F5';
+  return normalizePeriodToken(row.payload, row.cardType);
+}
+
+function resolveRowPlayerId(row: ProjectionMetricInputRow): string {
+  return String(
+    row.playerId ??
+      getPayloadValue(row.payload, ['play', 'player_id']) ??
+      row.payload?.player_id ??
+      '',
+  ).trim();
+}
+
+function resolveRowPlayerName(row: ProjectionMetricInputRow): string {
+  return normalizePlayerName(
+    row.playerName ??
+      getPayloadValue(row.payload, ['play', 'player_name']) ??
+      row.payload?.player_name,
+  );
+}
+
+function resolveRowCanonicalMarketKey(row: ProjectionMetricInputRow): string | null {
+  return toLowerToken(
+    row.canonicalMarketKey ??
+      getPayloadValue(row.payload, ['play', 'canonical_market_key']) ??
+      row.payload?.canonical_market_key,
+  );
+}
+
+function resolveRowPropType(row: ProjectionMetricInputRow): string | null {
+  return toLowerToken(
+    row.propType ??
+      getPayloadValue(row.payload, ['play', 'prop_type']) ??
+      row.payload?.prop_type,
+  );
 }
 
 // F5 card types are always projection-only: no live odds are fetched,
@@ -224,14 +309,9 @@ function deriveProjectionCardFamily(row: ProjectionMetricInputRow): string {
   const payload = row.payload || {};
   const sport = toUpperToken(payload.sport || row.sport) || 'UNKNOWN';
   const cardType = toLowerToken(row.cardType || payload.card_type) || '';
-  const period = normalizePeriodToken(row.payload, row.cardType);
-  const canonicalMarketKey = toLowerToken(
-    getPayloadValue(row.payload, ['play', 'canonical_market_key']) ||
-      payload.canonical_market_key,
-  );
-  const propType = toLowerToken(
-    getPayloadValue(row.payload, ['play', 'prop_type']) || payload.prop_type,
-  );
+  const period = resolvePeriodToken(row);
+  const canonicalMarketKey = resolveRowCanonicalMarketKey(row);
+  const propType = resolveRowPropType(row);
 
   if (sport === 'NHL') {
     if (propType === 'shots_on_goal' || cardType.includes('player-shots')) {
@@ -255,7 +335,25 @@ function deriveProjectionCardFamily(row: ProjectionMetricInputRow): string {
   return `${sport}_${cardType || 'UNKNOWN'}`.toUpperCase();
 }
 
-function resolveProjectionValue(payload: Record<string, unknown> | null): number | null {
+function resolveProjectionValue(row: ProjectionMetricInputRow): number | null {
+  const cardFamily = deriveProjectionCardFamily(row);
+  const contract = getProjectionAnalyticsContract(cardFamily);
+  if (contract) {
+    const canonicalCandidates =
+      contract.preferredNumericField === 'projection_raw'
+        ? [row.canonicalProjectionRaw, row.canonicalProjectionValue]
+        : [
+            row.canonicalProjectionValue,
+            row.canonicalProjectionRaw,
+            row.canonicalWinProbability,
+          ];
+    for (const candidate of canonicalCandidates) {
+      const parsed = toNumber(candidate);
+      if (parsed !== null) return parsed;
+    }
+  }
+
+  const payload = row.payload;
   const candidates = [
     payload?.numeric_projection,
     getPayloadValue(payload, ['projection', 'k_mean']),
@@ -277,10 +375,12 @@ function resolveProjectionValue(payload: Record<string, unknown> | null): number
 }
 
 function resolveProjectionDirection(
-  payload: Record<string, unknown> | null,
+  row: ProjectionMetricInputRow,
 ): 'OVER' | 'UNDER' | null {
+  const payload = row.payload;
   const token = toUpperToken(
-    payload?.recommended_direction ||
+    row.directionToken ||
+      payload?.recommended_direction ||
       getPayloadValue(payload, ['play', 'selection', 'side']) ||
       getPayloadValue(payload, ['selection', 'side']) ||
       getPayloadValue(payload, ['play', 'decision_v2', 'direction']) ||
@@ -290,6 +390,37 @@ function resolveProjectionDirection(
   );
   if (token === 'OVER' || token === 'UNDER') return token;
   return null;
+}
+
+function hasActionableProjectionCallForRow(
+  row: ProjectionMetricInputRow,
+): boolean {
+  const officialStatus = toUpperToken(
+    row.officialStatus ??
+      getPayloadValue(row.payload, ['play', 'decision_v2', 'official_status']) ??
+      getPayloadValue(row.payload, ['decision_v2', 'official_status']),
+  );
+  if (officialStatus === 'PASS') return false;
+  if (officialStatus === 'PLAY' || officialStatus === 'LEAN') return true;
+
+  const fallback = toUpperToken(
+    row.fallbackStatus ??
+      getPayloadValue(row.payload, ['decision', 'status']) ??
+      getPayloadValue(row.payload, ['status']) ??
+      getPayloadValue(row.payload, ['play', 'status']) ??
+      getPayloadValue(row.payload, ['action']) ??
+      getPayloadValue(row.payload, ['play', 'action']) ??
+      getPayloadValue(row.payload, ['decision', 'action']),
+  );
+
+  if (fallback === 'PASS' || fallback === 'HOLD' || fallback === 'WATCH') {
+    return false;
+  }
+  if (fallback === 'PLAY' || fallback === 'LEAN' || fallback === 'FIRE') {
+    return true;
+  }
+
+  return true;
 }
 
 export function hasActionableProjectionCall(
@@ -357,27 +488,20 @@ function resolvePlayerShotsActualValue(row: ProjectionMetricInputRow): number | 
       : null;
   if (!playerShots) return null;
 
-  const period = normalizePeriodToken(row.payload, row.cardType);
+  const period = resolvePeriodToken(row);
   const valuesByPlayer =
     period === '1P'
       ? playerShots.firstPeriodByPlayerId
       : playerShots.fullGameByPlayerId;
   if (!valuesByPlayer || typeof valuesByPlayer !== 'object') return null;
 
-  const playerId = String(
-    getPayloadValue(row.payload, ['play', 'player_id']) ||
-      row.payload?.player_id ||
-      '',
-  ).trim();
+  const playerId = resolveRowPlayerId(row);
   if (playerId) {
     const direct = toNumber((valuesByPlayer as Record<string, unknown>)[playerId]);
     if (direct !== null) return direct;
   }
 
-  const playerName = normalizePlayerName(
-    getPayloadValue(row.payload, ['play', 'player_name']) ||
-      row.payload?.player_name,
-  );
+  const playerName = resolveRowPlayerName(row);
   if (!playerName) return null;
 
   const playerIdByNormalizedName =
@@ -435,20 +559,13 @@ function resolveProjectionActualValue(row: ProjectionMetricInputRow): number | n
     const valuesByPlayer = playerBlocks.fullGameByPlayerId;
     if (!valuesByPlayer || typeof valuesByPlayer !== 'object') return null;
 
-    const playerId = String(
-      getPayloadValue(row.payload, ['play', 'player_id']) ||
-        row.payload?.player_id ||
-        '',
-    ).trim();
+    const playerId = resolveRowPlayerId(row);
     if (playerId) {
       const direct = toNumber((valuesByPlayer as Record<string, unknown>)[playerId]);
       if (direct !== null) return direct;
     }
 
-    const playerName = normalizePlayerName(
-      getPayloadValue(row.payload, ['play', 'player_name']) ||
-        row.payload?.player_name,
-    );
+    const playerName = resolveRowPlayerName(row);
     if (!playerName) return null;
 
     const playerIdByNormalizedName =
@@ -638,7 +755,7 @@ export function buildProjectionSummaries(
       };
     accumulator.rowsSeen += 1;
 
-    const projection = resolveProjectionValue(row.payload);
+    const projection = resolveProjectionValue(row);
     const actual = resolveProjectionActualValue(row);
     if (projection === null || actual === null) {
       grouped.set(cardFamily, accumulator);
@@ -649,9 +766,9 @@ export function buildProjectionSummaries(
     accumulator.absErrorSum += Math.abs(actual - projection);
     accumulator.biasSum += projection - actual;
 
-    const direction = resolveProjectionDirection(row.payload);
+    const direction = resolveProjectionDirection(row);
     if (
-      hasActionableProjectionCall(row.payload) &&
+      hasActionableProjectionCallForRow(row) &&
       (direction === 'OVER' || direction === 'UNDER')
     ) {
       accumulator.directionSampleCount += 1;
@@ -840,7 +957,7 @@ export function buildProjectionValueSegments(
     // Only include projection-only families
     if (!PROJECTION_FAMILY_LABELS[cardFamily]) continue;
 
-    const projection = resolveProjectionValue(row.payload);
+    const projection = resolveProjectionValue(row);
     const actual = resolveProjectionActualValue(row);
 
     const bucket = projection !== null ? getProjectionBucket(projection, cardFamily) : null;
@@ -879,9 +996,9 @@ export function buildProjectionValueSegments(
     accumulator.absErrorSum += Math.abs(actual - projection);
     accumulator.biasSum += projection - actual;
 
-    const direction = resolveProjectionDirection(row.payload);
+    const direction = resolveProjectionDirection(row);
     if (
-      hasActionableProjectionCall(row.payload) &&
+      hasActionableProjectionCallForRow(row) &&
       (direction === 'OVER' || direction === 'UNDER')
     ) {
       accumulator.directionSampleCount += 1;

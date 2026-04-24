@@ -151,12 +151,59 @@ const PROJECTION_ACCURACY_MARKET_FAMILIES = Object.freeze([
   'NHL_PLAYER_BLOCKS',
 ]);
 
+// Canonical analytics contract for downstream reporting consumers.
+// Non-moneyline families use projection_raw as the preferred numeric value because it
+// represents the model's projected stat/total before line comparison. Moneyline
+// families use projection_value because it is materialized as selected-side win
+// probability in projection_accuracy_evals and powers edge/confidence reporting.
+const PROJECTION_ANALYTICS_CONTRACT_BY_MARKET_FAMILY = Object.freeze({
+  NBA_TOTAL: Object.freeze({
+    materialized: true,
+    preferredNumericField: 'projection_raw',
+    numericSemantics: 'projected_stat_value',
+  }),
+  MLB_F5_TOTAL: Object.freeze({
+    materialized: true,
+    preferredNumericField: 'projection_raw',
+    numericSemantics: 'projected_stat_value',
+  }),
+  MLB_F5_ML: Object.freeze({
+    materialized: true,
+    preferredNumericField: 'projection_value',
+    numericSemantics: 'selected_side_win_probability',
+  }),
+  MLB_PITCHER_K: Object.freeze({
+    materialized: true,
+    preferredNumericField: 'projection_raw',
+    numericSemantics: 'projected_stat_value',
+  }),
+  NHL_PLAYER_SHOTS: Object.freeze({
+    materialized: true,
+    preferredNumericField: 'projection_raw',
+    numericSemantics: 'projected_stat_value',
+  }),
+  NHL_PLAYER_SHOTS_1P: Object.freeze({
+    materialized: true,
+    preferredNumericField: 'projection_raw',
+    numericSemantics: 'projected_stat_value',
+  }),
+  NHL_PLAYER_BLOCKS: Object.freeze({
+    materialized: true,
+    preferredNumericField: 'projection_raw',
+    numericSemantics: 'projected_stat_value',
+  }),
+});
+
 function normalizeCardType(value) {
   return String(value || '').trim().toLowerCase();
 }
 
 function isProjectionAccuracyCardType(cardType) {
   return Boolean(TRACKED_PROJECTION_ACCURACY_CARD_TYPES[normalizeCardType(cardType)]);
+}
+
+function getProjectionAnalyticsContract(marketFamily) {
+  return PROJECTION_ANALYTICS_CONTRACT_BY_MARKET_FAMILY[String(marketFamily || '').trim()] || null;
 }
 
 function toFiniteNumberOrNull(value) {
@@ -2291,8 +2338,10 @@ module.exports = {
   COMMON_LINES_BY_MARKET_FAMILY,
   MARKET_CONFIDENCE_DEFAULTS,
   PROJECTION_ACCURACY_MARKET_FAMILIES,
+  PROJECTION_ANALYTICS_CONTRACT_BY_MARKET_FAMILY,
   WEAK_DIRECTION_EDGE_THRESHOLD,
   isProjectionAccuracyCardType,
+  getProjectionAnalyticsContract,
   roundToNearestHalf,
   expectedOverProbability,
   expectedDirectionProbability,
