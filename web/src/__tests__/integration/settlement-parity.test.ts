@@ -11,9 +11,9 @@
  * Run: npm --prefix web run test:results:settlement-parity
  */
 
-// @ts-ignore
+// @ts-expect-error
 import db from '../../../../packages/data/src/db.js';
-// @ts-ignore
+// @ts-expect-error
 import { setupIsolatedTestDb, startIsolatedNextServer } from '../db-test-runtime.js';
 
 import assert from 'node:assert/strict';
