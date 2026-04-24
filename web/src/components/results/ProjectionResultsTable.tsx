@@ -185,8 +185,6 @@ function ProjectionRow({ row, attribution }: ProjectionRowProps) {
       : row.predictionSignalMissing
         ? 'MISSING SIGNAL'
         : null;
-  const legacyPickTier = row.tier && row.tier !== 'PASS' ? row.tier : null;
-
   return (
     <>
       {/* Desktop row */}
@@ -243,11 +241,6 @@ function ProjectionRow({ row, attribution }: ProjectionRowProps) {
           {legacyConfidenceBand && (
             <span className="rounded-lg border border-white/10 bg-white/5 px-2 py-1 font-mono">
               legacy_band: {legacyConfidenceBand}
-            </span>
-          )}
-          {legacyPickTier && (
-            <span className="rounded-lg border border-white/10 bg-white/5 px-2 py-1 font-mono">
-              legacy_pick_tier: {legacyPickTier}
             </span>
           )}
         </div>
@@ -321,11 +314,6 @@ function ProjectionRow({ row, attribution }: ProjectionRowProps) {
           {legacyConfidenceBand && (
             <span className="rounded-lg border border-white/10 bg-white/5 px-2 py-1 font-mono">
               legacy_band: {legacyConfidenceBand}
-            </span>
-          )}
-          {legacyPickTier && (
-            <span className="rounded-lg border border-white/10 bg-white/5 px-2 py-1 font-mono">
-              legacy_pick_tier: {legacyPickTier}
             </span>
           )}
         </div>

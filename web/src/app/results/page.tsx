@@ -3,15 +3,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { StickyBackButton } from '@/components/sticky-back-button';
-import { ProjectionResultsTable } from '@/components/results/ProjectionResultsTable';
-import type { ProjectionProxyRow } from '@/app/api/results/projection-settled/route';
-import {
-  normalizeToConfidenceTier,
-  type ConfidenceTier,
-  type ProjectionAccuracyBucket,
-  type ProjectionAccuracyRecord,
-  type ProjectionAccuracyResponse,
-} from '@/lib/types/projection-accuracy';
 
 type ResultsSummary = {
   totalCards: number;
@@ -75,50 +66,11 @@ type LedgerRow = {
   confidencePct: number | null;
   payloadParseError: boolean;
   payloadMissing?: boolean;
-  // WI-0383: 1P and full-game projection totals for NHL cards
-  projection1p?: number | null;
-  projectionTotal?: number | null;
   decisionTier?: 'PLAY' | 'LEAN' | null;
   decisionLabel?: string | null;
   cardFamily?: string | null;
   modelFamily?: string | null;
 };
-
-type ProjectionSummaryRow = {
-  actualsAvailable: boolean;
-  bias: number | null;
-  cardFamily: string;
-  directionalAccuracy: number | null;
-  directionalWins: number;
-  directionalLosses: number;
-  overWins: number;
-  overLosses: number;
-  underWins: number;
-  underLosses: number;
-  familyLabel: string;
-  mae: number | null;
-  rowsSeen: number;
-  sampleSize: number;
-  segments?: Array<{
-    bucketRangeLabel: string;
-    projectionMin: number;
-    projectionMax: number;
-    actualsAvailable: boolean;
-    bias: number | null;
-    mae: number | null;
-    directionalAccuracy: number | null;
-    directionalWins: number;
-    directionalLosses: number;
-    overWins: number;
-    overLosses: number;
-    underWins: number;
-    underLosses: number;
-    sampleSize: number;
-    rowsSeen: number;
-  }>;
-};
-
-type ProjectionConfidenceFilter = 'ALL' | ConfidenceTier;
 
 type ResultsResponse = {
   success: boolean;
@@ -127,7 +79,6 @@ type ResultsResponse = {
     summary: ResultsSummary;
     segments: SegmentRow[];
     segmentFamilies?: SegmentFamily[];
-    projectionSummaries?: ProjectionSummaryRow[];
     ledger: LedgerRow[];
     filters?: {
       sport: string | null;
@@ -163,18 +114,6 @@ function formatUnits(value: number | null | undefined) {
   return `${sign}${value.toFixed(2)}u`;
 }
 
-function formatDecimal(
-  value: number | null | undefined,
-  digits = 1,
-  options: { signed?: boolean } = {},
-) {
-  if (value === null || value === undefined || Number.isNaN(value)) return 'N/A';
-  const { signed = true } = options;
-  if (!signed) return Math.abs(value).toFixed(digits);
-  const sign = value > 0 ? '+' : '';
-  return `${sign}${value.toFixed(digits)}`;
-}
-
 function formatLedgerDate(value: string | null | undefined) {
   if (!value) return '--';
   const parsed = new Date(value);
@@ -194,22 +133,6 @@ function formatLabel(value: string | null | undefined) {
 
 function formatMarketSelectionLabel(row: LedgerRow) {
   return row.marketSelectionLabel || '--';
-}
-
-function marketHealthLabel(status: string | null | undefined) {
-  if (status === 'NOISE') return 'direction not trusted';
-  if (status === 'WATCH') return 'confidence bands need more separation';
-  if (status === 'TRUSTED') return 'directional signal usable';
-  if (status === 'SHARP') return 'directional signal is leading';
-  return 'awaiting 25 graded directional rows';
-}
-
-function marketHealthClass(status: string | null | undefined) {
-  if (status === 'NOISE') return 'text-rose-200';
-  if (status === 'WATCH') return 'text-amber-200';
-  if (status === 'TRUSTED') return 'text-emerald-200';
-  if (status === 'SHARP') return 'text-cyan-200';
-  return 'text-cloud/60';
 }
 
 function isFirstPeriodRow(row: LedgerRow) {
@@ -253,34 +176,6 @@ function roiTextClass(value: number | null | undefined) {
   return 'text-cloud/70';
 }
 
-function confidenceTierPillClass(tier: ConfidenceTier, active: boolean): string {
-  if (tier === 'HIGH') {
-    return active
-      ? 'border-emerald-400/50 bg-emerald-500/20 text-emerald-200'
-      : 'border-emerald-400/20 bg-emerald-500/10 text-emerald-300/70 hover:border-emerald-400/40';
-  }
-  if (tier === 'MED') {
-    return active
-      ? 'border-amber-400/50 bg-amber-500/20 text-amber-200'
-      : 'border-amber-400/20 bg-amber-500/10 text-amber-300/70 hover:border-amber-400/40';
-  }
-  return active
-    ? 'border-white/25 bg-white/10 text-cloud/80'
-    : 'border-white/10 bg-white/5 text-cloud/50 hover:border-white/20';
-}
-
-function createEmptyProjectionAccuracyBucket(): ProjectionAccuracyBucket {
-  return {
-    line_evals: 0,
-    wins: 0,
-    losses: 0,
-    pushes: 0,
-    no_bets: 0,
-    hit_rate: null,
-    avg_absolute_error: null,
-  };
-}
-
 const SEGMENT_DEFINITIONS: SegmentFamily[] = [
   {
     segmentId: 'play',
@@ -297,238 +192,10 @@ const SEGMENT_DEFINITIONS: SegmentFamily[] = [
 export default function ResultsPage() {
   const [summary, setSummary] = useState<ResultsSummary | null>(null);
   const [segments, setSegments] = useState<SegmentRow[]>([]);
-  const [projectionSummaries, setProjectionSummaries] = useState<ProjectionSummaryRow[]>([]);
   const [ledger, setLedger] = useState<LedgerRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [withoutOddsMode, setWithoutOddsMode] = useState(false);
-  const [projectionSettledRows, setProjectionSettledRows] = useState<ProjectionProxyRow[]>([]);
-  const [projectionAccuracy, setProjectionAccuracy] =
-    useState<ProjectionAccuracyResponse | null>(null);
-  const [projectionActualsReady, setProjectionActualsReady] = useState(false);
-  const [projectionSettledLoading, setProjectionSettledLoading] = useState(true);
-  const [expandedProjectionFamilies, setExpandedProjectionFamilies] = useState<Set<string>>(new Set());
-  const [projectionConfidenceFilter, setProjectionConfidenceFilter] =
-    useState<ProjectionConfidenceFilter>('ALL');
-  const [expandedConfidenceBand, setExpandedConfidenceBand] =
-    useState<ConfidenceTier | null>(null);
-  const projectionSettlementFamilies = useMemo(
-    () =>
-      new Set([
-        'NHL_1P_TOTAL',
-        'MLB_F5_ML',
-        'MLB_F5_MONEYLINE',
-        'MLB_F5_TOTAL',
-      ]),
-    [],
-  );
-  const projectionSummariesWithActuals = useMemo(
-    () => projectionSummaries.filter((row) => row.actualsAvailable),
-    [projectionSummaries],
-  );
-
-  const hasDisplaySignal = useCallback((row: ProjectionProxyRow): boolean => {
-    const family = String(row.cardFamily || '').toUpperCase();
-    const isMoneylineFamily = family === 'MLB_F5_ML' || family === 'MLB_F5_MONEYLINE';
-    if (!isMoneylineFamily) return true;
-    if (row.predictionSignalMissing) return false;
-    return typeof row.winProbability === 'number' && Number.isFinite(row.winProbability);
-  }, []);
-
-  const mappedProjectionSettledRows = useMemo(
-    () =>
-      projectionSettledRows.filter((row) =>
-        projectionSettlementFamilies.has(String(row.cardFamily || '').toUpperCase()) &&
-        hasDisplaySignal(row),
-      ),
-    [projectionSettledRows, projectionSettlementFamilies, hasDisplaySignal],
-  );
-  const mappedProjectionSummaries = useMemo(
-    () =>
-      projectionSummariesWithActuals.filter((row) =>
-        projectionSettlementFamilies.has(String(row.cardFamily || '').toUpperCase()),
-      ),
-    [projectionSummariesWithActuals, projectionSettlementFamilies],
-  );
-  const mappedProjectionAccuracyRows = useMemo(() => {
-    if (!projectionAccuracy?.rows?.length) return [];
-    const settledCardIds = new Set(
-      mappedProjectionSettledRows.map((row) => String(row.cardId || '').trim()),
-    );
-    const inFamily = projectionAccuracy.rows.filter((row) =>
-      projectionSettlementFamilies.has(String(row.market_family || '').toUpperCase()),
-    );
-    const matchingSettled = inFamily.filter((row) =>
-      settledCardIds.has(String(row.card_id || '').trim()),
-    );
-    if (matchingSettled.length > 0) return matchingSettled;
-    return inFamily;
-  }, [projectionAccuracy?.rows, mappedProjectionSettledRows, projectionSettlementFamilies]);
-  const projectionAttributionSample = mappedProjectionAccuracyRows[0] || null;
-  const projectionAttributionSampleConfidenceTier = projectionAttributionSample
-    ? normalizeToConfidenceTier(projectionAttributionSample.confidence_band)
-    : null;
-  const projectionAttributionLegacyBand = projectionAttributionSample
-    ? String(projectionAttributionSample.confidence_band || '').trim().toUpperCase()
-    : '';
-  const projectionConfidenceCounts = useMemo(() => {
-    const counts: Record<ProjectionConfidenceFilter, number> = {
-      ALL: mappedProjectionSettledRows.length,
-      HIGH: 0,
-      MED: 0,
-      LOW: 0,
-    };
-    for (const row of mappedProjectionSettledRows) {
-      counts[row.confidenceTier] += 1;
-    }
-    return counts;
-  }, [mappedProjectionSettledRows]);
-  const projectionConfidenceSummary = useMemo(() => {
-    const byBand = projectionAccuracy?.summary.by_confidence_band || {};
-    const buckets = new Map<ConfidenceTier, ProjectionAccuracyBucket>([
-      ['HIGH', createEmptyProjectionAccuracyBucket()],
-      ['MED', createEmptyProjectionAccuracyBucket()],
-      ['LOW', createEmptyProjectionAccuracyBucket()],
-    ]);
-    const rawBands = new Map<ConfidenceTier, Set<string>>([
-      ['HIGH', new Set()],
-      ['MED', new Set()],
-      ['LOW', new Set()],
-    ]);
-
-    for (const [band, bucket] of Object.entries(byBand)) {
-      const tier = normalizeToConfidenceTier(band);
-      const target = buckets.get(tier);
-      if (!target) continue;
-      target.line_evals += bucket.line_evals;
-      target.wins += bucket.wins;
-      target.losses += bucket.losses;
-      target.pushes += bucket.pushes;
-      target.no_bets += bucket.no_bets;
-      if (band) rawBands.get(tier)?.add(String(band).trim().toUpperCase());
-    }
-
-    return (['HIGH', 'MED', 'LOW'] as ConfidenceTier[])
-      .map((tier) => ({
-        tier,
-        bucket: buckets.get(tier) || createEmptyProjectionAccuracyBucket(),
-        rawBands: Array.from(rawBands.get(tier) || []),
-      }))
-      .filter(
-        ({ bucket }) =>
-          bucket.line_evals > 0 ||
-          bucket.wins > 0 ||
-          bucket.losses > 0 ||
-          bucket.pushes > 0 ||
-          bucket.no_bets > 0,
-      );
-  }, [projectionAccuracy?.summary.by_confidence_band]);
-  const settledByCardId = useMemo(() => {
-    const map = new Map<string, (typeof mappedProjectionSettledRows)[0]>();
-    for (const row of mappedProjectionSettledRows) {
-      if (row.cardId) map.set(String(row.cardId), row);
-    }
-    return map;
-  }, [mappedProjectionSettledRows]);
-  const confidenceDrilldownByTier = useMemo(() => {
-    const result = new Map<ConfidenceTier, { eligible: ProjectionAccuracyRecord[]; excludedCount: number }>();
-    for (const tier of ['HIGH', 'MED', 'LOW'] as ConfidenceTier[]) {
-      const forTier = mappedProjectionAccuracyRows.filter(
-        (r) => normalizeToConfidenceTier(r.confidence_band) === tier,
-      );
-      const eligible = forTier.filter((r) => r.weak_direction_flag !== 1);
-      result.set(tier, { eligible, excludedCount: forTier.length - eligible.length });
-    }
-    return result;
-  }, [mappedProjectionAccuracyRows]);
-  const moneylineCalibrationStats = useMemo(() => {
-    const rows = mappedProjectionSettledRows.filter((row) => {
-      const family = String(row.cardFamily || '').toUpperCase();
-      return family === 'MLB_F5_ML' || family === 'MLB_F5_MONEYLINE';
-    });
-    const officialRows = rows.filter((row) => row.trackingRole === 'OFFICIAL_PICK');
-    const officialGraded = officialRows.filter((row) => row.gradedResult === 'WIN' || row.gradedResult === 'LOSS');
-    const calibrationRows = rows.filter((row) => row.winProbability !== null && row.winProbability !== undefined);
-    const avgBrierValues = calibrationRows
-      .map((row) => row.brierScore)
-      .filter((value): value is number => typeof value === 'number' && Number.isFinite(value));
-    return {
-      total: rows.length,
-      officialCount: officialRows.length,
-      officialWins: officialGraded.filter((row) => row.gradedResult === 'WIN').length,
-      officialLosses: officialGraded.filter((row) => row.gradedResult === 'LOSS').length,
-      calibrationCount: calibrationRows.length,
-      avgBrier:
-        avgBrierValues.length > 0
-          ? avgBrierValues.reduce((sum, value) => sum + value, 0) / avgBrierValues.length
-          : null,
-      sufficientSample: calibrationRows.length >= 20,
-    };
-  }, [mappedProjectionSettledRows]);
-  const projectionSummaryRows = useMemo(() => {
-    const existingByFamily = new Map(
-      mappedProjectionSummaries.map((row) => [String(row.cardFamily || '').toUpperCase(), row]),
-    );
-
-    for (const family of projectionSettlementFamilies) {
-      if (existingByFamily.has(family)) continue;
-
-      const familyRows = mappedProjectionSettledRows.filter(
-        (row) => String(row.cardFamily || '').toUpperCase() === family,
-      );
-      if (familyRows.length === 0) continue;
-
-      const isMoneylineFamily = family === 'MLB_F5_ML' || family === 'MLB_F5_MONEYLINE';
-      const gradedRows = familyRows.filter(
-        (row) =>
-          (row.gradedResult === 'WIN' || row.gradedResult === 'LOSS') &&
-          (!isMoneylineFamily || row.trackingRole === 'OFFICIAL_PICK'),
-      );
-      const directionalWins = gradedRows.filter((row) => row.gradedResult === 'WIN').length;
-      const directionalLosses = gradedRows.filter((row) => row.gradedResult === 'LOSS').length;
-      const overRows = gradedRows.filter((row) => row.recommendedSide === 'OVER');
-      const underRows = gradedRows.filter((row) => row.recommendedSide === 'UNDER');
-      const errorRows = familyRows.filter(
-        (row) => Number.isFinite(row.projValue) && Number.isFinite(row.actualValue),
-      );
-      const absoluteErrors = errorRows.map((row) => Math.abs((row.projValue as number) - (row.actualValue as number)));
-      const signedErrors = errorRows.map((row) => (row.projValue as number) - (row.actualValue as number));
-      const mae =
-        absoluteErrors.length > 0
-          ? absoluteErrors.reduce((sum, value) => sum + value, 0) / absoluteErrors.length
-          : null;
-      const bias =
-        signedErrors.length > 0
-          ? signedErrors.reduce((sum, value) => sum + value, 0) / signedErrors.length
-          : null;
-
-      existingByFamily.set(family, {
-        actualsAvailable: true,
-        bias,
-        cardFamily: family,
-        directionalAccuracy:
-          directionalWins + directionalLosses > 0
-            ? directionalWins / (directionalWins + directionalLosses)
-            : null,
-        directionalWins,
-        directionalLosses,
-        overWins: overRows.filter((row) => row.gradedResult === 'WIN').length,
-        overLosses: overRows.filter((row) => row.gradedResult === 'LOSS').length,
-        underWins: underRows.filter((row) => row.gradedResult === 'WIN').length,
-        underLosses: underRows.filter((row) => row.gradedResult === 'LOSS').length,
-        familyLabel:
-          isMoneylineFamily
-            ? 'MLB F5 Moneyline Projections'
-            : family.replaceAll('_', ' '),
-        mae,
-        rowsSeen: familyRows.length,
-        sampleSize: familyRows.length,
-        segments: [],
-      });
-    }
-
-    return Array.from(existingByFamily.values());
-  }, [mappedProjectionSettledRows, mappedProjectionSummaries, projectionSettlementFamilies]);
 
   // Filter state
   const [filterSport, setFilterSport] = useState<string>('');
@@ -579,7 +246,6 @@ export default function ResultsPage() {
 
       setSummary(payload.data.summary);
       setSegments(payload.data.segments);
-      setProjectionSummaries(payload.data.projectionSummaries ?? []);
       setLedger(payload.data.ledger);
       setDataMeta(payload.data.meta || null);
       setError(null);
@@ -600,73 +266,6 @@ export default function ResultsPage() {
   useEffect(() => {
     loadResults();
   }, [loadResults]);
-
-  useEffect(() => {
-    let cancelled = false;
-    let fallbackTimer: ReturnType<typeof setTimeout> | null = null;
-
-    const loadProjectionResearchPanels = async () => {
-      try {
-        setProjectionSettledLoading(true);
-        const [settledResult, accuracyResult] = await Promise.allSettled([
-          fetch('/api/results/projection-settled'),
-          fetch('/api/results/projection-accuracy'),
-        ]);
-
-        if (
-          !cancelled &&
-          settledResult.status === 'fulfilled' &&
-          settledResult.value.ok
-        ) {
-          const payload = (await settledResult.value.json()) as {
-            success: boolean;
-            data?: {
-              settledRows: ProjectionProxyRow[];
-              totalSettled: number;
-              actualsReady: boolean;
-            };
-          };
-          if (payload.success && payload.data) {
-            setProjectionSettledRows(payload.data.settledRows);
-            setProjectionActualsReady(payload.data.actualsReady);
-          }
-        }
-
-        if (
-          !cancelled &&
-          accuracyResult.status === 'fulfilled' &&
-          accuracyResult.value.ok
-        ) {
-          const payload = (await accuracyResult.value.json()) as ProjectionAccuracyResponse;
-          setProjectionAccuracy(payload);
-        }
-      } catch {
-        // research-only surfaces should never block the betting ledger path
-      } finally {
-        if (!cancelled) setProjectionSettledLoading(false);
-      }
-    };
-
-    const runWhenIdle = () => {
-      if (cancelled) return;
-      void loadProjectionResearchPanels();
-    };
-
-    if (typeof window !== 'undefined' && 'requestIdleCallback' in window) {
-      const idleId = window.requestIdleCallback(runWhenIdle, { timeout: 1500 });
-      return () => {
-        cancelled = true;
-        window.cancelIdleCallback(idleId);
-        if (fallbackTimer) clearTimeout(fallbackTimer);
-      };
-    }
-
-    fallbackTimer = setTimeout(runWhenIdle, 700);
-    return () => {
-      cancelled = true;
-      if (fallbackTimer) clearTimeout(fallbackTimer);
-    };
-  }, []);
 
   const summaryCards = useMemo(() => {
     const isValidSummary = summary && typeof summary.totalCards === 'number';
@@ -1111,434 +710,13 @@ export default function ResultsPage() {
           </div>
         </section>
 
-        {projectionActualsReady && !projectionSettledLoading && (
-          <section className="mt-12 rounded-2xl border border-white/10 bg-surface/80 p-8">
-            <div className="mb-6">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div>
-                  <h2 className="text-2xl font-semibold">Projection Settlement</h2>
-                  <p className="mt-2 text-sm text-cloud/70">
-                    Settled projection-only cards graded against actual game
-                    outcomes, including NHL 1P totals and MLB F5. F5
-                    moneyline rows are displayed only when signal fields
-                    (win probability/edge confidence telemetry) are present.
-                  </p>
-                </div>
-                <span className="rounded-full border border-cyan-400/25 bg-cyan-400/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-cyan-200">
-                  PROJECTION_ONLY
-                </span>
-              </div>
-              <div className="mt-3 flex flex-wrap gap-4 text-xs text-cloud/50">
-                <span>
-                  Results are mapped into one settlement panel as actuals arrive.
-                </span>
-                <span>Official pick rates exclude PASS; PASS remains calibration telemetry.</span>
-              </div>
-              <div className="mt-4 flex flex-wrap items-center gap-2">
-                <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-cloud/50">
-                  Table Filter
-                </span>
-                {(['ALL', 'HIGH', 'MED', 'LOW'] as ProjectionConfidenceFilter[]).map((tier) => (
-                  <button
-                    key={tier}
-                    type="button"
-                    onClick={() => setProjectionConfidenceFilter(tier)}
-                    className={`rounded-full border px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] transition-colors ${
-                      projectionConfidenceFilter === tier
-                        ? 'border-emerald-400/40 bg-emerald-400/15 text-emerald-200'
-                        : 'border-white/10 bg-night/40 text-cloud/60'
-                    }`}
-                  >
-                    {tier} ({projectionConfidenceCounts[tier]})
-                  </button>
-                ))}
-              </div>
-            </div>
-            <ProjectionResultsTable
-              rows={mappedProjectionSettledRows}
-              attributionRows={mappedProjectionAccuracyRows}
-              confidenceFilter={projectionConfidenceFilter}
-            />
-            {projectionAccuracy && (
-              <div className="mt-6 rounded-xl border border-white/10 bg-night/40 p-4">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <div>
-                    <p className="text-xs font-semibold uppercase tracking-[0.2em] text-cloud/50">
-                      Projection Confidence Engine
-                    </p>
-                    <p className="mt-1 text-sm text-cloud/70">
-                      Weak directions and calibration-only rows are separated from official pick stats while remaining available for model-health telemetry.
-                    </p>
-                  </div>
-                  <p className={`text-sm font-semibold ${marketHealthClass(projectionAccuracy.summary.market_trust_status)}`}>
-                    {projectionAccuracy.summary.market_trust_status} — {marketHealthLabel(projectionAccuracy.summary.market_trust_status)}
-                  </p>
-                </div>
-                {moneylineCalibrationStats.total > 0 && (
-                  <div className="mt-4 rounded-xl border border-white/10 bg-white/5 p-3">
-                    <div className="flex flex-wrap items-center justify-between gap-3">
-                      <p className="text-xs font-semibold uppercase tracking-[0.16em] text-cloud/50">
-                        Moneyline Model Stats
-                      </p>
-                      <span className={`rounded-full border px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] ${
-                        moneylineCalibrationStats.sufficientSample
-                          ? 'border-emerald-400/30 bg-emerald-400/10 text-emerald-200'
-                          : 'border-amber-400/30 bg-amber-400/10 text-amber-200'
-                      }`}>
-                        {moneylineCalibrationStats.sufficientSample ? 'Sample Ready' : 'Need N >= 20'}
-                      </span>
-                    </div>
-                    <div className="mt-3 grid gap-3 md:grid-cols-4">
-                      <div>
-                        <p className="text-xs text-cloud/50">Official Picks</p>
-                        <p className="mt-1 font-mono text-cloud">
-                          {moneylineCalibrationStats.officialWins}-{moneylineCalibrationStats.officialLosses}
-                        </p>
-                      </div>
-                      <div>
-                        <p className="text-xs text-cloud/50">Official Count</p>
-                        <p className="mt-1 font-mono text-cloud">{moneylineCalibrationStats.officialCount}</p>
-                      </div>
-                      <div>
-                        <p className="text-xs text-cloud/50">Calibration Rows</p>
-                        <p className="mt-1 font-mono text-cloud">{moneylineCalibrationStats.calibrationCount}</p>
-                      </div>
-                      <div>
-                        <p className="text-xs text-cloud/50">Avg Brier</p>
-                        <p className="mt-1 font-mono text-cloud">
-                          {moneylineCalibrationStats.avgBrier !== null
-                            ? formatDecimal(moneylineCalibrationStats.avgBrier, 3, { signed: false })
-                            : 'N/A'}
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-                )}
-                <div className="mt-4 rounded-xl border border-white/10 bg-white/5 p-3 text-xs text-cloud/65">
-                  <p className="font-semibold uppercase tracking-[0.16em] text-cloud/50">
-                    Bucket Mapping
-                  </p>
-                  <div className="mt-2 grid gap-2 sm:grid-cols-3">
-                    <span className="rounded-lg border border-white/10 bg-night/50 px-2 py-1 font-mono">
-                      LOW: canonical LOW or legacy WATCH
-                    </span>
-                    <span className="rounded-lg border border-white/10 bg-night/50 px-2 py-1 font-mono">
-                      MED: canonical MED or legacy TRUST
-                    </span>
-                    <span className="rounded-lg border border-white/10 bg-night/50 px-2 py-1 font-mono">
-                      HIGH: canonical HIGH or legacy STRONG
-                    </span>
-                  </div>
-                  <p className="mt-3 text-cloud/60">
-                    Score-only fallback uses the canonical read-boundary thresholds: LOW &lt; 55%, MED 55%-69.99%, HIGH &gt;= 70%.
-                  </p>
-                  <p className="mt-2 text-cloud/60">
-                    Rows with weak_direction_flag=1 or edge_distance &lt; 0.15 are excluded from directional W/L and still included in MAE and bias auditing.
-                    FRAGILE is a presentation label for weak/no-edge directions, not a native confidence_band value.
-                  </p>
-                </div>
-                <div className="mt-4 grid gap-3 md:grid-cols-5">
-                  <div>
-                    <p className="text-xs text-cloud/50">Directional Record</p>
-                    <p className="mt-1 font-mono text-cloud">
-                      {projectionAccuracy.summary.wins}-{projectionAccuracy.summary.losses}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-xs text-cloud/50">Win Rate</p>
-                    <p className="mt-1 font-mono text-cloud">
-                      {formatPercent(projectionAccuracy.summary.hit_rate)}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-xs text-cloud/50">MAE</p>
-                    <p className="mt-1 font-mono text-cloud">
-                      {projectionAccuracy.summary.avg_absolute_error !== null
-                        ? formatDecimal(projectionAccuracy.summary.avg_absolute_error, 2, { signed: false })
-                        : 'N/A'}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-xs text-cloud/50">Bias</p>
-                    <p className="mt-1 font-mono text-cloud">
-                      {projectionAccuracy.summary.avg_signed_error !== null
-                        ? formatDecimal(projectionAccuracy.summary.avg_signed_error, 2)
-                        : 'N/A'}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-xs text-cloud/50">Weak Directions</p>
-                    <p className="mt-1 font-mono text-cloud">
-                      {projectionAccuracy.summary.weak_direction_count}
-                    </p>
-                  </div>
-                </div>
-                {projectionConfidenceSummary.length > 0 && (
-                  <div className="mt-4">
-                    <div className="flex flex-wrap gap-2 text-xs">
-                      {projectionConfidenceSummary.map(({ tier, bucket, rawBands }) => {
-                        const drilldown = confidenceDrilldownByTier.get(tier);
-                        const hasEligible = (drilldown?.eligible.length ?? 0) > 0;
-                        const isExpanded = expandedConfidenceBand === tier;
-                        return hasEligible ? (
-                          <button
-                            key={tier}
-                            type="button"
-                            onClick={() => setExpandedConfidenceBand(isExpanded ? null : tier)}
-                            className={`rounded-full border px-3 py-1 font-semibold transition-colors ${confidenceTierPillClass(tier, isExpanded)}`}
-                            title={rawBands.length > 0 ? `Legacy buckets: ${rawBands.join(', ')}` : undefined}
-                          >
-                            {tier}: {bucket.wins}–{bucket.losses}{isExpanded ? ' ▲' : ' ▼'}
-                          </button>
-                        ) : (
-                          <span
-                            key={tier}
-                            className="cursor-default rounded-full border border-white/10 px-3 py-1 text-cloud/40"
-                            title={rawBands.length > 0 ? `Legacy buckets: ${rawBands.join(', ')}` : undefined}
-                          >
-                            {tier}: {bucket.wins}–{bucket.losses}
-                          </span>
-                        );
-                      })}
-                    </div>
-                    {expandedConfidenceBand && (() => {
-                      const drilldown = confidenceDrilldownByTier.get(expandedConfidenceBand);
-                      if (!drilldown) return null;
-                      return (
-                        <div className="mt-3 rounded-xl border border-white/10 bg-night/50 p-3">
-                          <div className="mb-2 flex items-center justify-between gap-3">
-                            <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-cloud/50">
-                              {expandedConfidenceBand} band — row evidence
-                            </p>
-                            {drilldown.excludedCount > 0 && (
-                              <p className="text-[11px] text-cloud/40">
-                                {drilldown.excludedCount} weak-direction row{drilldown.excludedCount !== 1 ? 's' : ''} excluded
-                              </p>
-                            )}
-                          </div>
-                          {drilldown.eligible.length === 0 ? (
-                            <p className="text-xs text-cloud/50">No eligible rows for this band.</p>
-                          ) : (
-                            <div className="overflow-x-auto">
-                              <table className="w-full text-xs text-cloud/70">
-                                <thead>
-                                  <tr className="border-b border-white/10 text-[11px] uppercase tracking-[0.15em] text-cloud/40">
-                                    <th className="pb-1 pr-4 text-left font-semibold">Date</th>
-                                    <th className="pb-1 pr-4 text-left font-semibold">Matchup</th>
-                                    <th className="pb-1 pr-4 text-left font-semibold">Direction</th>
-                                    <th className="pb-1 pr-4 text-left font-semibold">Outcome</th>
-                                    <th className="pb-1 text-left font-semibold">Confidence</th>
-                                  </tr>
-                                </thead>
-                                <tbody className="divide-y divide-white/5">
-                                  {drilldown.eligible.map((row) => {
-                                    const settled = settledByCardId.get(String(row.card_id || ''));
-                                    const date = settled
-                                      ? formatLedgerDate(settled.gameDateUtc)
-                                      : '--';
-                                    const matchup = settled
-                                      ? (settled.homeTeam && settled.awayTeam
-                                        ? `${settled.awayTeam} @ ${settled.homeTeam}`
-                                        : settled.cardTitle || '--')
-                                      : (row.game_id ? String(row.game_id).slice(0, 20) : '--');
-                                    const direction = row.synthetic_direction || '--';
-                                    const outcome = row.graded_result || '--';
-                                    const confidence =
-                                      row.projection_confidence !== null &&
-                                      row.projection_confidence !== undefined
-                                        ? `${Math.round(row.projection_confidence)}%`
-                                        : '--';
-                                    const outcomeClass =
-                                      outcome === 'WIN'
-                                        ? 'text-emerald-300'
-                                        : outcome === 'LOSS'
-                                          ? 'text-rose-300'
-                                          : 'text-cloud/50';
-                                    return (
-                                      <tr key={`${row.card_id}-${row.game_id}`}>
-                                        <td className="py-1 pr-4 text-cloud/55">{date}</td>
-                                        <td className="py-1 pr-4 text-cloud/70">{matchup}</td>
-                                        <td className="py-1 pr-4 text-cloud/70">{direction}</td>
-                                        <td className={`py-1 pr-4 font-semibold ${outcomeClass}`}>{outcome}</td>
-                                        <td className="py-1 text-cloud/60">{confidence}</td>
-                                      </tr>
-                                    );
-                                  })}
-                                </tbody>
-                              </table>
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })()}
-                  </div>
-                )}
-                <div className="mt-4 rounded-xl border border-white/10 bg-night/50 p-3 text-xs text-cloud/65">
-                  <p className="font-semibold uppercase tracking-[0.16em] text-cloud/50">
-                    Card-level Attribution Sample
-                  </p>
-                  {projectionAttributionSample ? (
-                    <div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-                      <span className="rounded-lg border border-white/10 bg-white/5 px-2 py-1 font-mono">
-                        projection_raw: {formatDecimal(projectionAttributionSample.projection_raw, 3, { signed: false })}
-                      </span>
-                      <span className="rounded-lg border border-white/10 bg-white/5 px-2 py-1 font-mono">
-                        synthetic_line: {formatDecimal(projectionAttributionSample.synthetic_line, 3, { signed: false })}
-                      </span>
-                      <span className="rounded-lg border border-white/10 bg-white/5 px-2 py-1 font-mono">
-                        edge_distance: {formatDecimal(projectionAttributionSample.edge_distance, 3, { signed: false })}
-                      </span>
-                      <span className="rounded-lg border border-white/10 bg-white/5 px-2 py-1 font-mono">
-                        confidence_tier: {projectionAttributionSampleConfidenceTier || 'LOW'}
-                      </span>
-                      {projectionAttributionLegacyBand &&
-                        projectionAttributionLegacyBand !== projectionAttributionSampleConfidenceTier && (
-                          <span className="rounded-lg border border-white/10 bg-white/5 px-2 py-1 font-mono">
-                            legacy_band: {projectionAttributionLegacyBand}
-                          </span>
-                        )}
-                    </div>
-                  ) : (
-                    <p className="mt-2 text-cloud/50">
-                      Awaiting projection_accuracy rows to display card-level bucket attribution details.
-                    </p>
-                  )}
-                </div>
-              </div>
-            )}
-            {projectionSummaryRows.length > 0 && (
-            <div className="mt-6 overflow-hidden rounded-xl border border-white/10">
-              <div className="grid grid-cols-8 gap-4 bg-night/70 px-4 py-3 text-xs font-semibold uppercase tracking-[0.2em] text-cloud/60">
-                <span>Model</span>
-                <span>Sample</span>
-                <span>MAE</span>
-                <span>Bias</span>
-                <span>Dir. Acc.</span>
-                <span>Record</span>
-                <span>Over/Home</span>
-                <span>Under/Away</span>
-              </div>
-              <div className="divide-y divide-white/10">
-                {projectionSummaryRows.map((row) => {
-                  const isExpanded = expandedProjectionFamilies.has(row.cardFamily);
-                  const hasSegments = row.segments && row.segments.length > 0;
-
-                  return (
-                    <div key={row.cardFamily}>
-                      <div
-                        className={`grid grid-cols-8 gap-4 px-4 py-3 text-sm text-cloud/70 ${
-                          hasSegments ? 'cursor-pointer hover:bg-white/5' : ''
-                        }`}
-                        onClick={() => {
-                          if (!hasSegments) return;
-                          const newExpanded = new Set(expandedProjectionFamilies);
-                          if (isExpanded) {
-                            newExpanded.delete(row.cardFamily);
-                          } else {
-                            newExpanded.add(row.cardFamily);
-                          }
-                          setExpandedProjectionFamilies(newExpanded);
-                        }}
-                      >
-                        <span className="font-medium text-cloud">
-                          {hasSegments && (
-                            <span className="mr-2 text-xs text-cloud/50">
-                              {isExpanded ? '▼' : '▶'}
-                            </span>
-                          )}
-                          {row.familyLabel}
-                        </span>
-                        <span>{row.sampleSize > 0 ? row.sampleSize : '—'}</span>
-                        <span>
-                          {row.mae !== null ? formatDecimal(row.mae, 2, { signed: false }) : '—'}
-                        </span>
-                        <span>
-                          {row.bias !== null ? formatDecimal(row.bias, 2) : '—'}
-                        </span>
-                        <span>
-                          {row.actualsAvailable && row.directionalAccuracy !== null
-                            ? formatPercent(row.directionalAccuracy)
-                            : row.actualsAvailable === false
-                              ? 'Awaiting settled outcome data'
-                              : '—'}
-                        </span>
-                        <span>
-                          {(row.directionalWins + row.directionalLosses) > 0
-                            ? `${row.directionalWins}-${row.directionalLosses}`
-                            : '—'}
-                        </span>
-                        <span>
-                          {(row.overWins + row.overLosses) > 0
-                            ? `${row.overWins}-${row.overLosses}`
-                            : '—'}
-                        </span>
-                        <span>
-                          {(row.underWins + row.underLosses) > 0
-                            ? `${row.underWins}-${row.underLosses}`
-                            : '—'}
-                        </span>
-                      </div>
-
-                      {/* Segment rows */}
-                      {isExpanded && hasSegments && row.segments && (
-                        <div className="divide-y divide-white/5 bg-white/2">
-                          {row.segments.map((segment) => (
-                            <div
-                              key={segment.bucketRangeLabel}
-                              className="grid grid-cols-8 gap-4 px-8 py-2 text-xs text-cloud/60"
-                            >
-                              <span className="font-mono text-cloud/50">
-                                Range: {segment.bucketRangeLabel}
-                              </span>
-                              <span>{segment.sampleSize}</span>
-                              <span>
-                                {segment.mae !== null
-                                  ? formatDecimal(segment.mae, 2, { signed: false })
-                                  : '—'}
-                              </span>
-                              <span>
-                                {segment.bias !== null ? formatDecimal(segment.bias, 2) : '—'}
-                              </span>
-                              <span>
-                                {segment.directionalAccuracy !== null
-                                  ? formatPercent(segment.directionalAccuracy)
-                                  : '—'}
-                              </span>
-                              <span>
-                                {(segment.directionalWins + segment.directionalLosses) > 0
-                                  ? `${segment.directionalWins}-${segment.directionalLosses}`
-                                  : '—'}
-                              </span>
-                              <span>
-                                {(segment.overWins + segment.overLosses) > 0
-                                  ? `${segment.overWins}-${segment.overLosses}`
-                                  : '—'}
-                              </span>
-                              <span>
-                                {(segment.underWins + segment.underLosses) > 0
-                                  ? `${segment.underWins}-${segment.underLosses}`
-                                  : '—'}
-                              </span>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-            )}
-          </section>
-        )}
-
         <section className="mt-12 rounded-2xl border border-white/10 bg-surface/80 p-8">
           <div className="flex flex-wrap items-center justify-between gap-4">
             <div>
               <h2 className="text-2xl font-semibold">Betting Ledger</h2>
               <p className="mt-2 text-sm text-cloud/70">
                 A full audit trail of odds-backed calls only. Projection-only
-                model accuracy is tracked in the section above.
+                model accuracy is tracked on the projection accuracy page.
               </p>
             </div>
             <button
@@ -1591,18 +769,6 @@ export default function ResultsPage() {
                       <span>{formatMarketSelectionLabel(row)}</span>
                       <span>
                         {row.prediction || '--'}
-                        {row.sport === 'NHL' &&
-                        (row.projection1p != null ||
-                          row.projectionTotal != null) ? (
-                          <span className="block text-xs text-cloud/50 mt-0.5">
-                            {row.projectionTotal != null
-                              ? `Tot: ${row.projectionTotal.toFixed(2)}`
-                              : ''}
-                            {row.projection1p != null
-                              ? ` · 1P: ${row.projection1p.toFixed(2)}`
-                              : ''}
-                          </span>
-                        ) : null}
                       </span>
                       <span>{formatPrice(row.price)}</span>
                       <span className="font-semibold">
@@ -1701,21 +867,6 @@ export default function ResultsPage() {
                           {formatLabel(row.cardType)}
                         </p>
                       </div>
-                      {row.sport === 'NHL' &&
-                      (row.projection1p != null ||
-                        row.projectionTotal != null) ? (
-                        <div>
-                          <p className="text-cloud/50">Projection</p>
-                          <p className="mt-0.5 text-cloud/80 text-xs">
-                            {row.projectionTotal != null
-                              ? `Total: ${row.projectionTotal.toFixed(2)}`
-                              : '--'}
-                            {row.projection1p != null
-                              ? ` | 1P: ${row.projection1p.toFixed(2)}`
-                              : ''}
-                          </p>
-                        </div>
-                      ) : null}
                     </div>
                   </details>
                 );

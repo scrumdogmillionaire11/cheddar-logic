@@ -1,13 +1,13 @@
 import type { Metadata } from 'next';
 
 export const metadata: Metadata = {
-  title: 'Results | Cheddar Logic',
+  title: 'Betting Results | Cheddar',
   description:
-    'Historical pick results and model performance for Cheddar Logic signals.',
+    'Historical betting results and decision-tier performance for Cheddar signals.',
   openGraph: {
-    title: 'Results | Cheddar Logic',
+    title: 'Betting Results | Cheddar',
     description:
-      'Historical pick results and model performance for Cheddar Logic signals.',
+      'Historical betting results and decision-tier performance for Cheddar signals.',
     url: 'https://cheddarlogic.com/results',
   },
 };
