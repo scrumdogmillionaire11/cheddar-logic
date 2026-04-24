@@ -356,12 +356,22 @@ export default function ResultsPage() {
         </div>
 
         <header className="mb-10 space-y-3">
-          <p className="text-xs font-semibold uppercase tracking-[0.3em] text-cloud/50">
-            Accountability Ledger
-          </p>
-          <h1 className="font-display text-4xl font-semibold sm:text-5xl">
-            Results
-          </h1>
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div className="space-y-3">
+              <p className="text-xs font-semibold uppercase tracking-[0.3em] text-cloud/50">
+                Accountability Ledger
+              </p>
+              <h1 className="font-display text-4xl font-semibold sm:text-5xl">
+                Results
+              </h1>
+            </div>
+            <Link
+              href="/results/projections"
+              className="inline-flex rounded-full border border-cyan-400/35 bg-cyan-400/10 px-4 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-cyan-100 transition-colors hover:border-cyan-300/60 hover:bg-cyan-400/20"
+            >
+              Projection Results
+            </Link>
+          </div>
           <p className="max-w-2xl text-lg text-cloud/70">
             Every call is logged at decision time and graded after the final
             whistle. No recomputation, no deletions, no retroactive edits.
