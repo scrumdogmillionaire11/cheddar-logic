@@ -1,13 +1,16 @@
 /*
  * Results endpoint behavioral contract tests
  *
- * Covers three invariants using seeded fixtures and a real isolated Next server:
+ * Covers four invariants using seeded fixtures and a real isolated Next server:
  *   1. Dedupe: two picks on the same game+market reduce to one ledger row by default;
  *              dedupe=false returns both.
  *   2. Payload-missing visibility: a card_results row without a matching card_payloads
  *              entry still appears in the ledger (payload_data=null is allowed).
  *   3. Settlement coverage metadata: response meta contains displayedFinal,
  *              settledFinalDisplayed, and missingFinalDisplayed numeric fields.
+ *   4. Canonical confidence vocabulary: normalizeToConfidenceTier always emits
+ *              LOW|MED|HIGH — including legacy-source mapping and missing-signal fallback.
+ *              Ledger rows carry numeric confidencePct (not legacy string labels).
  *
  * Run: npm --prefix web run test:results:behavioral-contract
  */
@@ -18,6 +21,7 @@ import db from '../../../../packages/data/src/db.js';
 import { setupIsolatedTestDb, startIsolatedNextServer } from '../db-test-runtime.js';
 
 import assert from 'node:assert/strict';
+import { normalizeToConfidenceTier } from '../../lib/types/projection-accuracy.js';
 
 const TEST_PREFIX = 'test-rbc';
 
@@ -132,7 +136,43 @@ async function getJson(
   return { response, payload: await response.json() as Record<string, unknown> };
 }
 
+const CANONICAL_TIERS = new Set<string>(['LOW', 'MED', 'HIGH']);
+
 async function run() {
+  // --- Invariant 4 (unit): Confidence tier canonical vocabulary ---
+  // These pure-function tests require no server.
+
+  // a. Canonical pass-through
+  assert.equal(normalizeToConfidenceTier('HIGH'), 'HIGH', 'canonical HIGH pass-through');
+  assert.equal(normalizeToConfidenceTier('MED'), 'MED', 'canonical MED pass-through');
+  assert.equal(normalizeToConfidenceTier('LOW'), 'LOW', 'canonical LOW pass-through');
+
+  // b. Legacy vocabulary mapping
+  assert.equal(normalizeToConfidenceTier('STRONG'), 'HIGH', 'legacy STRONG maps to canonical HIGH');
+  assert.equal(normalizeToConfidenceTier('TRUST'), 'MED', 'legacy TRUST maps to canonical MED');
+  assert.equal(normalizeToConfidenceTier('WATCH'), 'LOW', 'legacy WATCH maps to canonical LOW');
+
+  // c. Confidence score fallback (0-100 scale)
+  assert.equal(normalizeToConfidenceTier(null, 70), 'HIGH', 'score=70 → HIGH');
+  assert.equal(normalizeToConfidenceTier(null, 55), 'MED', 'score=55 → MED');
+  assert.equal(normalizeToConfidenceTier(null, 54), 'LOW', 'score=54 → LOW');
+  assert.equal(normalizeToConfidenceTier(null, 69.9), 'MED', 'score=69.9 → MED (not HIGH)');
+
+  // d. Missing-signal fallback → LOW
+  assert.equal(normalizeToConfidenceTier(null), 'LOW', 'null band + no score → LOW (missing signal)');
+  assert.equal(normalizeToConfidenceTier(undefined), 'LOW', 'undefined band + no score → LOW (missing signal)');
+  assert.equal(normalizeToConfidenceTier(''), 'LOW', 'empty string band + no score → LOW (missing signal)');
+  assert.equal(normalizeToConfidenceTier('UNKNOWN'), 'LOW', 'unrecognized band + no score → LOW (missing signal)');
+
+  // All outputs must be canonical
+  for (const input of ['HIGH', 'MED', 'LOW', 'STRONG', 'TRUST', 'WATCH', null, undefined, '', 'UNKNOWN']) {
+    const result = normalizeToConfidenceTier(input as string | null | undefined);
+    assert.ok(
+      CANONICAL_TIERS.has(result),
+      `normalizeToConfidenceTier(${JSON.stringify(input)}) returned non-canonical: ${result}`,
+    );
+  }
+
   const testRuntime = await setupIsolatedTestDb('results-behavioral-contract');
   let server: { baseUrl: string; stop: () => Promise<void> } | null = null;
 
@@ -263,6 +303,33 @@ async function run() {
       (meta.displayedFinal as number) - (meta.settledFinalDisplayed as number),
       'missingFinalDisplayed must equal displayedFinal - settledFinalDisplayed',
     );
+
+    // --- Assert Invariant 4 (API): Canonical confidence vocabulary in ledger rows ---
+    // confidencePct must be a finite number or null — never a legacy string label.
+    const LEGACY_CONFIDENCE_LABELS = new Set(['WATCH', 'TRUST', 'STRONG']);
+    for (let i = 0; i < defaultLedger.length; i++) {
+      const row = defaultLedger[i];
+      const pct = row.confidencePct as unknown;
+      assert.ok(
+        pct === null || pct === undefined || (typeof pct === 'number' && Number.isFinite(pct)),
+        `ledger row ${i} confidencePct must be a finite number or null, got: ${JSON.stringify(pct)}`,
+      );
+      if (typeof pct === 'number' && Number.isFinite(pct)) {
+        const tier = pct >= 70 ? 'HIGH' : pct >= 55 ? 'MED' : 'LOW';
+        assert.ok(
+          CANONICAL_TIERS.has(tier),
+          `ledger row ${i} confidencePct=${pct} produced non-canonical tier: ${tier}`,
+        );
+      }
+      // Confidence field must not carry legacy output vocabulary as a string value.
+      for (const [key, val] of Object.entries(row)) {
+        if (typeof val === 'string' && LEGACY_CONFIDENCE_LABELS.has(val.toUpperCase()) && key.toLowerCase().includes('confidence')) {
+          assert.fail(
+            `ledger row ${i} field "${key}" carries legacy confidence label: ${val}`,
+          );
+        }
+      }
+    }
 
     console.log('✅ Results endpoint behavioral contract tests passed');
   } finally {

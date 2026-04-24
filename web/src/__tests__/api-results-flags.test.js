@@ -168,6 +168,31 @@ async function run() {
     }
   });
 
+  // Canonical confidence vocabulary: confidencePct must be a finite number or null.
+  // Derive tier (>=70→HIGH, >=55→MED, else→LOW) and assert it is canonical.
+  const CANONICAL_CONFIDENCE_TIERS = new Set(['LOW', 'MED', 'HIGH']);
+  const LEGACY_CONFIDENCE_LABELS = new Set(['WATCH', 'TRUST', 'STRONG']);
+  defaultLedger.forEach((row, index) => {
+    const pct = row.confidencePct;
+    assert.ok(
+      pct === null || pct === undefined || (typeof pct === 'number' && Number.isFinite(pct)),
+      `default ledger row ${index} confidencePct must be a finite number or null, got: ${JSON.stringify(pct)}`,
+    );
+    if (typeof pct === 'number' && Number.isFinite(pct)) {
+      const tier = pct >= 70 ? 'HIGH' : pct >= 55 ? 'MED' : 'LOW';
+      assert.ok(
+        CANONICAL_CONFIDENCE_TIERS.has(tier),
+        `default ledger row ${index} confidencePct=${pct} produced non-canonical tier: ${tier}`,
+      );
+    }
+    // No legacy confidence labels must appear as string values in confidence-related row fields.
+    for (const [key, val] of Object.entries(row)) {
+      if (typeof val === 'string' && LEGACY_CONFIDENCE_LABELS.has(val.toUpperCase()) && key.toLowerCase().includes('confidence')) {
+        assert.fail(`default ledger row ${index} field "${key}" carries legacy confidence label: ${val}`);
+      }
+    }
+  });
+
   console.log('✅ API results flags regression test passed');
   console.log(
     `   default=${defaultCount}, include_orphaned=${includeOrphanedCount}, no_dedupe=${noDedupeCount}`,

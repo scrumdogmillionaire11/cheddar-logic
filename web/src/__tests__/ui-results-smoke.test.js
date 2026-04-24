@@ -259,6 +259,44 @@ async function run() {
     assert.equal(mlbLedger.decisionTier, 'LEAN');
     assert.equal(mlbLedger.decisionLabel, 'SLIGHT EDGE');
 
+    // Canonical confidence vocabulary: confidencePct must be numeric and derive canonical tiers.
+    // Derive tier from score (same thresholds as normalizeToConfidenceTier): >=70→HIGH, >=55→MED, else→LOW.
+    const CANONICAL_CONFIDENCE_TIERS = new Set(['LOW', 'MED', 'HIGH']);
+    const LEGACY_CONFIDENCE_LABELS = new Set(['WATCH', 'TRUST', 'STRONG']);
+    function deriveTierFromScore(pct) {
+      if (typeof pct !== 'number' || !Number.isFinite(pct)) return 'LOW';
+      if (pct >= 70) return 'HIGH';
+      if (pct >= 55) return 'MED';
+      return 'LOW';
+    }
+
+    // NHL fixture: confidencePct=64.2 → MED
+    assert.ok(
+      typeof nhlLedger.confidencePct === 'number' && Number.isFinite(nhlLedger.confidencePct),
+      `NHL ledger confidencePct must be a finite number, got: ${nhlLedger.confidencePct}`,
+    );
+    const nhlTier = deriveTierFromScore(nhlLedger.confidencePct);
+    assert.ok(CANONICAL_CONFIDENCE_TIERS.has(nhlTier), `NHL confidencePct=${nhlLedger.confidencePct} tier not canonical: ${nhlTier}`);
+    assert.equal(nhlTier, 'MED', 'NHL confidencePct=64.2 must derive to MED tier');
+
+    // MLB fixture: confidencePct=55.4 → MED
+    assert.ok(
+      typeof mlbLedger.confidencePct === 'number' && Number.isFinite(mlbLedger.confidencePct),
+      `MLB ledger confidencePct must be a finite number, got: ${mlbLedger.confidencePct}`,
+    );
+    const mlbTier = deriveTierFromScore(mlbLedger.confidencePct);
+    assert.ok(CANONICAL_CONFIDENCE_TIERS.has(mlbTier), `MLB confidencePct=${mlbLedger.confidencePct} tier not canonical: ${mlbTier}`);
+    assert.equal(mlbTier, 'MED', 'MLB confidencePct=55.4 must derive to MED tier');
+
+    // No legacy confidence labels in any ledger row's confidence-related fields.
+    payload.data.ledger.forEach((row, idx) => {
+      for (const [key, val] of Object.entries(row)) {
+        if (typeof val === 'string' && LEGACY_CONFIDENCE_LABELS.has(val.toUpperCase()) && key.toLowerCase().includes('confidence')) {
+          assert.fail(`ledger row ${idx} field "${key}" carries legacy confidence label: ${val}`);
+        }
+      }
+    });
+
     assert.deepEqual(
       payload.data.segmentFamilies.map((segment) => [
         segment.segmentId,
