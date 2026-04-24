@@ -92,7 +92,10 @@ export const REASON_CODE_LABELS: Record<string, string> = Object.freeze({
 
 export function getReasonCodeLabel(code?: string | null): string | null {
   if (!code) return null;
-  const token = String(code).trim().toUpperCase();
+  const token = String(code)
+    .trim()
+    .toUpperCase()
+    .replace(/[\s-]+/g, '_');
   if (!token) return null;
   if (REASON_CODE_LABELS[token]) return REASON_CODE_LABELS[token];
   if (token.includes('GOALIE')) return 'Waiting on goalie confirmation';

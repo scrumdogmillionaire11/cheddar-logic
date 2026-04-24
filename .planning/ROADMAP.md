@@ -167,6 +167,25 @@ Plans:
 
 ---
 
+### Phase: discord-hook-eligibility — Canonical Discord Publish Eligibility
+
+**Goal**: Enforce one cross-market field that decides Discord post eligibility for game lines, game props, and player props, and ensure outgoing Discord content includes only PLAY and SLIGHT EDGE cards while PASS/BLOCKED cards are suppressed.
+
+**Requirements:** [DISCORD-HOOK-01, DISCORD-HOOK-02, DISCORD-HOOK-03, DISCORD-HOOK-04]
+
+- `DISCORD-HOOK-01`: Publisher stamps a canonical cross-market field (`webhook_publish_status`) with domain `PLAY`/`SLIGHT_EDGE`/`PASS_BLOCKED`
+- `DISCORD-HOOK-02`: Legacy aliases across lines/props are normalized once in publisher logic, not Discord formatter logic
+- `DISCORD-HOOK-03`: Discord formatter classifies/renders from canonical publish status first, with rollout-safe fallback for pre-canonical rows
+- `DISCORD-HOOK-04`: Canonical payloads result in only PLAY and SLIGHT EDGE outgoing content; PASS_BLOCKED never renders in posted lines
+
+**Plans:** 2 plans in 2 waves
+
+Plans:
+- [ ] discord-hook-eligibility-01-PLAN.md — Canonical publish-status contract + cross-market publisher tests (Wave 1)
+- [ ] discord-hook-eligibility-02-PLAN.md — Discord routing/filtering switched to canonical status with PLAY+SLIGHT EDGE-only output tests (Wave 2)
+
+---
+
 ### Phase: ui-decision-contract — Public Decision Surface Contract
 
 **Goal**: Enforce a single, coherent public card decision surface so surfaced status, verification/certainty gating, and optional model context cannot contradict each other. PASS cards must not publicly expose BEST/raw-edge/fair signals in the primary body unless explicitly internal-labeled.

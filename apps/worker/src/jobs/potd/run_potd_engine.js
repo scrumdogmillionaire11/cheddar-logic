@@ -151,14 +151,14 @@ function selectBestEdgeByShadowGroup(candidates) {
   return Array.from(byGroup.values());
 }
 
-function selectNearMissShadowCandidates({ winnerStatus, rankedNominees, winnerCandidate }) {
-  if (!Array.isArray(rankedNominees) || rankedNominees.length === 0) return [];
+function selectNearMissShadowCandidates({ winnerStatus, candidatePool, winnerCandidate }) {
+  if (!Array.isArray(candidatePool) || candidatePool.length === 0) return [];
   const winnerGroup =
     winnerStatus === 'FIRED' && winnerCandidate
       ? buildShadowMarketMatchGroup(winnerCandidate)
       : null;
 
-  const eligibleRows = rankedNominees.filter((candidate) =>
+  const eligibleRows = candidatePool.filter((candidate) =>
     !winnerGroup || buildShadowMarketMatchGroup(candidate) !== winnerGroup
   );
 
@@ -1010,6 +1010,7 @@ async function gatherBestCandidate({
     );
   });
   const bestEdgeSelectorPool = selectBestEdgeByShadowGroup(fireableSelectorPool);
+  const shadowCandidatePool = bestEdgeSelectorPool;
   const fireableNominees = selectTopPlaysFn(bestEdgeSelectorPool, {
     minConfidence: POTD_MIN_TOTAL_SCORE,
     minEdgePct: 0,
@@ -1032,6 +1033,7 @@ async function gatherBestCandidate({
     bestCandidate: fireableNominees[0] || null,
     rankedNominees,
     diagnosticNominees, // non-play diagnostics — labeled non-play, never nominated
+    shadowCandidatePool,
     allScoredCandidates: scoredCandidates,
     fetchErrors,
     activeSports: sports,
@@ -1109,6 +1111,7 @@ async function runPotdEngine({
         bestCandidate,
         rankedNominees,
         diagnosticNominees,
+        shadowCandidatePool,
         allScoredCandidates,
         fetchErrors,
         activeSports,
@@ -1136,7 +1139,7 @@ async function runPotdEngine({
           .sort((a, b) => b.edgePct - a.edgePct)[0] || null;
         const nearMissCandidates = selectNearMissShadowCandidates({
           winnerStatus: 'NO_PICK',
-          rankedNominees: diagnosticNominees,
+          candidatePool: shadowCandidatePool,
           winnerCandidate: null,
         });
         writeShadowCandidates(db, {
@@ -1212,7 +1215,7 @@ async function runPotdEngine({
       if (lowConfidenceCandidate) {
         const nearMissCandidates = selectNearMissShadowCandidates({
           winnerStatus: 'NO_PICK',
-          rankedNominees,
+          candidatePool: shadowCandidatePool,
           winnerCandidate: null,
         });
         writeShadowCandidates(db, {
@@ -1282,7 +1285,7 @@ async function runPotdEngine({
       if (!Number.isFinite(rawWager) || rawWager <= 0) {
         const nearMissCandidates = selectNearMissShadowCandidates({
           winnerStatus: 'NO_PICK',
-          rankedNominees,
+          candidatePool: shadowCandidatePool,
           winnerCandidate: null,
         });
         writeShadowCandidates(db, {
@@ -1343,7 +1346,7 @@ async function runPotdEngine({
       if (rawWager / bankrollAtPost < POTD_MIN_STAKE_PCT) {
         const nearMissCandidates = selectNearMissShadowCandidates({
           winnerStatus: 'NO_PICK',
-          rankedNominees,
+          candidatePool: shadowCandidatePool,
           winnerCandidate: null,
         });
         writeShadowCandidates(db, {
@@ -1474,7 +1477,7 @@ async function runPotdEngine({
         minEdgePct: POTD_MIN_EDGE,
         candidates: selectNearMissShadowCandidates({
           winnerStatus: 'FIRED',
-          rankedNominees,
+          candidatePool: shadowCandidatePool,
           winnerCandidate: bestCandidate,
         }),
       });

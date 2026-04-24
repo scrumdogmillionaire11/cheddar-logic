@@ -14,7 +14,10 @@ async function run() {
   const { REASON_CODE_LABELS: canonicalLabels, ALL_REASON_CODES } = canonical;
 
   // Import inlined web labels.
-  const { REASON_CODE_LABELS: inlinedLabels } = await import('../lib/game-card/reason-labels.ts');
+  const {
+    REASON_CODE_LABELS: inlinedLabels,
+    getReasonCodeLabel,
+  } = await import('../lib/game-card/reason-labels.ts');
 
   let passed = 0;
   let failed = 0;
@@ -45,6 +48,13 @@ async function run() {
     'every bucketed reason code has a canonical label',
     unlabeled.length === 0,
     unlabeled.length > 0 ? `unlabeled: ${unlabeled.join(', ')}` : '',
+  );
+
+  check(
+    'non-canonical separator variants normalize to canonical labels',
+    getReasonCodeLabel('EDGE FOUND SIDE') === 'Edge found' &&
+      getReasonCodeLabel('pass-execution-gate-net-edge-insufficient') === 'No edge at current price',
+    'separator normalization should preserve canonical label lookup',
   );
 
   // Labels that exist in web but not in canonical are OK (legacy aliases),

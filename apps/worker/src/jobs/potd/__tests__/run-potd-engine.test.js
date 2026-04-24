@@ -318,6 +318,106 @@ describe('runPotdEngine', () => {
     ]);
   });
 
+  test('fired path captures same-sport near misses from full eligible pool', async () => {
+    const { runPotdEngine } = require('../run_potd_engine');
+    const winner = buildSelectedCandidate({
+      gameId: 'potd-nba-pool-winner',
+      sport: 'NBA',
+      home_team: 'Boston Celtics',
+      away_team: 'New York Knicks',
+      selectionLabel: 'OVER 221.5',
+      line: 221.5,
+      totalScore: 0.91,
+      edgePct: 0.027,
+    });
+    const miss1 = buildSelectedCandidate({
+      gameId: 'potd-nba-pool-1',
+      sport: 'NBA',
+      home_team: 'Denver Nuggets',
+      away_team: 'Phoenix Suns',
+      selectionLabel: 'OVER 226.5',
+      line: 226.5,
+      totalScore: 0.82,
+      edgePct: 0.041,
+    });
+    const miss2 = buildSelectedCandidate({
+      gameId: 'potd-nba-pool-2',
+      sport: 'NBA',
+      home_team: 'Milwaukee Bucks',
+      away_team: 'Indiana Pacers',
+      selection: 'UNDER',
+      selectionLabel: 'UNDER 232.5',
+      line: 232.5,
+      totalScore: 0.81,
+      edgePct: 0.037,
+    });
+    const miss3 = buildSelectedCandidate({
+      gameId: 'potd-nba-pool-3',
+      sport: 'NBA',
+      home_team: 'Los Angeles Lakers',
+      away_team: 'Golden State Warriors',
+      selectionLabel: 'OVER 229.5',
+      line: 229.5,
+      totalScore: 0.8,
+      edgePct: 0.033,
+    });
+    const miss4 = buildSelectedCandidate({
+      gameId: 'potd-nba-pool-4',
+      sport: 'NBA',
+      home_team: 'Oklahoma City Thunder',
+      away_team: 'Minnesota Timberwolves',
+      selectionLabel: 'OVER 218.5',
+      line: 218.5,
+      totalScore: 0.79,
+      edgePct: 0.031,
+    });
+    const candidates = [winner, miss1, miss2, miss3, miss4];
+
+    const result = await runPotdEngine({
+      jobKey: 'potd|same-sport-shadow-pool',
+      force: true,
+      fetchOddsFn: async ({ sport }) => ({
+        games: sport === 'NBA' ? candidates.map((candidate) => ({ gameId: candidate.gameId })) : [],
+        errors: [],
+      }),
+      buildCandidatesFn: (game) =>
+        candidates.filter((candidate) => candidate.gameId === game.gameId),
+      scoreCandidateFn: (value) => value,
+      kellySizeFn: () => 2.0,
+      sendDiscordMessagesFn: async () => 1,
+    });
+
+    expect(result.success).toBe(true);
+
+    const playRows = readRows(
+      `SELECT game_id, sport
+       FROM potd_plays`,
+    );
+    expect(playRows).toEqual([
+      { game_id: winner.gameId, sport: 'NBA' },
+    ]);
+
+    const nomineeRows = readRows(
+      `SELECT game_id, sport
+       FROM potd_nominees
+       ORDER BY nominee_rank ASC`,
+    );
+    expect(nomineeRows).toEqual([
+      { game_id: winner.gameId, sport: 'NBA' },
+    ]);
+
+    const shadowRows = readRows(
+      `SELECT game_id, sport, selection
+       FROM potd_shadow_candidates
+       ORDER BY edge_pct DESC`,
+    );
+    expect(shadowRows).toEqual([
+      { game_id: miss1.gameId, sport: 'NBA', selection: 'OVER' },
+      { game_id: miss2.gameId, sport: 'NBA', selection: 'UNDER' },
+      { game_id: miss3.gameId, sport: 'NBA', selection: 'OVER' },
+    ]);
+  });
+
   test('fired path suppresses near-miss candidates from the winner market/match group', async () => {
     const { runPotdEngine } = require('../run_potd_engine');
     const winner = buildSelectedCandidate({
