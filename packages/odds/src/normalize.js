@@ -200,20 +200,28 @@ function normalizeGame(rawGame, sport) {
       h2hHomeBook: h2hExecution.best_price_home_book,
       h2hAwayBook: h2hExecution.best_price_away_book,
       total: totalConsensus.consensus_line,
-      totalLineOver: totalExecution.best_line_over,
-      totalLineOverBook: totalExecution.best_line_over_book,
-      totalLineUnder: totalExecution.best_line_under,
-      totalLineUnderBook: totalExecution.best_line_under_book,
+      totalLineOver: totalExecution.same_book_line_for_over ?? totalExecution.best_line_over,
+      totalLineOverBook: totalExecution.same_book_line_for_over != null
+        ? totalExecution.best_price_over_book
+        : totalExecution.best_line_over_book,
+      totalLineUnder: totalExecution.same_book_line_for_under ?? totalExecution.best_line_under,
+      totalLineUnderBook: totalExecution.same_book_line_for_under != null
+        ? totalExecution.best_price_under_book
+        : totalExecution.best_line_under_book,
       totalPriceOver: totalExecution.best_price_over,
       totalPriceOverBook: totalExecution.best_price_over_book,
       totalPriceUnder: totalExecution.best_price_under,
       totalPriceUnderBook: totalExecution.best_price_under_book,
       totalSameBookUnderForOver: totalExecution.same_book_under_for_over,
       totalSameBookOverForUnder: totalExecution.same_book_over_for_under,
-      spreadHome: spreadExecution.best_line_home,
-      spreadHomeBook: spreadExecution.best_line_home_book,
-      spreadAway: spreadExecution.best_line_away,
-      spreadAwayBook: spreadExecution.best_line_away_book,
+      spreadHome: spreadExecution.same_book_line_home ?? spreadExecution.best_line_home,
+      spreadHomeBook: spreadExecution.same_book_line_home != null
+        ? spreadExecution.best_price_home_book
+        : spreadExecution.best_line_home_book,
+      spreadAway: spreadExecution.same_book_line_away ?? spreadExecution.best_line_away,
+      spreadAwayBook: spreadExecution.same_book_line_away != null
+        ? spreadExecution.best_price_away_book
+        : spreadExecution.best_line_away_book,
       spreadPriceHome: spreadExecution.best_price_home,
       spreadPriceHomeBook: spreadExecution.best_price_home_book,
       spreadPriceAway: spreadExecution.best_price_away,

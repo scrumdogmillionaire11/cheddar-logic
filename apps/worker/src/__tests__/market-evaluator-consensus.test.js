@@ -144,6 +144,8 @@ describe('market evaluator consensus', () => {
       best_price_away_book: 'draftkings',
       same_book_away_for_home: -120,
       same_book_home_for_away: -118,
+      same_book_line_home: -3.5,
+      same_book_line_away: 2.5,
     });
   });
 
@@ -168,6 +170,8 @@ describe('market evaluator consensus', () => {
       best_price_under_book: 'draftkings',
       same_book_under_for_over: -120,
       same_book_over_for_under: -115,
+      same_book_line_for_over: 221,
+      same_book_line_for_under: 220.5,
     });
   });
 
@@ -322,8 +326,8 @@ describe('market evaluator consensus', () => {
       total: 220.5,
       totalLineOver: 220,
       totalLineOverBook: 'c',
-      totalLineUnder: 221.5,
-      totalLineUnderBook: 'b',
+      totalLineUnder: 220.5,
+      totalLineUnderBook: 'a',
       totalPriceOver: -105,
       totalPriceOverBook: 'c',
       totalPriceUnder: -110,
