@@ -9,6 +9,7 @@ import {
   normalizeToConfidenceTier,
   type ConfidenceTier,
   type ProjectionAccuracyBucket,
+  type ProjectionAccuracyRecord,
   type ProjectionAccuracyResponse,
 } from '@/lib/types/projection-accuracy';
 
@@ -252,6 +253,22 @@ function roiTextClass(value: number | null | undefined) {
   return 'text-cloud/70';
 }
 
+function confidenceTierPillClass(tier: ConfidenceTier, active: boolean): string {
+  if (tier === 'HIGH') {
+    return active
+      ? 'border-emerald-400/50 bg-emerald-500/20 text-emerald-200'
+      : 'border-emerald-400/20 bg-emerald-500/10 text-emerald-300/70 hover:border-emerald-400/40';
+  }
+  if (tier === 'MED') {
+    return active
+      ? 'border-amber-400/50 bg-amber-500/20 text-amber-200'
+      : 'border-amber-400/20 bg-amber-500/10 text-amber-300/70 hover:border-amber-400/40';
+  }
+  return active
+    ? 'border-white/25 bg-white/10 text-cloud/80'
+    : 'border-white/10 bg-white/5 text-cloud/50 hover:border-white/20';
+}
+
 function createEmptyProjectionAccuracyBucket(): ProjectionAccuracyBucket {
   return {
     line_evals: 0,
@@ -293,6 +310,8 @@ export default function ResultsPage() {
   const [expandedProjectionFamilies, setExpandedProjectionFamilies] = useState<Set<string>>(new Set());
   const [projectionConfidenceFilter, setProjectionConfidenceFilter] =
     useState<ProjectionConfidenceFilter>('ALL');
+  const [expandedConfidenceBand, setExpandedConfidenceBand] =
+    useState<ConfidenceTier | null>(null);
   const projectionSettlementFamilies = useMemo(
     () =>
       new Set([
@@ -404,6 +423,24 @@ export default function ResultsPage() {
           bucket.no_bets > 0,
       );
   }, [projectionAccuracy?.summary.by_confidence_band]);
+  const settledByCardId = useMemo(() => {
+    const map = new Map<string, (typeof mappedProjectionSettledRows)[0]>();
+    for (const row of mappedProjectionSettledRows) {
+      if (row.cardId) map.set(String(row.cardId), row);
+    }
+    return map;
+  }, [mappedProjectionSettledRows]);
+  const confidenceDrilldownByTier = useMemo(() => {
+    const result = new Map<ConfidenceTier, { eligible: ProjectionAccuracyRecord[]; excludedCount: number }>();
+    for (const tier of ['HIGH', 'MED', 'LOW'] as ConfidenceTier[]) {
+      const forTier = mappedProjectionAccuracyRows.filter(
+        (r) => normalizeToConfidenceTier(r.confidence_band) === tier,
+      );
+      const eligible = forTier.filter((r) => r.weak_direction_flag !== 1);
+      result.set(tier, { eligible, excludedCount: forTier.length - eligible.length });
+    }
+    return result;
+  }, [mappedProjectionAccuracyRows]);
   const moneylineCalibrationStats = useMemo(() => {
     const rows = mappedProjectionSettledRows.filter((row) => {
       const family = String(row.cardFamily || '').toUpperCase();
@@ -1237,16 +1274,103 @@ export default function ResultsPage() {
                   </div>
                 </div>
                 {projectionConfidenceSummary.length > 0 && (
-                  <div className="mt-4 flex flex-wrap gap-2 text-xs text-cloud/60">
-                    {projectionConfidenceSummary.map(({ tier, bucket, rawBands }) => (
-                      <span
-                        key={tier}
-                        className="rounded-full border border-white/10 px-3 py-1"
-                        title={rawBands.length > 0 ? `Legacy buckets: ${rawBands.join(', ')}` : undefined}
-                      >
-                        {tier}: {bucket.wins}-{bucket.losses}
-                      </span>
-                    ))}
+                  <div className="mt-4">
+                    <div className="flex flex-wrap gap-2 text-xs">
+                      {projectionConfidenceSummary.map(({ tier, bucket, rawBands }) => {
+                        const drilldown = confidenceDrilldownByTier.get(tier);
+                        const hasEligible = (drilldown?.eligible.length ?? 0) > 0;
+                        const isExpanded = expandedConfidenceBand === tier;
+                        return hasEligible ? (
+                          <button
+                            key={tier}
+                            type="button"
+                            onClick={() => setExpandedConfidenceBand(isExpanded ? null : tier)}
+                            className={`rounded-full border px-3 py-1 font-semibold transition-colors ${confidenceTierPillClass(tier, isExpanded)}`}
+                            title={rawBands.length > 0 ? `Legacy buckets: ${rawBands.join(', ')}` : undefined}
+                          >
+                            {tier}: {bucket.wins}–{bucket.losses}{isExpanded ? ' ▲' : ' ▼'}
+                          </button>
+                        ) : (
+                          <span
+                            key={tier}
+                            className="cursor-default rounded-full border border-white/10 px-3 py-1 text-cloud/40"
+                            title={rawBands.length > 0 ? `Legacy buckets: ${rawBands.join(', ')}` : undefined}
+                          >
+                            {tier}: {bucket.wins}–{bucket.losses}
+                          </span>
+                        );
+                      })}
+                    </div>
+                    {expandedConfidenceBand && (() => {
+                      const drilldown = confidenceDrilldownByTier.get(expandedConfidenceBand);
+                      if (!drilldown) return null;
+                      return (
+                        <div className="mt-3 rounded-xl border border-white/10 bg-night/50 p-3">
+                          <div className="mb-2 flex items-center justify-between gap-3">
+                            <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-cloud/50">
+                              {expandedConfidenceBand} band — row evidence
+                            </p>
+                            {drilldown.excludedCount > 0 && (
+                              <p className="text-[11px] text-cloud/40">
+                                {drilldown.excludedCount} weak-direction row{drilldown.excludedCount !== 1 ? 's' : ''} excluded
+                              </p>
+                            )}
+                          </div>
+                          {drilldown.eligible.length === 0 ? (
+                            <p className="text-xs text-cloud/50">No eligible rows for this band.</p>
+                          ) : (
+                            <div className="overflow-x-auto">
+                              <table className="w-full text-xs text-cloud/70">
+                                <thead>
+                                  <tr className="border-b border-white/10 text-[11px] uppercase tracking-[0.15em] text-cloud/40">
+                                    <th className="pb-1 pr-4 text-left font-semibold">Date</th>
+                                    <th className="pb-1 pr-4 text-left font-semibold">Matchup</th>
+                                    <th className="pb-1 pr-4 text-left font-semibold">Direction</th>
+                                    <th className="pb-1 pr-4 text-left font-semibold">Outcome</th>
+                                    <th className="pb-1 text-left font-semibold">Confidence</th>
+                                  </tr>
+                                </thead>
+                                <tbody className="divide-y divide-white/5">
+                                  {drilldown.eligible.map((row) => {
+                                    const settled = settledByCardId.get(String(row.card_id || ''));
+                                    const date = settled
+                                      ? formatLedgerDate(settled.gameDateUtc)
+                                      : '--';
+                                    const matchup = settled
+                                      ? (settled.homeTeam && settled.awayTeam
+                                        ? `${settled.awayTeam} @ ${settled.homeTeam}`
+                                        : settled.cardTitle || '--')
+                                      : (row.game_id ? String(row.game_id).slice(0, 20) : '--');
+                                    const direction = row.synthetic_direction || '--';
+                                    const outcome = row.graded_result || '--';
+                                    const confidence =
+                                      row.projection_confidence !== null &&
+                                      row.projection_confidence !== undefined
+                                        ? `${Math.round(row.projection_confidence)}%`
+                                        : '--';
+                                    const outcomeClass =
+                                      outcome === 'WIN'
+                                        ? 'text-emerald-300'
+                                        : outcome === 'LOSS'
+                                          ? 'text-rose-300'
+                                          : 'text-cloud/50';
+                                    return (
+                                      <tr key={`${row.card_id}-${row.game_id}`}>
+                                        <td className="py-1 pr-4 text-cloud/55">{date}</td>
+                                        <td className="py-1 pr-4 text-cloud/70">{matchup}</td>
+                                        <td className="py-1 pr-4 text-cloud/70">{direction}</td>
+                                        <td className={`py-1 pr-4 font-semibold ${outcomeClass}`}>{outcome}</td>
+                                        <td className="py-1 text-cloud/60">{confidence}</td>
+                                      </tr>
+                                    );
+                                  })}
+                                </tbody>
+                              </table>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()}
                   </div>
                 )}
                 <div className="mt-4 rounded-xl border border-white/10 bg-night/50 p-3 text-xs text-cloud/65">

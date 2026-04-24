@@ -328,12 +328,47 @@ async function run() {
       'explicit sport=NCAAM should return archival NCAAM rows',
     );
 
+    // Confidence band drilldown: projection-accuracy API structure
+    // Verifies the API powering confidence pills returns a shape the drilldown
+    // can consume — summary.weak_direction_count must be numeric, rows must be
+    // an array with valid per-row field shapes when present.
+    const { payload: projAccPayload } = await fetchJson(
+      server.baseUrl,
+      '/api/results/projection-accuracy',
+    );
+    assert.ok(projAccPayload.summary, 'projection-accuracy must include summary');
+    assert.ok(
+      typeof projAccPayload.summary.weak_direction_count === 'number',
+      `projection-accuracy summary.weak_direction_count must be a number, got: ${typeof projAccPayload.summary.weak_direction_count}`,
+    );
+    assert.ok(
+      Array.isArray(projAccPayload.rows),
+      'projection-accuracy must include rows array',
+    );
+    for (const row of projAccPayload.rows) {
+      assert.ok(
+        row.weak_direction_flag === 0 || row.weak_direction_flag === 1 || row.weak_direction_flag == null,
+        `projection-accuracy row.weak_direction_flag must be 0, 1, or null — got: ${row.weak_direction_flag}`,
+      );
+      assert.ok(
+        typeof row.confidence_band === 'string',
+        `projection-accuracy row.confidence_band must be a string — got: ${typeof row.confidence_band}`,
+      );
+    }
+
     const pageResponse = await fetch(`${server.baseUrl}/results`, {
       signal: AbortSignal.timeout(5000),
     });
     assert.equal(pageResponse.status, 200, '/results page should render');
     const pageHtml = await pageResponse.text();
     assert.match(pageHtml, /Betting Record/, 'results page should render the betting lane');
+    // Confidence Engine section is client-rendered post-hydration; verify the page
+    // does not regress (200 + core betting lane label are the SSR-observable guarantees).
+    assert.doesNotMatch(
+      pageHtml,
+      /Projection Confidence Engine.*WATCH|Projection Confidence Engine.*TRUST|Projection Confidence Engine.*STRONG/s,
+      'results page must not expose legacy confidence labels in server-rendered HTML',
+    );
 
     console.log('✅ UI results behavioral smoke test passed');
   } finally {

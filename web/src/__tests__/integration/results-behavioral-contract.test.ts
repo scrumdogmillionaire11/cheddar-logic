@@ -138,7 +138,56 @@ async function getJson(
 
 const CANONICAL_TIERS = new Set<string>(['LOW', 'MED', 'HIGH']);
 
+// Mirror of the client-side drilldown filter predicate in page.tsx.
+function isEligibleForDrilldown(row: { weak_direction_flag?: number | null }): boolean {
+  return row.weak_direction_flag !== 1;
+}
+
+function computeBandDrilldown(
+  rows: Array<{ confidence_band: string; weak_direction_flag?: number | null; graded_result?: string | null }>,
+  tier: string,
+) {
+  const forTier = rows.filter((r) => normalizeToConfidenceTier(r.confidence_band) === tier);
+  const eligible = forTier.filter(isEligibleForDrilldown);
+  return { eligible, excludedCount: forTier.length - eligible.length };
+}
+
 async function run() {
+  // --- Invariant 5 (unit): Confidence drilldown filtering logic ---
+  // These pure-function tests require no server. They verify the client-side
+  // drilldown predicate that page.tsx applies to mappedProjectionAccuracyRows.
+
+  const mockRows = [
+    { confidence_band: 'HIGH', weak_direction_flag: 0, graded_result: 'WIN' },
+    { confidence_band: 'HIGH', weak_direction_flag: 1, graded_result: 'LOSS' },
+    { confidence_band: 'MED',  weak_direction_flag: 0, graded_result: 'WIN' },
+    { confidence_band: 'LOW',  weak_direction_flag: 0, graded_result: 'LOSS' },
+    { confidence_band: 'LOW',  weak_direction_flag: 1, graded_result: 'WIN' },
+    { confidence_band: 'LOW',  weak_direction_flag: null, graded_result: 'WIN' },
+  ];
+
+  // Test 1: weak_direction_flag=1 rows are excluded from eligible list per band
+  const highDrilldown = computeBandDrilldown(mockRows, 'HIGH');
+  assert.equal(highDrilldown.eligible.length, 1, 'HIGH drilldown: flag=1 row is excluded');
+  assert.equal(highDrilldown.eligible[0].graded_result, 'WIN', 'HIGH drilldown: WIN row is the only eligible');
+
+  const lowDrilldown = computeBandDrilldown(mockRows, 'LOW');
+  assert.equal(lowDrilldown.eligible.length, 2, 'LOW drilldown: flag=0 and null rows are eligible');
+  assert.equal(lowDrilldown.excludedCount, 1, 'LOW drilldown: exactly one flag=1 row is excluded');
+
+  // Test 2: per-band excluded count reconciles with weak_direction_flag tally
+  assert.equal(highDrilldown.excludedCount, 1, 'HIGH band excluded count matches flag=1 tally');
+  assert.equal(computeBandDrilldown(mockRows, 'MED').excludedCount, 0, 'MED band has no excluded rows');
+
+  // Test 3: confidence tier assignments from drilldown are canonical
+  for (const row of mockRows) {
+    const tier = normalizeToConfidenceTier(row.confidence_band);
+    assert.ok(
+      CANONICAL_TIERS.has(tier),
+      `drilldown tier for band=${row.confidence_band} is non-canonical: ${tier}`,
+    );
+  }
+
   // --- Invariant 4 (unit): Confidence tier canonical vocabulary ---
   // These pure-function tests require no server.
 
