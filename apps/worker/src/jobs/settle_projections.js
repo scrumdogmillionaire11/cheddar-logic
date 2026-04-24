@@ -14,7 +14,7 @@ const {
   setProjectionActualResult,
   batchInsertProjectionProxyEvals,
 } = require('@cheddar-logic/data');
-const { buildProjectionProxyMarketRows, CARD_TYPE_TO_FAMILY } = require('../audit/projection_evaluator');
+const { buildProjectionProxyMarketRows, CARD_TYPE_TO_FAMILY, resolveMoneylineConfidenceBucket } = require('../audit/projection_evaluator');
 const { fetchNhlSettlementSnapshot, resolveNhlFullGamePlayerShots } = require('./nhl-settlement-source');
 const { fetchF5Total, fetchF5GameState, resolveF5Snapshot, resolveMlbGamePk } = require('./settle_mlb_f5');
 
@@ -431,7 +431,7 @@ async function settleProjections({ jobKey = null, dryRun = false } = {}) {
                   model_projection: selectedWinProbability,
                   actual_value: actualSelectedSide,
                   selected_side: selectedSide,
-                  confidence_bucket: payload?.confidence_band,
+                  confidence_bucket: resolveMoneylineConfidenceBucket({ payload }),
                   confidence_score: payload?.confidence_score,
                   actual_result: JSON.stringify(actualResultObj),
                 });
