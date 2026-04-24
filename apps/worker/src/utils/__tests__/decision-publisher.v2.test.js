@@ -1622,46 +1622,63 @@ describe('decision publisher v2 pipeline', () => {
 });
 
 describe('computeWebhookFields', () => {
-  it('stamps official for NHL total with nhl_totals_status=PLAY', () => {
+  const expectCanonicalPublish = (payload, publishStatus, bucket) => {
+    expect(payload.webhook_publish_status).toBe(publishStatus);
+    expect(payload.webhook_bucket).toBe(bucket);
+    expect(payload.decision_trace.webhook_publish_status).toBe(publishStatus);
+    expect(payload.decision_trace.webhook_bucket).toBe(bucket);
+    expect(payload.decision_trace.mapping_version).toBe('v1');
+  };
+
+  it('stamps official for NHL total with final_play_state=OFFICIAL_PLAY', () => {
     const p = {
       sport: 'NHL', kind: 'PLAY', market_type: 'total', recommended_bet_type: 'total',
       selection: { side: 'OVER' }, edge: 1.2,
+      final_play_state: 'OFFICIAL_PLAY',
+      decision_v2: { official_status: 'PLAY' },
       nhl_totals_status: { status: 'PLAY', reasonCodes: [] },
     };
     computeWebhookFields(p);
-    expect(p.webhook_bucket).toBe('official');
+    expectCanonicalPublish(p, 'PLAY', 'official');
     expect(p.webhook_eligible).toBe(true);
     expect(p.webhook_reason_code).toBeNull();
+    expect(p.decision_trace.source_of_truth).toBe('final_play_state');
   });
 
-  it('stamps lean for NHL total capped by goalie uncertainty', () => {
+  it('stamps slight edge for NHL total capped by goalie uncertainty', () => {
     const p = {
       sport: 'NHL', kind: 'PLAY', market_type: 'total', recommended_bet_type: 'total',
       selection: { side: 'OVER' }, edge: 1.1,
+      final_play_state: 'LEAN',
+      decision_v2: { official_status: 'LEAN' },
       nhl_totals_status: { status: 'SLIGHT EDGE', reasonCodes: ['CAP_GOALIES_UNCONFIRMED'] },
     };
     computeWebhookFields(p);
-    expect(p.webhook_bucket).toBe('lean');
+    expectCanonicalPublish(p, 'SLIGHT_EDGE', 'lean');
     expect(p.webhook_eligible).toBe(true);
     expect(p.webhook_reason_code).toBeNull();
   });
 
-  it('stamps pass_blocked for NHL total with nhl_totals_status=PASS', () => {
+  it('stamps pass_blocked for NHL total with final_play_state=BLOCKED', () => {
     const p = {
       sport: 'NHL', kind: 'PLAY', market_type: 'total', recommended_bet_type: 'total',
       selection: { side: 'OVER' },
+      final_play_state: 'BLOCKED',
+      decision_v2: { official_status: 'PASS' },
       nhl_totals_status: { status: 'PASS', reasonCodes: ['PASS_INTEGRITY_BLOCK'] },
     };
     computeWebhookFields(p);
-    expect(p.webhook_bucket).toBe('pass_blocked');
+    expectCanonicalPublish(p, 'PASS_BLOCKED', 'pass_blocked');
     expect(p.webhook_eligible).toBe(false);
     expect(p.webhook_reason_code).toBe('PASS_INTEGRITY_BLOCK');
   });
 
-  it('stamps lean for NHL 1P with surfaced_status=SLIGHT EDGE', () => {
+  it('stamps slight edge for NHL 1P with final_play_state=LEAN', () => {
     const p = {
       sport: 'NHL', kind: 'PLAY', market_type: 'total', period: '1p',
       prediction: 'OVER',
+      final_play_state: 'LEAN',
+      decision_v2: { official_status: 'LEAN' },
       nhl_1p_decision: {
         projection: { side: 'OVER' },
         surfaced_status: 'SLIGHT EDGE',
@@ -1669,7 +1686,7 @@ describe('computeWebhookFields', () => {
       },
     };
     computeWebhookFields(p);
-    expect(p.webhook_bucket).toBe('lean');
+    expectCanonicalPublish(p, 'SLIGHT_EDGE', 'lean');
     expect(p.webhook_display_side).toBe('OVER');
   });
 
@@ -1680,46 +1697,67 @@ describe('computeWebhookFields', () => {
       decision_v2: { official_status: 'PLAY' }, action: 'FIRE', classification: 'BASE',
     };
     computeWebhookFields(p);
-    expect(p.webhook_bucket).toBe('official');
+    expectCanonicalPublish(p, 'PLAY', 'official');
+    expect(p.decision_trace.source_of_truth).toBe('decision_v2.official_status');
   });
 
-  it('stamps lean for card with action=HOLD', () => {
+  it('fails closed for legacy-only card with action=HOLD', () => {
     const p = { sport: 'MLB', kind: 'PLAY', market_type: 'total', action: 'HOLD', classification: 'LEAN', edge: 0.4 };
     computeWebhookFields(p);
-    expect(p.webhook_bucket).toBe('lean');
-    expect(p.webhook_lean_eligible).toBe(true);
+    expectCanonicalPublish(p, 'PASS_BLOCKED', 'pass_blocked');
+    expect(p.webhook_lean_eligible).toBe(false);
+    expect(p.publish_status_flags).toContain('MISSING_CANONICAL_STATUS');
+    expect(p.decision_trace.source_of_truth).toBe('none');
   });
 
-  it('stamps pass_blocked when action=PASS overrides nhl_totals_status=PLAY', () => {
+  it('final_play_state wins over legacy and NHL total status', () => {
     const p = {
       sport: 'NHL', kind: 'PLAY', market_type: 'total',
       action: 'PASS', classification: 'PASS',
       decision_v2: { official_status: 'PLAY' },
+      final_play_state: 'WATCH',
       nhl_totals_status: { status: 'PLAY', reasonCodes: [] },
     };
     computeWebhookFields(p);
-    expect(p.webhook_bucket).toBe('pass_blocked');
+    expectCanonicalPublish(p, 'PASS_BLOCKED', 'pass_blocked');
     expect(p.webhook_eligible).toBe(false);
+    expect(p.decision_trace.source_of_truth).toBe('final_play_state');
+    expect(p.publish_status_flags).toContain('STATUS_DOWNGRADED_AFTER_MODEL');
   });
 
-  it('stamps official for prop card via play.action=FIRE', () => {
+  it('stamps official for prop card via final_play_state=OFFICIAL_PLAY', () => {
     const p = {
       sport: 'NHL', card_type: 'nhl-player-shots',
+      final_play_state: 'OFFICIAL_PLAY',
+      decision_v2: { official_status: 'PLAY' },
       play: { action: 'FIRE', classification: 'BASE', selection: 'OVER 3.5' },
     };
     computeWebhookFields(p);
-    expect(p.webhook_bucket).toBe('official');
+    expectCanonicalPublish(p, 'PLAY', 'official');
     expect(p.webhook_eligible).toBe(true);
   });
 
   it('webhook_lean_eligible false when |edge| < 0.15', () => {
-    const p = { sport: 'NBA', action: 'HOLD', classification: 'LEAN', edge: 0.08 };
+    const p = {
+      sport: 'NBA',
+      action: 'HOLD',
+      classification: 'LEAN',
+      edge: 0.08,
+      final_play_state: 'LEAN',
+      decision_v2: { official_status: 'LEAN' },
+    };
     computeWebhookFields(p);
     expect(p.webhook_lean_eligible).toBe(false);
   });
 
   it('webhook_lean_eligible true when edge absent', () => {
-    const p = { sport: 'NBA', action: 'HOLD', classification: 'LEAN' };
+    const p = {
+      sport: 'NBA',
+      action: 'HOLD',
+      classification: 'LEAN',
+      final_play_state: 'LEAN',
+      decision_v2: { official_status: 'LEAN' },
+    };
     computeWebhookFields(p);
     expect(p.webhook_lean_eligible).toBe(true);
   });
@@ -1728,10 +1766,109 @@ describe('computeWebhookFields', () => {
     const p = {
       selection: { side: 'UNDER' }, period: '1p',
       nhl_1p_decision: { projection: { side: 'over' }, surfaced_status: 'PLAY' },
+      final_play_state: 'OFFICIAL_PLAY',
+      decision_v2: { official_status: 'PLAY' },
       action: 'FIRE',
     };
     computeWebhookFields(p);
     expect(p.webhook_display_side).toBe('OVER');
+  });
+
+  it.each([
+    ['OFFICIAL_PLAY', 'PLAY', 'official'],
+    ['LEAN', 'SLIGHT_EDGE', 'lean'],
+    ['WATCH', 'PASS_BLOCKED', 'pass_blocked'],
+    ['BLOCKED', 'PASS_BLOCKED', 'pass_blocked'],
+    ['NO_PLAY', 'PASS_BLOCKED', 'pass_blocked'],
+  ])('maps final_play_state=%s exhaustively', (finalPlayState, publishStatus, bucket) => {
+    const p = {
+      sport: 'NBA',
+      kind: 'PLAY',
+      market_type: 'total',
+      final_play_state: finalPlayState,
+      decision_v2: { official_status: finalPlayState === 'OFFICIAL_PLAY' ? 'PLAY' : finalPlayState === 'LEAN' ? 'LEAN' : 'PASS' },
+    };
+    computeWebhookFields(p);
+    expectCanonicalPublish(p, publishStatus, bucket);
+    expect(p.decision_trace.source_of_truth).toBe('final_play_state');
+  });
+
+  it('blocks WATCH despite LEAN official status and positive legacy aliases', () => {
+    const p = {
+      sport: 'NBA',
+      kind: 'PLAY',
+      market_type: 'total',
+      final_play_state: 'WATCH',
+      decision_v2: { official_status: 'LEAN' },
+      classification: 'LEAN',
+      action: 'HOLD',
+      status: 'WATCH',
+    };
+    computeWebhookFields(p);
+    expectCanonicalPublish(p, 'PASS_BLOCKED', 'pass_blocked');
+    expect(p.webhook_publish_status).not.toBe('SLIGHT_EDGE');
+    expect(p.webhook_bucket).not.toBe('lean');
+    expect(p.publish_status_flags).toContain('CANONICAL_STATUS_CONFLICT');
+  });
+
+  it('records downgrade when PLAY official status is lowered to LEAN', () => {
+    const p = {
+      sport: 'NBA',
+      kind: 'PLAY',
+      market_type: 'total',
+      final_play_state: 'LEAN',
+      decision_v2: { official_status: 'PLAY' },
+      action: 'FIRE',
+      classification: 'BASE',
+    };
+    computeWebhookFields(p);
+    expectCanonicalPublish(p, 'SLIGHT_EDGE', 'lean');
+    expect(p.publish_status_flags).toContain('STATUS_DOWNGRADED_AFTER_MODEL');
+  });
+
+  it('full precedence conflict stays blocked and diagnostic-rich', () => {
+    const p = {
+      sport: 'NBA',
+      kind: 'PLAY',
+      market_type: 'total',
+      final_play_state: 'WATCH',
+      decision_v2: { official_status: 'PLAY' },
+      classification: 'LEAN',
+      action: 'HOLD',
+      status: 'WATCH',
+    };
+    computeWebhookFields(p);
+    expectCanonicalPublish(p, 'PASS_BLOCKED', 'pass_blocked');
+    expect(p.decision_trace.source_of_truth).toBe('final_play_state');
+    expect(p.publish_status_flags).toContain('STATUS_DOWNGRADED_AFTER_MODEL');
+  });
+
+  it('invalid final_play_state fails closed with INVALID_PUBLISH_MAPPING', () => {
+    const p = {
+      sport: 'NBA',
+      kind: 'PLAY',
+      market_type: 'total',
+      final_play_state: 'MAYBE',
+      decision_v2: { official_status: 'PLAY' },
+    };
+    computeWebhookFields(p);
+    expectCanonicalPublish(p, 'PASS_BLOCKED', 'pass_blocked');
+    expect(p.publish_status_flags).toContain('INVALID_PUBLISH_MAPPING');
+  });
+
+  it('never treats display slight-edge tokens as canonical official status', () => {
+    for (const token of ['SLIGHT_EDGE', 'SLIGHT EDGE', 'Slight Edge']) {
+      const p = {
+        sport: 'NBA',
+        kind: 'PLAY',
+        market_type: 'total',
+        decision_v2: { official_status: token },
+      };
+      computeWebhookFields(p);
+      expectCanonicalPublish(p, 'PASS_BLOCKED', 'pass_blocked');
+      expect(p.publish_status_flags).toContain('INVALID_PUBLISH_MAPPING');
+      expect(p.decision_v2.official_status).toBe(token);
+    }
   });
 
   it('no-op for null or undefined payload', () => {

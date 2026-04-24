@@ -186,6 +186,23 @@ Plans:
 
 ---
 
+### Phase: discord-hook-results — Discord Webhook Delivery Results Visibility
+
+**Goal**: Surface structured, operator-readable Discord webhook delivery results so each target send outcome, retries, and failure reasons are visible without reading raw logs.
+
+**Requirements:** [WI-1164-DISCORD-RESULTS-01, WI-1164-DISCORD-RESULTS-02, WI-1164-DISCORD-RESULTS-03]
+
+- `WI-1164-DISCORD-RESULTS-01`: Each webhook attempt emits a structured transport result with target label, attempts, final status, elapsed time, HTTP status or error, retry count, and posted card count when successful
+- `WI-1164-DISCORD-RESULTS-02`: Job completion output includes an operator-readable transport results block with aggregate counts and per-target outcome lines
+- `WI-1164-DISCORD-RESULTS-03`: Partial failure is explicit in the final job result and failed target labels plus failure reasons are surfaced in both programmatic and operator-facing outputs
+
+**Plans:** 1 plan in 1 wave
+
+Plans:
+- [ ] discord-hook-results-01-PLAN.md — Structured webhook delivery results + operator-facing partial-failure reporting tests (Wave 3)
+
+---
+
 ### Phase: ui-decision-contract — Public Decision Surface Contract
 
 **Goal**: Enforce a single, coherent public card decision surface so surfaced status, verification/certainty gating, and optional model context cannot contradict each other. PASS cards must not publicly expose BEST/raw-edge/fair signals in the primary body unless explicitly internal-labeled.
