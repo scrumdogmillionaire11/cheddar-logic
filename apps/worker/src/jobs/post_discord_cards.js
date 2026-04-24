@@ -106,6 +106,24 @@ function normalizeWebhookBucketToken(value) {
   return token.toLowerCase();
 }
 
+function normalizeWebhookPublishStatus(value) {
+  const token = normalizeToken(value);
+  if (!token) return '';
+  if (token === 'PLAY') return 'PLAY';
+  if (token === 'SLIGHT_EDGE') return 'SLIGHT_EDGE';
+  if (token === 'PASS_BLOCKED') return 'PASS_BLOCKED';
+  return 'PASS_BLOCKED';
+}
+
+function webhookPublishBucket(card) {
+  const payload = card?.payloadData || {};
+  if (!Object.prototype.hasOwnProperty.call(payload, 'webhook_publish_status')) return '';
+  const publishStatus = normalizeWebhookPublishStatus(payload.webhook_publish_status);
+  if (publishStatus === 'PLAY') return 'official';
+  if (publishStatus === 'SLIGHT_EDGE') return 'lean';
+  return 'pass_blocked';
+}
+
 // Prevents [object Object] leaking into Discord output
 function safeScalar(val) {
   if (val === null || val === undefined) return null;
@@ -427,6 +445,8 @@ function isDisplayableWebhookCard(card) {
   if (normalizeToken(card?.payloadData?.kind) === 'EVIDENCE' && !isFirstPeriodCard(card)) {
     return isDisplayableWebhookCardLegacy(card);
   }
+  const publishBucket = webhookPublishBucket(card);
+  if (publishBucket) return publishBucket === 'official' || publishBucket === 'lean';
   const eligible = card?.payloadData?.webhook_eligible;
   if (typeof eligible === 'boolean') return eligible;
   return isDisplayableWebhookCardLegacy(card);
@@ -589,6 +609,8 @@ function classifyDecisionBucket(card) {
   // EVIDENCE cards are context drivers — never standalone bet rows.
   // Override any pre-stamped webhook_bucket that may have been set when action=FIRE.
   if (normalizeToken(card?.payloadData?.kind) === 'EVIDENCE' && !isFirstPeriodCard(card)) return 'pass_blocked';
+  const publishBucket = webhookPublishBucket(card);
+  if (publishBucket) return publishBucket;
   const bucket = normalizeWebhookBucketToken(card?.payloadData?.webhook_bucket);
   if (bucket === 'official' || bucket === 'lean' || bucket === 'pass_blocked') return bucket;
   return classifyDecisionBucketLegacy(card);

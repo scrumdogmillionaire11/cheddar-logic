@@ -56,6 +56,9 @@ function stampNhlTotals(pd) {
     accelerantScore: pd.accelerant_score ?? null,
     hasRequiredInputs: true,
   });
+  if (pd.nhl_totals_status.status === 'PLAY') pd.final_play_state = 'OFFICIAL_PLAY';
+  else if (pd.nhl_totals_status.status === 'SLIGHT EDGE') pd.final_play_state = 'LEAN';
+  else if (pd.nhl_totals_status.status === 'PASS') pd.final_play_state = 'NO_PLAY';
   computeWebhookFields(pd);
 }
 
@@ -1296,7 +1299,168 @@ describe('WI-0934: NHL totals bucket policy — PLAY / SLIGHT EDGE / PASS', () =
 });
 
 describe('canonical webhook fields path', () => {
-  // classifyDecisionBucket reads webhook_bucket
+  it('classifyDecisionBucket reads webhook_publish_status before compatibility bucket fields', () => {
+    const playCard = makeCard({
+      payloadData: {
+        webhook_publish_status: 'PLAY',
+        webhook_bucket: 'pass_blocked',
+        webhook_eligible: false,
+      },
+    });
+    const slightEdgeCard = makeCard({
+      payloadData: {
+        webhook_publish_status: 'SLIGHT_EDGE',
+        webhook_bucket: 'official',
+      },
+    });
+    const passBlockedCard = makeCard({
+      payloadData: {
+        webhook_publish_status: 'PASS_BLOCKED',
+        webhook_bucket: 'official',
+        webhook_eligible: true,
+      },
+    });
+
+    expect(classifyDecisionBucket(playCard)).toBe('official');
+    expect(classifyDecisionBucket(slightEdgeCard)).toBe('lean');
+    expect(classifyDecisionBucket(passBlockedCard)).toBe('pass_blocked');
+    expect(isDisplayableWebhookCard(playCard)).toBe(true);
+    expect(isDisplayableWebhookCard(slightEdgeCard)).toBe(true);
+    expect(isDisplayableWebhookCard(passBlockedCard)).toBe(false);
+  });
+
+  it('buildDiscordSnapshot renders only PLAY and SLIGHT_EDGE canonical cards across mixed markets', () => {
+    const now = new Date('2026-03-20T14:00:00.000Z');
+    const cards = [
+      makeCard({
+        id: 'canonical-line-play',
+        cardType: 'nhl-total',
+        payloadData: {
+          webhook_publish_status: 'PLAY',
+          webhook_bucket: 'pass_blocked',
+          webhook_eligible: false,
+          kind: 'PLAY',
+          market_type: 'TOTAL',
+          selection: { side: 'OVER' },
+          line: 5.5,
+          price: -110,
+          model_projection: 6.1,
+          edge: 0.6,
+        },
+      }),
+      makeCard({
+        id: 'canonical-game-prop-lean',
+        cardType: 'nhl-tsoa-call',
+        payloadData: {
+          webhook_publish_status: 'SLIGHT_EDGE',
+          webhook_bucket: 'pass_blocked',
+          webhook_eligible: false,
+          webhook_lean_eligible: true,
+          kind: 'PLAY',
+          market_type: 'TSOA',
+          selection: { team: 'Boston Bruins' },
+          price: +140,
+          edge: 0.24,
+        },
+      }),
+      makeCard({
+        id: 'canonical-player-prop-lean',
+        cardType: 'nhl_player_shots_props',
+        payloadData: {
+          webhook_publish_status: 'SLIGHT_EDGE',
+          webhook_bucket: 'official',
+          webhook_eligible: false,
+          webhook_lean_eligible: true,
+          action: 'PASS',
+          market_type: 'SHOTS',
+          prediction: 'David Pastrnak over 3.5 shots',
+          price: -125,
+          player_projection: '4.2 shots',
+          edge: 0.31,
+        },
+      }),
+      makeCard({
+        id: 'canonical-line-pass',
+        cardType: 'nhl-total',
+        payloadData: {
+          webhook_publish_status: 'PASS_BLOCKED',
+          webhook_bucket: 'official',
+          webhook_eligible: true,
+          kind: 'PLAY',
+          market_type: 'TOTAL',
+          selection: { side: 'UNDER' },
+          line: 5.5,
+          price: -110,
+          model_projection: 5.1,
+          edge: 0.4,
+          why: 'Blocked Line Prop',
+        },
+      }),
+      makeCard({
+        id: 'canonical-game-prop-pass',
+        cardType: 'nhl-game-prop-anytime',
+        payloadData: {
+          webhook_publish_status: 'PASS_BLOCKED',
+          webhook_bucket: 'lean',
+          webhook_eligible: true,
+          kind: 'PLAY',
+          market_type: 'ANYTIME',
+          selection: { team: 'Blocked Game Prop' },
+          price: +220,
+          edge: 0.45,
+        },
+      }),
+      makeCard({
+        id: 'canonical-player-prop-pass',
+        cardType: 'nhl_player_shots_props',
+        payloadData: {
+          webhook_publish_status: 'PASS_BLOCKED',
+          webhook_bucket: 'lean',
+          webhook_eligible: true,
+          market_type: 'SHOTS',
+          prediction: 'Blocked Player over 2.5 shots',
+          price: -105,
+          edge: 0.5,
+        },
+      }),
+    ];
+
+    const snapshot = buildDiscordSnapshot({ cards, now });
+    const content = snapshot.messages.join('\n');
+
+    expect(snapshot.totalCards).toBe(3);
+    expect(snapshot.sectionCounts).toEqual({ official: 1, lean: 2, passBlocked: 0 });
+    expect(content).toContain('🟢 PLAY');
+    expect(content).toContain('🟡 Slight Edge');
+    expect(content).toContain('TOTAL | OVER 5.5 (-110)');
+    expect(content).toContain('TSOA | Boston Bruins (+140)');
+    expect(content).toContain('PROP | David Pastrnak over 3.5 shots (-125)');
+    expect(content).not.toContain('Blocked Line Prop');
+    expect(content).not.toContain('Blocked Game Prop');
+    expect(content).not.toContain('Blocked Player');
+    expect(content).not.toContain('⚪ PASS');
+    expect(content).not.toContain('⚠️ WATCH');
+  });
+
+  it('legacy rows without webhook_publish_status still fall back to compatibility fields', () => {
+    const card = makeCard({
+      payloadData: {
+        webhook_bucket: 'lean',
+        webhook_eligible: true,
+        webhook_lean_eligible: true,
+        action: 'PASS',
+        kind: 'PLAY',
+        selection: { side: 'OVER' },
+        edge: 0.3,
+      },
+    });
+
+    expect(classifyDecisionBucket(card)).toBe('lean');
+    expect(isDisplayableWebhookCard(card)).toBe(true);
+    expect(passesLeanThreshold(card)).toBe(true);
+  });
+
+  // classifyDecisionBucket reads webhook_bucket when canonical publish status is absent.
   it('classifyDecisionBucket returns official when webhook_bucket=official', () => {
     const card = makeCard({ payloadData: { webhook_bucket: 'official' } });
     expect(classifyDecisionBucket(card)).toBe('official');
