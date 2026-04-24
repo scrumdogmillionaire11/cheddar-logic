@@ -5,7 +5,12 @@ import Link from 'next/link';
 import { StickyBackButton } from '@/components/sticky-back-button';
 import { ProjectionResultsTable } from '@/components/results/ProjectionResultsTable';
 import type { ProjectionProxyRow } from '@/app/api/results/projection-settled/route';
-import type { ProjectionAccuracyResponse } from '@/lib/types/projection-accuracy';
+import {
+  normalizeToConfidenceTier,
+  type ConfidenceTier,
+  type ProjectionAccuracyBucket,
+  type ProjectionAccuracyResponse,
+} from '@/lib/types/projection-accuracy';
 
 type ResultsSummary = {
   totalCards: number;
@@ -111,6 +116,8 @@ type ProjectionSummaryRow = {
     rowsSeen: number;
   }>;
 };
+
+type ProjectionConfidenceFilter = 'ALL' | ConfidenceTier;
 
 type ResultsResponse = {
   success: boolean;
@@ -245,6 +252,18 @@ function roiTextClass(value: number | null | undefined) {
   return 'text-cloud/70';
 }
 
+function createEmptyProjectionAccuracyBucket(): ProjectionAccuracyBucket {
+  return {
+    line_evals: 0,
+    wins: 0,
+    losses: 0,
+    pushes: 0,
+    no_bets: 0,
+    hit_rate: null,
+    avg_absolute_error: null,
+  };
+}
+
 const SEGMENT_DEFINITIONS: SegmentFamily[] = [
   {
     segmentId: 'play',
@@ -272,6 +291,8 @@ export default function ResultsPage() {
   const [projectionActualsReady, setProjectionActualsReady] = useState(false);
   const [projectionSettledLoading, setProjectionSettledLoading] = useState(true);
   const [expandedProjectionFamilies, setExpandedProjectionFamilies] = useState<Set<string>>(new Set());
+  const [projectionConfidenceFilter, setProjectionConfidenceFilter] =
+    useState<ProjectionConfidenceFilter>('ALL');
   const projectionSettlementFamilies = useMemo(
     () =>
       new Set([
@@ -325,6 +346,64 @@ export default function ResultsPage() {
     return inFamily;
   }, [projectionAccuracy?.rows, mappedProjectionSettledRows, projectionSettlementFamilies]);
   const projectionAttributionSample = mappedProjectionAccuracyRows[0] || null;
+  const projectionAttributionSampleConfidenceTier = projectionAttributionSample
+    ? normalizeToConfidenceTier(projectionAttributionSample.confidence_band)
+    : null;
+  const projectionAttributionLegacyBand = projectionAttributionSample
+    ? String(projectionAttributionSample.confidence_band || '').trim().toUpperCase()
+    : '';
+  const projectionConfidenceCounts = useMemo(() => {
+    const counts: Record<ProjectionConfidenceFilter, number> = {
+      ALL: mappedProjectionSettledRows.length,
+      HIGH: 0,
+      MED: 0,
+      LOW: 0,
+    };
+    for (const row of mappedProjectionSettledRows) {
+      counts[row.confidenceTier] += 1;
+    }
+    return counts;
+  }, [mappedProjectionSettledRows]);
+  const projectionConfidenceSummary = useMemo(() => {
+    const byBand = projectionAccuracy?.summary.by_confidence_band || {};
+    const buckets = new Map<ConfidenceTier, ProjectionAccuracyBucket>([
+      ['HIGH', createEmptyProjectionAccuracyBucket()],
+      ['MED', createEmptyProjectionAccuracyBucket()],
+      ['LOW', createEmptyProjectionAccuracyBucket()],
+    ]);
+    const rawBands = new Map<ConfidenceTier, Set<string>>([
+      ['HIGH', new Set()],
+      ['MED', new Set()],
+      ['LOW', new Set()],
+    ]);
+
+    for (const [band, bucket] of Object.entries(byBand)) {
+      const tier = normalizeToConfidenceTier(band);
+      const target = buckets.get(tier);
+      if (!target) continue;
+      target.line_evals += bucket.line_evals;
+      target.wins += bucket.wins;
+      target.losses += bucket.losses;
+      target.pushes += bucket.pushes;
+      target.no_bets += bucket.no_bets;
+      if (band) rawBands.get(tier)?.add(String(band).trim().toUpperCase());
+    }
+
+    return (['HIGH', 'MED', 'LOW'] as ConfidenceTier[])
+      .map((tier) => ({
+        tier,
+        bucket: buckets.get(tier) || createEmptyProjectionAccuracyBucket(),
+        rawBands: Array.from(rawBands.get(tier) || []),
+      }))
+      .filter(
+        ({ bucket }) =>
+          bucket.line_evals > 0 ||
+          bucket.wins > 0 ||
+          bucket.losses > 0 ||
+          bucket.pushes > 0 ||
+          bucket.no_bets > 0,
+      );
+  }, [projectionAccuracy?.summary.by_confidence_band]);
   const moneylineCalibrationStats = useMemo(() => {
     const rows = mappedProjectionSettledRows.filter((row) => {
       const family = String(row.cardFamily || '').toUpperCase();
@@ -1018,10 +1097,30 @@ export default function ResultsPage() {
                 </span>
                 <span>Official pick rates exclude PASS; PASS remains calibration telemetry.</span>
               </div>
+              <div className="mt-4 flex flex-wrap items-center gap-2">
+                <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-cloud/50">
+                  Table Filter
+                </span>
+                {(['ALL', 'HIGH', 'MED', 'LOW'] as ProjectionConfidenceFilter[]).map((tier) => (
+                  <button
+                    key={tier}
+                    type="button"
+                    onClick={() => setProjectionConfidenceFilter(tier)}
+                    className={`rounded-full border px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] transition-colors ${
+                      projectionConfidenceFilter === tier
+                        ? 'border-emerald-400/40 bg-emerald-400/15 text-emerald-200'
+                        : 'border-white/10 bg-night/40 text-cloud/60'
+                    }`}
+                  >
+                    {tier} ({projectionConfidenceCounts[tier]})
+                  </button>
+                ))}
+              </div>
             </div>
             <ProjectionResultsTable
               rows={mappedProjectionSettledRows}
               attributionRows={mappedProjectionAccuracyRows}
+              confidenceFilter={projectionConfidenceFilter}
             />
             {projectionAccuracy && (
               <div className="mt-6 rounded-xl border border-white/10 bg-night/40 p-4">
@@ -1082,13 +1181,21 @@ export default function ResultsPage() {
                   <p className="font-semibold uppercase tracking-[0.16em] text-cloud/50">
                     Bucket Mapping
                   </p>
-                  <div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-                    <span className="rounded-lg border border-white/10 bg-night/50 px-2 py-1 font-mono">LOW: confidence_score &lt; 52%</span>
-                    <span className="rounded-lg border border-white/10 bg-night/50 px-2 py-1 font-mono">WATCH: 52%-57.99%</span>
-                    <span className="rounded-lg border border-white/10 bg-night/50 px-2 py-1 font-mono">TRUST: 58%-62.99%</span>
-                    <span className="rounded-lg border border-white/10 bg-night/50 px-2 py-1 font-mono">STRONG: &gt;= 63%</span>
+                  <div className="mt-2 grid gap-2 sm:grid-cols-3">
+                    <span className="rounded-lg border border-white/10 bg-night/50 px-2 py-1 font-mono">
+                      LOW: canonical LOW or legacy WATCH
+                    </span>
+                    <span className="rounded-lg border border-white/10 bg-night/50 px-2 py-1 font-mono">
+                      MED: canonical MED or legacy TRUST
+                    </span>
+                    <span className="rounded-lg border border-white/10 bg-night/50 px-2 py-1 font-mono">
+                      HIGH: canonical HIGH or legacy STRONG
+                    </span>
                   </div>
                   <p className="mt-3 text-cloud/60">
+                    Score-only fallback uses the canonical read-boundary thresholds: LOW &lt; 55%, MED 55%-69.99%, HIGH &gt;= 70%.
+                  </p>
+                  <p className="mt-2 text-cloud/60">
                     Rows with weak_direction_flag=1 or edge_distance &lt; 0.15 are excluded from directional W/L and still included in MAE and bias auditing.
                     FRAGILE is a presentation label for weak/no-edge directions, not a native confidence_band value.
                   </p>
@@ -1129,11 +1236,15 @@ export default function ResultsPage() {
                     </p>
                   </div>
                 </div>
-                {Object.keys(projectionAccuracy.summary.by_confidence_band).length > 0 && (
+                {projectionConfidenceSummary.length > 0 && (
                   <div className="mt-4 flex flex-wrap gap-2 text-xs text-cloud/60">
-                    {Object.entries(projectionAccuracy.summary.by_confidence_band).map(([band, row]) => (
-                      <span key={band} className="rounded-full border border-white/10 px-3 py-1">
-                        {band}: {row.wins}-{row.losses}
+                    {projectionConfidenceSummary.map(({ tier, bucket, rawBands }) => (
+                      <span
+                        key={tier}
+                        className="rounded-full border border-white/10 px-3 py-1"
+                        title={rawBands.length > 0 ? `Legacy buckets: ${rawBands.join(', ')}` : undefined}
+                      >
+                        {tier}: {bucket.wins}-{bucket.losses}
                       </span>
                     ))}
                   </div>
@@ -1154,8 +1265,14 @@ export default function ResultsPage() {
                         edge_distance: {formatDecimal(projectionAttributionSample.edge_distance, 3, { signed: false })}
                       </span>
                       <span className="rounded-lg border border-white/10 bg-white/5 px-2 py-1 font-mono">
-                        confidence_band: {projectionAttributionSample.confidence_band || 'UNKNOWN'}
+                        confidence_tier: {projectionAttributionSampleConfidenceTier || 'LOW'}
                       </span>
+                      {projectionAttributionLegacyBand &&
+                        projectionAttributionLegacyBand !== projectionAttributionSampleConfidenceTier && (
+                          <span className="rounded-lg border border-white/10 bg-white/5 px-2 py-1 font-mono">
+                            legacy_band: {projectionAttributionLegacyBand}
+                          </span>
+                        )}
                     </div>
                   ) : (
                     <p className="mt-2 text-cloud/50">
