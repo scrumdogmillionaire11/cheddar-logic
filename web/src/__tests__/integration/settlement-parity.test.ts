@@ -11,9 +11,9 @@
  * Run: npm --prefix web run test:results:settlement-parity
  */
 
-// @ts-expect-error
+// @ts-expect-error -- JS module lacks type declarations
 import db from '../../../../packages/data/src/db.js';
-// @ts-expect-error
+// @ts-expect-error -- JS module lacks type declarations
 import { setupIsolatedTestDb, startIsolatedNextServer } from '../db-test-runtime.js';
 
 import assert from 'node:assert/strict';
