@@ -352,3 +352,80 @@ describe('checkNhlMoneylineCoverage', () => {
     expect(pipelineWrites[0][2]).toBe('ok');
   });
 });
+
+describe('checkNhlSogSyncFreshness / checkNhlSogPullFreshness', () => {
+  let wasJobRecentlySuccessfulMock;
+  let upcomingNhlGameCount;
+  let pipelineWrites;
+  let checkNhlSogSyncFreshness;
+  let checkNhlSogPullFreshness;
+
+  beforeEach(() => {
+    jest.resetModules();
+    wasJobRecentlySuccessfulMock = jest.fn(() => true);
+    upcomingNhlGameCount = 2;
+    pipelineWrites = [];
+
+    jest.doMock('@cheddar-logic/data', () => ({
+      getDatabase: jest.fn(() => ({
+        prepare: jest.fn((sql) => {
+          if (sql.includes('COUNT(*)') && sql.includes('FROM games')) {
+            return { get: jest.fn(() => ({ cnt: upcomingNhlGameCount })) };
+          }
+          if (sql.includes('INSERT INTO pipeline_health')) {
+            return {
+              run: jest.fn((...args) => { pipelineWrites.push(args); }),
+            };
+          }
+          return { get: jest.fn(() => null), run: jest.fn(), all: jest.fn(() => []) };
+        }),
+      })),
+      insertJobRun: jest.fn(),
+      markJobRunSuccess: jest.fn(),
+      markJobRunFailure: jest.fn(),
+      createJob: jest.fn(),
+      wasJobRecentlySuccessful: wasJobRecentlySuccessfulMock,
+    }));
+
+    const mod = require('../jobs/check_pipeline_health');
+    checkNhlSogSyncFreshness = mod.checkNhlSogSyncFreshness;
+    checkNhlSogPullFreshness = mod.checkNhlSogPullFreshness;
+  });
+
+  test('sync: returns ok=true when sync_nhl_sog_player_ids ran within 1440 min', () => {
+    wasJobRecentlySuccessfulMock.mockReturnValue(true);
+    const result = checkNhlSogSyncFreshness();
+    expect(result.ok).toBe(true);
+    expect(wasJobRecentlySuccessfulMock).toHaveBeenCalledWith('sync_nhl_sog_player_ids', 1440);
+  });
+
+  test('sync: returns ok=false and writes failed when sync_nhl_sog_player_ids has not run', () => {
+    wasJobRecentlySuccessfulMock.mockReturnValue(false);
+    const result = checkNhlSogSyncFreshness();
+    expect(result.ok).toBe(false);
+    expect(result.reason).toContain('sync_nhl_sog_player_ids');
+    expect(pipelineWrites.some((w) => w[1] === 'sog_sync_freshness' && w[2] === 'failed')).toBe(true);
+  });
+
+  test('sync: returns ok=true (skipped) when no upcoming NHL games', () => {
+    upcomingNhlGameCount = 0;
+    const result = checkNhlSogSyncFreshness();
+    expect(result.ok).toBe(true);
+    expect(result.reason).toContain('model check skipped');
+  });
+
+  test('pull: returns ok=true when pull_nhl_player_shots ran within 1440 min', () => {
+    wasJobRecentlySuccessfulMock.mockReturnValue(true);
+    const result = checkNhlSogPullFreshness();
+    expect(result.ok).toBe(true);
+    expect(wasJobRecentlySuccessfulMock).toHaveBeenCalledWith('pull_nhl_player_shots', 1440);
+  });
+
+  test('pull: returns ok=false and writes failed when pull_nhl_player_shots has not run', () => {
+    wasJobRecentlySuccessfulMock.mockReturnValue(false);
+    const result = checkNhlSogPullFreshness();
+    expect(result.ok).toBe(false);
+    expect(result.reason).toContain('pull_nhl_player_shots');
+    expect(pipelineWrites.some((w) => w[1] === 'sog_pull_freshness' && w[2] === 'failed')).toBe(true);
+  });
+});

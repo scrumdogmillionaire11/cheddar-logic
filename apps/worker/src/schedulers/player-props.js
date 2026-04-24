@@ -220,15 +220,17 @@ function computePlayerPropsDueJobs(
     // Heavy (09:00): sync SOG player IDs + optional BLK chain + shots prop/model
     // Light (18:00+): shots prop + model only
     if (isHeavyWindow) {
-      // SOG player sync — daily refresh of tracked player roster
-      const sogSyncKey = keyNhlFixed(dateStr, hhmm);
-      jobs.push({
-        jobName: 'sync_nhl_sog_player_ids',
-        jobKey: sogSyncKey,
-        execute: syncNhlSogPlayerIds,
-        args: { jobKey: sogSyncKey, dryRun },
-        reason: `player-props heavy ingest NHL SOG player sync (${hhmm} ET)`,
-      });
+      // SOG player sync — gated on canonical feature flag, same contract as nhl.js
+      if (isFeatureEnabled('nhl', 'sog-sync')) {
+        const sogSyncKey = keyNhlFixed(dateStr, hhmm);
+        jobs.push({
+          jobName: 'sync_nhl_sog_player_ids',
+          jobKey: sogSyncKey,
+          execute: syncNhlSogPlayerIds,
+          args: { jobKey: sogSyncKey, dryRun },
+          reason: `player-props heavy ingest NHL SOG player sync (${hhmm} ET)`,
+        });
+      }
 
       // BLK ingest chain — suppressible via ENABLE_NHL_BLK_INGEST=false
       if (blkEnabled) {

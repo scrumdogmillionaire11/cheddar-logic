@@ -716,3 +716,28 @@ describe('pull_nhl_player_shots — enriched raw_data (shotsPer60 + projToi)', (
     expect(stored.ppRatePer60).toBeNull();
   });
 });
+
+describe('pull_nhl_player_shots — prerequisite failure semantics', () => {
+  beforeEach(() => {
+    mockUpsertPlayerShotLogCalls = [];
+    mockUpsertPlayerAvailabilityCalls = [];
+    jest.clearAllMocks();
+    global.fetch = jest.fn();
+    delete process.env.NHL_SOG_PLAYER_IDS;
+    delete process.env.NHL_SOG_EXCLUDE_PLAYER_IDS;
+  });
+
+  test('returns explicit prereq failure when both tracked_players and NHL_SOG_PLAYER_IDS are empty', async () => {
+    const { pullNhlPlayerShots } = loadModule();
+    const { insertJobRun, markJobRunFailure } = require('@cheddar-logic/data');
+
+    const result = await pullNhlPlayerShots({ dryRun: false });
+
+    expect(result.success).toBe(false);
+    expect(result.prereqFailure).toBe(true);
+    expect(result.reason).toBe('no_player_ids');
+    expect(insertJobRun).toHaveBeenCalled();
+    expect(markJobRunFailure).toHaveBeenCalled();
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+});
