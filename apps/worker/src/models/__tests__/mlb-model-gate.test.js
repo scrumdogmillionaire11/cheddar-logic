@@ -221,6 +221,9 @@ describe('projectFullGameTotalCard — WI-0944 gate semantics', () => {
   });
 
   test('edge below threshold remains PASS and preserves PASS reason continuity', () => {
+    // This fixture produces rawEdge > 0 (positive edge shrunk below the 0.75 lean threshold).
+    // PASS_NO_EDGE must NOT be emitted when the raw edge is positive — doing so would
+    // violate assertLegalPassNoEdge in market-eval. pass_reason_code is null in this case.
     const result = projectFullGameTotalCard(
       validHome,
       validAway,
@@ -230,10 +233,9 @@ describe('projectFullGameTotalCard — WI-0944 gate semantics', () => {
 
     expect(result).toBeTruthy();
     expect(result.status).toBe('PASS');
-    expect(result.pass_reason_code).toBe('PASS_NO_EDGE');
-    expect(result.reason_codes).toEqual(
-      expect.arrayContaining(['PASS_NO_EDGE']),
-    );
+    expect(result.raw_edge_value).toBeGreaterThan(0);
+    expect(result.pass_reason_code).not.toBe('PASS_NO_EDGE');
+    expect(result.reason_codes).not.toContain('PASS_NO_EDGE');
   });
 
   test('DEGRADED_MODEL with real edge surfaces as WATCH (not PASS) — edge-led decisioning', () => {

@@ -242,6 +242,8 @@ module.exports = {
   backfillProjectionAccuracyEvals:  projAccuracy.backfillProjectionAccuracyEvals,
   materializeProjectionAccuracyMarketHealth: projAccuracy.materializeProjectionAccuracyMarketHealth,
   deriveProjectionAccuracyCapture:  projAccuracy.deriveProjectionAccuracyCapture,
+  PROJECTION_ANALYTICS_CONTRACT_BY_MARKET_FAMILY: projAccuracy.PROJECTION_ANALYTICS_CONTRACT_BY_MARKET_FAMILY,
+  getProjectionAnalyticsContract:   projAccuracy.getProjectionAnalyticsContract,
   roundToNearestHalf:               projAccuracy.roundToNearestHalf,
   expectedOverProbability:          projAccuracy.expectedOverProbability,
   expectedDirectionProbability:     projAccuracy.expectedDirectionProbability,

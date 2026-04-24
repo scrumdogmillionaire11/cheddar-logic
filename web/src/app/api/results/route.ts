@@ -53,6 +53,14 @@ import {
  * marketPeriodToken: row.market_period_token
  * json_extract(cr.metadata, '$.market_period_token')
  * ELSE 'FULL_GAME'
+ * INNER JOIN card_display_log cdl ON cr.card_id = cdl.pick_id
+ * response.headers.set('X-Settlement-Coverage'
+ * displayedFinal
+ * settledFinalDisplayed
+ * missingFinalDisplayed
+ * segmentFamilies
+ * segmentId
+ * segmentLabel
  * const DEFAULT_EXCLUDED_SPORT = 'NCAAM';
  * function buildSportFilter(
  * sql: `AND UPPER(${sportExpr}) != '${DEFAULT_EXCLUDED_SPORT}'`

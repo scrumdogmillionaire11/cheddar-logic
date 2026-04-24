@@ -1499,7 +1499,10 @@ function projectFullGameTotalCard(homePitcher, awayPitcher, fullGameLine, contex
   }
 
   if (confidenceBelowGate && !isDegraded) reasonCodes.push('PASS_CONFIDENCE_GATE');
-  if (!hasLeanEdge && !hasBlockingPassReason(reasonCodes)) reasonCodes.push('PASS_NO_EDGE');
+  // PASS_NO_EDGE only applies when rawEdge is non-positive. A positive rawEdge that was
+  // shrunk below threshold is "below-threshold", not "no edge" — using PASS_NO_EDGE with a
+  // positive raw_edge_value violates the assertLegalPassNoEdge invariant in market-eval.
+  if (!hasLeanEdge && !(Number.isFinite(rawEdge) && rawEdge > 0) && !hasBlockingPassReason(reasonCodes)) reasonCodes.push('PASS_NO_EDGE');
 
   // WI-0944: DEGRADED_MODEL with edge present — surface as WATCH (LEAN) rather than hard PASS.
   // Confidence gate remains a hard veto only for FULL_MODEL paths; degraded projections

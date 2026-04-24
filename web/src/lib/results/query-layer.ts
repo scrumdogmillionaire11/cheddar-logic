@@ -96,6 +96,14 @@ export type ProjectionTrackingRow = {
   // Card family disambiguation
   canonical_market_key: string | null;
   prop_type: string | null;
+  // Canonical projection analytics materialized in projection_accuracy_evals
+  canonical_projection_raw: number | null;
+  canonical_projection_value: number | null;
+  canonical_win_probability: number | null;
+  canonical_edge_pp: number | null;
+  canonical_confidence_score: number | null;
+  canonical_confidence_band: string | null;
+  canonical_tracking_role: string | null;
 };
 
 export type ResultsQueryData = {
@@ -118,6 +126,27 @@ const ALLOWED_SPORTS = ['NHL', 'NBA', 'NCAAM', 'MLB', 'NFL'] as const;
 const ALLOWED_CATEGORIES = ['driver', 'call'] as const;
 const ALLOWED_MARKETS = ['moneyline', 'spread', 'total'] as const;
 export const DEFAULT_EXCLUDED_SPORT = 'NCAAM';
+
+const LATEST_PROJECTION_ACCURACY_CTE = `
+  WITH accuracy_latest AS (
+    SELECT
+      pae.card_id,
+      pae.projection_raw,
+      pae.projection_value,
+      pae.win_probability,
+      pae.edge_pp,
+      pae.confidence_score,
+      pae.confidence_band,
+      pae.tracking_role,
+      ROW_NUMBER() OVER (
+        PARTITION BY pae.card_id
+        ORDER BY
+          datetime(COALESCE(pae.captured_at, '1970-01-01T00:00:00Z')) DESC,
+          pae.id DESC
+      ) AS rn
+    FROM projection_accuracy_evals pae
+  )
+`;
 
 const DRIVER_PATTERNS = [
   '%-projection',
@@ -603,6 +632,7 @@ function queryProjectionTrackingRows(
   return db
     .prepare(
       `
+      ${LATEST_PROJECTION_ACCURACY_CTE}
       SELECT
         cr.sport,
         cr.card_type,
@@ -660,9 +690,17 @@ function queryProjectionTrackingRows(
         COALESCE(
           json_extract(cp.payload_data, '$.play.prop_type'),
           json_extract(cp.payload_data, '$.prop_type')
-        ) AS prop_type
+        ) AS prop_type,
+        CAST(al.projection_raw AS REAL) AS canonical_projection_raw,
+        CAST(al.projection_value AS REAL) AS canonical_projection_value,
+        CAST(al.win_probability AS REAL) AS canonical_win_probability,
+        CAST(al.edge_pp AS REAL) AS canonical_edge_pp,
+        CAST(al.confidence_score AS REAL) AS canonical_confidence_score,
+        al.confidence_band AS canonical_confidence_band,
+        al.tracking_role AS canonical_tracking_role
       FROM card_results cr
       LEFT JOIN card_payloads cp ON cp.id = cr.card_id
+      LEFT JOIN accuracy_latest al ON al.card_id = cr.card_id AND al.rn = 1
       INNER JOIN game_results gr ON gr.game_id = cr.game_id
       WHERE cr.card_type IN (${placeholders})
         AND gr.status = 'final'
