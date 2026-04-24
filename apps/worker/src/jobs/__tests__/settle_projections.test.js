@@ -727,6 +727,31 @@ describe('settleProjections — proxy eval integration', () => {
       agreement_group: 'DIRECT_SELECTION',
     });
   });
+
+  test('backfill mode materializes missing NHL 1P proxy rows from stored actual_result without refetching', async () => {
+    getUnsettledProjectionCards.mockReturnValue([{
+      ...makeProjectionCard('nhl-pace-1p', 1.7),
+      actual_result: JSON.stringify({ goals_1p: 2 }),
+    }]);
+
+    const result = await settleProjections({ dryRun: false, backfillMissingProxyEvals: true });
+
+    expect(result.success).toBe(true);
+    expect(result.backfilled).toBe(1);
+    expect(fetchNhlSnapshot).not.toHaveBeenCalled();
+    expect(setProjectionActualResult).not.toHaveBeenCalled();
+    expect(batchInsertProjectionProxyEvals).toHaveBeenCalledTimes(1);
+    const [, rows] = batchInsertProjectionProxyEvals.mock.calls[0];
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      card_id: 'card-nhl-pace-1p-proj',
+      card_family: 'NHL_1P_TOTAL',
+      proj_value: 1.7,
+      actual_value: 2,
+      proxy_line: 1.5,
+      graded_result: 'NO_BET',
+    });
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

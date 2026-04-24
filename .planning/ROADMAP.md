@@ -296,3 +296,18 @@ Plans:
 
 Plans:
 - [ ] WI-1135-01-PLAN.md — Interface-first decomposition of results route into query/transform/cache layers + explicit diagnostics gating + regression verification (Wave 1)
+
+---
+
+### Phase: WI-1156 — Projection Settlement Completeness And Desktop Projection Results Surface
+
+**Goal**: Fix projection settlement parity in both environments, complete deterministic settlement coverage for surfaced projection families (including NHL `1P O/U`), and deliver a desktop-readable projection results surface.
+
+**Requirements:** [WI-1156-SETTLE-01, WI-1156-SETTLE-02, WI-1156-API-01, WI-1156-BACKFILL-01, WI-1156-UI-01, WI-1156-LEGACY-01]
+
+**Plans:** 3 plans in 3 waves
+
+Plans:
+- [ ] WI-1156-01-PLAN.md — Worker settlement completeness + reproducible historical backfill path for in-scope families (Wave 1)
+- [ ] WI-1156-02-PLAN.md — Shared supported-family contract for projection-settled and projection-accuracy APIs + contract tests (Wave 2)
+- [ ] WI-1156-03-PLAN.md — Desktop projection results table/detail surface + legacy settlement/UI branch retirement verification (Wave 3)

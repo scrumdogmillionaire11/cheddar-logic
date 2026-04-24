@@ -10,6 +10,9 @@ const {
   settlePendingCards,
 } = require('../jobs/settle_pending_cards.js');
 const {
+  settleProjections,
+} = require('../jobs/settle_projections.js');
+const {
   backfillPeriodToken,
 } = require('../jobs/backfill_period_token.js');
 
@@ -784,5 +787,89 @@ describe('backfill_period_token job (backfillPeriodToken)', () => {
 
     expect(JSON.parse(row1p.metadata).market_period_token).toBe('1P');
     expect(JSON.parse(rowFg.metadata).market_period_token).toBe('FULL_GAME');
+  });
+});
+
+describe('settle_projections backfill mode', () => {
+  const BACKFILL_PROXY_DB_PATH = '/tmp/cheddar-test-projection-proxy-backfill.db';
+  const BACKFILL_PROXY_LOCK_PATH = `${BACKFILL_PROXY_DB_PATH}.lock`;
+
+  function removeProxyBackfillBackups() {
+    const backupsDir = path.join(path.dirname(BACKFILL_PROXY_DB_PATH), 'backups');
+    if (!fs.existsSync(backupsDir)) return;
+    for (const entry of fs.readdirSync(backupsDir)) {
+      if (entry.startsWith('cheddar-before-settle-cards-') && entry.endsWith('.db')) {
+        try { fs.unlinkSync(path.join(backupsDir, entry)); } catch {}
+      }
+    }
+  }
+
+  beforeEach(async () => {
+    process.env.CHEDDAR_DB_PATH = BACKFILL_PROXY_DB_PATH;
+    process.env.CHEDDAR_DB_AUTODISCOVER = 'false';
+    process.env.CHEDDAR_DB_ALLOW_MULTI_PROCESS = 'false';
+
+    try { fs.unlinkSync(BACKFILL_PROXY_DB_PATH); } catch {}
+    try { fs.unlinkSync(BACKFILL_PROXY_LOCK_PATH); } catch {}
+    removeProxyBackfillBackups();
+
+    await runMigrations();
+  });
+
+  afterEach(() => {
+    closeDatabase();
+    try { fs.unlinkSync(BACKFILL_PROXY_DB_PATH); } catch {}
+    try { fs.unlinkSync(BACKFILL_PROXY_LOCK_PATH); } catch {}
+    removeProxyBackfillBackups();
+  });
+
+  test('materializes missing NHL 1P proxy eval rows from stored actual_result', async () => {
+    let db = getDatabase();
+    const now = new Date(Date.now() - 5 * 60 * 60 * 1000).toISOString();
+
+    db.exec('ALTER TABLE card_payloads ADD COLUMN actual_result TEXT');
+
+    db.prepare(`
+      INSERT INTO games (id, sport, game_id, home_team, away_team, game_time_utc, status)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run('g-backfill-1p', 'NHL', 'backfill-1p-game', 'Home', 'Away', now, 'completed');
+
+    db.prepare(`
+      INSERT INTO card_payloads (
+        id, game_id, sport, card_type, card_title, created_at, payload_data, actual_result
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      'card-backfill-1p',
+      'backfill-1p-game',
+      'nhl',
+      'nhl-pace-1p',
+      'Backfill NHL 1P',
+      now,
+      JSON.stringify({ projected_total: 1.7 }),
+      JSON.stringify({ goals_1p: 2 }),
+    );
+
+    closeDatabase();
+
+    const result = await settleProjections({ dryRun: false, backfillMissingProxyEvals: true });
+
+    expect(result.success).toBe(true);
+    expect(result.backfilled).toBe(1);
+
+    db = getDatabase();
+    const rows = db.prepare(`
+      SELECT card_id, card_family, proxy_line, actual_value, graded_result
+      FROM projection_proxy_evals
+      WHERE card_id = ?
+    `).all('card-backfill-1p');
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      card_id: 'card-backfill-1p',
+      card_family: 'NHL_1P_TOTAL',
+      proxy_line: 1.5,
+      actual_value: 2,
+      graded_result: 'NO_BET',
+    });
   });
 });
