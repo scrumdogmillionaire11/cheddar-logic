@@ -126,18 +126,6 @@ function projectionDisplayDedupKey(row: ProjectionProxyRow): string {
   ].join('|');
 }
 
-function tierBadgeClass(tier: 'PLAY' | 'SLIGHT_EDGE' | 'LEAN' | 'STRONG' | 'PASS'): string {
-  if (tier === 'PLAY')
-    return 'border-blue-500/60 bg-blue-500/25 text-blue-100 font-semibold';
-  if (tier === 'SLIGHT_EDGE')
-    return 'border-sky-500/40 bg-sky-500/15 text-sky-200';
-  if (tier === 'LEAN')
-    return 'border-blue-500/40 bg-blue-500/15 text-blue-200';
-  if (tier === 'STRONG')
-    return 'border-blue-600/70 bg-blue-600/30 text-blue-50 font-bold';
-  return 'border-white/20 bg-white/5 text-cloud/50';
-}
-
 function confidenceBadgeClass(band: ConfidenceTier): string {
   if (band === 'HIGH')
     return 'border-emerald-500/40 bg-emerald-500/15 text-emerald-200';
@@ -179,7 +167,6 @@ function ProjectionRow({ row, attribution }: ProjectionRowProps) {
     : fmtNum(row.actualValue, 3);
   const direction = row.recommendedSide;
   const directionLabel = moneylineFamily ? moneylineDirectionLabel(row) : direction;
-  const tier = row.tier;
   const outcome = row.gradedResult;
   const attributionProjectionRaw = fmtNum(attribution?.projection_raw, 3);
   const attributionSyntheticLine = fmtNum(attribution?.synthetic_line ?? row.proxyLine, 3);
@@ -187,12 +174,18 @@ function ProjectionRow({ row, attribution }: ProjectionRowProps) {
     ? fmtPct(row.edgePp ?? attribution?.edge_pp ?? null, 1, { signed: true })
     : fmtNum(attribution?.edge_distance, 3);
   const attributionEdgeLabel = moneylineFamily ? 'edge_pp:' : 'edge_distance:';
-  const attributionBand = row.confidenceBand || attribution?.confidence_band || 'UNKNOWN';
-  const confidenceLabel = row.confidenceScore !== null && row.confidenceScore !== undefined
-    ? `${attributionBand} (${Math.round(row.confidenceScore)})`
-    : row.predictionSignalMissing
-      ? 'MISSING SIGNAL'
-      : attributionBand;
+  const rawConfidenceBand = normalizeToken(row.confidenceBand || attribution?.confidence_band);
+  const legacyConfidenceBand =
+    rawConfidenceBand && rawConfidenceBand !== row.confidenceTier
+      ? rawConfidenceBand
+      : null;
+  const confidenceScoreLabel =
+    row.confidenceScore !== null && row.confidenceScore !== undefined
+      ? `${Math.round(row.confidenceScore)}%`
+      : row.predictionSignalMissing
+        ? 'MISSING SIGNAL'
+        : null;
+  const legacyPickTier = row.tier && row.tier !== 'PASS' ? row.tier : null;
 
   return (
     <>
@@ -212,8 +205,12 @@ function ProjectionRow({ row, attribution }: ProjectionRowProps) {
             </span>
           </span>
           <span className="flex justify-center">
-            <span className={`rounded-full border px-2 py-0.5 text-xs ${moneylineFamily ? confidenceBadgeClass(row.confidenceTier) : tierBadgeClass(tier)}`}>
-              {moneylineFamily ? confidenceLabel : tier}
+            <span
+              className={`rounded-full border px-2 py-0.5 text-xs font-semibold ${confidenceBadgeClass(
+                row.confidenceTier,
+              )}`}
+            >
+              {row.confidenceTier}
             </span>
           </span>
           <span className="text-right font-mono text-cloud/50">{edge}</span>
@@ -228,7 +225,7 @@ function ProjectionRow({ row, attribution }: ProjectionRowProps) {
             </span>
           </span>
         </div>
-        <div className="mt-2 grid grid-cols-4 gap-2 text-[11px] text-cloud/55">
+        <div className="mt-2 flex flex-wrap gap-2 text-[11px] text-cloud/55">
           <span className="rounded-lg border border-white/10 bg-white/5 px-2 py-1 font-mono">
             projection_raw: {attributionProjectionRaw}
           </span>
@@ -238,9 +235,21 @@ function ProjectionRow({ row, attribution }: ProjectionRowProps) {
           <span className="rounded-lg border border-white/10 bg-white/5 px-2 py-1 font-mono">
             {attributionEdgeLabel} {attributionEdgeDistance}
           </span>
-          <span className="rounded-lg border border-white/10 bg-white/5 px-2 py-1 font-mono">
-            confidence_band: {attributionBand}
-          </span>
+          {confidenceScoreLabel && (
+            <span className="rounded-lg border border-white/10 bg-white/5 px-2 py-1 font-mono">
+              confidence_score: {confidenceScoreLabel}
+            </span>
+          )}
+          {legacyConfidenceBand && (
+            <span className="rounded-lg border border-white/10 bg-white/5 px-2 py-1 font-mono">
+              legacy_band: {legacyConfidenceBand}
+            </span>
+          )}
+          {legacyPickTier && (
+            <span className="rounded-lg border border-white/10 bg-white/5 px-2 py-1 font-mono">
+              legacy_pick_tier: {legacyPickTier}
+            </span>
+          )}
         </div>
         {moneylineFamily && row.expectedOutcomeLabel && (
           <div className="mt-2 text-[11px] uppercase tracking-[0.16em] text-cloud/45">
@@ -268,14 +277,13 @@ function ProjectionRow({ row, attribution }: ProjectionRowProps) {
           <span className={`rounded-full border px-2 py-0.5 text-xs ${directionBadgeClass(direction)}`}>
             {directionLabel}
           </span>
-          <span className={`rounded-full border px-2 py-0.5 text-xs ${tierBadgeClass(tier)}`}>
-            {tier}
+          <span
+            className={`rounded-full border px-2 py-0.5 text-xs font-semibold ${confidenceBadgeClass(
+              row.confidenceTier,
+            )}`}
+          >
+            {row.confidenceTier}
           </span>
-          {moneylineFamily && (
-            <span className={`rounded-full border px-2 py-0.5 text-xs ${confidenceBadgeClass(row.confidenceTier)}`}>
-              {confidenceLabel}
-            </span>
-          )}
         </div>
         <div className="mt-2 grid grid-cols-4 gap-2 text-xs">
           <div className="rounded-lg border border-white/10 bg-white/5 px-2 py-1.5 text-center">
@@ -295,7 +303,7 @@ function ProjectionRow({ row, attribution }: ProjectionRowProps) {
             <p className="text-cloud/50">Score</p>
           </div>
         </div>
-        <div className="mt-2 grid grid-cols-2 gap-2 text-[11px] text-cloud/55">
+        <div className="mt-2 flex flex-wrap gap-2 text-[11px] text-cloud/55">
           <span className="rounded-lg border border-white/10 bg-white/5 px-2 py-1 font-mono">
             projection_raw: {attributionProjectionRaw}
           </span>
@@ -305,9 +313,21 @@ function ProjectionRow({ row, attribution }: ProjectionRowProps) {
           <span className="rounded-lg border border-white/10 bg-white/5 px-2 py-1 font-mono">
             {attributionEdgeLabel} {attributionEdgeDistance}
           </span>
-          <span className="rounded-lg border border-white/10 bg-white/5 px-2 py-1 font-mono">
-            confidence_band: {attributionBand}
-          </span>
+          {confidenceScoreLabel && (
+            <span className="rounded-lg border border-white/10 bg-white/5 px-2 py-1 font-mono">
+              confidence_score: {confidenceScoreLabel}
+            </span>
+          )}
+          {legacyConfidenceBand && (
+            <span className="rounded-lg border border-white/10 bg-white/5 px-2 py-1 font-mono">
+              legacy_band: {legacyConfidenceBand}
+            </span>
+          )}
+          {legacyPickTier && (
+            <span className="rounded-lg border border-white/10 bg-white/5 px-2 py-1 font-mono">
+              legacy_pick_tier: {legacyPickTier}
+            </span>
+          )}
         </div>
         {moneylineFamily && row.expectedOutcomeLabel && (
           <div className="text-[11px] uppercase tracking-[0.16em] text-cloud/45">
@@ -353,7 +373,7 @@ function CardFamilySection({
       <span className="col-span-2">Matchup</span>
       <span className="text-right">Projected</span>
       <span className="text-center">Direction</span>
-      <span className="text-center">Tier / Conf</span>
+      <span className="text-center">Confidence</span>
       <span className="text-right">Edge</span>
       <span className="text-right">Actual</span>
       <span className="text-right">Outcome</span>
@@ -401,11 +421,13 @@ function CardFamilySection({
 interface ProjectionResultsTableProps {
   rows: ProjectionProxyRow[];
   attributionRows?: ProjectionAccuracyRecord[];
+  confidenceFilter?: 'ALL' | ConfidenceTier;
 }
 
 export function ProjectionResultsTable({
   rows,
   attributionRows = [],
+  confidenceFilter = 'ALL',
 }: ProjectionResultsTableProps) {
   if (rows.length === 0) {
     return (
@@ -421,8 +443,12 @@ export function ProjectionResultsTable({
   const dedupedRows = Array.from(
     new Map(rows.map((row) => [projectionDisplayDedupKey(row), row] as const)).values(),
   );
+  const visibleRows =
+    confidenceFilter === 'ALL'
+      ? dedupedRows
+      : dedupedRows.filter((row) => row.confidenceTier === confidenceFilter);
 
-  const groupedRows = dedupedRows.reduce<Map<string, ProjectionProxyRow[]>>((groups, row) => {
+  const groupedRows = visibleRows.reduce<Map<string, ProjectionProxyRow[]>>((groups, row) => {
     const key = row.cardFamily || 'UNKNOWN';
     const group = groups.get(key);
     if (group) {
@@ -442,6 +468,14 @@ export function ProjectionResultsTable({
     },
     new Map(),
   );
+
+  if (visibleRows.length === 0) {
+    return (
+      <div className="rounded-xl border border-white/10 bg-night/30 px-4 py-8 text-center text-sm text-cloud/60">
+        No settled projection records match the selected confidence tier yet.
+      </div>
+    );
+  }
 
   return (
     <div className="mt-6 space-y-8">
