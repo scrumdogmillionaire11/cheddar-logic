@@ -861,6 +861,34 @@ describe('settleProjections — nhl-player-shots mismatch detection (WI-0909)', 
   });
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// resolveMoneylineConfidenceBucket — canonical resolution chain (WI-1145)
+// ─────────────────────────────────────────────────────────────────────────────
+
+const { resolveMoneylineConfidenceBucket } = require('../../audit/projection_evaluator');
+
+describe('resolveMoneylineConfidenceBucket — canonical resolution chain', () => {
+  test('Case 1: top-level confidence_band present returns its bucket', () => {
+    const result = resolveMoneylineConfidenceBucket({ payload: { confidence_band: 'HIGH', confidence_score: 60 } });
+    expect(result).toBe('HIGH');
+  });
+
+  test('Case 2: top-level absent, drivers[0].confidence_band present returns correct bucket', () => {
+    const result = resolveMoneylineConfidenceBucket({ payload: { drivers: [{ confidence_band: 'MED' }] } });
+    expect(result).toBe('MED');
+  });
+
+  test('Case 3: all band fields absent with confidence_score present derives bucket from score', () => {
+    const result = resolveMoneylineConfidenceBucket({ payload: { confidence_score: 72 } });
+    expect(result).toBe('HIGH');
+  });
+
+  test('Case 4: all fields absent returns LOW default', () => {
+    const result = resolveMoneylineConfidenceBucket({ payload: {} });
+    expect(result).toBe('LOW');
+  });
+});
+
 function makeFullGameSnapshot({ fullGameByPlayerId = {}, playerIdByNormalizedName = {} } = {}) {
   return {
     available: true,

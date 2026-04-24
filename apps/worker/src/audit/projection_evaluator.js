@@ -201,7 +201,8 @@ function resolveMoneylineConfidenceBucket(row = {}) {
       row.confidence_band ??
       payload.confidence_bucket ??
       payload.confidence_band ??
-      getPayloadValue(payload, ['projection_accuracy', 'confidence_band']),
+      getPayloadValue(payload, ['projection_accuracy', 'confidence_band']) ??
+      getPayloadValue(payload, ['drivers', '0', 'confidence_band']),
     row.confidence_score ??
       payload.confidence_score ??
       getPayloadValue(payload, ['projection_accuracy', 'confidence_score']),
@@ -797,4 +798,5 @@ module.exports = {
   buildProjectionProxyMarketRows,
   PROXY_LINES_BY_FAMILY,
   PROXY_TIER_BANDS,
+  resolveMoneylineConfidenceBucket,
 };
