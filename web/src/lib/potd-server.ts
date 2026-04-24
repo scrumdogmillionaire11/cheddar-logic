@@ -965,3 +965,71 @@ export async function getPotdSettledHistoryData(): Promise<PotdSettledHistoryDat
     if (db) closeReadOnlyInstance(db);
   }
 }
+
+export type PotdPendingData = {
+  pendingCount: number;
+  pending: PotdNearMissSettledPlay[];
+};
+
+export async function getPotdPendingData(): Promise<PotdPendingData> {
+  let db: ReturnType<typeof getDatabaseReadOnly> | null = null;
+  try {
+    await ensureDbReady();
+    db = getDatabaseReadOnly();
+
+    const rawRows = (db
+      .prepare(
+        `SELECT
+           sc.id,
+           sc.play_date,
+           sc.sport,
+           sc.game_id,
+           sc.home_team,
+           sc.away_team,
+           sc.market_type,
+           sc.line,
+           sc.selection_label,
+           sc.game_time_utc,
+           COALESCE(sr.status, 'pending') AS status,
+           sr.result,
+           sr.pnl_units,
+           sr.virtual_stake_units,
+           sc.edge_pct,
+           sc.candidate_identity_key,
+           sc.captured_at AS settled_sort_at
+         FROM potd_shadow_candidates sc
+         LEFT JOIN potd_shadow_results sr
+           ON (sr.shadow_candidate_id = sc.id)
+           OR (
+             sr.play_date = sc.play_date
+             AND sr.candidate_identity_key = sc.candidate_identity_key
+           )
+         WHERE COALESCE(sr.status, 'pending') NOT IN ('settled', 'non_gradeable')
+         ORDER BY sc.play_date DESC, datetime(sc.game_time_utc) ASC`,
+      )
+      .all() as PotdNearMissSettledRow[]);
+
+    const pendingRows = dedupeNearMissRowsByMarketMatch(rawRows).map((row) => ({
+      id: String(row.id),
+      playDate: row.play_date,
+      sport: row.sport || '--',
+      homeTeam: row.home_team || '--',
+      awayTeam: row.away_team || '--',
+      marketType: row.market_type || '--',
+      selectionLabel: row.selection_label || '--',
+      gameTimeUtc: row.game_time_utc || null,
+      gameTimeEtLabel: formatEtDateTime(row.game_time_utc),
+      result: row.result || null,
+      pnlUnits: row.pnl_units,
+      virtualStakeUnits: row.virtual_stake_units,
+      edgePct: row.edge_pct,
+    }));
+
+    return {
+      pendingCount: pendingRows.length,
+      pending: pendingRows,
+    };
+  } finally {
+    if (db) closeReadOnlyInstance(db);
+  }
+}
