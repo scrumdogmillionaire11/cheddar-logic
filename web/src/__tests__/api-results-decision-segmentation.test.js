@@ -41,69 +41,93 @@ async function validateResultsSegmentationSourceContract(assert) {
     new URL('../app/api/results/route.ts', import.meta.url),
     'utf8',
   );
+  const queryLayerSource = await fs.readFile(
+    new URL('../lib/results/query-layer.ts', import.meta.url),
+    'utf8',
+  );
+  const transformLayerSource = await fs.readFile(
+    new URL('../lib/results/transform-layer.ts', import.meta.url),
+    'utf8',
+  );
+  const projectionMetricsSource = await fs.readFile(
+    new URL('../app/api/results/projection-metrics.ts', import.meta.url),
+    'utf8',
+  );
 
   assert.ok(
-    routeSource.includes("type DecisionSegmentId = 'play' | 'slight_edge';"),
+    transformLayerSource.includes(
+      "export type DecisionSegmentId = 'play' | 'slight_edge';",
+    ),
     'results route must define play/slight_edge segment ids',
   );
   assert.ok(
-    routeSource.includes(
+    transformLayerSource.includes(
       "{ id: 'play', label: 'PLAY', canonicalStatus: 'PLAY' }",
     ) &&
-      routeSource.includes(
+      transformLayerSource.includes(
         "{ id: 'slight_edge', label: 'SLIGHT EDGE', canonicalStatus: 'LEAN' }",
       ),
     'results route must keep PLAY and SLIGHT EDGE segment metadata',
   );
   assert.ok(
-    routeSource.includes("function deriveDecisionSegment(tier: 'PLAY' | 'LEAN')"),
+    transformLayerSource.includes(
+      "export function deriveDecisionSegment(",
+    ) &&
+      transformLayerSource.includes("tier: 'PLAY' | 'LEAN'"),
     'results route must define deriveDecisionSegment helper',
   );
   assert.ok(
-    routeSource.includes(
+    transformLayerSource.includes(
       "return tier === 'PLAY' ? DECISION_SEGMENTS[0] : DECISION_SEGMENTS[1];",
     ),
     'results route must map PLAY/LEAN tiers onto canonical decision segments',
   );
   assert.ok(
-    routeSource.includes('segmentFamilies = DECISION_SEGMENTS.map') &&
-      routeSource.includes("decisionTier === 'PLAY'") &&
-      routeSource.includes("'SLIGHT EDGE'"),
+    transformLayerSource.includes('const segmentFamilies = DECISION_SEGMENTS.map') &&
+      transformLayerSource.includes("decisionTier === 'PLAY'") &&
+      transformLayerSource.includes("'SLIGHT EDGE'"),
     'results route must derive segment families and ledger labels from canonical decision tiers',
   );
   assert.ok(
-    routeSource.includes("from './projection-metrics';") &&
-      routeSource.includes('buildProjectionSummaries') &&
-      routeSource.includes('deriveResultCardMode') &&
-      routeSource.includes("if (deriveResultCardMode(payload, row.card_type) !== 'ODDS_BACKED')") &&
-      routeSource.includes('const projectionSummaries = buildProjectionSummaries(') &&
-      routeSource.includes('projectionSummaries,'),
+    transformLayerSource.includes("from '@/app/api/results/projection-metrics';") &&
+      transformLayerSource.includes('buildProjectionSummaries') &&
+      projectionMetricsSource.includes('export function deriveResultCardMode(') &&
+      transformLayerSource.includes(
+        "if (deriveResultCardMode(payload, row.card_type) !== 'ODDS_BACKED')",
+      ) &&
+      transformLayerSource.includes(
+        'const projectionSummaries = buildProjectionSummaries(',
+      ) &&
+      routeSource.includes('projectionTrackingRows') &&
+      routeSource.includes('buildResultsAggregation('),
     'results route must split ODDS_BACKED betting rows from PROJECTION_ONLY projection summaries',
   );
   assert.ok(
-    routeSource.includes('LEFT JOIN clv_ledger clv ON clv.card_id = cr.card_id') &&
-      routeSource.includes('const clv =') &&
-      routeSource.includes('clv,'),
+    queryLayerSource.includes(
+      'LEFT JOIN clv_ledger clv ON clv.card_id = cr.card_id',
+    ) &&
+      transformLayerSource.includes('const clv =') &&
+      transformLayerSource.includes('clv,'),
     'results route must left join clv_ledger and expose optional clv data',
   );
   assert.ok(
-    routeSource.includes('END AS market_period_token') &&
-      routeSource.includes('marketPeriodToken: row.market_period_token'),
+    queryLayerSource.includes('END AS market_period_token') &&
+      transformLayerSource.includes('marketPeriodToken: row.market_period_token'),
     'results route must expose market_period_token on ledger rows as marketPeriodToken',
   );
   // WI-0607: COALESCE(persisted, derived) pattern must be present for both SQL blocks
   assert.ok(
-    routeSource.includes("json_extract(cr.metadata, '$.market_period_token')"),
+    queryLayerSource.includes("json_extract(cr.metadata, '$.market_period_token')"),
     'results route must prefer persisted metadata.market_period_token via json_extract',
   );
   assert.ok(
-    routeSource.includes("ELSE 'FULL_GAME'"),
+    queryLayerSource.includes("ELSE 'FULL_GAME'"),
     'results route must retain derived CASE fallback expression for backward compatibility',
   );
   assert.ok(
-    routeSource.includes("const DEFAULT_EXCLUDED_SPORT = 'NCAAM';") &&
-      routeSource.includes('function buildSportFilter(') &&
-      routeSource.includes(
+    queryLayerSource.includes("export const DEFAULT_EXCLUDED_SPORT = 'NCAAM';") &&
+      queryLayerSource.includes('export function buildSportFilter(') &&
+      queryLayerSource.includes(
         "sql: `AND UPPER(${sportExpr}) != '${DEFAULT_EXCLUDED_SPORT}'`",
       ),
     'results route must suppress NCAAM by default while preserving explicit sport filters',
