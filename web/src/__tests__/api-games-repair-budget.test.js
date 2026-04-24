@@ -66,9 +66,10 @@ async function runSourceContractAssertions(assert) {
     'route must hard-require worker decision_v2 for non-PROP wave-1 rows and map fields from it',
   );
   assert.ok(
-    source.includes('API_GAMES_HORIZON_HOURS') &&
-      source.includes('HAS_API_GAMES_HORIZON'),
-    'route must expose configurable API_GAMES_HORIZON_HOURS query window',
+    source.includes("horizon_contract: 'v1-et-boundary-aware'") &&
+      !source.includes('API_GAMES_HORIZON_HOURS') &&
+      !source.includes('HAS_API_GAMES_HORIZON'),
+    'route must enforce fixed ET-boundary horizon contract (no configurable hour-window overrides)',
   );
   assert.ok(
     source.includes("'base_games'") &&
@@ -80,7 +81,8 @@ async function runSourceContractAssertions(assert) {
     'route must define all required stage counters',
   );
   assert.ok(
-    source.includes('diagnostics: flowDiagnostics'),
+    source.includes('const combinedDiagnostics') &&
+      source.includes('diagnostics: combinedDiagnostics'),
     'route must attach non-prod diagnostics metadata to response meta',
   );
   assert.ok(

@@ -86,7 +86,7 @@ async function runTests() {
     const pathModule = await import('node:path');
     const fs = fsModule.default || fsModule;
     const path = pathModule.default || pathModule;
-    const routePath = path.resolve('src/app/api/games/route.ts');
+    const routePath = path.resolve('src/lib/games/route-handler.ts');
     const routeSource = fs.readFileSync(routePath, 'utf8');
 
     console.log('── Section 1: Route contract assertions ──');
@@ -125,9 +125,8 @@ async function runTests() {
     );
     assert(
       routeSource.includes('activeStartUtc') &&
-        routeSource.includes('ACTIVE_LOOKBACK_HOURS') &&
-        routeSource.includes("lifecycleMode === 'active' ? activeStartUtc : gamesStartUtc"),
-      'route uses rolling activeStartUtc for active mode (not todayUtc) to include late-night in-progress games',
+        routeSource.includes('resolveGamesQueryStartUtc({'),
+      'route uses ET-boundary activeStartUtc (yesterday midnight ET) for active mode to catch late-night in-progress games',
     );
 
     console.log();
@@ -385,6 +384,185 @@ async function runTests() {
     .prepare(`DELETE FROM games WHERE game_id LIKE '${PROD_PARITY_PREFIX}%'`)
     .run();
   console.log();
+
+    // -----------------------------------------------------------------------
+    // Section 4: ET-Day Boundary Inclusivity (WI-1154 Test 1)
+    // -----------------------------------------------------------------------
+    console.log('── Section 4: ET-day boundary inclusivity ──');
+    {
+      // Mock: now = 2026-04-24 18:00:00 ET = 2026-04-24 22:00:00 UTC
+      // Expected horizon_end = 2026-04-25 23:59:59 ET = 2026-04-26 03:59:59 UTC
+      const ET_TEST_PREFIX = 'et-boundary-';
+      client.prepare(`DELETE FROM games WHERE game_id LIKE '${ET_TEST_PREFIX}%'`).run();
+
+      const nowEt = new Date('2026-04-24T22:00:00Z'); // 18:00 ET
+      const nowUtcStr = toSqlUtc(nowEt);
+
+      // Compute ET-boundary horizon end inline (mirrors query-layer.ts logic)
+      const etDateStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(nowEt);
+      const [etYear, etMonth, etDay] = etDateStr.split('-').map(Number);
+      const dayPlusTwoNoon = new Date(Date.UTC(etYear, etMonth - 1, etDay + 2, 17, 0, 0));
+      const futureTzPart = new Intl.DateTimeFormat('en-US', {
+        timeZone: 'America/New_York', timeZoneName: 'shortOffset',
+      }).formatToParts(dayPlusTwoNoon).find(p => p.type === 'timeZoneName').value;
+      const futureOffset = parseInt(futureTzPart.replace('GMT', '') || '-5', 10);
+      const futureSign = futureOffset < 0 ? '-' : '+';
+      const futureAbsHours = Math.abs(futureOffset).toString().padStart(2, '0');
+      const dayPlusTwoDateStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(dayPlusTwoNoon);
+      const dayPlusTwoMidnight = new Date(`${dayPlusTwoDateStr}T00:00:00${futureSign}${futureAbsHours}:00`);
+      const horizonEndUtc = toSqlUtc(new Date(dayPlusTwoMidnight.getTime() - 1000));
+
+      // horizonEndUtc should be '2026-04-26 03:59:59'
+      assert(
+        horizonEndUtc === '2026-04-26 03:59:59',
+        `ET-boundary: 18:00 ET today → horizon = 2026-04-26 03:59:59 UTC (got ${horizonEndUtc})`,
+      );
+
+      // Case 1: Game at 2026-04-25 10:00:00 UTC (within tomorrow end) — INCLUDED
+      const gameInsideId = `${ET_TEST_PREFIX}inside`;
+      client.prepare(
+        `INSERT OR REPLACE INTO games (id, sport, game_id, home_team, away_team, game_time_utc, status, created_at, updated_at)
+         VALUES (?, 'mlb', ?, 'Home', 'Away', '2026-04-25 10:00:00', 'scheduled', datetime('now'), datetime('now'))`,
+      ).run(`id-${gameInsideId}`, gameInsideId);
+
+      // Case 2: Game at 2026-04-26 04:00:00 UTC (after tomorrow end) — EXCLUDED
+      const gameOutsideId = `${ET_TEST_PREFIX}outside`;
+      client.prepare(
+        `INSERT OR REPLACE INTO games (id, sport, game_id, home_team, away_team, game_time_utc, status, created_at, updated_at)
+         VALUES (?, 'mlb', ?, 'Home', 'Away', '2026-04-26 04:00:00', 'scheduled', datetime('now'), datetime('now'))`,
+      ).run(`id-${gameOutsideId}`, gameOutsideId);
+
+      // Case 3: Game at 2026-04-26 03:59:59 UTC (exactly at boundary) — INCLUDED (inclusive end)
+      const gameBoundaryId = `${ET_TEST_PREFIX}boundary`;
+      client.prepare(
+        `INSERT OR REPLACE INTO games (id, sport, game_id, home_team, away_team, game_time_utc, status, created_at, updated_at)
+         VALUES (?, 'mlb', ?, 'Home', 'Away', '2026-04-26 03:59:59', 'scheduled', datetime('now'), datetime('now'))`,
+      ).run(`id-${gameBoundaryId}`, gameBoundaryId);
+
+      const pregameResults = client.prepare(
+        `SELECT game_id FROM games
+         WHERE datetime(game_time_utc) >= ? AND datetime(game_time_utc) > ? AND datetime(game_time_utc) <= ?`,
+      ).all(toSqlUtc(new Date(0)), nowUtcStr, horizonEndUtc);
+      const resultIds = new Set(pregameResults.map(r => r.game_id));
+
+      assert(resultIds.has(gameInsideId), 'ET-boundary: game at 10:00 UTC April 25 is INCLUDED (within tomorrow end)');
+      assert(!resultIds.has(gameOutsideId), 'ET-boundary: game at 04:00 UTC April 26 is EXCLUDED (after tomorrow end)');
+      assert(resultIds.has(gameBoundaryId), 'ET-boundary: game exactly at 03:59:59 UTC April 26 is INCLUDED (inclusive end)');
+
+      client.prepare(`DELETE FROM games WHERE game_id LIKE '${ET_TEST_PREFIX}%'`).run();
+    }
+    console.log();
+
+    // -----------------------------------------------------------------------
+    // Section 5: Empty-State Diagnostics Contract (WI-1154 Test 2)
+    // -----------------------------------------------------------------------
+    console.log('── Section 5: Empty-state diagnostics contract ──');
+    {
+      const fsModule = await import('node:fs');
+      const pathModule = await import('node:path');
+      const fs = fsModule.default || fsModule;
+      const path = pathModule.default || pathModule;
+      const handlerPath = path.resolve('src/lib/games/route-handler.ts');
+      const handlerSource = fs.readFileSync(handlerPath, 'utf8');
+
+      assert(
+        handlerSource.includes('emptyStateDiagnostics') &&
+          handlerSource.includes("reason = 'NO_ACTIVE_GAMES'") &&
+          handlerSource.includes("reason = 'NO_ACTIONABLE_ROWS'") &&
+          handlerSource.includes("reason = 'ALL_ROWS_PASSED'") &&
+          handlerSource.includes("reason = 'SETTLEMENT_GATE'"),
+        'route-handler emits empty_state diagnostics with canonical reason codes',
+      );
+      assert(
+        handlerSource.includes('started_games_count') &&
+          handlerSource.includes('actionable_rows_count') &&
+          handlerSource.includes('passed_rows_count') &&
+          handlerSource.includes('total_rows_in_window'),
+        'route-handler empty_state includes all required diagnostic fields',
+      );
+      assert(
+        handlerSource.includes("lifecycleMode === 'active' && data.length === 0"),
+        'empty_state diagnostics are only computed for active lifecycle empty responses',
+      );
+    }
+    console.log();
+
+    // -----------------------------------------------------------------------
+    // Section 6: Horizon Contract Parity (WI-1154 Test 3)
+    // -----------------------------------------------------------------------
+    console.log('── Section 6: Worker + web horizon parity ──');
+    {
+      const { computeMLBHorizonEndUtc } = await import('../../../packages/data/src/games/horizon-contract.js');
+
+      // Verify that computeMLBHorizonEndUtc agrees with the inline ET-boundary
+      // computation in query-layer.ts for several reference times.
+      const referenceTimes = [
+        new Date('2026-04-24T12:00:00Z'), // 08:00 ET
+        new Date('2026-04-24T22:00:00Z'), // 18:00 ET
+        new Date('2026-04-25T03:30:00Z'), // 23:30 ET
+        new Date('2026-01-15T20:00:00Z'), // winter EST
+      ];
+
+      for (const now of referenceTimes) {
+        const contractResult = computeMLBHorizonEndUtc(now);
+        // Inline query-layer.ts computation (mirrors resolveGamesQueryWindow)
+        const etDateStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(now);
+        const [etYear, etMonth, etDay] = etDateStr.split('-').map(Number);
+        const dayPlusTwoNoon = new Date(Date.UTC(etYear, etMonth - 1, etDay + 2, 17, 0, 0));
+        const futureTzPart = new Intl.DateTimeFormat('en-US', {
+          timeZone: 'America/New_York', timeZoneName: 'shortOffset',
+        }).formatToParts(dayPlusTwoNoon).find(p => p.type === 'timeZoneName').value;
+        const futureOffset = parseInt(futureTzPart.replace('GMT', '') || '-5', 10);
+        const futureSign = futureOffset < 0 ? '-' : '+';
+        const futureAbsHours = Math.abs(futureOffset).toString().padStart(2, '0');
+        const dayPlusTwoDateStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(dayPlusTwoNoon);
+        const dayPlusTwoMidnight = new Date(`${dayPlusTwoDateStr}T00:00:00${futureSign}${futureAbsHours}:00`);
+        const webResult = toSqlUtc(new Date(dayPlusTwoMidnight.getTime() - 1000));
+
+        assert(
+          contractResult === webResult,
+          `Parity: contract=${contractResult} web=${webResult} at ${now.toISOString()}`,
+        );
+      }
+    }
+    console.log();
+
+    // -----------------------------------------------------------------------
+    // Section 7: Dev/Prod Consistency (WI-1154 Test 4)
+    // -----------------------------------------------------------------------
+    console.log('── Section 7: Dev/prod env var consistency ──');
+    {
+      const fsModule = await import('node:fs');
+      const pathModule = await import('node:path');
+      const fs = fsModule.default || fsModule;
+      const path = pathModule.default || pathModule;
+      const queryLayerPath = path.resolve('src/lib/games/query-layer.ts');
+      const queryLayerSource = fs.readFileSync(queryLayerPath, 'utf8');
+      const routeHandlerPath = path.resolve('src/lib/games/route-handler.ts');
+      const routeHandlerSource = fs.readFileSync(routeHandlerPath, 'utf8');
+
+      // Env var overrides for horizon must NOT appear (removed in WI-1154)
+      assert(
+        !routeHandlerSource.includes('API_GAMES_HORIZON_HOURS') &&
+          !queryLayerSource.includes('ACTIVE_GAMES_LOOKBACK_HOURS') &&
+          !queryLayerSource.includes('apiGamesHorizonHours'),
+        'API_GAMES_HORIZON_HOURS and ACTIVE_GAMES_LOOKBACK_HOURS removed — horizon uses ET-boundary only',
+      );
+      // Horizon uses ET-boundary contract, not hardcoded hours
+      assert(
+        queryLayerSource.includes('yesterdayUtc') &&
+          queryLayerSource.includes('gamesEndUtc') &&
+          queryLayerSource.includes('horizon-contract'),
+        'query-layer uses ET-boundary gamesEndUtc (references horizon-contract in comments)',
+      );
+      // No dev/prod drift: shouldUseDevLookback / lookbackUtc removed
+      assert(
+        !queryLayerSource.includes('shouldUseDevLookback') &&
+          !queryLayerSource.includes('lookbackUtc'),
+        'lookback drift variables removed from query-layer',
+      );
+    }
+    console.log();
 
     // -----------------------------------------------------------------------
     // Results

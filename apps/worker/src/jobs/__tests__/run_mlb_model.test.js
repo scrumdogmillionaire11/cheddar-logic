@@ -3024,6 +3024,10 @@ describe('multi-market insertion (IME-01-03)', () => {
         xfip: 4.1,
         bbPct: 0.08,
       })),
+      computeMLBHorizonEndUtc: jest.fn((nowUtc) => {
+        const end = new Date(nowUtc.getTime() + 36 * 60 * 60 * 1000);
+        return end.toISOString().substring(0, 19).replace('T', ' ');
+      }),
       resolveSnapshotAge: jest.fn((snapshotRow, opts = {}) => {
         const nowMs = Number.isFinite(opts.nowMs)
           ? opts.nowMs

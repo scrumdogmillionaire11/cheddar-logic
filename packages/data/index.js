@@ -21,6 +21,7 @@ const dbPath = require('./src/db-path');
 const dbTelemetry = require('./src/db-telemetry');
 const projAccuracy = require('./src/db/projection-accuracy');
 const reasonCodes = require('./src/reason-codes');
+const horizonContract = require('./src/games/horizon-contract');
 
 // Ensure migrations are run on first import (optional but recommended)
 // Uncomment to auto-run migrations:
@@ -255,6 +256,11 @@ module.exports = {
   batchInsertProjectionProxyEvals: projAccuracy.batchInsertProjectionProxyEvals,
   getProjectionProxyEvals:         projAccuracy.getProjectionProxyEvals,
   getProjectionAccuracySummary:    projAccuracy.getProjectionAccuracySummary,
+
+  // MLB horizon contract — ET-day-boundary visibility rule
+  HORIZON_CONTRACT_VERSION:      horizonContract.HORIZON_CONTRACT_VERSION,
+  computeMLBHorizonEndUtc:       horizonContract.computeMLBHorizonEndUtc,
+  horizonEndToApproximateHours:  horizonContract.horizonEndToApproximateHours,
 
   // canonical reason-code registry
   BLOCKER_REASON_CODES:        reasonCodes.BLOCKER_REASON_CODES,

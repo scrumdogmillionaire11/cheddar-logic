@@ -39,6 +39,8 @@ const {
   // WI-0840: dynamic league constants query
   computeMLBLeagueAverages,
   resolveSnapshotAge,
+  // WI-1154: canonical ET-day-boundary horizon contract
+  computeMLBHorizonEndUtc,
 } = require('@cheddar-logic/data');
 
 // Import pluggable inference layer
@@ -4006,7 +4008,7 @@ async function runMLBModel({
         );
       }
       console.log('[MLBModel] Fetching odds for upcoming MLB games...');
-      const horizonUtc = nowUtc.plus({ hours: 36 }).toISO();
+      const horizonUtc = computeMLBHorizonEndUtc(nowUtc.toJSDate()).replace(' ', 'T') + 'Z';
       const oddsSnapshots = getOddsWithUpcomingGames(
         'MLB',
         nowUtc.toISO(),
