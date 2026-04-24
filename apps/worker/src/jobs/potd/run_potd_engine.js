@@ -75,6 +75,31 @@ function normalizeShadowLine(line) {
   return Number(line).toFixed(3);
 }
 
+function normalizeShadowTeam(value) {
+  return String(value || '').trim().replace(/\s+/g, ' ').toUpperCase();
+}
+
+function resolveShadowGameRef(candidate) {
+  const gameId = String(candidate?.gameId || candidate?.game_id || '').trim();
+  if (gameId) return gameId;
+
+  const teams = [
+    normalizeShadowTeam(candidate?.home_team || candidate?.homeTeam),
+    normalizeShadowTeam(candidate?.away_team || candidate?.awayTeam),
+  ].filter(Boolean).sort();
+
+  return teams.length > 0 ? teams.join('__') : 'UNKNOWN_GAME';
+}
+
+function normalizeShadowMarketLineContext(candidate) {
+  const marketType = String(candidate?.marketType || candidate?.market_type || '').toUpperCase();
+  const line = candidate?.line;
+  if (marketType === 'MONEYLINE') return 'NA';
+  if (!isFiniteNumber(line)) return 'NA';
+  if (marketType === 'SPREAD') return Math.abs(Number(line)).toFixed(3);
+  return Number(line).toFixed(3);
+}
+
 function buildShadowCandidateIdentity(candidate, canonicalSelection) {
   const sport = String(candidate?.sport || '').toUpperCase();
   const marketType = String(candidate?.marketType || '').toUpperCase();
@@ -91,15 +116,54 @@ function shadowCandidateIdentity(candidate) {
   return buildShadowCandidateIdentity(candidate, canonicalSelection);
 }
 
+function buildShadowMarketMatchGroup(candidate) {
+  const sport = String(candidate?.sport || '').toUpperCase();
+  const marketType = String(candidate?.marketType || candidate?.market_type || '').toUpperCase();
+  return [
+    sport,
+    resolveShadowGameRef(candidate),
+    marketType,
+    normalizeShadowMarketLineContext(candidate),
+  ].join('|');
+}
+
+function compareShadowCandidatesByEdgeScoreIdentity(left, right) {
+  const leftEdge = isFiniteNumber(left?.edgePct) ? left.edgePct : Number.NEGATIVE_INFINITY;
+  const rightEdge = isFiniteNumber(right?.edgePct) ? right.edgePct : Number.NEGATIVE_INFINITY;
+  if (rightEdge !== leftEdge) return rightEdge - leftEdge;
+
+  const leftScore = isFiniteNumber(left?.totalScore) ? left.totalScore : Number.NEGATIVE_INFINITY;
+  const rightScore = isFiniteNumber(right?.totalScore) ? right.totalScore : Number.NEGATIVE_INFINITY;
+  if (rightScore !== leftScore) return rightScore - leftScore;
+
+  return String(shadowCandidateIdentity(left) || '').localeCompare(String(shadowCandidateIdentity(right) || ''));
+}
+
+function selectBestEdgeByShadowGroup(candidates) {
+  const byGroup = new Map();
+  for (const candidate of candidates || []) {
+    const groupKey = buildShadowMarketMatchGroup(candidate);
+    const current = byGroup.get(groupKey);
+    if (!current || compareShadowCandidatesByEdgeScoreIdentity(current, candidate) > 0) {
+      byGroup.set(groupKey, candidate);
+    }
+  }
+  return Array.from(byGroup.values());
+}
+
 function selectNearMissShadowCandidates({ winnerStatus, rankedNominees, winnerCandidate }) {
   if (!Array.isArray(rankedNominees) || rankedNominees.length === 0) return [];
-  const winnerIdentity =
+  const winnerGroup =
     winnerStatus === 'FIRED' && winnerCandidate
-      ? shadowCandidateIdentity(winnerCandidate)
+      ? buildShadowMarketMatchGroup(winnerCandidate)
       : null;
 
-  return rankedNominees
-    .filter((candidate) => !winnerIdentity || shadowCandidateIdentity(candidate) !== winnerIdentity)
+  const eligibleRows = rankedNominees.filter((candidate) =>
+    !winnerGroup || buildShadowMarketMatchGroup(candidate) !== winnerGroup
+  );
+
+  return selectBestEdgeByShadowGroup(eligibleRows)
+    .sort(compareShadowCandidatesByEdgeScoreIdentity)
     .slice(0, POTD_MAX_NEAR_MISS_SHADOW_CANDIDATES);
 }
 
@@ -338,6 +402,20 @@ function buildNopickAlertMessage({ alertCandidate, topByEdge, reason, candidates
 
 function writeShadowCandidates(db, { playDate, capturedAt, minEdgePct, candidates }) {
   if (!Array.isArray(candidates) || candidates.length === 0) return;
+  const retainedRows = selectBestEdgeByShadowGroup(candidates)
+    .map((candidate) => {
+      const canonicalSelection = canonicalizeShadowSelection(candidate);
+      if (!canonicalSelection) return null;
+      return {
+        candidate,
+        canonicalSelection,
+        identityKey: buildShadowCandidateIdentity(candidate, canonicalSelection),
+        groupKey: buildShadowMarketMatchGroup(candidate),
+      };
+    })
+    .filter(Boolean);
+  if (retainedRows.length === 0) return;
+
   const stmt = db.prepare(`
     INSERT INTO potd_shadow_candidates (
       play_date, captured_at, sport, market_type, selection_label,
@@ -373,33 +451,64 @@ function writeShadowCandidates(db, { playDate, capturedAt, minEdgePct, candidate
       selection = excluded.selection,
       game_time_utc = excluded.game_time_utc
   `);
-  for (const c of candidates) {
-    const canonicalSelection = canonicalizeShadowSelection(c);
-    if (!canonicalSelection) continue;
-    stmt.run({
-      play_date: playDate,
-      captured_at: capturedAt,
-      sport: c.sport ?? null,
-      market_type: c.marketType ?? null,
-      selection_label: c.selectionLabel ?? null,
-      home_team: c.home_team ?? null,
-      away_team: c.away_team ?? null,
-      game_id: c.gameId ?? null,
-      price: c.price ?? null,
-      line: c.line ?? null,
-      edge_pct: c.edgePct ?? null,
-      total_score: c.totalScore ?? null,
-      line_value: c.lineValue ?? null,
-      market_consensus: c.marketConsensus ?? null,
-      model_win_prob: c.modelWinProb ?? null,
-      implied_prob: c.impliedProb ?? null,
-      projection_source: c.scoreBreakdown && c.scoreBreakdown.projection_source ? c.scoreBreakdown.projection_source : null,
-      gap_to_min_edge: c.edgePct != null ? c.edgePct - resolveNoiseFloor(c.sport, c.marketType, minEdgePct) : null,
-      selection: canonicalSelection,
-      game_time_utc: c.commence_time ?? null,
-      candidate_identity_key: buildShadowCandidateIdentity(c, canonicalSelection),
-    });
-  }
+  const existingRowsStmt = db.prepare(`
+    SELECT id, play_date, sport, market_type, home_team, away_team, game_id,
+           line, candidate_identity_key
+    FROM potd_shadow_candidates
+    WHERE play_date = ?
+  `);
+  const clearResultFkStmt = db.prepare(`
+    UPDATE potd_shadow_results
+    SET shadow_candidate_id = NULL
+    WHERE shadow_candidate_id = ?
+  `);
+  const deleteCandidateStmt = db.prepare(`
+    DELETE FROM potd_shadow_candidates
+    WHERE id = ?
+  `);
+
+  const transaction = db.transaction(() => {
+    for (const row of retainedRows) {
+      const c = row.candidate;
+      stmt.run({
+        play_date: playDate,
+        captured_at: capturedAt,
+        sport: c.sport ?? null,
+        market_type: c.marketType ?? null,
+        selection_label: c.selectionLabel ?? null,
+        home_team: c.home_team ?? null,
+        away_team: c.away_team ?? null,
+        game_id: c.gameId ?? null,
+        price: c.price ?? null,
+        line: c.line ?? null,
+        edge_pct: c.edgePct ?? null,
+        total_score: c.totalScore ?? null,
+        line_value: c.lineValue ?? null,
+        market_consensus: c.marketConsensus ?? null,
+        model_win_prob: c.modelWinProb ?? null,
+        implied_prob: c.impliedProb ?? null,
+        projection_source: c.scoreBreakdown && c.scoreBreakdown.projection_source ? c.scoreBreakdown.projection_source : null,
+        gap_to_min_edge: c.edgePct != null ? c.edgePct - resolveNoiseFloor(c.sport, c.marketType, minEdgePct) : null,
+        selection: row.canonicalSelection,
+        game_time_utc: c.commence_time ?? null,
+        candidate_identity_key: row.identityKey,
+      });
+    }
+
+    const retainedIdentityKeys = new Set(retainedRows.map((row) => row.identityKey));
+    const retainedGroupKeys = new Set(retainedRows.map((row) => row.groupKey));
+    const existingRows = existingRowsStmt.all(playDate);
+    for (const existing of existingRows) {
+      const groupKey = buildShadowMarketMatchGroup(existing);
+      if (!retainedGroupKeys.has(groupKey) || retainedIdentityKeys.has(existing.candidate_identity_key)) {
+        continue;
+      }
+      clearResultFkStmt.run(existing.id);
+      deleteCandidateStmt.run(existing.id);
+    }
+  });
+
+  transaction();
 }
 function writeNominees(db, { playDate, capturedAt, winnerStatus, nominees }) {
   db.prepare(`DELETE FROM potd_nominees WHERE play_date = ?`).run(playDate);
@@ -855,17 +964,6 @@ async function gatherBestCandidate({
     auditLogCandidate(c, resolveNoiseFloor(c.sport, c.marketType, POTD_MIN_EDGE));
   }
 
-  const viableCandidates = scoredCandidates.filter(c => {
-    if (!isModelBackedCandidate(c)) return false;
-    const noiseFloor = resolveNoiseFloor(c.sport, c.marketType, POTD_MIN_EDGE);
-    return (
-      isFiniteNumber(c.edgePct) &&
-      c.edgePct > noiseFloor &&
-      isFiniteNumber(c.totalScore) &&
-      c.totalScore >= POTD_MIN_TOTAL_SCORE
-    );
-  });
-
   // Apply per-sport noise floors before ranking; pass minEdgePct: 0 so
   // selectTopPlaysFn does not re-apply a single global floor on top.
   const modelHealthGates = loadModelHealthGates(db);
@@ -886,7 +984,7 @@ async function gatherBestCandidate({
       .replace('AMERICANFOOTBALL_', '');
     return modelHealthGates.has(sportKey);
   }
-  const noisePassed = scoredCandidates.filter(c => {
+  const fireableSelectorPool = scoredCandidates.filter(c => {
     if (!isModelBackedCandidate(c)) return false;
     if (isSportModelGated(c)) {
       if (POTD_AUDIT_LOG_ENABLED) {
@@ -904,9 +1002,15 @@ async function gatherBestCandidate({
       return false;
     }
     const noiseFloor = resolveNoiseFloor(c.sport, c.marketType, POTD_MIN_EDGE);
-    return isFiniteNumber(c.edgePct) && c.edgePct > noiseFloor;
+    return (
+      isFiniteNumber(c.edgePct) &&
+      c.edgePct > noiseFloor &&
+      isFiniteNumber(c.totalScore) &&
+      c.totalScore >= POTD_MIN_TOTAL_SCORE
+    );
   });
-  const fireableNominees = selectTopPlaysFn(noisePassed, {
+  const bestEdgeSelectorPool = selectBestEdgeByShadowGroup(fireableSelectorPool);
+  const fireableNominees = selectTopPlaysFn(bestEdgeSelectorPool, {
     minConfidence: POTD_MIN_TOTAL_SCORE,
     minEdgePct: 0,
     maxNominees: POTD_MAX_NOMINEES,
@@ -914,7 +1018,7 @@ async function gatherBestCandidate({
   });
 
   // diagnosticNominees are for no-pick diagnostics only and remain model-backed.
-  const diagnosticNominees = selectTopPlaysFn(noisePassed, {
+  const diagnosticNominees = selectTopPlaysFn(bestEdgeSelectorPool, {
     minConfidence: POTD_MIN_TOTAL_SCORE,
     minEdgePct: 0,
     maxNominees: POTD_MAX_NOMINEES,
@@ -932,7 +1036,7 @@ async function gatherBestCandidate({
     fetchErrors,
     activeSports: sports,
     candidatesCount: scoredCandidates.length,
-    viableCount: viableCandidates.length,
+    viableCount: fireableSelectorPool.length,
   };
 }
 

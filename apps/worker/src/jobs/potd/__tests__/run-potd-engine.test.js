@@ -23,6 +23,7 @@ function resetTables() {
     DELETE FROM potd_plays;
     DELETE FROM potd_daily_stats;
     DELETE FROM potd_nominees;
+    DELETE FROM potd_shadow_results;
     DELETE FROM potd_shadow_candidates;
     DELETE FROM card_results;
     DELETE FROM card_payloads;
@@ -317,6 +318,172 @@ describe('runPotdEngine', () => {
     ]);
   });
 
+  test('fired path suppresses near-miss candidates from the winner market/match group', async () => {
+    const { runPotdEngine } = require('../run_potd_engine');
+    const winner = buildSelectedCandidate({
+      gameId: 'potd-winner-group-total',
+      selection: 'OVER',
+      selectionLabel: 'OVER 5.5',
+      line: 5.5,
+      edgePct: 0.05,
+    });
+    const opposingSameGroup = buildSelectedCandidate({
+      gameId: winner.gameId,
+      selection: 'UNDER',
+      selectionLabel: 'UNDER 5.5',
+      line: 5.5,
+      edgePct: 0.049,
+    });
+    const spreadNearMiss = buildSelectedCandidate({
+      gameId: 'potd-winner-group-spread',
+      marketType: 'SPREAD',
+      selection: 'HOME',
+      selectionLabel: 'Boston Bruins -1.5',
+      line: -1.5,
+      edgePct: 0.035,
+    });
+    const ranked = [winner, opposingSameGroup, spreadNearMiss];
+
+    const result = await runPotdEngine({
+      jobKey: 'potd|winner-group-suppression',
+      force: true,
+      fetchOddsFn: async () => ({ games: ranked.map((candidate) => ({ gameId: candidate.gameId })), errors: [] }),
+      buildCandidatesFn: (game) => ranked.filter((candidate) => candidate.gameId === game.gameId),
+      scoreCandidateFn: (value) => value,
+      selectTopPlaysFn: () => ranked,
+      kellySizeFn: () => 2.0,
+      sendDiscordMessagesFn: async () => 1,
+    });
+
+    expect(result.success).toBe(true);
+
+    const shadowRows = readRows(
+      `SELECT game_id, market_type, selection
+       FROM potd_shadow_candidates
+       ORDER BY id ASC`,
+    );
+    expect(shadowRows).toEqual([
+      { game_id: spreadNearMiss.gameId, market_type: 'SPREAD', selection: 'HOME' },
+    ]);
+  });
+
+  test('near-miss write keeps highest-edge opposing TOTAL and SPREAD side per market/match', async () => {
+    const { runPotdEngine } = require('../run_potd_engine');
+    const totalOver = buildSelectedCandidate({
+      gameId: 'potd-best-edge-total',
+      selection: 'OVER',
+      selectionLabel: 'OVER 5.5',
+      line: 5.5,
+      edgePct: 0.031,
+    });
+    const totalUnder = buildSelectedCandidate({
+      gameId: totalOver.gameId,
+      selection: 'UNDER',
+      selectionLabel: 'UNDER 5.5',
+      line: 5.5,
+      edgePct: 0.038,
+    });
+    const spreadHome = buildSelectedCandidate({
+      gameId: 'potd-best-edge-spread',
+      marketType: 'SPREAD',
+      selection: 'HOME',
+      selectionLabel: 'Boston Bruins -1.5',
+      line: -1.5,
+      edgePct: 0.029,
+    });
+    const spreadAway = buildSelectedCandidate({
+      gameId: spreadHome.gameId,
+      marketType: 'SPREAD',
+      selection: 'AWAY',
+      selectionLabel: 'Toronto Maple Leafs +1.5',
+      line: 1.5,
+      edgePct: 0.034,
+    });
+    const candidates = [totalOver, totalUnder, spreadHome, spreadAway];
+
+    const result = await runPotdEngine({
+      jobKey: 'potd|near-miss-best-edge-groups',
+      force: true,
+      fetchOddsFn: async () => ({ games: candidates.map((candidate) => ({ gameId: candidate.gameId })), errors: [] }),
+      buildCandidatesFn: (game) => candidates.filter((candidate) => candidate.gameId === game.gameId),
+      scoreCandidateFn: (value) => value,
+      selectTopPlaysFn: (values) => values,
+      kellySizeFn: () => 0,
+      sendDiscordMessagesFn: async () => 1,
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.reason).toBe('zero_wager');
+
+    const shadowRows = readRows(
+      `SELECT game_id, market_type, selection, line, edge_pct, candidate_identity_key
+       FROM potd_shadow_candidates
+       ORDER BY edge_pct DESC`,
+    );
+    expect(shadowRows).toHaveLength(2);
+    expect(shadowRows).toEqual([
+      expect.objectContaining({
+        game_id: totalOver.gameId,
+        market_type: 'TOTAL',
+        selection: 'UNDER',
+        line: 5.5,
+        edge_pct: 0.038,
+      }),
+      expect.objectContaining({
+        game_id: spreadHome.gameId,
+        market_type: 'SPREAD',
+        selection: 'AWAY',
+        line: 1.5,
+        edge_pct: 0.034,
+      }),
+    ]);
+    expect(shadowRows[0].candidate_identity_key).toContain('|UNDER|');
+    expect(shadowRows[1].candidate_identity_key).toContain('|AWAY|');
+  });
+
+  test('below-score high-edge candidate does not suppress lower-edge fireable side', async () => {
+    const { runPotdEngine } = require('../run_potd_engine');
+    const belowScoreHighEdge = buildSelectedCandidate({
+      gameId: 'potd-fireable-canonical-total',
+      selection: 'OVER',
+      selectionLabel: 'OVER 5.5',
+      line: 5.5,
+      edgePct: 0.08,
+      totalScore: 0.29,
+    });
+    const fireableLowerEdge = buildSelectedCandidate({
+      gameId: belowScoreHighEdge.gameId,
+      selection: 'UNDER',
+      selectionLabel: 'UNDER 5.5',
+      line: 5.5,
+      edgePct: 0.035,
+      totalScore: 0.72,
+    });
+    const candidates = [belowScoreHighEdge, fireableLowerEdge];
+
+    const result = await runPotdEngine({
+      jobKey: 'potd|below-score-does-not-suppress-fireable',
+      force: true,
+      fetchOddsFn: async () => ({ games: [{ gameId: belowScoreHighEdge.gameId }], errors: [] }),
+      buildCandidatesFn: () => candidates,
+      scoreCandidateFn: (value) => value,
+      selectTopPlaysFn: (values) => values,
+      kellySizeFn: () => 0,
+      sendDiscordMessagesFn: async () => 1,
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.reason).toBe('zero_wager');
+
+    const shadowRows = readRows(
+      `SELECT selection, edge_pct, total_score
+       FROM potd_shadow_candidates`,
+    );
+    expect(shadowRows).toEqual([
+      { selection: 'UNDER', edge_pct: 0.035, total_score: 0.72 },
+    ]);
+  });
+
   test('no-best-candidate path records no shadow rows when no fireable nominees remain', async () => {
     const { runPotdEngine } = require('../run_potd_engine');
     const candidate = buildSelectedCandidate({
@@ -436,6 +603,89 @@ describe('runPotdEngine', () => {
     expect(rows).toHaveLength(1);
     expect(rows[0].play_date).toEqual(expect.any(String));
     expect(rows[0].candidate_identity_key).toEqual(expect.any(String));
+  });
+
+  test('same-day rerun replaces obsolete same-group shadow row and nulls result FK', async () => {
+    const { runPotdEngine } = require('../run_potd_engine');
+    const firstCandidate = buildSelectedCandidate({
+      gameId: 'potd-shadow-replace-total',
+      selection: 'OVER',
+      selectionLabel: 'OVER 5.5',
+      line: 5.5,
+      edgePct: 0.025,
+    });
+    const replacementCandidate = buildSelectedCandidate({
+      gameId: firstCandidate.gameId,
+      selection: 'UNDER',
+      selectionLabel: 'UNDER 5.5',
+      line: 5.5,
+      edgePct: 0.04,
+    });
+
+    const baseOptions = {
+      force: true,
+      fetchOddsFn: async () => ({ games: [{ gameId: firstCandidate.gameId }], errors: [] }),
+      scoreCandidateFn: (v) => v,
+      selectTopPlaysFn: (values) => values,
+      kellySizeFn: () => 0,
+      sendDiscordMessagesFn: async () => 1,
+    };
+
+    await runPotdEngine({
+      ...baseOptions,
+      jobKey: 'potd|shadow-replace-pass-1',
+      buildCandidatesFn: () => [firstCandidate],
+    });
+
+    const firstRow = readRows(
+      `SELECT id, play_date, candidate_identity_key
+       FROM potd_shadow_candidates
+       LIMIT 1`,
+    )[0];
+    expect(firstRow).toBeTruthy();
+
+    const db = new Database(TEST_DB_PATH);
+    db.prepare(
+      `INSERT INTO potd_shadow_results (
+        play_date, candidate_identity_key, shadow_candidate_id, game_id, sport,
+        market_type, selection, selection_label, line, price, game_time_utc,
+        status, result, virtual_stake_units
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', NULL, 1.0)`,
+    ).run(
+      firstRow.play_date,
+      firstRow.candidate_identity_key,
+      firstRow.id,
+      firstCandidate.gameId,
+      firstCandidate.sport,
+      firstCandidate.marketType,
+      firstCandidate.selection,
+      firstCandidate.selectionLabel,
+      firstCandidate.line,
+      firstCandidate.price,
+      firstCandidate.commence_time,
+    );
+    db.close();
+
+    await runPotdEngine({
+      ...baseOptions,
+      jobKey: 'potd|shadow-replace-pass-2',
+      buildCandidatesFn: () => [replacementCandidate],
+    });
+
+    const shadowRows = readRows(
+      `SELECT id, selection, candidate_identity_key
+       FROM potd_shadow_candidates`,
+    );
+    expect(shadowRows).toHaveLength(1);
+    expect(shadowRows[0].selection).toBe('UNDER');
+
+    const resultRows = readRows(
+      `SELECT shadow_candidate_id, candidate_identity_key
+       FROM potd_shadow_results`,
+    );
+    expect(resultRows).toHaveLength(1);
+    expect(resultRows[0].shadow_candidate_id).toBeNull();
+    expect(resultRows[0].candidate_identity_key).toBe(firstRow.candidate_identity_key);
   });
 
   test.each([
