@@ -539,14 +539,22 @@ function renderNearMissSummary(summary: PotdNearMissSummary) {
             View all settled games
           </div>
         </a>
-        <div className="rounded-2xl border border-white/10 bg-night/40 p-4">
+        <a
+          href="/play-of-the-day/pending"
+          aria-label="Open POTD pending games"
+          title="Open pending games"
+          className="cursor-pointer rounded-2xl border border-white/10 bg-night/40 p-4 transition hover:border-teal/45 hover:bg-teal/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal/60 focus-visible:ring-offset-2 focus-visible:ring-offset-night"
+        >
           <div className="text-[11px] uppercase tracking-[0.22em] text-cloud/50">
             Pending
           </div>
           <div className="mt-2 text-xl font-semibold text-cloud">
             {summary.pending}
           </div>
-        </div>
+          <div className="mt-1 text-[10px] uppercase tracking-[0.18em] text-teal-100/80">
+            View pending games
+          </div>
+        </a>
         <div className="rounded-2xl border border-white/10 bg-night/40 p-4">
           <div className="text-[11px] uppercase tracking-[0.22em] text-cloud/50">
             Non-gradeable
