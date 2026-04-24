@@ -6,6 +6,15 @@ const { makeEtDateTime } = require('../../../../tests/helpers/discord-timing');
 
 const TEST_DB_PATH = '/tmp/cheddar-test-run-potd-engine.db';
 const LOCK_PATH = `${TEST_DB_PATH}.lock`;
+const TEST_SYSTEM_NOW = new Date('2026-04-09T13:00:00.000-04:00');
+
+beforeAll(() => {
+  jest.useFakeTimers().setSystemTime(TEST_SYSTEM_NOW);
+});
+
+afterAll(() => {
+  jest.useRealTimers();
+});
 
 function removeIfExists(filePath) {
   try {
@@ -897,7 +906,7 @@ describe('runPotdEngine', () => {
       sport: 'mlb',
       homeTeam: 'Dodgers',
       awayTeam: 'Rockies',
-      gameTimeUtc: '2026-04-12T01:10:00.000Z',
+      gameTimeUtc: '2026-04-10T00:00:00.000Z',
     });
     insertCardPayloadRow({
       id: 'mlb-potd-001-card',
@@ -926,7 +935,7 @@ describe('runPotdEngine', () => {
               sport: 'MLB',
               homeTeam: 'Dodgers',
               awayTeam: 'Rockies',
-              gameTimeUtc: '2026-04-12T01:10:00.000Z',
+              gameTimeUtc: '2026-04-10T00:00:00.000Z',
               capturedAtUtc: '2026-04-11T18:05:00.000Z',
               market: {
                 spreads: [],

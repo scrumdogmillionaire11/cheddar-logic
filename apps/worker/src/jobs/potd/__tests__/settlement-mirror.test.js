@@ -71,7 +71,7 @@ describe('mirrorPotdSettlement', () => {
       sport: 'NHL',
       home_team: 'Boston Bruins',
       away_team: 'Toronto Maple Leafs',
-      commence_time: '2035-04-10T00:00:00.000Z',
+      commence_time: '2026-04-10T00:00:00.000Z',
       marketType: 'TOTAL',
       selection: 'OVER',
       selectionLabel: 'OVER 5.5',
