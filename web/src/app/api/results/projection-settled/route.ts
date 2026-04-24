@@ -1,5 +1,5 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { getDatabaseReadOnly, closeReadOnlyInstance } from '@cheddar-logic/data';
+import { NextRequest, NextResponse } from 'next/server.js';
+import data from '@cheddar-logic/data';
 import { ensureDbReady } from '@/lib/db-init';
 import {
   performSecurityChecks,
@@ -9,6 +9,12 @@ import {
   type ConfidenceTier,
   normalizeToConfidenceTier,
 } from '@/lib/types/projection-accuracy';
+
+const {
+  getDatabaseReadOnly,
+  closeReadOnlyInstance,
+  PROJECTION_ANALYTICS_CONTRACT_BY_MARKET_FAMILY,
+} = data;
 
 // WI-0967: Query projection_proxy_evals table for graded projection results.
 // These rows come from settle_projections.js which calls buildProjectionProxyMarketRows().
@@ -137,6 +143,9 @@ const ACCURACY_LATEST_CTE_SQL = `WITH accuracy_latest AS (
     ) AS rn
   FROM projection_accuracy_evals pae
 )`;
+
+const SUPPORTED_CARD_FAMILIES = Object.keys(PROJECTION_ANALYTICS_CONTRACT_BY_MARKET_FAMILY);
+const SUPPORTED_CARD_FAMILY_SQL = SUPPORTED_CARD_FAMILIES.map(() => '?').join(', ');
 
 function parsePayload(value: string | null): Record<string, unknown> | null {
   if (!value) return null;
@@ -377,10 +386,11 @@ export async function GET(
          LEFT JOIN card_payloads cp ON cp.id = ppe.card_id
          LEFT JOIN accuracy_latest al ON al.card_id = ppe.card_id AND al.rn = 1
          LEFT JOIN games g ON g.game_id = ppe.game_id
+        WHERE ppe.card_family IN (${SUPPORTED_CARD_FAMILY_SQL})
          ORDER BY ppe.game_date DESC, ppe.id DESC
          LIMIT 200`,
       )
-      .all() as DbProxyEvalRow[];
+      .all(...SUPPORTED_CARD_FAMILIES) as DbProxyEvalRow[];
 
     const enrichedRows: ProjectionProxyInternalRow[] = proxyRows.map((row) => {
       return {

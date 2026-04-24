@@ -1,5 +1,6 @@
 'use client';
 
+import { useState } from 'react';
 import type { ProjectionProxyRow } from '@/app/api/results/projection-settled/route';
 import type { ConfidenceTier, ProjectionAccuracyRecord } from '@/lib/types/projection-accuracy';
 
@@ -151,23 +152,11 @@ interface ProjectionRowProps {
   attribution?: ProjectionAccuracyRecord;
 }
 
-function ProjectionRow({ row, attribution }: ProjectionRowProps) {
-  const date = fmtDate(row.gameDateUtc);
+function ProjectionDetailChips({
+  row,
+  attribution,
+}: ProjectionRowProps) {
   const moneylineFamily = isMoneylineFamily(row.cardFamily);
-  const projected = moneylineFamily
-    ? moneylineProjectedLabel(row)
-    : fmtNum(row.projValue, 3);
-  const edge = moneylineFamily
-    ? fmtPct(row.edgePp ?? row.edgeVsLine, 1, { signed: true })
-    : row.edgeVsLine === null || row.edgeVsLine === undefined
-      ? '—'
-      : (row.edgeVsLine >= 0 ? '+' : '') + fmtNum(row.edgeVsLine, 2);
-  const actual = moneylineFamily
-    ? row.actualValue === 0.5 ? 'PUSH' : row.gradedResult
-    : fmtNum(row.actualValue, 3);
-  const direction = row.recommendedSide;
-  const directionLabel = moneylineFamily ? moneylineDirectionLabel(row) : direction;
-  const outcome = row.gradedResult;
   const attributionProjectionRaw = fmtNum(attribution?.projection_raw, 3);
   const attributionSyntheticLine = fmtNum(attribution?.synthetic_line ?? row.proxyLine, 3);
   const attributionEdgeDistance = moneylineFamily
@@ -185,74 +174,145 @@ function ProjectionRow({ row, attribution }: ProjectionRowProps) {
       : row.predictionSignalMissing
         ? 'MISSING SIGNAL'
         : null;
+
   return (
     <>
-      {/* Desktop row */}
-      <div className="hidden px-4 py-3 text-sm text-cloud/70 md:block">
-        <div className="grid grid-cols-9 gap-3">
-          <span>{date}</span>
-          <span className="col-span-2 truncate">{fmtMatchup(row)}</span>
-          <span className="text-right font-mono">{projected}</span>
-          <span className="flex justify-center">
-            <span
-              className={`rounded-full border px-2 py-0.5 text-xs font-semibold ${directionBadgeClass(
-                direction,
-              )}`}
-            >
-              {directionLabel}
-            </span>
-          </span>
-          <span className="flex justify-center">
-            <span
-              className={`rounded-full border px-2 py-0.5 text-xs font-semibold ${confidenceBadgeClass(
-                row.confidenceTier,
-              )}`}
-            >
-              {row.confidenceTier}
-            </span>
-          </span>
-          <span className="text-right font-mono text-cloud/50">{edge}</span>
-          <span className="text-right font-mono">{actual}</span>
-          <span className="flex justify-end">
-            <span
-              className={`rounded-full border px-2 py-0.5 text-xs font-semibold ${outcomeBadgeClass(
-                outcome,
-              )}`}
-            >
-              {outcome}
-            </span>
-          </span>
-        </div>
-        <div className="mt-2 flex flex-wrap gap-2 text-[11px] text-cloud/55">
-          <span className="rounded-lg border border-white/10 bg-white/5 px-2 py-1 font-mono">
-            projection_raw: {attributionProjectionRaw}
-          </span>
-          <span className="rounded-lg border border-white/10 bg-white/5 px-2 py-1 font-mono">
-            synthetic_line: {attributionSyntheticLine}
-          </span>
-          <span className="rounded-lg border border-white/10 bg-white/5 px-2 py-1 font-mono">
-            {attributionEdgeLabel} {attributionEdgeDistance}
-          </span>
-          {confidenceScoreLabel && (
-            <span className="rounded-lg border border-white/10 bg-white/5 px-2 py-1 font-mono">
-              confidence_score: {confidenceScoreLabel}
-            </span>
-          )}
-          {legacyConfidenceBand && (
-            <span className="rounded-lg border border-white/10 bg-white/5 px-2 py-1 font-mono">
-              legacy_band: {legacyConfidenceBand}
-            </span>
-          )}
-        </div>
-        {moneylineFamily && row.expectedOutcomeLabel && (
-          <div className="mt-2 text-[11px] uppercase tracking-[0.16em] text-cloud/45">
-            Expected vs actual: {row.expectedOutcomeLabel.replaceAll('_', ' ')}
-          </div>
-        )}
-      </div>
+      <span className="rounded-lg border border-white/10 bg-white/5 px-2 py-1 font-mono">
+        projection_raw: {attributionProjectionRaw}
+      </span>
+      <span className="rounded-lg border border-white/10 bg-white/5 px-2 py-1 font-mono">
+        synthetic_line: {attributionSyntheticLine}
+      </span>
+      <span className="rounded-lg border border-white/10 bg-white/5 px-2 py-1 font-mono">
+        {attributionEdgeLabel} {attributionEdgeDistance}
+      </span>
+      {confidenceScoreLabel && (
+        <span className="rounded-lg border border-white/10 bg-white/5 px-2 py-1 font-mono">
+          confidence_score: {confidenceScoreLabel}
+        </span>
+      )}
+      {legacyConfidenceBand && (
+        <span className="rounded-lg border border-white/10 bg-white/5 px-2 py-1 font-mono">
+          legacy_band: {legacyConfidenceBand}
+        </span>
+      )}
+    </>
+  );
+}
 
-      {/* Mobile card */}
-      <div className="space-y-2 border-b border-white/10 px-4 py-3 text-sm md:hidden">
+function ProjectionDesktopRow({
+  row,
+  attribution,
+  expanded,
+  onToggle,
+}: ProjectionRowProps & { expanded: boolean; onToggle: () => void }) {
+  const date = fmtDate(row.gameDateUtc);
+  const moneylineFamily = isMoneylineFamily(row.cardFamily);
+  const projected = moneylineFamily
+    ? moneylineProjectedLabel(row)
+    : fmtNum(row.projValue, 3);
+  const edge = moneylineFamily
+    ? fmtPct(row.edgePp ?? row.edgeVsLine, 1, { signed: true })
+    : row.edgeVsLine === null || row.edgeVsLine === undefined
+      ? '—'
+      : (row.edgeVsLine >= 0 ? '+' : '') + fmtNum(row.edgeVsLine, 2);
+  const actual = moneylineFamily
+    ? row.actualValue === 0.5 ? 'PUSH' : row.gradedResult
+    : fmtNum(row.actualValue, 3);
+  const direction = row.recommendedSide;
+  const directionLabel = moneylineFamily ? moneylineDirectionLabel(row) : direction;
+  const outcome = row.gradedResult;
+
+  return (
+    <>
+      <tr className="hidden border-t border-white/10 text-sm text-cloud/70 md:table-row">
+        <td className="px-4 py-3 align-middle font-mono text-cloud/60">{date}</td>
+        <td className="px-4 py-3 align-middle">
+          <div className="max-w-[18rem]">
+            <p className="truncate font-medium text-cloud">{fmtMatchup(row)}</p>
+            <p className="mt-1 text-xs uppercase tracking-[0.16em] text-cloud/40">
+              {row.cardFamily?.replaceAll('_', ' ')}
+            </p>
+          </div>
+        </td>
+        <td className="px-4 py-3 text-right font-mono align-middle">{projected}</td>
+        <td className="px-4 py-3 text-center align-middle">
+          <span
+            className={`rounded-full border px-2 py-0.5 text-xs font-semibold ${directionBadgeClass(
+              direction,
+            )}`}
+          >
+            {directionLabel}
+          </span>
+        </td>
+        <td className="px-4 py-3 text-center align-middle">
+          <span
+            className={`rounded-full border px-2 py-0.5 text-xs font-semibold ${confidenceBadgeClass(
+              row.confidenceTier,
+            )}`}
+          >
+            {row.confidenceTier}
+          </span>
+        </td>
+        <td className="px-4 py-3 text-right font-mono text-cloud/50 align-middle">{edge}</td>
+        <td className="px-4 py-3 text-right font-mono align-middle">{actual}</td>
+        <td className="px-4 py-3 text-right align-middle">
+          <span
+            className={`rounded-full border px-2 py-0.5 text-xs font-semibold ${outcomeBadgeClass(
+              outcome,
+            )}`}
+          >
+            {outcome}
+          </span>
+        </td>
+        <td className="px-4 py-3 text-right align-middle">
+          <button
+            type="button"
+            onClick={onToggle}
+            className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-cloud/70 transition-colors hover:border-cyan-300/50 hover:text-cloud"
+          >
+            {expanded ? 'Hide' : 'Details'}
+          </button>
+        </td>
+      </tr>
+      {expanded && (
+        <tr className="hidden bg-night/40 md:table-row">
+          <td colSpan={9} className="px-4 py-3">
+            <div className="flex flex-wrap gap-2 text-[11px] text-cloud/55">
+              <ProjectionDetailChips row={row} attribution={attribution} />
+            </div>
+            {moneylineFamily && row.expectedOutcomeLabel && (
+              <div className="mt-2 text-[11px] uppercase tracking-[0.16em] text-cloud/45">
+                Expected vs actual: {row.expectedOutcomeLabel.replaceAll('_', ' ')}
+              </div>
+            )}
+          </td>
+        </tr>
+      )}
+    </>
+  );
+}
+
+function ProjectionRow({ row, attribution }: ProjectionRowProps) {
+  const date = fmtDate(row.gameDateUtc);
+  const moneylineFamily = isMoneylineFamily(row.cardFamily);
+  const projected = moneylineFamily
+    ? moneylineProjectedLabel(row)
+    : fmtNum(row.projValue, 3);
+  const edge = moneylineFamily
+    ? fmtPct(row.edgePp ?? row.edgeVsLine, 1, { signed: true })
+    : row.edgeVsLine === null || row.edgeVsLine === undefined
+      ? '—'
+      : (row.edgeVsLine >= 0 ? '+' : '') + fmtNum(row.edgeVsLine, 2);
+  const actual = moneylineFamily
+    ? row.actualValue === 0.5 ? 'PUSH' : row.gradedResult
+    : fmtNum(row.actualValue, 3);
+  const direction = row.recommendedSide;
+  const directionLabel = moneylineFamily ? moneylineDirectionLabel(row) : direction;
+  const outcome = row.gradedResult;
+
+  return (
+    <div className="space-y-2 border-b border-white/10 px-4 py-3 text-sm md:hidden">
         <div className="flex items-start justify-between gap-2">
           <div className="flex-1">
             <p className="text-xs text-cloud/50">{date}</p>
@@ -297,25 +357,7 @@ function ProjectionRow({ row, attribution }: ProjectionRowProps) {
           </div>
         </div>
         <div className="mt-2 flex flex-wrap gap-2 text-[11px] text-cloud/55">
-          <span className="rounded-lg border border-white/10 bg-white/5 px-2 py-1 font-mono">
-            projection_raw: {attributionProjectionRaw}
-          </span>
-          <span className="rounded-lg border border-white/10 bg-white/5 px-2 py-1 font-mono">
-            synthetic_line: {attributionSyntheticLine}
-          </span>
-          <span className="rounded-lg border border-white/10 bg-white/5 px-2 py-1 font-mono">
-            {attributionEdgeLabel} {attributionEdgeDistance}
-          </span>
-          {confidenceScoreLabel && (
-            <span className="rounded-lg border border-white/10 bg-white/5 px-2 py-1 font-mono">
-              confidence_score: {confidenceScoreLabel}
-            </span>
-          )}
-          {legacyConfidenceBand && (
-            <span className="rounded-lg border border-white/10 bg-white/5 px-2 py-1 font-mono">
-              legacy_band: {legacyConfidenceBand}
-            </span>
-          )}
+          <ProjectionDetailChips row={row} attribution={attribution} />
         </div>
         {moneylineFamily && row.expectedOutcomeLabel && (
           <div className="text-[11px] uppercase tracking-[0.16em] text-cloud/45">
@@ -323,7 +365,6 @@ function ProjectionRow({ row, attribution }: ProjectionRowProps) {
           </div>
         )}
       </div>
-    </>
   );
 }
 
@@ -355,18 +396,19 @@ function CardFamilySection({
   rows,
   attributionByCardId,
 }: CardFamilySectionProps) {
-  const headers = (
-    <div className="grid grid-cols-9 gap-3 bg-night/70 px-4 py-3 text-xs font-semibold uppercase tracking-[0.2em] text-cloud/60">
-      <span>Date</span>
-      <span className="col-span-2">Matchup</span>
-      <span className="text-right">Projected</span>
-      <span className="text-center">Direction</span>
-      <span className="text-center">Confidence</span>
-      <span className="text-right">Edge</span>
-      <span className="text-right">Actual</span>
-      <span className="text-right">Outcome</span>
-    </div>
-  );
+  const [expandedRowKeys, setExpandedRowKeys] = useState<Set<string>>(new Set());
+
+  function toggleRow(rowKey: string) {
+    setExpandedRowKeys((current) => {
+      const next = new Set(current);
+      if (next.has(rowKey)) {
+        next.delete(rowKey);
+      } else {
+        next.add(rowKey);
+      }
+      return next;
+    });
+  }
 
   return (
     <div>
@@ -377,10 +419,39 @@ function CardFamilySection({
         </span>
       </div>
 
-      <div className="overflow-hidden rounded-xl border border-white/10">
-        {/* headers — desktop only */}
-        <div className="hidden md:block">
-          {headers}
+      <div className="overflow-hidden rounded-xl border border-white/10 bg-night/20">
+        <div className="hidden overflow-x-auto md:block">
+          <table className="min-w-full table-fixed border-collapse">
+            <thead className="bg-night/70 text-xs font-semibold uppercase tracking-[0.2em] text-cloud/60">
+              <tr>
+                <th className="w-[8rem] px-4 py-3 text-left">Date</th>
+                <th className="px-4 py-3 text-left">Matchup</th>
+                <th className="w-[9rem] px-4 py-3 text-right">Projected</th>
+                <th className="w-[9rem] px-4 py-3 text-center">Direction</th>
+                <th className="w-[8rem] px-4 py-3 text-center">Confidence</th>
+                <th className="w-[8rem] px-4 py-3 text-right">Edge</th>
+                <th className="w-[8rem] px-4 py-3 text-right">Actual</th>
+                <th className="w-[8rem] px-4 py-3 text-right">Outcome</th>
+                <th className="w-[8rem] px-4 py-3 text-right">Detail</th>
+              </tr>
+            </thead>
+            {rows.length > 0 && (
+              <tbody>
+                {rows.map((row, index) => {
+                  const rowKey = projectionRowKey(row, index);
+                  return (
+                    <ProjectionDesktopRow
+                      key={rowKey}
+                      row={row}
+                      attribution={attributionByCardId.get(String(row.cardId || ''))}
+                      expanded={expandedRowKeys.has(rowKey)}
+                      onToggle={() => toggleRow(rowKey)}
+                    />
+                  );
+                })}
+              </tbody>
+            )}
+          </table>
         </div>
 
         {rows.length === 0 ? (
@@ -389,7 +460,7 @@ function CardFamilySection({
             complete and actuals are ingested.
           </div>
         ) : (
-          <div className="divide-y divide-white/10 md:divide-y-0">
+          <div className="divide-y divide-white/10 md:hidden">
             {rows.map((row, index) => (
               <ProjectionRow
                 key={projectionRowKey(row, index)}

@@ -147,7 +147,9 @@ const PROJECTION_ACCURACY_MARKET_FAMILIES = Object.freeze([
   'MLB_F5_TOTAL',
   'MLB_F5_ML',
   'MLB_PITCHER_K',
+  'NHL_1P_TOTAL',
   'NHL_PLAYER_SHOTS',
+  'NHL_PLAYER_SHOTS_1P',
   'NHL_PLAYER_BLOCKS',
 ]);
 
@@ -174,6 +176,11 @@ const PROJECTION_ANALYTICS_CONTRACT_BY_MARKET_FAMILY = Object.freeze({
   }),
   MLB_PITCHER_K: Object.freeze({
     materialized: true,
+    preferredNumericField: 'projection_raw',
+    numericSemantics: 'projected_stat_value',
+  }),
+  NHL_1P_TOTAL: Object.freeze({
+    materialized: false,
     preferredNumericField: 'projection_raw',
     numericSemantics: 'projected_stat_value',
   }),

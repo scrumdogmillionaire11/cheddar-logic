@@ -1,4 +1,4 @@
-import { NextResponse } from 'next/server';
+import { NextResponse } from 'next/server.js';
 import type { ProjectionAccuracyResponse } from '@/lib/types/projection-accuracy';
 import data from '@cheddar-logic/data';
 
@@ -8,17 +8,12 @@ const {
   getProjectionAccuracyEvalSummary,
   getProjectionAccuracyEvals,
   getProjectionAccuracyMarketHealth,
+  PROJECTION_ANALYTICS_CONTRACT_BY_MARKET_FAMILY,
 } = data;
 
 const DEFAULT_LOOKBACK_DAYS = 30;
 const MAX_LOOKBACK_DAYS = 365;
-const VALID_MARKETS = new Set([
-  'MLB_F5_TOTAL',
-  'MLB_F5_ML',
-  'MLB_PITCHER_K',
-  'NHL_PLAYER_SHOTS',
-  'NHL_PLAYER_BLOCKS',
-]);
+const VALID_MARKETS = new Set(Object.keys(PROJECTION_ANALYTICS_CONTRACT_BY_MARKET_FAMILY));
 
 function parseLookbackDays(value: string | null): number {
   if (!value) return DEFAULT_LOOKBACK_DAYS;

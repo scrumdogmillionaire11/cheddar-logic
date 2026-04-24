@@ -57,10 +57,11 @@ function setProjectionActualResult(cardId, actualResult) {
   }
 }
 
-function getUnsettledProjectionCards() {
+function getUnsettledProjectionCards(options = {}) {
   const db = getDatabase();
   ensureActualResultColumn(db);
   const cutoff = new Date(Date.now() - 4 * 60 * 60 * 1000).toISOString();
+  const includeMissingProxyEvals = options.includeMissingProxyEvals === true ? 1 : 0;
   return db.prepare(`
     SELECT
       cp.id as card_id,
@@ -68,17 +69,30 @@ function getUnsettledProjectionCards() {
       cp.sport,
       cp.card_type,
       cp.payload_data,
+      cp.actual_result,
       g.game_time_utc,
       g.home_team,
       g.away_team
     FROM card_payloads cp
     JOIN games g ON cp.game_id = g.game_id
     WHERE cp.card_type IN ('nhl-pace-1p', 'mlb-f5', 'mlb-f5-ml', 'nhl-player-shots', 'nhl-player-shots-1p', 'nhl-player-blk', 'mlb-pitcher-k')
-      AND cp.actual_result IS NULL
+      AND (
+        cp.actual_result IS NULL
+        OR (
+          ? = 1
+          AND cp.card_type IN ('nhl-pace-1p', 'mlb-f5', 'mlb-f5-ml')
+          AND cp.actual_result IS NOT NULL
+          AND NOT EXISTS (
+            SELECT 1
+            FROM projection_proxy_evals ppe
+            WHERE ppe.card_id = cp.id
+          )
+        )
+      )
       AND g.game_time_utc < ?
     ORDER BY g.game_time_utc DESC
     LIMIT 100
-  `).all(cutoff);
+  `).all(includeMissingProxyEvals, cutoff);
 }
 
 function deleteCardPayloadsByGameAndType(gameId, cardType, options = {}) {

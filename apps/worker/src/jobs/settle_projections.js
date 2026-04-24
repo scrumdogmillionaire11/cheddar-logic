@@ -23,6 +23,7 @@ const PITCHER_K_PROJECTION_SETTLEMENT_CODES = Object.freeze({
   NO_GAME_PK: 'PROJECTION_SETTLEMENT_NO_GAME_PK',
   NO_PLAYER_MATCH: 'PROJECTION_SETTLEMENT_NO_PLAYER_MATCH',
 });
+const PROXY_EVAL_BACKFILL_CARD_TYPES = new Set(['nhl-pace-1p', 'mlb-f5', 'mlb-f5-ml']);
 
 function parseJsonObject(value) {
   if (!value) return {};
@@ -132,6 +133,79 @@ function setProjectionSettlementMetadata(db, cardId, { code, message }) {
   return true;
 }
 
+function getStoredActualResult(card) {
+  return parseJsonObject(card?.actual_result);
+}
+
+function insertProjectionProxyRows(db, card, payload, actualResult) {
+  if (!PROXY_EVAL_BACKFILL_CARD_TYPES.has(card?.card_type)) return 0;
+
+  let proxyRows = [];
+
+  if (card.card_type === 'nhl-pace-1p') {
+    const goals1p = toFiniteNumberOrNull(actualResult?.goals_1p);
+    if (goals1p === null) return 0;
+    proxyRows = buildProjectionProxyMarketRows({
+      card_id: card.card_id,
+      game_id: card.game_id,
+      game_date: card.game_time_utc?.slice(0, 10),
+      sport: card.sport,
+      card_family: CARD_TYPE_TO_FAMILY[card.card_type],
+      model_projection: payload?.projected_total ?? null,
+      actual_result: JSON.stringify({ goals_1p: goals1p }),
+    });
+  }
+
+  if (card.card_type === 'mlb-f5') {
+    const runsF5 = toFiniteNumberOrNull(actualResult?.runs_f5);
+    if (runsF5 === null) return 0;
+    proxyRows = buildProjectionProxyMarketRows({
+      card_id: card.card_id,
+      game_id: card.game_id,
+      game_date: card.game_time_utc?.slice(0, 10),
+      sport: card.sport,
+      card_family: CARD_TYPE_TO_FAMILY[card.card_type],
+      model_projection: payload?.projected_total ?? null,
+      actual_result: JSON.stringify({ runs_f5: runsF5 }),
+    });
+  }
+
+  if (card.card_type === 'mlb-f5-ml') {
+    const selectedSide = actualResult?.selected_side ?? resolveF5MlSelectedSide(payload);
+    const actualSelectedSide = toFiniteNumberOrNull(actualResult?.f5_ml_actual);
+    const winner = actualResult?.f5_winner ?? null;
+    const selectedWinProbability = resolveF5MlSelectedWinProbability(payload, selectedSide);
+    if (selectedWinProbability === null || actualSelectedSide === null) return 0;
+    proxyRows = buildProjectionProxyMarketRows({
+      card_id: card.card_id,
+      game_id: card.game_id,
+      game_date: card.game_time_utc?.slice(0, 10),
+      sport: card.sport,
+      card_family: CARD_TYPE_TO_FAMILY[card.card_type],
+      model_projection: selectedWinProbability,
+      actual_value: actualSelectedSide,
+      selected_side: selectedSide,
+      confidence_bucket: resolveMoneylineConfidenceBucket({ payload }),
+      confidence_score: payload?.confidence_score,
+      actual_result: JSON.stringify({
+        f5_ml_actual: actualSelectedSide,
+        f5_winner: winner,
+        selected_side: selectedSide,
+      }),
+    });
+  }
+
+  if (proxyRows.length === 0) return 0;
+
+  try {
+    batchInsertProjectionProxyEvals(db, proxyRows);
+  } catch (proxyErr) {
+    console.error('[settle_projections] proxy eval insert failed', card.card_id, proxyErr?.message);
+    return 0;
+  }
+  return proxyRows.length;
+}
+
 /**
  * Resolve the NHL Gamecenter ID from the game_id_map table or by treating
  * a pure-numeric canonical game_id as the native NHL ID (same logic as
@@ -198,7 +272,7 @@ async function fetchMlbPitcherKs(gamePk) {
   return { available: false, reason: 'fetch_failed' };
 }
 
-async function settleProjections({ jobKey = null, dryRun = false } = {}) {
+async function settleProjections({ jobKey = null, dryRun = false, backfillMissingProxyEvals = false } = {}) {
   const jobRunId = `job-${JOB_NAME}-${new Date().toISOString().split('.')[0]}-${uuidV4().slice(0, 8)}`;
 
   return withDb(async () => {
@@ -227,7 +301,7 @@ async function settleProjections({ jobKey = null, dryRun = false } = {}) {
       }
 
       const db = getDatabase();
-      const unsettled = getUnsettledProjectionCards();
+      const unsettled = getUnsettledProjectionCards({ includeMissingProxyEvals: backfillMissingProxyEvals });
 
       if (unsettled.length === 0) {
         if (!dryRun) markJobRunSuccess(jobRunId, { settled: 0, skipped: 0 });
@@ -236,6 +310,7 @@ async function settleProjections({ jobKey = null, dryRun = false } = {}) {
       }
 
       let settled = 0;
+      let backfilled = 0;
       let skipped = 0;
       const pitcherKTelemetry = {
         captured: 0,
@@ -251,6 +326,17 @@ async function settleProjections({ jobKey = null, dryRun = false } = {}) {
             typeof card.payload_data === 'string'
               ? JSON.parse(card.payload_data)
               : card.payload_data;
+          const storedActualResult = getStoredActualResult(card);
+
+          if (backfillMissingProxyEvals && card.actual_result) {
+            const insertedRows = dryRun ? 0 : insertProjectionProxyRows(db, card, payload, storedActualResult);
+            if (insertedRows > 0) {
+              backfilled++;
+            } else {
+              skipped++;
+            }
+            continue;
+          }
 
           // ── NHL nhl-pace-1p ──────────────────────────────────────────────
           if (card.card_type === 'nhl-pace-1p') {
@@ -291,25 +377,7 @@ async function settleProjections({ jobKey = null, dryRun = false } = {}) {
             );
 
             // Persist proxy-line grades for NHL 1P
-            if (!dryRun) {
-              const actualResultObj = { goals_1p: goals1p };
-              const proxyRows = buildProjectionProxyMarketRows({
-                card_id: card.card_id,
-                game_id: card.game_id,
-                game_date: card.game_time_utc?.slice(0, 10),
-                sport: card.sport,
-                card_family: CARD_TYPE_TO_FAMILY[card.card_type],
-                model_projection: payload?.projected_total ?? null,
-                actual_result: JSON.stringify(actualResultObj),
-              });
-              if (proxyRows.length > 0) {
-                try {
-                  batchInsertProjectionProxyEvals(db, proxyRows);
-                } catch (proxyErr) {
-                  console.error('[settle_projections] proxy eval insert failed', card.card_id, proxyErr?.message);
-                }
-              }
-            }
+            if (!dryRun) insertProjectionProxyRows(db, card, payload, { goals_1p: goals1p });
 
             settled++;
             continue;
@@ -343,25 +411,7 @@ async function settleProjections({ jobKey = null, dryRun = false } = {}) {
             );
 
             // Persist proxy-line grades for MLB F5
-            if (!dryRun) {
-              const actualResultObj = { runs_f5: actualF5 };
-              const proxyRows = buildProjectionProxyMarketRows({
-                card_id: card.card_id,
-                game_id: card.game_id,
-                game_date: card.game_time_utc?.slice(0, 10),
-                sport: card.sport,
-                card_family: CARD_TYPE_TO_FAMILY[card.card_type],
-                model_projection: payload?.projected_total ?? null,
-                actual_result: JSON.stringify(actualResultObj),
-              });
-              if (proxyRows.length > 0) {
-                try {
-                  batchInsertProjectionProxyEvals(db, proxyRows);
-                } catch (proxyErr) {
-                  console.error('[settle_projections] proxy eval insert failed', card.card_id, proxyErr?.message);
-                }
-              }
-            }
+            if (!dryRun) insertProjectionProxyRows(db, card, payload, { runs_f5: actualF5 });
 
             settled++;
             continue;
@@ -415,34 +465,11 @@ async function settleProjections({ jobKey = null, dryRun = false } = {}) {
             );
 
             if (!dryRun) {
-              const selectedWinProbability = resolveF5MlSelectedWinProbability(payload, selectedSide);
-              if (selectedWinProbability !== null && actualSelectedSide !== null) {
-                const actualResultObj = {
-                  f5_ml_actual: actualSelectedSide,
-                  f5_winner: winner,
-                  selected_side: selectedSide,
-                };
-                const proxyRows = buildProjectionProxyMarketRows({
-                  card_id: card.card_id,
-                  game_id: card.game_id,
-                  game_date: card.game_time_utc?.slice(0, 10),
-                  sport: card.sport,
-                  card_family: CARD_TYPE_TO_FAMILY[card.card_type],
-                  model_projection: selectedWinProbability,
-                  actual_value: actualSelectedSide,
-                  selected_side: selectedSide,
-                  confidence_bucket: resolveMoneylineConfidenceBucket({ payload }),
-                  confidence_score: payload?.confidence_score,
-                  actual_result: JSON.stringify(actualResultObj),
-                });
-                if (proxyRows.length > 0) {
-                  try {
-                    batchInsertProjectionProxyEvals(db, proxyRows);
-                  } catch (proxyErr) {
-                    console.error('[settle_projections] proxy eval insert failed', card.card_id, proxyErr?.message);
-                  }
-                }
-              }
+              insertProjectionProxyRows(db, card, payload, {
+                f5_ml_actual: actualSelectedSide,
+                f5_winner: winner,
+                selected_side: selectedSide,
+              });
             }
 
             settled++;
@@ -687,6 +714,7 @@ async function settleProjections({ jobKey = null, dryRun = false } = {}) {
       if (!dryRun) {
         markJobRunSuccess(jobRunId, {
           settled,
+          backfilled,
           skipped,
           pitcher_k: pitcherKTelemetry,
         });
@@ -694,11 +722,12 @@ async function settleProjections({ jobKey = null, dryRun = false } = {}) {
       console.log(
         `[${JOB_NAME}] pitcher_k=${JSON.stringify(pitcherKTelemetry)}`,
       );
-      console.log(`[${JOB_NAME}] settled=${settled} skipped=${skipped}`);
+      console.log(`[${JOB_NAME}] settled=${settled} backfilled=${backfilled} skipped=${skipped}`);
       return {
         success: true,
         jobRunId,
         settled,
+        backfilled,
         skipped,
         pitcher_k: pitcherKTelemetry,
       };
@@ -714,16 +743,17 @@ async function settleProjections({ jobKey = null, dryRun = false } = {}) {
 }
 
 function parseCliArgs(argv = process.argv.slice(2)) {
-  const args = { dryRun: false };
+  const args = { dryRun: false, backfillMissingProxyEvals: false };
   for (const arg of argv) {
     if (arg === '--dry-run') args.dryRun = true;
+    if (arg === '--backfill-missing-proxy-evals') args.backfillMissingProxyEvals = true;
   }
   return args;
 }
 
 if (require.main === module) {
   const args = parseCliArgs();
-  settleProjections({ dryRun: args.dryRun })
+  settleProjections({ dryRun: args.dryRun, backfillMissingProxyEvals: args.backfillMissingProxyEvals })
     .then((r) => process.exit(r.success ? 0 : 1))
     .catch((err) => {
       console.error(err.message);
