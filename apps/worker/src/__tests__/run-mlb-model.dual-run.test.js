@@ -267,6 +267,10 @@ function loadRunMlbModel({
     }),
     // WI-0840: dynamic league constants — return static fallback in tests
     computeMLBLeagueAverages: jest.fn(() => ({ kPct: 0.225, xfip: 4.3, bbPct: 0.085, source: 'static_2024', n: 0 })),
+    computeMLBHorizonEndUtc: jest.fn((nowUtc) => {
+      const end = new Date(nowUtc.getTime() + 36 * 60 * 60 * 1000);
+      return end.toISOString().substring(0, 19).replace('T', ' ');
+    }),
   }));
 
   jest.doMock('../models', () => ({
