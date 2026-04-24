@@ -331,14 +331,16 @@ async function pullNhlPlayerShots({ jobKey = null, dryRun = false } = {}) {
     }
 
     if (allPlayerIds.length === 0) {
-      console.log(
-        '[NHLPlayerShots] No player IDs configured. Run sync_nhl_sog_player_ids or set NHL_SOG_PLAYER_IDS.',
+      console.error(
+        '[NHLPlayerShots] PREREQ FAILURE: no player IDs available. Run sync_nhl_sog_player_ids or set NHL_SOG_PLAYER_IDS.',
       );
+      insertJobRun('pull_nhl_player_shots', jobRunId, jobKey);
+      markJobRunFailure(jobRunId, { error: 'no_player_ids', prereqFailure: true });
       return {
-        success: true,
-        jobRunId: null,
-        skipped: true,
+        success: false,
+        prereqFailure: true,
         reason: 'no_player_ids',
+        jobRunId,
       };
     }
     const excludeIds = new Set(parsePlayerIds(process.env.NHL_SOG_EXCLUDE_PLAYER_IDS));

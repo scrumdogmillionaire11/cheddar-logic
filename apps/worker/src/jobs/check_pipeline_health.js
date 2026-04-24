@@ -1735,6 +1735,10 @@ async function checkPipelineHealth({ jobKey, dryRun }) {
         checkSportModelFreshness('nhl', 'run_nhl_model', 'model_freshness', getModelFreshnessMaxAgeMinutes()),
       nhl_market_call_diagnostics: checkNhlMarketCallDiagnostics,
       nhl_moneyline_coverage: checkNhlMoneylineCoverage,
+      nhl_sog_sync_freshness: () =>
+        checkSportModelFreshness('nhl', 'sync_nhl_sog_player_ids', 'sog_sync_freshness', 1440),
+      nhl_sog_pull_freshness: () =>
+        checkSportModelFreshness('nhl', 'pull_nhl_player_shots', 'sog_pull_freshness', 1440),
       nhl_shots_model_freshness: () =>
         checkSportModelFreshness('nhl', 'run-nhl-player-shots-model', 'shots_model_freshness', getModelFreshnessMaxAgeMinutes()),
       nba_model_freshness: () =>
@@ -1773,6 +1777,8 @@ async function checkPipelineHealth({ jobKey, dryRun }) {
         nhl_model_freshness: ['nhl', 'model_freshness'],
         nhl_market_call_diagnostics: ['nhl', 'market_call_blockers'],
         nhl_moneyline_coverage: ['nhl', 'moneyline_coverage'],
+        nhl_sog_sync_freshness: ['nhl', 'sog_sync_freshness'],
+        nhl_sog_pull_freshness: ['nhl', 'sog_pull_freshness'],
         nhl_shots_model_freshness: ['nhl', 'shots_model_freshness'],
         nba_model_freshness: ['nba', 'model_freshness'],
         nba_market_call_diagnostics: ['nba', 'market_call_blockers'],
@@ -1838,8 +1844,18 @@ if (require.main === module) {
   );
 }
 
+function checkNhlSogSyncFreshness() {
+  return checkSportModelFreshness('nhl', 'sync_nhl_sog_player_ids', 'sog_sync_freshness', 1440);
+}
+
+function checkNhlSogPullFreshness() {
+  return checkSportModelFreshness('nhl', 'pull_nhl_player_shots', 'sog_pull_freshness', 1440);
+}
+
 module.exports = {
   checkPipelineHealth,
+  checkNhlSogSyncFreshness,
+  checkNhlSogPullFreshness,
   checkCardsFreshness,
   checkMlbF5MarketAvailability,
   checkMlbGameLineCoverage,

@@ -86,10 +86,11 @@ describe('computePlayerPropsDueJobs', () => {
     process.env.FIXED_CATCHUP = 'false';
     // Large tick so the 2×TICK_MS window is wide enough to fire
     process.env.TICK_MS = '120000';
-    // Clear all feature flags to defaults
+    // Clear all feature flags to defaults; enable SOG sync for tests that exercise it
     delete process.env.ENABLE_PLAYER_PROPS_SCHEDULER;
     delete process.env.ENABLE_NHL_BLK_INGEST;
     delete process.env.PLAYER_PROPS_FIXED_TIMES_ET;
+    process.env.ENABLE_NHL_SOG_PLAYER_SYNC = 'true';
   });
 
   afterEach(() => {
@@ -104,6 +105,30 @@ describe('computePlayerPropsDueJobs', () => {
       const nowEt = makeNowEt('09:00');
       const result = computePlayerPropsDueJobs(nowEt, { games: [], dryRun: false });
       expect(result).toEqual([]);
+    });
+  });
+
+  // ─── SOG sync feature flag gate ──────────────────────────────────────────
+  describe('ENABLE_NHL_SOG_PLAYER_SYNC gate', () => {
+    it('suppresses sync_nhl_sog_player_ids at heavy window when flag not set', () => {
+      delete process.env.ENABLE_NHL_SOG_PLAYER_SYNC;
+      const nowEt = makeNowEt('09:00');
+      const result = computePlayerPropsDueJobs(nowEt, { games: [], dryRun: false });
+      expect(result.map((j) => j.jobName)).not.toContain('sync_nhl_sog_player_ids');
+    });
+
+    it('suppresses sync_nhl_sog_player_ids at heavy window when flag is false', () => {
+      process.env.ENABLE_NHL_SOG_PLAYER_SYNC = 'false';
+      const nowEt = makeNowEt('09:00');
+      const result = computePlayerPropsDueJobs(nowEt, { games: [], dryRun: false });
+      expect(result.map((j) => j.jobName)).not.toContain('sync_nhl_sog_player_ids');
+    });
+
+    it('enqueues sync_nhl_sog_player_ids at heavy window when ENABLE_NHL_SOG_PLAYER_SYNC=true', () => {
+      process.env.ENABLE_NHL_SOG_PLAYER_SYNC = 'true';
+      const nowEt = makeNowEt('09:00');
+      const result = computePlayerPropsDueJobs(nowEt, { games: [], dryRun: false });
+      expect(result.map((j) => j.jobName)).toContain('sync_nhl_sog_player_ids');
     });
   });
 

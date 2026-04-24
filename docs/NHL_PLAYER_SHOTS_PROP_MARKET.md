@@ -58,7 +58,7 @@ When enabled, a card is created for HOT or WATCH first-period edges (same thresh
 | Variable | Required | Default | Purpose |
 |---|---|---|---|
 | `ODDS_API_KEY` | Yes | — | The Odds API key |
-| `ENABLE_NHL_SOG_PLAYER_SYNC` | No | `true` | Enables daily 04:00 ET tracked-player sync job in scheduler |
+| `ENABLE_NHL_SOG_PLAYER_SYNC` | No | `false` (disabled — explicit opt-in; applies to both schedulers) | Enables daily tracked-player sync job in the NHL and player-props schedulers |
 | `NHL_SOG_TOP_SHOOTERS_COUNT` | No | `50` | Number of shooters to track from NHL stats API sync |
 | `NHL_SOG_MIN_GAMES_PLAYED` | No | `20` | Minimum games played required for tracked-player sync eligibility |
 | `NHL_SOG_SEASON_ID` | No | Auto-derived | Optional override for NHL season ID (e.g., `20252026`) |
