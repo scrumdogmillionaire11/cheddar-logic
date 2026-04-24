@@ -10,8 +10,8 @@
  * are deprecated references only and are not active runtime contracts.
  *
  * Query window:
- *   - Production default: midnight today America/New_York -> now + API_GAMES_HORIZON_HOURS (default 36h)
- *   - Dev override (optional): include recent past games via lookback window
+ *   - Pregame: today midnight ET → end of tomorrow ET (23:59:59 ET, per horizon-contract v1)
+ *   - Active: yesterday midnight ET → now (started games not yet settled)
  * Sort: game_time_utc ASC
  * Limit: 200
  *
@@ -175,16 +175,6 @@ const ENABLE_WELCOME_HOME =
   process.env.ENABLE_WELCOME_HOME === 'true' ||
   process.env.NEXT_PUBLIC_ENABLE_WELCOME_HOME === 'true';
 
-const ENABLE_DEV_PAST_GAMES =
-  process.env.ENABLE_DEV_PAST_GAMES === 'true' ||
-  process.env.CHEDDAR_DEV_INCLUDE_PAST_GAMES === 'true';
-
-const DEV_GAMES_LOOKBACK_HOURS = Number.parseInt(
-  process.env.DEV_GAMES_LOOKBACK_HOURS ||
-    process.env.CHEDDAR_DEV_GAMES_LOOKBACK_HOURS ||
-    '24',
-  10,
-);
 
 const API_GAMES_MAX_CARD_ROWS = Math.max(
   100,
@@ -218,14 +208,6 @@ const API_GAMES_MLB_FALLBACK_ODDS_TOLERANCE_MINUTES =
   RAW_API_GAMES_MLB_FALLBACK_ODDS_TOLERANCE_MINUTES > 0
     ? RAW_API_GAMES_MLB_FALLBACK_ODDS_TOLERANCE_MINUTES
     : 10;
-const RAW_API_GAMES_HORIZON_HOURS = Number.parseInt(
-  process.env.API_GAMES_HORIZON_HOURS || '36',
-  10,
-);
-const API_GAMES_HORIZON_HOURS = Number.isFinite(RAW_API_GAMES_HORIZON_HOURS)
-  ? RAW_API_GAMES_HORIZON_HOURS
-  : 36;
-const HAS_API_GAMES_HORIZON = API_GAMES_HORIZON_HOURS > 0;
 const API_GAMES_INGEST_FAILURE_LOOKBACK_HOURS = 12;
 const RAW_API_GAMES_TIMEOUT_MS = Number.parseInt(
   process.env.API_GAMES_TIMEOUT_MS || '5000',
@@ -1767,19 +1749,12 @@ export async function GET(request: NextRequest) {
     const queryWindow = resolveGamesQueryWindow({
       now,
       lifecycleMode,
-      isDev: isNonProd,
-      enableDevPastGames: ENABLE_DEV_PAST_GAMES,
-      devLookbackHours: DEV_GAMES_LOOKBACK_HOURS,
-      hasApiGamesHorizon: HAS_API_GAMES_HORIZON,
-      apiGamesHorizonHours: API_GAMES_HORIZON_HOURS,
     });
     const {
       nowUtc,
-      lookbackUtc,
       gamesStartUtc,
       activeStartUtc,
       gamesEndUtc,
-      shouldUseDevLookback,
     } = queryWindow;
 
     const lifecycleSql =
@@ -2183,9 +2158,9 @@ export async function GET(request: NextRequest) {
     currentStage = 'load_games';
     const loadGamesStartedAt = Date.now();
     const activeLifecycleFallbackApplied = false;
-    // Active mode uses activeStartUtc (36h rolling lookback) so games started
-    // before today's ET midnight boundary stay visible while in progress.
-    // Pregame mode continues using gamesStartUtc (today midnight ET).
+    // Active mode uses activeStartUtc (yesterday midnight ET) so late-night
+    // games started before today's ET midnight boundary remain visible while
+    // in progress. Pregame uses gamesStartUtc (today midnight ET).
     const initialStartUtc = resolveGamesQueryStartUtc({
       lifecycleMode,
       activeStartUtc,
@@ -2193,7 +2168,7 @@ export async function GET(request: NextRequest) {
     });
     rows = loadGamesWithLatestOdds(initialStartUtc, gamesEndUtc);
 
-    if (isNonProd && rows.length === 0 && !shouldUseDevLookback) {
+    if (isNonProd && rows.length === 0) {
       const fallbackLookbackHours = Number(
         process.env.DEV_GAMES_FALLBACK_HOURS || 72,
       );
@@ -2208,8 +2183,7 @@ export async function GET(request: NextRequest) {
       }
     }
     // Note: active mode no longer needs a secondary fallback — activeStartUtc
-    // already spans 36 h so there is no scenario where rows drops to 0 for live
-    // games solely due to the start-date boundary.
+    // (yesterday midnight ET) covers all games that could still be in-progress.
     perf.loadGamesMs = Date.now() - loadGamesStartedAt;
     budget.assertWithin('load_games');
 
@@ -4028,6 +4002,50 @@ function mergePropFallbackRows(params: {
         .sort((a, b) => b.count - a.count);
     };
 
+    // Empty-state diagnostics: always returned when active lifecycle has 0 results.
+    // Explains WHY the list is empty so the UI can display meaningful messaging
+    // and CardsPageContext never silently falls back to pregame.
+    const emptyStateDiagnostics = lifecycleMode === 'active' && data.length === 0
+      ? (() => {
+          const startedGamesCount = rows.length;
+          let actionableRowsCount = 0;
+          let passedRowsCount = 0;
+          for (const plays of playsMap.values()) {
+            for (const play of plays) {
+              if (play.status === 'PASS') {
+                passedRowsCount++;
+              } else {
+                actionableRowsCount++;
+              }
+            }
+          }
+          const totalRowsInWindow = rows.length;
+          const settlementDrops = parsedDropReasons.filter(
+            (dr) => dr.drop_reason_code?.startsWith('PASS_EXECUTION_GATE') ||
+                    dr.drop_reason_code?.startsWith('SETTLEMENT'),
+          ).length;
+          let reason: 'NO_ACTIVE_GAMES' | 'NO_ACTIONABLE_ROWS' | 'ALL_ROWS_PASSED' | 'SETTLEMENT_GATE' | 'UNKNOWN';
+          if (startedGamesCount === 0) {
+            reason = 'NO_ACTIVE_GAMES';
+          } else if (settlementDrops > 0 && actionableRowsCount === 0) {
+            reason = 'SETTLEMENT_GATE';
+          } else if (passedRowsCount > 0 && actionableRowsCount === 0) {
+            reason = 'ALL_ROWS_PASSED';
+          } else if (actionableRowsCount === 0) {
+            reason = 'NO_ACTIONABLE_ROWS';
+          } else {
+            reason = 'UNKNOWN';
+          }
+          return {
+            reason,
+            started_games_count: startedGamesCount,
+            actionable_rows_count: actionableRowsCount,
+            passed_rows_count: passedRowsCount,
+            total_rows_in_window: totalRowsInWindow,
+          };
+        })()
+      : undefined;
+
     const flowDiagnostics = isDev
       ? {
           stage_counters: stageCounters,
@@ -4035,10 +4053,7 @@ function mergePropFallbackRows(params: {
             start_utc: gamesStartUtc,
             end_utc: gamesEndUtc,
             now_utc: nowUtc,
-            horizon_hours: HAS_API_GAMES_HORIZON
-              ? API_GAMES_HORIZON_HOURS
-              : null,
-            dev_lookback_applied: Boolean(lookbackUtc),
+            horizon_contract: 'v1-et-boundary-aware',
             active_fallback_applied: activeLifecycleFallbackApplied,
             lifecycle_mode: lifecycleMode,
             base_window_count: baseWindowCount,
@@ -4081,6 +4096,10 @@ function mergePropFallbackRows(params: {
     }
 
     stageTracker.finish();
+    const combinedDiagnostics: Record<string, unknown> | undefined =
+      emptyStateDiagnostics || flowDiagnostics
+        ? { ...flowDiagnostics, ...(emptyStateDiagnostics ? { empty_state: emptyStateDiagnostics } : {}) }
+        : undefined;
     const payload = buildGamesSuccessPayload({
       data,
       currentRunId,
@@ -4088,7 +4107,7 @@ function mergePropFallbackRows(params: {
       perf,
       responseMode: 'full',
       isDev,
-      diagnostics: flowDiagnostics,
+      diagnostics: combinedDiagnostics,
       joinDebug,
     });
     if (cacheKey) {

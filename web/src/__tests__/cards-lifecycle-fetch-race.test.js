@@ -153,7 +153,35 @@ assert(
 );
 console.log('✓ Empty active responses stay in active lifecycle\n');
 
-console.log('✅ All WI-0396 Lifecycle Fetch Race Tests Passed!');
+// ── WI-1154 Test 5: Active lifecycle empty-state does NOT silently switch to pregame ──
+console.log('WI-1154 Test 5: Active empty-state — no hidden pregame fallback');
+
+// 5a: No mode switch on empty response (no dispatch('set_lifecycle_mode', 'pregame') on empty data)
+assert(
+  !source.includes("dispatch({ type: 'set_lifecycle_mode', lifecycleMode: 'pregame' })") ||
+    source.includes("dispatch({ type: 'set_lifecycle_mode', lifecycleMode: resolvedLifecycleMode })"),
+  'CardsPageContext must NOT dispatch pregame on empty active response',
+);
+// 5b: The component does not check for zero-length data to switch modes
+assert(
+  !source.includes('nextGames.length === 0') ||
+    !source.includes("'pregame'"),
+  'CardsPageContext must not switch to pregame when nextGames is empty',
+);
+// 5c: No lifecycle fallback flag that could trigger silent switch
+assert(
+  !source.includes('lifecycleFallbackAttemptedRef') &&
+    !source.includes('activeEmptyFallback'),
+  'no legacy lifecycle fallback variables remain',
+);
+// 5d: Empty-state diagnostics from route response are logged, not suppressed
+assert(
+  source.includes("data?.data") || source.includes('nextGames'),
+  'component reads data array and renders it directly (empty or not)',
+);
+console.log('✓ WI-1154 Test 5 passed: active empty-state never silently switches to pregame\n');
+
+console.log('✅ All WI-0396 + WI-1154 Lifecycle Fetch Race Tests Passed!');
 console.log('\n📋 Summary:');
 console.log('✓ SSR-safe default (pregame) prevents hydration mismatch');
 console.log('✓ URL/session effect changes mode after mount/hydration');

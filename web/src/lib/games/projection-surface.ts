@@ -1,5 +1,10 @@
 export const PROJECTION_SURFACE_CARD_TYPES = [
   'nhl-pace-1p',
+  'nhl-pace-totals',        
+  'nhl-totals-call',
+  'nab-totals-call',       
+  'nba-spread-call',        
+  'nhl-moneyline-call',     
   'mlb-f5',
   'mlb-f5-ml',
   'mlb-full-game',

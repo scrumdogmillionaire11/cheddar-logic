@@ -21,6 +21,37 @@ cd packages/data && npm run db:test-query
 cd packages/data && npm run test:integration
 ```
 
+## Games Horizon Contract (WI-1154)
+
+`/api/games` and worker MLB odds pulls now share one canonical visibility rule:
+
+- Contract: `packages/data/src/games/horizon-contract.js`
+- Version: `v1-et-boundary-aware`
+- Rule: include games through end-of-tomorrow in America/New_York (`23:59:59 ET`)
+
+Verification commands:
+
+```bash
+# Data contract unit tests
+npm --prefix packages/data run test -- src/games/__tests__/horizon-contract.test.js
+
+# API lifecycle + ET-boundary + empty-state diagnostics contract
+npm --prefix web run test:games-filter
+
+# UI lifecycle no-silent-fallback contract
+node web/src/__tests__/cards-lifecycle-fetch-race.test.js
+
+# Hardcoded hour-offset hygiene guard
+node web/src/__tests__/codebase-hygiene.test.js
+```
+
+If tomorrow MLB games are missing, confirm both sides reference the contract:
+
+- Web query window (`web/src/lib/games/query-layer.ts`) must compute `gamesEndUtc` as ET end-of-tomorrow.
+- Worker job (`apps/worker/src/jobs/run_mlb_model.js`) must use `computeMLBHorizonEndUtc`.
+
+Do not reintroduce fixed-hour visibility windows (`36h`, `48h`, env overrides) for core horizon behavior.
+
 ## Moneyline Suppression Attribution (WI-0955)
 
 Use these queries when MLB/NHL moneyline cards appear to disappear between model output and visible cards.
