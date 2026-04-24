@@ -922,6 +922,7 @@ async function gatherBestCandidate({
   buildCandidatesFn,
   scoreCandidateFn,
   selectTopPlaysFn,
+  playDate,
   db = null,
 }) {
   const sports = getActivePotdSports();
@@ -959,8 +960,29 @@ async function gatherBestCandidate({
     }
   }
 
+  // POTD is date-scoped: only consider candidates whose game starts on the
+  // same ET play_date as this run.
+  const playDateScopedCandidates = scoredCandidates.filter((candidate) => {
+    const startUtc = candidate?.commence_time;
+    if (!startUtc || !playDate) return false;
+    const startEt = DateTime.fromISO(startUtc, { zone: 'utc' }).setZone(DEFAULT_TIMEZONE);
+    if (!startEt.isValid) return false;
+    return startEt.toISODate() === playDate;
+  });
+
+  if (POTD_AUDIT_LOG_ENABLED && playDateScopedCandidates.length !== scoredCandidates.length) {
+    console.log(
+      JSON.stringify({
+        type: 'POTD_PLAY_DATE_FILTER',
+        playDate,
+        dropped: scoredCandidates.length - playDateScopedCandidates.length,
+        kept: playDateScopedCandidates.length,
+      }),
+    );
+  }
+
   // Per-candidate audit log: emit noise-floor evaluation for every scored candidate.
-  for (const c of scoredCandidates) {
+  for (const c of playDateScopedCandidates) {
     auditLogCandidate(c, resolveNoiseFloor(c.sport, c.marketType, POTD_MIN_EDGE));
   }
 
@@ -984,7 +1006,7 @@ async function gatherBestCandidate({
       .replace('AMERICANFOOTBALL_', '');
     return modelHealthGates.has(sportKey);
   }
-  const fireableSelectorPool = scoredCandidates.filter(c => {
+  const fireableSelectorPool = playDateScopedCandidates.filter(c => {
     if (!isModelBackedCandidate(c)) return false;
     if (isSportModelGated(c)) {
       if (POTD_AUDIT_LOG_ENABLED) {
@@ -1034,10 +1056,10 @@ async function gatherBestCandidate({
     rankedNominees,
     diagnosticNominees, // non-play diagnostics — labeled non-play, never nominated
     shadowCandidatePool,
-    allScoredCandidates: scoredCandidates,
+    allScoredCandidates: playDateScopedCandidates,
     fetchErrors,
     activeSports: sports,
-    candidatesCount: scoredCandidates.length,
+    candidatesCount: playDateScopedCandidates.length,
     viableCount: fireableSelectorPool.length,
   };
 }
@@ -1122,6 +1144,7 @@ async function runPotdEngine({
         buildCandidatesFn,
         scoreCandidateFn,
         selectTopPlaysFn,
+        playDate,
         db,
       });
 

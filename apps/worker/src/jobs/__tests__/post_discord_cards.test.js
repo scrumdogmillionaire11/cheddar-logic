@@ -56,6 +56,9 @@ function stampNhlTotals(pd) {
     accelerantScore: pd.accelerant_score ?? null,
     hasRequiredInputs: true,
   });
+  if (pd.nhl_totals_status.status === 'PLAY') pd.final_play_state = 'OFFICIAL_PLAY';
+  else if (pd.nhl_totals_status.status === 'SLIGHT EDGE') pd.final_play_state = 'LEAN';
+  else if (pd.nhl_totals_status.status === 'PASS') pd.final_play_state = 'NO_PLAY';
   computeWebhookFields(pd);
 }
 
@@ -1296,7 +1299,168 @@ describe('WI-0934: NHL totals bucket policy — PLAY / SLIGHT EDGE / PASS', () =
 });
 
 describe('canonical webhook fields path', () => {
-  // classifyDecisionBucket reads webhook_bucket
+  it('classifyDecisionBucket reads webhook_publish_status before compatibility bucket fields', () => {
+    const playCard = makeCard({
+      payloadData: {
+        webhook_publish_status: 'PLAY',
+        webhook_bucket: 'pass_blocked',
+        webhook_eligible: false,
+      },
+    });
+    const slightEdgeCard = makeCard({
+      payloadData: {
+        webhook_publish_status: 'SLIGHT_EDGE',
+        webhook_bucket: 'official',
+      },
+    });
+    const passBlockedCard = makeCard({
+      payloadData: {
+        webhook_publish_status: 'PASS_BLOCKED',
+        webhook_bucket: 'official',
+        webhook_eligible: true,
+      },
+    });
+
+    expect(classifyDecisionBucket(playCard)).toBe('official');
+    expect(classifyDecisionBucket(slightEdgeCard)).toBe('lean');
+    expect(classifyDecisionBucket(passBlockedCard)).toBe('pass_blocked');
+    expect(isDisplayableWebhookCard(playCard)).toBe(true);
+    expect(isDisplayableWebhookCard(slightEdgeCard)).toBe(true);
+    expect(isDisplayableWebhookCard(passBlockedCard)).toBe(false);
+  });
+
+  it('buildDiscordSnapshot renders only PLAY and SLIGHT_EDGE canonical cards across mixed markets', () => {
+    const now = new Date('2026-03-20T14:00:00.000Z');
+    const cards = [
+      makeCard({
+        id: 'canonical-line-play',
+        cardType: 'nhl-total',
+        payloadData: {
+          webhook_publish_status: 'PLAY',
+          webhook_bucket: 'pass_blocked',
+          webhook_eligible: false,
+          kind: 'PLAY',
+          market_type: 'TOTAL',
+          selection: { side: 'OVER' },
+          line: 5.5,
+          price: -110,
+          model_projection: 6.1,
+          edge: 0.6,
+        },
+      }),
+      makeCard({
+        id: 'canonical-game-prop-lean',
+        cardType: 'nhl-tsoa-call',
+        payloadData: {
+          webhook_publish_status: 'SLIGHT_EDGE',
+          webhook_bucket: 'pass_blocked',
+          webhook_eligible: false,
+          webhook_lean_eligible: true,
+          kind: 'PLAY',
+          market_type: 'TSOA',
+          selection: { team: 'Boston Bruins' },
+          price: +140,
+          edge: 0.24,
+        },
+      }),
+      makeCard({
+        id: 'canonical-player-prop-lean',
+        cardType: 'nhl_player_shots_props',
+        payloadData: {
+          webhook_publish_status: 'SLIGHT_EDGE',
+          webhook_bucket: 'official',
+          webhook_eligible: false,
+          webhook_lean_eligible: true,
+          action: 'PASS',
+          market_type: 'SHOTS',
+          prediction: 'David Pastrnak over 3.5 shots',
+          price: -125,
+          player_projection: '4.2 shots',
+          edge: 0.31,
+        },
+      }),
+      makeCard({
+        id: 'canonical-line-pass',
+        cardType: 'nhl-total',
+        payloadData: {
+          webhook_publish_status: 'PASS_BLOCKED',
+          webhook_bucket: 'official',
+          webhook_eligible: true,
+          kind: 'PLAY',
+          market_type: 'TOTAL',
+          selection: { side: 'UNDER' },
+          line: 5.5,
+          price: -110,
+          model_projection: 5.1,
+          edge: 0.4,
+          why: 'Blocked Line Prop',
+        },
+      }),
+      makeCard({
+        id: 'canonical-game-prop-pass',
+        cardType: 'nhl-game-prop-anytime',
+        payloadData: {
+          webhook_publish_status: 'PASS_BLOCKED',
+          webhook_bucket: 'lean',
+          webhook_eligible: true,
+          kind: 'PLAY',
+          market_type: 'ANYTIME',
+          selection: { team: 'Blocked Game Prop' },
+          price: +220,
+          edge: 0.45,
+        },
+      }),
+      makeCard({
+        id: 'canonical-player-prop-pass',
+        cardType: 'nhl_player_shots_props',
+        payloadData: {
+          webhook_publish_status: 'PASS_BLOCKED',
+          webhook_bucket: 'lean',
+          webhook_eligible: true,
+          market_type: 'SHOTS',
+          prediction: 'Blocked Player over 2.5 shots',
+          price: -105,
+          edge: 0.5,
+        },
+      }),
+    ];
+
+    const snapshot = buildDiscordSnapshot({ cards, now });
+    const content = snapshot.messages.join('\n');
+
+    expect(snapshot.totalCards).toBe(3);
+    expect(snapshot.sectionCounts).toEqual({ official: 1, lean: 2, passBlocked: 0 });
+    expect(content).toContain('🟢 PLAY');
+    expect(content).toContain('🟡 Slight Edge');
+    expect(content).toContain('TOTAL | OVER 5.5 (-110)');
+    expect(content).toContain('TSOA | Boston Bruins (+140)');
+    expect(content).toContain('PROP | David Pastrnak over 3.5 shots (-125)');
+    expect(content).not.toContain('Blocked Line Prop');
+    expect(content).not.toContain('Blocked Game Prop');
+    expect(content).not.toContain('Blocked Player');
+    expect(content).not.toContain('⚪ PASS');
+    expect(content).not.toContain('⚠️ WATCH');
+  });
+
+  it('legacy rows without webhook_publish_status still fall back to compatibility fields', () => {
+    const card = makeCard({
+      payloadData: {
+        webhook_bucket: 'lean',
+        webhook_eligible: true,
+        webhook_lean_eligible: true,
+        action: 'PASS',
+        kind: 'PLAY',
+        selection: { side: 'OVER' },
+        edge: 0.3,
+      },
+    });
+
+    expect(classifyDecisionBucket(card)).toBe('lean');
+    expect(isDisplayableWebhookCard(card)).toBe(true);
+    expect(passesLeanThreshold(card)).toBe(true);
+  });
+
+  // classifyDecisionBucket reads webhook_bucket when canonical publish status is absent.
   it('classifyDecisionBucket returns official when webhook_bucket=official', () => {
     const card = makeCard({ payloadData: { webhook_bucket: 'official' } });
     expect(classifyDecisionBucket(card)).toBe('official');
@@ -1406,6 +1570,39 @@ describe('postDiscordCards integration', () => {
     db.close();
   }
 
+  function insertPlayableCard({
+    id,
+    gameId,
+    sport = 'nhl',
+    homeTeam = 'Toronto Maple Leafs',
+    awayTeam = 'Boston Bruins',
+    gameTimeUtc = '2035-04-10T20:00:00.000Z',
+  }) {
+    const db = new Database(TEST_DB_PATH);
+    db.prepare(
+      `INSERT INTO games (id, sport, game_id, home_team, away_team, game_time_utc, status)
+       VALUES (?, ?, ?, ?, ?, ?, 'scheduled')`,
+    ).run(gameId, sport, gameId, homeTeam, awayTeam, gameTimeUtc);
+    db.prepare(
+      `INSERT INTO card_payloads (id, game_id, sport, card_type, card_title, created_at, payload_data)
+       VALUES (?, ?, ?, ?, 'Regular Card', '2026-04-09T18:01:00.000Z', ?)`,
+    ).run(
+      id,
+      gameId,
+      sport,
+      `${sport}-moneyline-call`,
+      JSON.stringify({
+        action: 'FIRE',
+        kind: 'PLAY',
+        market_type: 'MONEYLINE',
+        selection: { side: 'HOME' },
+        price: -115,
+        line: null,
+      }),
+    );
+    db.close();
+  }
+
   beforeAll(async () => {
     process.env.CHEDDAR_DB_PATH = TEST_DB_PATH;
     process.env.CHEDDAR_DB_AUTODISCOVER = 'false';
@@ -1422,6 +1619,10 @@ describe('postDiscordCards integration', () => {
   });
 
   beforeEach(() => {
+    process.env.ENABLE_DISCORD_CARD_WEBHOOKS = 'true';
+    process.env.DISCORD_CARD_WEBHOOK_URL = 'https://discord.example/cards';
+    delete process.env.DISCORD_CARD_WEBHOOK_URL_NHL;
+    delete process.env.DISCORD_CARD_WEBHOOK_URL_NBA;
     dataModule.closeDatabase();
     resetTables();
   });
@@ -1481,6 +1682,125 @@ describe('postDiscordCards integration', () => {
     });
     expect(result.success).toBe(true);
     expect(result.totalCards).toBe(1);
+  });
+
+  test('postDiscordCards returns all-success transport results and operator block', async () => {
+    insertPlayableCard({ id: 'success-card', gameId: 'success-game' });
+    const fakeFetch = jest.fn(async () => ({ ok: true, status: 204, text: async () => '' }));
+
+    const result = await postDiscordCards({
+      now: new Date('2035-04-10T12:00:00.000Z'),
+      fetchImpl: fakeFetch,
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.partialFailure).toBe(false);
+    expect(result.transportResults).toEqual([
+      expect.objectContaining({
+        targetLabel: 'default',
+        status: 'success',
+        attemptCount: 1,
+        retryCount: 0,
+        httpStatus: 204,
+        error: null,
+        postedCardCount: 1,
+      }),
+    ]);
+    expect(result.transportResults[0].elapsedMs).toEqual(expect.any(Number));
+    expect(result.transportSummary).toEqual(expect.objectContaining({
+      successCount: 1,
+      failedCount: 0,
+      retryCount: 0,
+      partialFailure: false,
+    }));
+    expect(result.resultBlock).toContain('Discord transport results');
+    expect(result.resultBlock).toContain('success:1 failed:0 retries:0 partialFailure:no');
+    expect(result.resultBlock).toContain('- default status:success attempts:1 retries:0 postedCards:1');
+  });
+
+  test('postDiscordCards reports partial failure with failed target reason', async () => {
+    process.env.DISCORD_CARD_WEBHOOK_URL_NHL = 'https://discord.example/nhl';
+    process.env.DISCORD_CARD_WEBHOOK_URL_NBA = 'https://discord.example/nba';
+    insertPlayableCard({ id: 'nhl-card', gameId: 'nhl-game', sport: 'nhl' });
+    insertPlayableCard({
+      id: 'nba-card',
+      gameId: 'nba-game',
+      sport: 'nba',
+      homeTeam: 'Boston Celtics',
+      awayTeam: 'New York Knicks',
+      gameTimeUtc: '2035-04-10T21:00:00.000Z',
+    });
+    const fakeFetch = jest.fn(async (url) => {
+      if (url.includes('/nhl')) return { ok: false, status: 500, text: async () => 'upstream broke' };
+      return { ok: true, status: 204, text: async () => '' };
+    });
+
+    const result = await postDiscordCards({
+      now: new Date('2035-04-10T12:00:00.000Z'),
+      fetchImpl: fakeFetch,
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.partialFailure).toBe(true);
+    expect(result.transportSummary).toEqual(expect.objectContaining({
+      successCount: 1,
+      failedCount: 1,
+      partialFailure: true,
+    }));
+    expect(result.transportSummary.failedTargets).toEqual([
+      expect.objectContaining({
+        targetLabel: 'NHL',
+        httpStatus: 500,
+        error: 'Discord webhook failed (500): upstream broke',
+      }),
+    ]);
+    expect(result.resultBlock).toContain('success:1 failed:1 retries:0 partialFailure:yes');
+    expect(result.resultBlock).toContain('- NHL status:failed attempts:1 retries:0 reason:Discord webhook failed (500): upstream broke');
+    expect(result.resultBlock).toContain('- NBA status:success attempts:1 retries:0 postedCards:1');
+  });
+
+  test('postDiscordCards reports retry-then-success without partial failure', async () => {
+    insertPlayableCard({ id: 'retry-card', gameId: 'retry-game' });
+    let callCount = 0;
+    const fakeFetch = jest.fn(async () => {
+      callCount++;
+      if (callCount === 1) {
+        return {
+          ok: false,
+          status: 429,
+          json: async () => ({ retry_after: 0.01 }),
+          text: async () => JSON.stringify({ retry_after: 0.01 }),
+        };
+      }
+      return { ok: true, status: 204, text: async () => '' };
+    });
+    const fakeSleep = jest.fn(async () => {});
+
+    const result = await postDiscordCards({
+      now: new Date('2035-04-10T12:00:00.000Z'),
+      fetchImpl: fakeFetch,
+      sleepFn: fakeSleep,
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.partialFailure).toBe(false);
+    expect(result.transportResults[0]).toEqual(expect.objectContaining({
+      targetLabel: 'default',
+      status: 'success',
+      attemptCount: 2,
+      retryCount: 1,
+      httpStatus: 204,
+      postedCardCount: 1,
+    }));
+    expect(result.transportSummary).toEqual(expect.objectContaining({
+      successCount: 1,
+      failedCount: 0,
+      retryCount: 1,
+      partialFailure: false,
+    }));
+    expect(result.resultBlock).toContain('success:1 failed:0 retries:1 partialFailure:no');
+    expect(result.resultBlock).toContain('- default status:success attempts:2 retries:1 postedCards:1');
+    expect(fakeSleep).toHaveBeenCalledTimes(1);
   });
 });
 

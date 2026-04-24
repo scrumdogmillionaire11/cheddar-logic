@@ -106,6 +106,24 @@ function normalizeWebhookBucketToken(value) {
   return token.toLowerCase();
 }
 
+function normalizeWebhookPublishStatus(value) {
+  const token = normalizeToken(value);
+  if (!token) return '';
+  if (token === 'PLAY') return 'PLAY';
+  if (token === 'SLIGHT_EDGE') return 'SLIGHT_EDGE';
+  if (token === 'PASS_BLOCKED') return 'PASS_BLOCKED';
+  return 'PASS_BLOCKED';
+}
+
+function webhookPublishBucket(card) {
+  const payload = card?.payloadData || {};
+  if (!Object.prototype.hasOwnProperty.call(payload, 'webhook_publish_status')) return '';
+  const publishStatus = normalizeWebhookPublishStatus(payload.webhook_publish_status);
+  if (publishStatus === 'PLAY') return 'official';
+  if (publishStatus === 'SLIGHT_EDGE') return 'lean';
+  return 'pass_blocked';
+}
+
 // Prevents [object Object] leaking into Discord output
 function safeScalar(val) {
   if (val === null || val === undefined) return null;
@@ -427,6 +445,8 @@ function isDisplayableWebhookCard(card) {
   if (normalizeToken(card?.payloadData?.kind) === 'EVIDENCE' && !isFirstPeriodCard(card)) {
     return isDisplayableWebhookCardLegacy(card);
   }
+  const publishBucket = webhookPublishBucket(card);
+  if (publishBucket) return publishBucket === 'official' || publishBucket === 'lean';
   const eligible = card?.payloadData?.webhook_eligible;
   if (typeof eligible === 'boolean') return eligible;
   return isDisplayableWebhookCardLegacy(card);
@@ -589,6 +609,8 @@ function classifyDecisionBucket(card) {
   // EVIDENCE cards are context drivers — never standalone bet rows.
   // Override any pre-stamped webhook_bucket that may have been set when action=FIRE.
   if (normalizeToken(card?.payloadData?.kind) === 'EVIDENCE' && !isFirstPeriodCard(card)) return 'pass_blocked';
+  const publishBucket = webhookPublishBucket(card);
+  if (publishBucket) return publishBucket;
   const bucket = normalizeWebhookBucketToken(card?.payloadData?.webhook_bucket);
   if (bucket === 'official' || bucket === 'lean' || bucket === 'pass_blocked') return bucket;
   return classifyDecisionBucketLegacy(card);
@@ -1124,42 +1146,93 @@ function chunkDiscordContent(content, charLimit = DEFAULT_CHAR_LIMIT) {
 
 const _defaultSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-async function sendDiscordMessages({
+function normalizeDiscordError(error) {
+  const message = error?.message || String(error || 'unknown_error');
+  const statusMatch = message.match(/Discord webhook failed \((\d+)/);
+  return {
+    httpStatus: statusMatch ? Number(statusMatch[1]) : null,
+    error: message,
+  };
+}
+
+async function sendDiscordMessagesDetailed({
   webhookUrl,
   messages,
   fetchImpl = fetch,
   sleepFn = _defaultSleep,
+  targetLabel = 'default',
+  postedCardCount = null,
 }) {
   const startEpoch = Date.now();
   let sentCount = 0;
+  let attemptCount = 0;
+  let retryCount = 0;
+  let httpStatus = null;
+  const resultBase = {
+    targetLabel,
+    attemptCount: 0,
+    retryCount: 0,
+    elapsedMs: 0,
+    httpStatus: null,
+    error: null,
+    postedCardCount: null,
+  };
+
+  const finish = (fields) => ({
+    ...resultBase,
+    attemptCount,
+    retryCount,
+    elapsedMs: Math.max(0, Date.now() - startEpoch),
+    httpStatus,
+    ...fields,
+  });
 
   for (const message of messages) {
     // Check cumulative budget before each send
     if (Date.now() - startEpoch >= DISCORD_TOTAL_TIMEOUT_MS) {
-      throw new Error('Discord timeout budget exceeded');
+      return finish({
+        status: 'failed',
+        error: 'Discord timeout budget exceeded',
+      });
     }
 
     let retries = 0;
     let sent = false;
 
     while (!sent) {
-      const response = await fetchImpl(webhookUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content: message }),
-      });
+      let response;
+      try {
+        attemptCount++;
+        response = await fetchImpl(webhookUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ content: message }),
+        });
+      } catch (error) {
+        const normalized = normalizeDiscordError(error);
+        return finish({
+          status: 'failed',
+          httpStatus: normalized.httpStatus,
+          error: normalized.error,
+        });
+      }
 
       if (response.ok) {
+        httpStatus = response.status || null;
         sentCount++;
         sent = true;
         continue;
       }
 
+      httpStatus = response.status || null;
       if (response.status === 429) {
         // Already exhausted retries — fail immediately
         if (retries >= MAX_RETRIES) {
           const body = await response.text().catch(() => '');
-          throw new Error(`Discord webhook failed (429 — MAX_RETRIES exhausted): ${body}`);
+          return finish({
+            status: 'failed',
+            error: `Discord webhook failed (429 - MAX_RETRIES exhausted): ${body}`,
+          });
         }
 
         // Parse retry_after (may be float seconds)
@@ -1174,7 +1247,10 @@ async function sendDiscordMessages({
 
         // Fail fast if retry_after exceeds our budget
         if (retryAfterMs > DISCORD_RETRY_MAX_AFTER_MS) {
-          throw new Error(`Discord webhook 429: retry_after ${retryAfterMs}ms exceeds max ${DISCORD_RETRY_MAX_AFTER_MS}ms — failing fast`);
+          return finish({
+            status: 'failed',
+            error: `Discord webhook 429: retry_after ${retryAfterMs}ms exceeds max ${DISCORD_RETRY_MAX_AFTER_MS}ms - failing fast`,
+          });
         }
 
         const jitter = RETRY_JITTER_MIN_MS + Math.floor(Math.random() * (RETRY_JITTER_MAX_MS - RETRY_JITTER_MIN_MS + 1));
@@ -1184,20 +1260,85 @@ async function sendDiscordMessages({
 
         // Check budget again after sleep
         if (Date.now() - startEpoch >= DISCORD_TOTAL_TIMEOUT_MS) {
-          throw new Error('Discord timeout budget exceeded');
+          return finish({
+            status: 'failed',
+            error: 'Discord timeout budget exceeded',
+          });
         }
 
         retries++;
+        retryCount++;
         continue;
       }
 
       // Non-429 error — throw immediately
       const body = await response.text().catch(() => '');
-      throw new Error(`Discord webhook failed (${response.status}): ${body}`);
+      return finish({
+        status: 'failed',
+        error: `Discord webhook failed (${response.status}): ${body}`,
+      });
     }
   }
 
-  return sentCount;
+  return finish({
+    status: 'success',
+    error: null,
+    postedCardCount: postedCardCount !== null && postedCardCount !== undefined && Number.isFinite(Number(postedCardCount))
+      ? Number(postedCardCount)
+      : sentCount,
+  });
+}
+
+async function sendDiscordMessages({
+  webhookUrl,
+  messages,
+  fetchImpl = fetch,
+  sleepFn = _defaultSleep,
+}) {
+  const result = await sendDiscordMessagesDetailed({ webhookUrl, messages, fetchImpl, sleepFn });
+  if (result.status === 'failed') {
+    throw new Error(result.error || 'Discord webhook failed');
+  }
+  return result.postedCardCount;
+}
+
+function buildTransportSummary(transportResults) {
+  const results = Array.isArray(transportResults) ? transportResults : [];
+  const successCount = results.filter((result) => result.status === 'success').length;
+  const failedCount = results.filter((result) => result.status === 'failed').length;
+  const retryCount = results.reduce((sum, result) => sum + (Number(result.retryCount) || 0), 0);
+  const partialFailure = failedCount > 0;
+  const failedTargets = results
+    .filter((result) => result.status === 'failed')
+    .map((result) => ({
+      targetLabel: result.targetLabel,
+      error: result.error || `HTTP ${result.httpStatus || 'unknown'}`,
+      httpStatus: result.httpStatus,
+      attemptCount: result.attemptCount,
+      retryCount: result.retryCount,
+    }));
+
+  const lines = [
+    'Discord transport results',
+    `success:${successCount} failed:${failedCount} retries:${retryCount} partialFailure:${partialFailure ? 'yes' : 'no'}`,
+  ];
+  for (const result of results) {
+    const detail = result.status === 'success'
+      ? `postedCards:${result.postedCardCount ?? 0}`
+      : `reason:${result.error || `HTTP ${result.httpStatus || 'unknown'}`}`;
+    lines.push(
+      `- ${result.targetLabel} status:${result.status} attempts:${result.attemptCount} retries:${result.retryCount} ${detail}`,
+    );
+  }
+
+  return {
+    successCount,
+    failedCount,
+    retryCount,
+    partialFailure,
+    failedTargets,
+    block: lines.join('\n'),
+  };
 }
 
 function fetchCardsForSnapshot({ maxRows = DEFAULT_MAX_ROWS, now = new Date(), includePotd = false } = {}) {
@@ -1316,6 +1457,7 @@ function buildDiscordSnapshot({ now = new Date(), cards = [], filters = null, in
   });
 
   const messages = [];
+  const cardCountsBySport = {};
   const sectionCounts = { official: 0, lean: 0, passBlocked: 0 };
 
   // Render POTD leading section — one block per POTD card, before all game entries.
@@ -1338,6 +1480,7 @@ function buildDiscordSnapshot({ now = new Date(), cards = [], filters = null, in
     if (edgePct) potdLines.push(`Edge: ${edgePct}${scoreStr ? ` | Score: ${scoreStr}` : ''}`);
     potdLines.push('═════════════════');
     messages.push({ sport: 'potd', text: potdLines.join('\n') });
+    cardCountsBySport.potd = (cardCountsBySport.potd || 0) + 1;
     sectionCounts.official += 1;
   }
 
@@ -1390,6 +1533,8 @@ function buildDiscordSnapshot({ now = new Date(), cards = [], filters = null, in
 
     headerLines.push('─────────────────');
     messages.push({ sport: normalizeToken(seed?.sport || ''), text: headerLines.join('\n') });
+    const sportKey = normalizeToken(seed?.sport || '');
+    cardCountsBySport[sportKey] = (cardCountsBySport[sportKey] || 0) + official.length + leans.length + blockedWatch.length;
   }
 
   if (messages.length === 0 && preFilterCount > 0) {
@@ -1413,6 +1558,7 @@ function buildDiscordSnapshot({ now = new Date(), cards = [], filters = null, in
     totalCards: filtered.length,
     totalGames: messages.length,
     sectionCounts,
+    cardCountsBySport,
   };
 }
 
@@ -1427,7 +1573,13 @@ function resolveWebhookUrlForSport(sport) {
   return String(process.env.DISCORD_CARD_WEBHOOK_URL || '').trim();
 }
 
-async function postDiscordCards({ jobKey = null, dryRun = false, now = new Date() } = {}) {
+async function postDiscordCards({
+  jobKey = null,
+  dryRun = false,
+  now = new Date(),
+  fetchImpl = fetch,
+  sleepFn = _defaultSleep,
+} = {}) {
   const enabled = process.env.ENABLE_DISCORD_CARD_WEBHOOKS === 'true';
   const fallbackUrl = String(process.env.DISCORD_CARD_WEBHOOK_URL || '').trim();
   const charLimit = Number(process.env.DISCORD_CARD_WEBHOOK_CHAR_LIMIT || DEFAULT_CHAR_LIMIT);
@@ -1523,26 +1675,57 @@ async function postDiscordCards({ jobKey = null, dryRun = false, now = new Date(
     insertJobRun(JOB_NAME, runId, jobKey);
     try {
       let sentCount = 0;
+      const transportResults = [];
       if (hasPerSportRouting) {
         for (const { sport, url, chunks } of routingPlan) {
           console.log(`[post-discord-cards] Routing ${chunks.length} chunk(s) for ${sport} to dedicated channel`);
-          sentCount += await sendDiscordMessages({ webhookUrl: url, messages: chunks });
+          const result = await sendDiscordMessagesDetailed({
+            webhookUrl: url,
+            messages: chunks,
+            fetchImpl,
+            sleepFn,
+            targetLabel: sport,
+            postedCardCount: snapshot.cardCountsBySport[sport] || 0,
+          });
+          transportResults.push(result);
+          if (result.status === 'success') sentCount += chunks.length;
         }
       } else {
-        sentCount = await sendDiscordMessages({ webhookUrl: fallbackUrl, messages: allChunks });
+        const result = await sendDiscordMessagesDetailed({
+          webhookUrl: fallbackUrl,
+          messages: allChunks,
+          fetchImpl,
+          sleepFn,
+          targetLabel: 'default',
+          postedCardCount: snapshot.totalCards,
+        });
+        transportResults.push(result);
+        if (result.status === 'success') sentCount = allChunks.length;
       }
-      markJobRunSuccess(runId, {
+      const transportSummary = buildTransportSummary(transportResults);
+      const markPayload = {
         chunks: sentCount,
         total_cards: snapshot.totalCards,
         sections: snapshot.sectionCounts,
-      });
+        transport: transportSummary,
+      };
+      if (transportSummary.partialFailure) {
+        markJobRunFailure(runId, `Discord transport partial failure: ${transportSummary.failedTargets.map((target) => `${target.targetLabel}: ${target.error}`).join('; ')}`);
+      } else {
+        markJobRunSuccess(runId, markPayload);
+      }
       return {
-        success: true,
+        success: !transportSummary.partialFailure,
         jobRunId: runId,
         chunks: sentCount,
         totalCards: snapshot.totalCards,
         totalGames: snapshot.totalGames,
         sectionCounts: snapshot.sectionCounts,
+        transportResults,
+        transportSummary,
+        partialFailure: transportSummary.partialFailure,
+        resultBlock: transportSummary.block,
+        error: transportSummary.partialFailure ? 'Discord transport partial failure' : undefined,
       };
     } catch (error) {
       markJobRunFailure(runId, error.message);

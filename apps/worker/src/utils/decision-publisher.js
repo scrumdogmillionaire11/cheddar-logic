@@ -4,7 +4,6 @@ const {
   CANONICAL_EDGE_CONTRACT,
   computeCandidateHash,
   computeInputsHash,
-  deriveWebhookBucket,
   deriveLegacyDecisionEnvelope,
   deriveWebhookReasonCode,
   deriveUiDisplayStatus,
@@ -44,6 +43,41 @@ const POLICY_BLOCK_CODES = new Set([
 ]);
 
 const WEBHOOK_MIN_LEAN_EDGE = Number(process.env.DISCORD_MIN_LEAN_EDGE ?? 0.15);
+
+const WEBHOOK_PUBLISH_MAPPING_VERSION = 'v1';
+const WEBHOOK_PUBLISH_STATUS = Object.freeze({
+  PLAY: 'PLAY',
+  SLIGHT_EDGE: 'SLIGHT_EDGE',
+  PASS_BLOCKED: 'PASS_BLOCKED',
+});
+const WEBHOOK_BUCKET_BY_PUBLISH_STATUS = Object.freeze({
+  PLAY: 'official',
+  SLIGHT_EDGE: 'lean',
+  PASS_BLOCKED: 'pass_blocked',
+});
+
+// Publisher routing is intentionally table-driven. NO_PLAY routes to
+// PASS_BLOCKED for Discord delivery only; it is not a global hard-block
+// semantic. When canonical and legacy fields disagree, canonical fields win
+// and diagnostics record the disagreement instead of normalizing it away.
+const WEBHOOK_PUBLISH_BY_FINAL_PLAY_STATE = Object.freeze({
+  OFFICIAL_PLAY: WEBHOOK_PUBLISH_STATUS.PLAY,
+  LEAN: WEBHOOK_PUBLISH_STATUS.SLIGHT_EDGE,
+  WATCH: WEBHOOK_PUBLISH_STATUS.PASS_BLOCKED,
+  BLOCKED: WEBHOOK_PUBLISH_STATUS.PASS_BLOCKED,
+  NO_PLAY: WEBHOOK_PUBLISH_STATUS.PASS_BLOCKED,
+});
+const WEBHOOK_PUBLISH_BY_OFFICIAL_STATUS = Object.freeze({
+  PLAY: WEBHOOK_PUBLISH_STATUS.PLAY,
+  LEAN: WEBHOOK_PUBLISH_STATUS.SLIGHT_EDGE,
+  PASS: WEBHOOK_PUBLISH_STATUS.PASS_BLOCKED,
+});
+const FINAL_STATE_BY_OFFICIAL_STATUS = Object.freeze({
+  PLAY: 'OFFICIAL_PLAY',
+  LEAN: 'LEAN',
+  PASS: 'NO_PLAY',
+});
+const POSITIVE_LEGACY_STATUS = new Set(['FIRE', 'PLAY', 'BASE', 'HOLD', 'WATCH', 'LEAN']);
 
 // Legacy tier → action mapping. Used only for non-Wave1 payloads that do not
 // go through buildDecisionV2(). All new payloads use decision_v2.official_status
@@ -619,6 +653,109 @@ function toCanonicalMarketForContext(market) {
   return null;
 }
 
+function normalizePublishToken(value) {
+  if (typeof value !== 'string') return null;
+  const token = value.trim().toUpperCase().replace(/\s+/g, '_');
+  return token.length > 0 ? token : null;
+}
+
+function appendPublishFlag(flags, flag) {
+  if (!flag || flags.includes(flag)) return;
+  flags.push(flag);
+}
+
+function hasPositiveLegacyStatus(payload) {
+  const tokens = [
+    payload?.action,
+    payload?.classification,
+    payload?.status,
+    payload?.play?.action,
+    payload?.play?.classification,
+    payload?.play?.status,
+  ]
+    .map(normalizePublishToken)
+    .filter(Boolean);
+  return tokens.some((token) => POSITIVE_LEGACY_STATUS.has(token));
+}
+
+function deriveCanonicalWebhookPublishStatus(payload) {
+  const flags = [];
+  const finalPlayState = normalizePublishToken(payload?.final_play_state);
+  const officialStatus = normalizePublishToken(payload?.decision_v2?.official_status);
+  const reasonCodes = normalizeStrictReasonCodes([
+    ...(Array.isArray(payload?.reason_codes) ? payload.reason_codes : []),
+    ...(Array.isArray(payload?.decision_v2?.canonical_envelope_v2?.reason_codes)
+      ? payload.decision_v2.canonical_envelope_v2.reason_codes
+      : []),
+    payload?.decision_v2?.primary_reason_code,
+    payload?.pass_reason_code,
+  ]);
+
+  let sourceOfTruth = 'none';
+  let publishStatus = WEBHOOK_PUBLISH_STATUS.PASS_BLOCKED;
+
+  if (finalPlayState) {
+    sourceOfTruth = 'final_play_state';
+    publishStatus = WEBHOOK_PUBLISH_BY_FINAL_PLAY_STATE[finalPlayState];
+    if (!publishStatus) {
+      publishStatus = WEBHOOK_PUBLISH_STATUS.PASS_BLOCKED;
+      appendPublishFlag(flags, 'INVALID_PUBLISH_MAPPING');
+    }
+  } else if (officialStatus) {
+    sourceOfTruth = 'decision_v2.official_status';
+    publishStatus = WEBHOOK_PUBLISH_BY_OFFICIAL_STATUS[officialStatus];
+    if (!publishStatus) {
+      publishStatus = WEBHOOK_PUBLISH_STATUS.PASS_BLOCKED;
+      appendPublishFlag(flags, 'INVALID_PUBLISH_MAPPING');
+    }
+  } else {
+    appendPublishFlag(flags, 'MISSING_CANONICAL_STATUS');
+  }
+
+  if (officialStatus && !WEBHOOK_PUBLISH_BY_OFFICIAL_STATUS[officialStatus]) {
+    appendPublishFlag(flags, 'INVALID_PUBLISH_MAPPING');
+  }
+
+  if (finalPlayState && officialStatus) {
+    const expectedFinalState = FINAL_STATE_BY_OFFICIAL_STATUS[officialStatus];
+    if (expectedFinalState && expectedFinalState !== finalPlayState) {
+      appendPublishFlag(flags, 'CANONICAL_STATUS_CONFLICT');
+      if (officialStatus === 'PLAY' && finalPlayState !== 'OFFICIAL_PLAY') {
+        appendPublishFlag(flags, 'STATUS_DOWNGRADED_AFTER_MODEL');
+      }
+    }
+  }
+
+  if (
+    sourceOfTruth === 'final_play_state' &&
+    publishStatus === WEBHOOK_PUBLISH_STATUS.PASS_BLOCKED &&
+    hasPositiveLegacyStatus(payload)
+  ) {
+    appendPublishFlag(flags, 'CANONICAL_STATUS_CONFLICT');
+  }
+
+  const webhookBucket =
+    WEBHOOK_BUCKET_BY_PUBLISH_STATUS[publishStatus] || WEBHOOK_BUCKET_BY_PUBLISH_STATUS.PASS_BLOCKED;
+  if (!WEBHOOK_BUCKET_BY_PUBLISH_STATUS[publishStatus]) {
+    appendPublishFlag(flags, 'INVALID_PUBLISH_MAPPING');
+  }
+
+  return {
+    publishStatus,
+    webhookBucket,
+    flags,
+    trace: {
+      official_status: officialStatus,
+      final_play_state: finalPlayState,
+      webhook_publish_status: publishStatus,
+      webhook_bucket: webhookBucket,
+      reason_codes: reasonCodes,
+      source_of_truth: sourceOfTruth,
+      mapping_version: WEBHOOK_PUBLISH_MAPPING_VERSION,
+    },
+  };
+}
+
 function applyPublishedDecisionToPayload(
   card,
   decision,
@@ -757,22 +894,29 @@ function applyPublishedDecisionToPayload(
 function computeWebhookFields(payload) {
   if (!payload || typeof payload !== 'object') return;
 
-  const sport = String(payload.sport || '').toUpperCase();
-  const period = normalizePeriod(payload);
-  const market = normalizeMarketType(payload.market_type, payload.recommended_bet_type);
-  const isNhlTotal = sport === 'NHL' && period === 'full_game' && market === 'total';
-  const is1P = period === '1p';
-  const bucket = deriveWebhookBucket(payload, { isNhlTotal, is1P });
+  const {
+    publishStatus,
+    webhookBucket,
+    flags,
+    trace,
+  } = deriveCanonicalWebhookPublishStatus(payload);
   const displaySide = resolveWebhookDisplaySide(payload);
   const leanEligible = isWebhookLeanEligible(payload, WEBHOOK_MIN_LEAN_EDGE);
+  const reasonCode = deriveWebhookReasonCode(payload, webhookBucket);
 
-  const reasonCode = deriveWebhookReasonCode(payload, bucket);
-
-  payload.webhook_bucket = bucket;
-  payload.webhook_eligible = bucket !== 'pass_blocked';
+  payload.webhook_publish_status = publishStatus;
+  payload.webhook_bucket = webhookBucket;
+  payload.webhook_eligible = webhookBucket !== 'pass_blocked';
   payload.webhook_display_side = displaySide;
-  payload.webhook_lean_eligible = leanEligible;
+  payload.webhook_lean_eligible = webhookBucket === 'lean' && leanEligible;
   payload.webhook_reason_code = reasonCode;
+  payload.publish_status_flags = flags;
+  payload.decision_trace = {
+    ...(payload.decision_trace && typeof payload.decision_trace === 'object'
+      ? payload.decision_trace
+      : {}),
+    ...trace,
+  };
 }
 
 function publishDecisionForCard({ card, oddsSnapshot, options = {} }) {
