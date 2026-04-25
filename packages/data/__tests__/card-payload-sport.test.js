@@ -415,7 +415,7 @@ describe('card payload/card_results sport normalization', () => {
     );
 
     expect(dbModule.getLatestMlbModelOutput(gameId)).toEqual({
-      modelWinProbHome: 0.602,
+      modelWinProbHome: 0.398,
       edge: 0.052,
       side: 'AWAY',
       projection_source: 'MLB_FULL_GAME_MODEL',
@@ -738,6 +738,57 @@ describe('card payload/card_results sport normalization', () => {
       null,
       null,
       'run-nhl-evidence-filter',
+      now.toISOString()
+    );
+
+    expect(dbModule.getLatestNhlModelOutput(gameId)).toBeNull();
+  });
+
+  test('getLatestNhlModelOutput filters out PASS payloads from decision_v2 official_status', () => {
+    const db = dbModule.getDatabase();
+    const now = new Date();
+    const gameTimeUtc = new Date(now.getTime() + 60 * 60 * 1000).toISOString();
+    const gameId = 'test-nhl-decision-v2-pass-filter';
+    ensureSettlementTables(db);
+
+    db.prepare(
+      `INSERT INTO games (
+        id, sport, game_id, home_team, away_team, game_time_utc, status
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      'game-nhl-decision-v2-pass-filter',
+      'nhl',
+      gameId,
+      'Home Team',
+      'Away Team',
+      gameTimeUtc,
+      'scheduled'
+    );
+
+    db.prepare(`
+      INSERT INTO card_payloads (
+        id, game_id, sport, card_type, card_title, created_at, expires_at,
+        payload_data, model_output_ids, metadata, run_id, updated_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      'card-nhl-decision-v2-pass-filter',
+      gameId,
+      'nhl',
+      'nhl-model-output',
+      'NHL Model Output',
+      now.toISOString(),
+      null,
+      JSON.stringify({
+        decision_v2: { official_status: 'PASS' },
+        goalie_home_save_pct: 0.918,
+        goalie_home_gsax: 7.4,
+        goalie_away_save_pct: 0.905,
+        goalie_away_gsax: -1.2,
+      }),
+      null,
+      null,
+      'run-nhl-decision-v2-pass-filter',
       now.toISOString()
     );
 

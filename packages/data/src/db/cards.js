@@ -1265,8 +1265,11 @@ function getLatestNhlModelOutput(gameId) {
   if (!row) return null;
   const rd = JSON.parse(row.payload_data);
   
+  const statusToken = String(rd.status ?? rd.decision_v2?.official_status ?? '').toUpperCase();
+  const typeToken = String(rd.type ?? '').toLowerCase();
+
   // Filter out PASS and evidence payloads (non-actionable)
-  if (rd.status === 'PASS' || rd.type === 'evidence') {
+  if (statusToken === 'PASS' || typeToken === 'evidence') {
     return null;
   }
   
@@ -1302,18 +1305,25 @@ function getLatestMlbModelOutput(gameId) {
   const rd = JSON.parse(row.payload_data);
   
   // Try modern top-level schema first
-  let modernEdge = rd.edge;
-  let modernProb = rd.model_prob ?? rd.p_fair;
-  let modernSide = rd.selection?.side;
+  const modernEdge = rd.edge;
+  const modernSelectionProb = rd.model_prob ?? rd.p_fair;
+  const modernSide = String(rd.selection?.side ?? '').toUpperCase();
   
   if (
-    Number.isFinite(modernProb) &&
+    Number.isFinite(modernSelectionProb) &&
     Number.isFinite(modernEdge) &&
     (modernSide === 'HOME' || modernSide === 'AWAY')
   ) {
+    const modelWinProbHome =
+      modernSide === 'HOME'
+        ? modernSelectionProb
+        : 1 - modernSelectionProb;
+
+    if (!Number.isFinite(modelWinProbHome)) return null;
+
     // Modern schema is complete and valid
     return {
-      modelWinProbHome: modernProb,
+      modelWinProbHome,
       edge: modernEdge,
       side: modernSide,
       projection_source: rd.projection_source ?? 'MLB_FULL_GAME_MODEL',
