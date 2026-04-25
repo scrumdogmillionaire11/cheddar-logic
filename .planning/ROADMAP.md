@@ -412,7 +412,7 @@ Plans:
 **Plans:** 1 plan in 1 wave
 
 Plans:
-- [ ] WI-1181-PLAN.md — Normalized NHL model_signal payload for actionable rows + explicit blocker semantics for non-actionable rows + producer/consumer regression coverage (Wave 1)
+- [x] WI-1181-PLAN.md — Normalized NHL model_signal payload for actionable rows + explicit blocker semantics for non-actionable rows + producer/consumer regression coverage (Wave 1)
 
 ---
 
