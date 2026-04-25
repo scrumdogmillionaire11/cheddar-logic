@@ -60,6 +60,7 @@ import {
   isProjectionSurfaceCardType,
 } from '@/lib/games/projection-surface';
 import {
+  ACTIVE_EXCLUDED_STATUSES,
   buildBettingSurfacePayloadPredicate,
   clampNumber,
   getActiveRunIds,
@@ -101,16 +102,6 @@ PROJECTION_ONLY
 projection_source
 synthetic_fallback
 */
-const ACTIVE_EXCLUDED_STATUSES = [
-  'POSTPONED',
-  'CANCELLED',
-  'CANCELED',
-  'FINAL',
-  'CLOSED',
-  'COMPLETE',
-  'COMPLETED',
-  'FT',
-];
 
 interface CardRow {
   id: string;

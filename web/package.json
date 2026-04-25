@@ -16,6 +16,8 @@
     "test:cards-sport-filter": "node src/__tests__/api-cards-sport-filter.test.js",
     "test:cards-lifecycle-regression": "node src/__tests__/api-cards-lifecycle-regression.test.js",
     "test:cards:projection-exclusion": "node src/__tests__/cards-projection-exclusion.test.js",
+    "test:cards:eligibility-contract": "node src/__tests__/api-cards-eligibility-contract.test.js",
+    "test:cards:diagnostics-contract": "node src/__tests__/api-cards-diagnostics-contract.test.js",
     "test:db-mutating": "npm run test:dedupe && npm run test:games-filter && npm run test:cards-sport-filter && npm run test:cards-lifecycle-regression",
     "test:api:nhl-contract": "node src/__tests__/api-nhl-payload-contract.test.js",
     "test:games-filter": "node src/__tests__/api-games-filter.test.js",

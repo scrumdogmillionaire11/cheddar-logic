@@ -4,6 +4,17 @@ import { PROJECTION_ONLY_LINE_SOURCES } from './payload-classifier';
 
 export type LifecycleMode = 'pregame' | 'active';
 
+export const ACTIVE_EXCLUDED_STATUSES = [
+  'POSTPONED',
+  'CANCELLED',
+  'CANCELED',
+  'FINAL',
+  'CLOSED',
+  'COMPLETE',
+  'COMPLETED',
+  'FT',
+] as const;
+
 const CORE_RUN_STATE_SPORTS = [
   'nba',
   'nhl',
