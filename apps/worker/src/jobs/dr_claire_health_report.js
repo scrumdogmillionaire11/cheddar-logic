@@ -30,6 +30,14 @@ const HEALTHY_HIT_RATE = 0.52;
 const DEGRADED_HIT_RATE_MIN = 0.45;
 const STALE_MINUTES = 90;
 const MODEL_FRESHNESS_MAX_AGE_MS = 4 * 60 * 60 * 1000;
+const POTD_RUN_STALE_MS = 36 * 60 * 60 * 1000;
+const POTD_NEAR_MISS_STALE_MS = 48 * 60 * 60 * 1000;
+const ET_DATE_FORMATTER = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'America/New_York',
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+});
 
 function parseArgs(argv = process.argv.slice(2)) {
   const opts = { json: false, persist: false, sport: null, days: LOOKBACK_DAYS };
@@ -78,6 +86,204 @@ function computeStreak(outcomes) {
 function getHitRate(wins, losses) {
   const total = wins + losses;
   return total === 0 ? null : wins / total;
+}
+
+function getEtDateKey(date = new Date()) {
+  return ET_DATE_FORMATTER.format(date);
+}
+
+function isTableAvailable(db, tableName) {
+  try {
+    const row = db.prepare(
+      `SELECT name FROM sqlite_master WHERE type='table' AND name = ? LIMIT 1`,
+    ).get(tableName);
+    return Boolean(row);
+  } catch {
+    return false;
+  }
+}
+
+function safeGet(db, sql, ...params) {
+  try {
+    return db.prepare(sql).get(...params) || null;
+  } catch {
+    return null;
+  }
+}
+
+function safeAll(db, sql, ...params) {
+  try {
+    return db.prepare(sql).all(...params);
+  } catch {
+    return [];
+  }
+}
+
+function toNumber(value) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function maxIso(...values) {
+  let best = null;
+  for (const value of values.filter(Boolean)) {
+    const ms = new Date(value).getTime();
+    if (!Number.isFinite(ms)) continue;
+    if (!best || ms > new Date(best).getTime()) best = value;
+  }
+  return best;
+}
+
+function buildPotdHealth(db, now = new Date()) {
+  const today = getEtDateKey(now);
+  const hasDailyStats = isTableAvailable(db, 'potd_daily_stats');
+  const hasPlays = isTableAvailable(db, 'potd_plays');
+  const hasNominees = isTableAvailable(db, 'potd_nominees');
+  const hasShadowCandidates = isTableAvailable(db, 'potd_shadow_candidates');
+  const hasShadowResults = isTableAvailable(db, 'potd_shadow_results');
+
+  const latestDaily = hasDailyStats
+    ? safeGet(db, `
+        SELECT play_date, potd_fired, candidate_count, viable_count, created_at
+        FROM potd_daily_stats
+        ORDER BY created_at DESC, play_date DESC
+        LIMIT 1
+      `)
+    : null;
+  const todayDaily = hasDailyStats
+    ? safeGet(db, `
+        SELECT play_date, potd_fired, candidate_count, viable_count, created_at
+        FROM potd_daily_stats
+        WHERE play_date = ?
+        LIMIT 1
+      `, today)
+    : null;
+  const todayPlay = hasPlays
+    ? safeGet(db, `
+        SELECT play_date, posted_at, created_at
+        FROM potd_plays
+        WHERE play_date = ?
+        ORDER BY posted_at DESC, created_at DESC
+        LIMIT 1
+      `, today)
+    : null;
+  const latestPlay = hasPlays
+    ? safeGet(db, `
+        SELECT play_date, posted_at, created_at
+        FROM potd_plays
+        ORDER BY posted_at DESC, created_at DESC
+        LIMIT 1
+      `)
+    : null;
+  const todayNomineeCount = hasNominees
+    ? safeGet(db, 'SELECT COUNT(*) AS count FROM potd_nominees WHERE play_date = ?', today)?.count ?? 0
+    : 0;
+  const todayShadowCount = hasShadowCandidates
+    ? safeGet(db, 'SELECT COUNT(*) AS count FROM potd_shadow_candidates WHERE play_date = ?', today)?.count ?? 0
+    : 0;
+  const shadowStatusRows = hasShadowResults
+    ? safeAll(db, `
+        SELECT status, result, COUNT(*) AS count
+        FROM potd_shadow_results
+        GROUP BY status, result
+      `)
+    : [];
+  const latestShadowResult = hasShadowResults
+    ? safeGet(db, `
+        SELECT settled_at, updated_at, created_at
+        FROM potd_shadow_results
+        ORDER BY COALESCE(settled_at, updated_at, created_at) DESC
+        LIMIT 1
+      `)
+    : null;
+
+  const candidateCount = toNumber(todayDaily?.candidate_count) ?? todayNomineeCount + todayShadowCount;
+  const viableCount = toNumber(todayDaily?.viable_count);
+  const todayState = todayPlay || Number(todayDaily?.potd_fired) === 1
+    ? 'fired'
+    : todayDaily
+      ? 'no-pick'
+      : 'no-data';
+  const lastRunAt = maxIso(
+    latestDaily?.created_at,
+    latestPlay?.posted_at,
+    latestPlay?.created_at,
+  );
+  const lastRunAgeMs = lastRunAt ? now.getTime() - new Date(lastRunAt).getTime() : null;
+  const nearMissLastSettledAt = maxIso(
+    latestShadowResult?.settled_at,
+    latestShadowResult?.updated_at,
+    latestShadowResult?.created_at,
+  );
+  const nearMissAgeMs = nearMissLastSettledAt
+    ? now.getTime() - new Date(nearMissLastSettledAt).getTime()
+    : null;
+
+  const nearMissCounts = {
+    total: 0,
+    pending: 0,
+    settled: 0,
+    win: 0,
+    loss: 0,
+    push: 0,
+  };
+  for (const row of shadowStatusRows) {
+    const count = Number(row.count || 0);
+    nearMissCounts.total += count;
+    const status = String(row.status || '').toLowerCase();
+    const result = String(row.result || '').toLowerCase();
+    if (status === 'settled') nearMissCounts.settled += count;
+    if (status === 'pending') nearMissCounts.pending += count;
+    if (result === 'win') nearMissCounts.win += count;
+    if (result === 'loss') nearMissCounts.loss += count;
+    if (result === 'push') nearMissCounts.push += count;
+  }
+
+  const signals = [];
+  let status = 'healthy';
+  if (!lastRunAt) {
+    status = 'no-data';
+    signals.push('No POTD run history found');
+  } else if (lastRunAgeMs !== null && lastRunAgeMs > POTD_RUN_STALE_MS) {
+    status = 'stale';
+    signals.push(`POTD run is stale: last run ${formatAge(new Date(lastRunAt).getTime())}`);
+  }
+  if (todayState === 'no-data') {
+    if (status === 'healthy') status = 'degraded';
+    signals.push('No POTD fired/no-pick state recorded for today');
+  } else if (todayState === 'no-pick' && status === 'healthy') {
+    status = 'degraded';
+    signals.push('POTD recorded a no-pick state today');
+  }
+  if (candidateCount === 0) {
+    if (status === 'healthy') status = 'degraded';
+    signals.push('POTD candidate volume is zero today');
+  }
+  if (nearMissCounts.total === 0) {
+    if (status === 'healthy') status = 'degraded';
+    signals.push('No near-miss shadow settlement history found');
+  } else if (nearMissAgeMs !== null && nearMissAgeMs > POTD_NEAR_MISS_STALE_MS) {
+    if (status === 'healthy' || status === 'degraded') status = 'stale';
+    signals.push(`Near-miss shadow settlement is stale: last update ${formatAge(new Date(nearMissLastSettledAt).getTime())}`);
+  }
+
+  return {
+    status,
+    last_run_at: lastRunAt,
+    last_run_age: lastRunAt ? formatAge(new Date(lastRunAt).getTime()) : 'never',
+    today_state: todayState,
+    play_date: today,
+    candidate_count: candidateCount,
+    viable_count: viableCount,
+    near_miss: {
+      last_settled_at: nearMissLastSettledAt,
+      last_settled_age: nearMissLastSettledAt
+        ? formatAge(new Date(nearMissLastSettledAt).getTime())
+        : 'never',
+      counts: nearMissCounts,
+    },
+    signals,
+  };
 }
 
 function runSportHealthQuery(db, sport, lookbackDays) {
@@ -224,7 +430,7 @@ function formatAge(ms) {
 }
 
 function printTextReport(data, opts) {
-  const { generatedAt, lookbackDays, overallStatus, sports, pipeline } = data;
+  const { generatedAt, lookbackDays, overallStatus, sports, pipeline, potd_health: potdHealth } = data;
 
   console.log('');
   console.log('╔══════════════════════════════════════════════════════════════╗');
@@ -265,6 +471,26 @@ function printTextReport(data, opts) {
       console.log(`     ⚠️  Signals:`);
       for (const sig of s.degradationSignals) {
         console.log(`        • ${sig}`);
+      }
+    }
+  }
+
+  if (potdHealth) {
+    console.log('');
+    console.log('──────────────────────────────────────────────────────────────');
+    console.log('  POTD HEALTH');
+    console.log('──────────────────────────────────────────────────────────────');
+    console.log(`  ${statusIcon(potdHealth.status)} Status: ${String(potdHealth.status).toUpperCase()}`);
+    console.log(`     Last run:      ${potdHealth.last_run_age || 'never'}`);
+    console.log(`     Today state:   ${potdHealth.today_state || 'no-data'}`);
+    console.log(`     Candidates:    ${potdHealth.candidate_count ?? 0} total${potdHealth.viable_count != null ? `, ${potdHealth.viable_count} viable` : ''}`);
+    const nearMiss = potdHealth.near_miss || {};
+    const nearMissCounts = nearMiss.counts || {};
+    console.log(`     Near-miss:     ${nearMissCounts.settled ?? 0} settled, ${nearMissCounts.pending ?? 0} pending (last: ${nearMiss.last_settled_age || 'never'})`);
+    if ((potdHealth.signals || []).length > 0) {
+      console.log('     Signals:');
+      for (const signal of potdHealth.signals) {
+        console.log(`        • ${signal}`);
       }
     }
   }
@@ -341,6 +567,7 @@ function buildDrClaireReport(opts = {}, deps = {}) {
     }
 
     const pipeline = getPipelineSummary(db);
+    const potdHealth = buildPotdHealth(db);
 
     // Overall status: worst of all sports
     const statusRank = { critical: 0, stale: 1, degraded: 2, healthy: 3, 'no-data': 4 };
@@ -355,6 +582,7 @@ function buildDrClaireReport(opts = {}, deps = {}) {
       overallStatus,
       sports: sportResults,
       pipeline,
+      potd_health: potdHealth,
     };
     return report;
   } finally {
@@ -464,6 +692,7 @@ if (require.main === module) {
 
 module.exports = {
   assignStatus,
+  buildPotdHealth,
   buildDrClaireReport,
   floorToFiveMinuteBucketUtc,
   parseArgs,
