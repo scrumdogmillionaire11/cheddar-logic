@@ -633,7 +633,21 @@ function buildCandidates(game) {
     ...buildSpreadCandidates(game),
     ...buildTotalCandidates(game),
     ...buildMoneylineCandidates(game),
-  ];
+  ].map((candidate) => {
+    const marketType = String(candidate.marketType || '').toUpperCase();
+    const sportToken = String(game.sport || '').toUpperCase();
+
+    const hasMlbPayload = game.mlbModelPayloadPresent === true;
+    const hasNhlPayload = game.nhlModelPayloadPresent === true;
+    const hasNbaPayload = game.nbaModelPayloadPresent === true;
+
+    const payloadPresent =
+      (isMlbSport(sportToken) && marketType === 'MONEYLINE' && hasMlbPayload) ||
+      (isNhlSport(sportToken) && marketType === 'MONEYLINE' && hasNhlPayload) ||
+      (sportToken === 'NBA' && marketType === 'TOTAL' && hasNbaPayload);
+
+    return payloadPresent ? { ...candidate, modelPayloadPresent: true } : candidate;
+  });
 
   if (!isMlbSport(game.sport) || !game.oddsSnapshot) {
     // NHL model signal block
@@ -950,6 +964,45 @@ function scoreCandidate(candidate) {
         marketType: candidate.marketType,
         projectionSource: nbaSignal.projection_source,
       }),
+    };
+  }
+
+  // WI-1180: contract-MODEL markets with present but non-actionable model payloads
+  // should not silently downgrade to consensus fallback scoring.
+  const contractExpected = resolveEdgeSourceContract(candidate.sport, candidate.marketType);
+  if (contractExpected === 'MODEL' && candidate.modelPayloadPresent === true) {
+    const rejectionCode = 'MODEL_SIGNAL_INCOMPLETE';
+    return {
+      ...candidate,
+      lineValue,
+      marketConsensus,
+      totalScore: null,
+      modelWinProb: null,
+      impliedProb,
+      edgePct: null,
+      edgeSourceTag: 'MODEL',
+      edgeSource: normalizeEdgeSource('MODEL'),
+      edgeSourceMeta: {
+        projection_source: null,
+        model_win_prob: null,
+        signal_type: rejectionCode,
+      },
+      rejectionDiagnostics: [
+        {
+          code: rejectionCode,
+          contractExpected,
+          marketType: candidate.marketType,
+          sport: candidate.sport,
+        },
+      ],
+      confidenceLabel: 'LOW',
+      scoreBreakdown: {
+        lineValue,
+        marketConsensus,
+        edgeComponent: 0,
+        rejection_code: rejectionCode,
+      },
+      reasoning: `Model signal incomplete for ${candidate.selectionLabel}: payload present but actionable model inputs are missing.`,
     };
   }
 
