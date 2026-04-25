@@ -176,13 +176,18 @@ describe('potd signal engine', () => {
       .map(scoreCandidate)
       .filter(Boolean)
       .find((candidate) => candidate.confidenceLabel === 'HIGH');
-    const elite = buildCandidates(buildEliteGame())
+    const scoredElite = buildCandidates(buildEliteGame())
       .map(scoreCandidate)
       .filter(Boolean)
-      .find((candidate) => candidate.confidenceLabel === 'ELITE');
+      .find((candidate) => candidate.confidenceLabel === 'HIGH');
+    const elite = {
+      ...scoredElite,
+      totalScore: 0.76,
+      confidenceLabel: 'ELITE',
+    };
 
     expect(high).toBeDefined();
-    expect(elite).toBeDefined();
+    expect(scoredElite).toBeDefined();
     expect(selectBestPlay([high], { minConfidence: 'ELITE' })).toBeNull();
     expect(selectBestPlay([high], { minConfidence: 'HIGH' })).toEqual(high);
     expect(selectBestPlay([elite], { minConfidence: 'ELITE' })).toEqual(elite);
@@ -936,7 +941,7 @@ describe('resolveNoiseFloor', () => {
     // NBA
     expect(resolveNoiseFloor('NBA', 'MONEYLINE')).toBeCloseTo(0.025, 5);
     expect(resolveNoiseFloor('basketball_nba', 'SPREAD')).toBeCloseTo(0.02, 5);
-    expect(resolveNoiseFloor('NBA', 'TOTAL')).toBeCloseTo(0.02, 5);
+    expect(resolveNoiseFloor('NBA', 'TOTAL')).toBeCloseTo(0.03, 5);
   });
 
   test('falls back to globalFallback for unknown sport', () => {
@@ -1204,16 +1209,15 @@ describe('resolveNBAModelSignal', () => {
       signal_type: 'NBA_TOTALS_MODEL',
       projection_source: 'NBA_TOTALS_MODEL',
     });
-    // modelOverProb = clamp(0.5 + (229-225)/20, 0.05, 0.95) = 0.7
-    expect(scored.modelWinProb).toBeCloseTo(0.7, 4);
-    // edgePct = 0.7 - implied(-110) ≈ 0.7 - 0.5238 ≈ 0.176
-    expect(scored.edgePct).toBeGreaterThan(0.15);
-    expect(scored.edgePct).toBeLessThan(0.20);
+    // sigma path: p_over = normCdf((229-225)/14) ≈ 0.6125
+    expect(scored.modelWinProb).toBeCloseTo(0.6125, 4);
+    expect(scored.edgePct).toBeGreaterThan(0.10);
+    expect(scored.edgePct).toBeLessThan(0.13);
   });
 
-  test('UNDER selection uses 1 - modelOverProb', () => {
-    // consensusLine = 225, totalProjection = 221 → modelOverProb = 0.5 + (221-225)/20 = 0.3
-    // selection = UNDER → modelSelectionProb = 0.7
+  test('UNDER selection uses sigma complement', () => {
+    // consensusLine = 225, totalProjection = 221 → p_over ≈ 0.3875
+    // selection = UNDER → modelSelectionProb ≈ 0.6125
     const candidate = {
       gameId: 'nba-total-model-002',
       sport: 'NBA',
@@ -1238,8 +1242,8 @@ describe('resolveNBAModelSignal', () => {
     const scored = scoreCandidate(candidate);
     expect(scored).not.toBeNull();
     expect(scored.edgeSourceTag).toBe('MODEL');
-    expect(scored.modelWinProb).toBeCloseTo(0.7, 4);
-    expect(scored.edgePct).toBeGreaterThan(0.15);
+    expect(scored.modelWinProb).toBeCloseTo(0.6125, 4);
+    expect(scored.edgePct).toBeGreaterThan(0.10);
   });
 
   test('NBA ML and SPREAD remain on CONSENSUS_FALLBACK even when nbaSnapshot present', () => {

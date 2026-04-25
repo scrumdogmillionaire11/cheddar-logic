@@ -1,6 +1,7 @@
 'use strict';
 
 const { resolveGoalieComposite } = require('../../models/nhl-pace-model');
+const { computeTotalEdge, getSigmaDefaults } = require('@cheddar-logic/models/src/edge-calculator');
 
 function isFiniteNumber(value) {
   return Number.isFinite(value);
@@ -94,7 +95,7 @@ const NOISE_FLOORS = {
   NBA: {
     MONEYLINE: Number(process.env.POTD_NOISE_FLOOR_NBA_ML     || 0.025),
     SPREAD:    Number(process.env.POTD_NOISE_FLOOR_NBA_SPREAD  || 0.02),
-    TOTAL:     Number(process.env.POTD_NOISE_FLOOR_NBA_TOTAL   || 0.02),
+    TOTAL:     Number(process.env.POTD_NOISE_FLOOR_NBA_TOTAL   || 0.03),
   },
 };
 
@@ -109,6 +110,21 @@ const EDGE_SOURCE_CONTRACT = Object.freeze({
   NBA: Object.freeze({ MONEYLINE: 'CONSENSUS_FALLBACK', SPREAD: 'CONSENSUS_FALLBACK', TOTAL: 'MODEL' }),
   NFL: Object.freeze({ MONEYLINE: 'CONSENSUS_FALLBACK', SPREAD: 'CONSENSUS_FALLBACK', TOTAL: 'CONSENSUS_FALLBACK' }),
 });
+
+// Normalization cap for edge component in totalScore formula.
+// edgePct >= EDGE_NORMALIZATION_CAP → edgeComponent = 1.0 (full 0.25 weight).
+// edgePct = 0 → edgeComponent = 0.0 (no score subsidy for meh candidates).
+const EDGE_NORMALIZATION_CAP = 0.12;
+
+function edgeComponentFromEdge(edgePct) {
+  if (!isFiniteNumber(edgePct)) return 0;
+  return round(clamp(edgePct / EDGE_NORMALIZATION_CAP, 0, 1), 6);
+}
+
+function computeTotalScore(lineValue, marketConsensus, edgePct) {
+  const edgeComponent = edgeComponentFromEdge(edgePct);
+  return round((lineValue * 0.45) + (marketConsensus * 0.30) + (edgeComponent * 0.25), 6);
+}
 
 /**
  * Returns 'MODEL', 'CONSENSUS_FALLBACK', or 'UNKNOWN' for the given sport+market.
@@ -781,7 +797,7 @@ function scoreCandidate(candidate) {
       6
     );
     const modelEdge = round(modelWinProb - impliedProb, 6);
-    const totalScore = round((lineValue * 0.625) + (marketConsensus * 0.375), 6);
+    const totalScore = computeTotalScore(lineValue, marketConsensus, modelEdge);
     return {
       ...candidate,
       lineValue,
@@ -801,6 +817,7 @@ function scoreCandidate(candidate) {
       scoreBreakdown: {
         lineValue,
         marketConsensus,
+        edgeComponent: edgeComponentFromEdge(modelEdge),
         model_win_prob: modelWinProb,
         projection_source: mlbSnapSignal.projection_source,
       },
@@ -829,7 +846,7 @@ function scoreCandidate(candidate) {
         ? nhlSignal.homeModelWinProb
         : round(1 - nhlSignal.homeModelWinProb, 6);
     const modelEdge = round(modelWinProb - impliedProb, 6);
-    const totalScore = round((lineValue * 0.625) + (marketConsensus * 0.375), 6);
+    const totalScore = computeTotalScore(lineValue, marketConsensus, modelEdge);
     return {
       ...candidate,
       lineValue,
@@ -849,6 +866,7 @@ function scoreCandidate(candidate) {
       scoreBreakdown: {
         lineValue,
         marketConsensus,
+        edgeComponent: edgeComponentFromEdge(modelEdge),
         model_win_prob: modelWinProb,
         projection_source: nhlSignal.projection_source ?? null,
       },
@@ -873,12 +891,31 @@ function scoreCandidate(candidate) {
     nbaSignal !== null;
   if (useNbaModelSignal) {
     const refLine = isFiniteNumber(candidate.consensusLine) ? candidate.consensusLine : candidate.line;
-    const modelOverProb = clamp(0.5 + (nbaSignal.totalProjection - refLine) / 20, 0.05, 0.95);
-    const modelSelectionProb = candidate.selection === 'OVER'
-      ? round(modelOverProb, 6)
-      : round(1 - modelOverProb, 6);
-    const modelEdge = round(modelSelectionProb - impliedProb, 6);
-    const totalScore = round((lineValue * 0.625) + (marketConsensus * 0.375), 6);
+    const isPredictionOver = candidate.selection === 'OVER';
+    const totalPriceOver = isPredictionOver
+      ? candidate.price
+      : (isFiniteNumber(candidate.oddsContext?.total_price_over)
+          ? candidate.oddsContext.total_price_over
+          : candidate.counterpartConsensusPrice);
+    const totalPriceUnder = isPredictionOver
+      ? (isFiniteNumber(candidate.oddsContext?.total_price_under)
+          ? candidate.oddsContext.total_price_under
+          : candidate.counterpartConsensusPrice)
+      : candidate.price;
+    const totalEdge = computeTotalEdge({
+      projectionTotal: nbaSignal.totalProjection,
+      totalLine: refLine,
+      totalPriceOver,
+      totalPriceUnder,
+      sigmaTotal: getSigmaDefaults('NBA').total,
+      isPredictionOver,
+    });
+    if (!isFiniteNumber(totalEdge?.p_fair) || !isFiniteNumber(totalEdge?.edge)) {
+      return null;
+    }
+    const modelSelectionProb = round(totalEdge.p_fair, 6);
+    const modelEdge = round(totalEdge.edge, 6);
+    const totalScore = computeTotalScore(lineValue, marketConsensus, modelEdge);
     return {
       ...candidate,
       lineValue,
@@ -898,6 +935,8 @@ function scoreCandidate(candidate) {
       scoreBreakdown: {
         lineValue,
         marketConsensus,
+        edgeComponent: edgeComponentFromEdge(modelEdge),
+        sigma_used: totalEdge.sigma_used,
         model_win_prob: modelSelectionProb,
         projection_source: nbaSignal.projection_source,
       },
@@ -915,7 +954,7 @@ function scoreCandidate(candidate) {
   }
 
   const edgePct = round(modelFairProbability - impliedProb, 6);
-  const totalScore = round((lineValue * 0.625) + (marketConsensus * 0.375), 6);
+  const totalScore = computeTotalScore(lineValue, marketConsensus, edgePct);
 
   return {
     ...candidate,
@@ -936,6 +975,7 @@ function scoreCandidate(candidate) {
     scoreBreakdown: {
       lineValue,
       marketConsensus,
+      edgeComponent: edgeComponentFromEdge(edgePct),
     },
     reasoning: buildReasoningString({
       selectionLabel: candidate.selectionLabel,
