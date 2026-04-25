@@ -62,10 +62,13 @@ import {
 import {
   ACTIVE_EXCLUDED_STATUSES,
   buildBettingSurfacePayloadPredicate,
+  buildCardTypePreciseSettledPredicate,
+  buildPerTypeRunScopePredicate,
   clampNumber,
   getActiveRunIds,
   getRunStatus,
   resolveLifecycleMode,
+  resolveNhlCompatibleSports,
   type LifecycleMode,
 } from '@/lib/cards/query';
 import {
@@ -361,10 +364,19 @@ export async function GET(request: NextRequest) {
 
     if (sport) {
       // Request filter gate. Purpose: honor explicit sport selection.
+      // NHL lane: also include nhl_props cards when sport=nhl so game cards and
+      // prop cards surface together without requiring a separate query.
       // Failure semantics: not counted as a hidden-card drop because rows
       // outside the requested sport are intentionally out of scope.
-      requestWhere.push('LOWER(cp.sport) = ?');
-      requestParams.push(sport);
+      const compatibleSports = resolveNhlCompatibleSports(sport);
+      if (compatibleSports && compatibleSports.length > 1) {
+        const sportPlaceholders = compatibleSports.map(() => '?').join(', ');
+        requestWhere.push(`LOWER(cp.sport) IN (${sportPlaceholders})`);
+        requestParams.push(...compatibleSports);
+      } else {
+        requestWhere.push('LOWER(cp.sport) = ?');
+        requestParams.push(sport);
+      }
     }
 
     if (cardType) {
@@ -413,14 +425,11 @@ export async function GET(request: NextRequest) {
     baseWhere.push(
       `(LOWER(cp.card_type) IN (${PROJECTION_SURFACE_CARD_TYPES_SQL}) OR ${buildBettingSurfacePayloadPredicate('cp.payload_data')})`,
     );
-    // Settlement gate. Purpose: hide cards whose game already has settled
-    // card_results. Failure semantics: SETTLED_RESULT.
-    baseWhere.push(`NOT EXISTS (
-      SELECT 1
-      FROM card_results cr
-      WHERE cr.game_id = cp.game_id
-        AND cr.status = 'settled'
-    )`);
+    // Settlement gate. Purpose: hide cards whose specific card_type has settled
+    // results for this game. Uses card-type-precise scope so a settled nhl-totals
+    // row does not suppress unsettled nhl-pace-1p cards from the same game.
+    // Failure semantics: SETTLED_RESULT.
+    baseWhere.push(buildCardTypePreciseSettledPredicate());
     if (!ENABLE_WELCOME_HOME) {
       // Feature-flag gate. Purpose: keep welcome-home experiments hidden unless
       // explicitly enabled. Failure semantics: WELCOME_HOME_DISABLED.
@@ -451,11 +460,13 @@ export async function GET(request: NextRequest) {
     const runScopedParams = [...baseParams];
     if (activeRunIds.length > 0) {
       const runIdPlaceholders = activeRunIds.map(() => '?').join(', ');
-      // Run-scope gate. Purpose: prefer cards from current successful worker
-      // runs. Failure semantics: RUN_SCOPE_EXCLUDED, unless the route's empty
-      // result fallback removes this gate to preserve legacy availability.
-      runScopedWhere.push(`cp.run_id IN (${runIdPlaceholders})`);
-      runScopedParams.push(...activeRunIds);
+      // Run-scope gate with per-type fallback. Purpose: prefer cards from
+      // current successful worker runs while allowing a card type to surface
+      // from older runs if the active run has no rows for that game+type.
+      // Failure semantics: RUN_SCOPE_EXCLUDED (global fallback only).
+      // Callers push activeRunIds twice: once for each IN clause in the predicate.
+      runScopedWhere.push(buildPerTypeRunScopePredicate(runIdPlaceholders));
+      runScopedParams.push(...activeRunIds, ...activeRunIds);
     }
 
     const dedupeMode = dedupe === 'none' ? 'none' : 'latest_per_game_type';

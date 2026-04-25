@@ -149,6 +149,42 @@ export function getActiveRunIds(
   }
 }
 
+// Narrowed settled suppression: exclude only the specific card/market type that
+// settled, not every card in the game. Prevents game-level collateral exclusion.
+export function buildCardTypePreciseSettledPredicate(): string {
+  return `NOT EXISTS (
+    SELECT 1
+    FROM card_results cr
+    WHERE cr.game_id = cp.game_id
+      AND cr.card_type = cp.card_type
+      AND cr.status = 'settled'
+  )`;
+}
+
+// Per-type run-scope fallback: include a card when its run_id is active OR when
+// no active-run card exists for the same game+card_type. This prevents valid
+// card types from being hidden just because the active run skipped that type.
+// Callers must push activeRunIds TWICE into params (first IN, then inner IN).
+export function buildPerTypeRunScopePredicate(runIdPlaceholders: string): string {
+  return `(
+    cp.run_id IN (${runIdPlaceholders})
+    OR NOT EXISTS (
+      SELECT 1 FROM card_payloads inner_cp
+      WHERE inner_cp.game_id = cp.game_id
+        AND inner_cp.card_type = cp.card_type
+        AND inner_cp.run_id IN (${runIdPlaceholders})
+    )
+  )`;
+}
+
+// NHL lane compatibility: expand 'nhl' sport filter to also include 'nhl_props'
+// so NHL game cards and NHL prop cards surface together under a single sport param.
+export function resolveNhlCompatibleSports(sport: string | null): string[] | null {
+  if (!sport) return null;
+  if (sport === 'nhl') return ['nhl', 'nhl_props'];
+  return [sport];
+}
+
 export function getRunStatus(
   db: ReturnType<typeof getDatabaseReadOnly>,
   runId: string | null,

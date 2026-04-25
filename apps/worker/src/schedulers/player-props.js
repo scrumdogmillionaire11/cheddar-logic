@@ -11,7 +11,7 @@
  * Cadence model
  * -------------
  * 09:00 ET (heavy ingest window):
- *   NHL: sync_nhl_sog_player_ids → [BLK chain] → run_nhl_player_shots_model
+ *   NHL: sync_nhl_sog_player_ids → pull_nhl_player_shots → [BLK chain] → run_nhl_player_shots_model
  *   MLB: pull_mlb_pitcher_stats → pull_mlb_weather
  *
  * 15:00 ET:
@@ -48,6 +48,7 @@ const { DateTime } = require('luxon');
 // ─── Job imports ─────────────────────────────────────────────────────────────
 
 const { syncNhlSogPlayerIds } = require('../jobs/sync_nhl_sog_player_ids');
+const { pullNhlPlayerShots } = require('../jobs/pull_nhl_player_shots');
 const { syncNhlBlkPlayerIds } = require('../jobs/sync_nhl_blk_player_ids');
 const { pullNhlPlayerBlk } = require('../jobs/pull_nhl_player_blk');
 const { ingestNstBlkRates } = require('../jobs/ingest_nst_blk_rates');
@@ -217,7 +218,7 @@ function computePlayerPropsDueJobs(
     const isHeavyWindow = hhmm === fixedTimes[0]; // first window is heavy-ingest (09:00 by default)
 
     // NHL fixed window
-    // Heavy (09:00): sync SOG player IDs + optional BLK chain + shots prop/model
+    // Heavy (09:00): sync SOG player IDs + pull SOG logs + optional BLK chain + shots model
     // Light (18:00+): shots prop + model only
     if (isHeavyWindow) {
       // SOG player sync — gated on canonical feature flag, same contract as nhl.js
@@ -231,6 +232,15 @@ function computePlayerPropsDueJobs(
           reason: `player-props heavy ingest NHL SOG player sync (${hhmm} ET)`,
         });
       }
+
+      const sogPullKey = `${keyNhlFixed(dateStr, hhmm)}|shots_pull`;
+      jobs.push({
+        jobName: 'pull_nhl_player_shots',
+        jobKey: sogPullKey,
+        execute: pullNhlPlayerShots,
+        args: { jobKey: sogPullKey, dryRun },
+        reason: `player-props heavy ingest NHL SOG log pull (${hhmm} ET)`,
+      });
 
       // BLK ingest chain — suppressible via ENABLE_NHL_BLK_INGEST=false
       if (blkEnabled) {
