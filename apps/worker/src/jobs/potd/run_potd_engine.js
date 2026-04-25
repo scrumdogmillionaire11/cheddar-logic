@@ -706,9 +706,15 @@ function buildCandidateAuditEntry(candidate, noiseFloor, minScore) {
   const passesNoise = isFiniteNumber(edge) && edge > noiseFloor;
   const passesScore = isFiniteNumber(totalScore) && totalScore >= minScore;
   const passesConfidence = confidenceLabel !== 'LOW';
+  const rejectionCodes = Array.isArray(candidate.rejectionDiagnostics)
+    ? candidate.rejectionDiagnostics.map((entry) => entry?.code).filter(Boolean)
+    : [];
+  const hasModelSignalIncomplete = rejectionCodes.includes('MODEL_SIGNAL_INCOMPLETE');
 
   let rejectedReason = 'VIABLE';
-  if (source !== 'MODEL') {
+  if (hasModelSignalIncomplete) {
+    rejectedReason = 'MODEL_SIGNAL_INCOMPLETE';
+  } else if (source !== 'MODEL') {
     rejectedReason = 'NON_MODEL_SOURCE';
   } else if (!hasInputs) {
     rejectedReason = 'MISSING_EDGE_INPUTS';
@@ -749,6 +755,7 @@ function buildCandidateAuditEntry(candidate, noiseFloor, minScore) {
     edgeSourceTag: candidate.edgeSourceTag ?? null,
     edgeSourceMeta: candidate.edgeSourceMeta ?? null,
     confidenceLabel: candidate.confidenceLabel ?? null,
+    rejectionDiagnostics: rejectionCodes,
     rejectedReason,
   };
 }
@@ -967,6 +974,24 @@ function buildPotdCard(candidate, row, { cardId, nowIso }) {
   };
 }
 
+function hasModelPayloadForGame(db, gameId, cardType) {
+  if (!db || !gameId || !cardType) return false;
+  try {
+    const row = db
+      .prepare(
+        `SELECT 1 AS present
+         FROM card_payloads
+         WHERE game_id = ? AND card_type = ?
+         ORDER BY created_at DESC
+         LIMIT 1`,
+      )
+      .get(gameId, cardType);
+    return Boolean(row);
+  } catch (_) {
+    return false;
+  }
+}
+
 async function gatherBestCandidate({
   fetchOddsFn,
   buildCandidatesFn,
@@ -985,21 +1010,38 @@ async function gatherBestCandidate({
       fetchErrors.push(...result.errors);
     }
     for (const game of result?.games || []) {
+      const gameId = game?.gameId;
+      const mlbModelPayloadPresent =
+        sport === 'MLB' && gameId
+          ? hasModelPayloadForGame(db, gameId, 'mlb-full-game')
+          : false;
+      const nhlModelPayloadPresent =
+        sport === 'NHL' && gameId
+          ? hasModelPayloadForGame(db, gameId, 'nhl-model-output')
+          : false;
+      const nbaModelPayloadPresent =
+        sport === 'NBA' && gameId
+          ? hasModelPayloadForGame(db, gameId, 'nba-totals-call')
+          : false;
+
       const candidateGame =
         sport === 'MLB' && game?.gameId
           ? {
               ...game,
               mlbSnapshot: getLatestMlbModelOutput(game.gameId) || null,
+              mlbModelPayloadPresent,
             }
           : sport === 'NHL' && game?.gameId
           ? {
               ...game,
               nhlSnapshot: getLatestNhlModelOutput(game.gameId) || null,
+              nhlModelPayloadPresent,
             }
           : sport === 'NBA' && game?.gameId
           ? {
               ...game,
               nbaSnapshot: getLatestNbaModelOutput(game.gameId) || null,
+              nbaModelPayloadPresent,
             }
           : game;
       const candidates = buildCandidatesFn(candidateGame);
