@@ -361,3 +361,29 @@ Plans:
 - [ ] WI-1156-01-PLAN.md — Worker settlement completeness + reproducible historical backfill path for in-scope families (Wave 1)
 - [ ] WI-1156-02-PLAN.md — Shared supported-family contract for projection-settled and projection-accuracy APIs + contract tests (Wave 2)
 - [ ] WI-1156-03-PLAN.md — Desktop projection results table/detail surface + legacy settlement/UI branch retirement verification (Wave 3)
+
+---
+
+### Phase: WI-1178 — Normalize POTD Edge Calculation And Scoring Across Sports
+
+**Goal**: Eliminate structural bias toward NBA totals in POTD selection by replacing the uncalibrated linear edge heuristic with a sigma-based probability model, equalizing noise floors, and adding normalized edge weight to the scoring formula.
+
+**Requirements:** [WI-1178-EDGE-01, WI-1178-SCORE-01, WI-1178-FLOOR-01]
+
+**Plans:** 1 plan in 1 wave
+
+Plans:
+- [x] WI-1178-01-PLAN.md — Sigma-based NBA total edge + three-term totalScore formula + noise floor raise + 5 new tests (Wave 1)
+
+---
+
+### Phase: WI-1172 — Collapse Dead MLB SIERA/xERA Fallback Weighting To Active Runtime Contract
+
+**Goal**: Remove dead `siera`/`x_era` null-weighting branches from MLB starter-skill fallback projection logic, align runtime behavior with active data availability, and keep ADR-0007 in exact contract parity with implementation.
+
+**Requirements:** [WI-1172-FALLBACK-01, WI-1172-ADR-01, WI-1172-REG-01]
+
+**Plans:** 1 plan in 1 wave
+
+Plans:
+- [ ] WI-1172-01-PLAN.md — Simplify fallback contract to active signals + regression coverage + ADR contract alignment (Wave 1)

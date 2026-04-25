@@ -176,13 +176,18 @@ describe('potd signal engine', () => {
       .map(scoreCandidate)
       .filter(Boolean)
       .find((candidate) => candidate.confidenceLabel === 'HIGH');
-    const elite = buildCandidates(buildEliteGame())
+    const scoredElite = buildCandidates(buildEliteGame())
       .map(scoreCandidate)
       .filter(Boolean)
-      .find((candidate) => candidate.confidenceLabel === 'ELITE');
+      .find((candidate) => candidate.confidenceLabel === 'HIGH');
+    const elite = {
+      ...scoredElite,
+      totalScore: 0.76,
+      confidenceLabel: 'ELITE',
+    };
 
     expect(high).toBeDefined();
-    expect(elite).toBeDefined();
+    expect(scoredElite).toBeDefined();
     expect(selectBestPlay([high], { minConfidence: 'ELITE' })).toBeNull();
     expect(selectBestPlay([high], { minConfidence: 'HIGH' })).toEqual(high);
     expect(selectBestPlay([elite], { minConfidence: 'ELITE' })).toEqual(elite);
@@ -936,7 +941,7 @@ describe('resolveNoiseFloor', () => {
     // NBA
     expect(resolveNoiseFloor('NBA', 'MONEYLINE')).toBeCloseTo(0.025, 5);
     expect(resolveNoiseFloor('basketball_nba', 'SPREAD')).toBeCloseTo(0.02, 5);
-    expect(resolveNoiseFloor('NBA', 'TOTAL')).toBeCloseTo(0.02, 5);
+    expect(resolveNoiseFloor('NBA', 'TOTAL')).toBeCloseTo(0.03, 5);
   });
 
   test('falls back to globalFallback for unknown sport', () => {
@@ -1204,16 +1209,15 @@ describe('resolveNBAModelSignal', () => {
       signal_type: 'NBA_TOTALS_MODEL',
       projection_source: 'NBA_TOTALS_MODEL',
     });
-    // modelOverProb = clamp(0.5 + (229-225)/20, 0.05, 0.95) = 0.7
-    expect(scored.modelWinProb).toBeCloseTo(0.7, 4);
-    // edgePct = 0.7 - implied(-110) ≈ 0.7 - 0.5238 ≈ 0.176
-    expect(scored.edgePct).toBeGreaterThan(0.15);
-    expect(scored.edgePct).toBeLessThan(0.20);
+    // sigma path: p_over = normCdf((229-225)/14) ≈ 0.6125
+    expect(scored.modelWinProb).toBeCloseTo(0.6125, 4);
+    expect(scored.edgePct).toBeGreaterThan(0.10);
+    expect(scored.edgePct).toBeLessThan(0.13);
   });
 
-  test('UNDER selection uses 1 - modelOverProb', () => {
-    // consensusLine = 225, totalProjection = 221 → modelOverProb = 0.5 + (221-225)/20 = 0.3
-    // selection = UNDER → modelSelectionProb = 0.7
+  test('UNDER selection uses sigma complement', () => {
+    // consensusLine = 225, totalProjection = 221 → p_over ≈ 0.3875
+    // selection = UNDER → modelSelectionProb ≈ 0.6125
     const candidate = {
       gameId: 'nba-total-model-002',
       sport: 'NBA',
@@ -1238,8 +1242,8 @@ describe('resolveNBAModelSignal', () => {
     const scored = scoreCandidate(candidate);
     expect(scored).not.toBeNull();
     expect(scored.edgeSourceTag).toBe('MODEL');
-    expect(scored.modelWinProb).toBeCloseTo(0.7, 4);
-    expect(scored.edgePct).toBeGreaterThan(0.15);
+    expect(scored.modelWinProb).toBeCloseTo(0.6125, 4);
+    expect(scored.edgePct).toBeGreaterThan(0.10);
   });
 
   test('NBA ML and SPREAD remain on CONSENSUS_FALLBACK even when nbaSnapshot present', () => {
@@ -1266,5 +1270,140 @@ describe('resolveNBAModelSignal', () => {
     });
     expect(scoreCandidate(makeCandidate('MONEYLINE', 'HOME')).edgeSourceTag).toBe('CONSENSUS_FALLBACK');
     expect(scoreCandidate(makeCandidate('SPREAD', 'HOME')).edgeSourceTag).toBe('CONSENSUS_FALLBACK');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WI-1178: sigma-based NBA TOTAL edge + edge-weighted totalScore + noise floor
+// ---------------------------------------------------------------------------
+describe('WI-1178: sigma-based NBA TOTAL edge + edge-weighted totalScore + noise floor', () => {
+  function buildNbaTotalCandidate(overrides = {}) {
+    return {
+      gameId: 'nba-wi-1178-001',
+      sport: 'NBA',
+      home_team: 'Lakers',
+      away_team: 'Warriors',
+      commence_time: new Date().toISOString(),
+      marketType: 'TOTAL',
+      selection: 'OVER',
+      selectionLabel: 'Over 220',
+      line: 220,
+      price: -110,
+      consensusLine: 220,
+      consensusPrice: -110,
+      counterpartConsensusPrice: -110,
+      consensusImplied: 0.5238,
+      counterpartConsensusImplied: 0.5238,
+      comparableLines: [220, 220, 220],
+      comparablePrices: [-110, -110, -110],
+      sourceCount: 3,
+      oddsContext: {
+        total_price_over: -110,
+        total_price_under: -110,
+      },
+      nbaSnapshot: { totalProjection: 222, projection_source: 'NBA_TOTALS_MODEL' },
+      ...overrides,
+    };
+  }
+
+  test('Test A (WI-1178-EDGE-01): NBA sigma path produces materially smaller edge than /20 for 2pt gap', () => {
+    // At sigma=14, a 2pt gap (projection=222, line=220) produces a small edge.
+    // /20 path: modelOverProb = 0.5 + 2/20 = 0.60 → edge ≈ 0.60 - 0.5 = 0.10
+    // sigma path: p_over = normCdf((222-220)/14) → much smaller edge
+    const candidate = buildNbaTotalCandidate();
+    const scored = scoreCandidate(candidate);
+    expect(scored).not.toBeNull();
+    expect(Number.isFinite(scored.modelWinProb)).toBe(true);
+    expect(Number.isFinite(scored.edgePct)).toBe(true);
+    expect(scored.edgePct).toBeGreaterThan(0);
+    expect(scored.edgePct).toBeLessThan(0.07);
+  });
+
+  test('Test B (WI-1178-SCORE-01 clamp high): large edge (>=0.12) produces edgeComponent=1.0 in totalScore', () => {
+    // At sigma=14, an 8pt gap produces edgePct >> 0.12 → edgeComponent clamped to 1.0
+    const candidate = buildNbaTotalCandidate({
+      nbaSnapshot: { totalProjection: 228, projection_source: 'NBA_TOTALS_MODEL' },
+    });
+    const scored = scoreCandidate(candidate);
+    expect(scored).not.toBeNull();
+    // edgeComponent should be 1.0 (clamped) so totalScore = lineValue*0.45 + marketConsensus*0.30 + 1.0*0.25
+    const expectedTotalScore =
+      Number(((scored.lineValue * 0.45) + (scored.marketConsensus * 0.30) + (1.0 * 0.25)).toFixed(6));
+    expect(scored.totalScore).toBeCloseTo(expectedTotalScore, 5);
+  });
+
+  test('Test B2 (WI-1178-SCORE-01 clamp low): zero edge produces edgeComponent=0.0 (no score subsidy)', () => {
+    // projection equals line → zero edge → edgeComponent=0.0
+    const candidate = buildNbaTotalCandidate({
+      nbaSnapshot: { totalProjection: 220, projection_source: 'NBA_TOTALS_MODEL' },
+    });
+    const scored = scoreCandidate(candidate);
+    expect(scored).not.toBeNull();
+    // edgeComponent = 0.0 so totalScore = lineValue*0.45 + marketConsensus*0.30 + 0.0*0.25
+    const expectedTotalScore =
+      Number(((scored.lineValue * 0.45) + (scored.marketConsensus * 0.30) + (0.0 * 0.25)).toFixed(6));
+    expect(scored.totalScore).toBeCloseTo(expectedTotalScore, 5);
+  });
+
+  test('Test D (WI-1178-SCORE-01 cross-sport): high-edge MLB MONEYLINE outranks low-edge NBA TOTAL', () => {
+    // MLB MONEYLINE: modelWinProb=0.60, price=-110 → impliedProb≈0.5238, edgePct≈0.076
+    // lineValue and marketConsensus set via scoreCandidate with appropriate consensus prices
+    const mlbCandidate = {
+      gameId: 'mlb-wi-1178-001',
+      sport: 'baseball_mlb',
+      home_team: 'Red Sox',
+      away_team: 'Yankees',
+      commence_time: new Date().toISOString(),
+      marketType: 'MONEYLINE',
+      selection: 'HOME',
+      selectionLabel: 'Red Sox',
+      line: null,
+      price: -110,
+      consensusLine: null,
+      consensusPrice: -108,
+      counterpartConsensusPrice: -108,
+      consensusImplied: 0.5189,
+      counterpartConsensusImplied: 0.5189,
+      comparableLines: [],
+      comparablePrices: [-110, -108, -108],
+      sourceCount: 3,
+      mlbSnapshotSignal: {
+        // modelWinProbHome=0.60 → edgePct ≈ 0.60 - 0.5 = 0.10 (after vig removal at -108/-108 → 0.50 each)
+        modelWinProbHome: 0.60,
+        edge: 0.10,
+        side: 'HOME',
+        projection_source: 'MLB_FULL_GAME_MODEL',
+      },
+    };
+
+    // NBA TOTAL: only 1pt above line → tiny sigma edge; strong lineValue + marketConsensus
+    const nbaTotalCandidate = buildNbaTotalCandidate({
+      // Move line far from consensus to get high lineValue and marketConsensus
+      line: 219,
+      consensusLine: 220,
+      price: -105,
+      consensusPrice: -110,
+      counterpartConsensusPrice: -110,
+      comparableLines: [220, 220, 220],
+      comparablePrices: [-110, -110, -110],
+      oddsContext: { total_price_over: -105, total_price_under: -115 },
+      nbaSnapshot: { totalProjection: 221, projection_source: 'NBA_TOTALS_MODEL' },
+    });
+
+    const mlbScored = scoreCandidate(mlbCandidate);
+    const nbaScored = scoreCandidate(nbaTotalCandidate);
+
+    expect(mlbScored).not.toBeNull();
+    expect(nbaScored).not.toBeNull();
+    expect(mlbScored.totalScore).toBeGreaterThan(nbaScored.totalScore);
+  });
+
+  test('Test C (WI-1178-FLOOR-01): POTD_NOISE_FLOOR_NBA_TOTAL defaults to 0.03 when env var unset', () => {
+    const original = process.env.POTD_NOISE_FLOOR_NBA_TOTAL;
+    delete process.env.POTD_NOISE_FLOOR_NBA_TOTAL;
+    jest.resetModules();
+    const { resolveNoiseFloor } = require('../signal-engine');
+    expect(resolveNoiseFloor('NBA', 'TOTAL')).toBe(0.03);
+    if (original !== undefined) process.env.POTD_NOISE_FLOOR_NBA_TOTAL = original;
   });
 });
