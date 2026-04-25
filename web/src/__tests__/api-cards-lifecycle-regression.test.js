@@ -617,13 +617,27 @@ async function runTests() {
       cardsRouteSource.includes("process.env.ENABLE_GATE_SHADOW_COMPARE === 'true'");
     const hasShadowCompareTelemetry =
       cardsRouteSource.includes('buildShadowCompareTelemetry') &&
-      cardsRouteSource.includes('gate_shadow_compare');
+      cardsRouteSource.includes('gate_shadow_compare') &&
+      cardsRouteSource.includes('buildShadowCompareRows');
+    const payloadClassifierSource = fs.readFileSync(
+      path.join(REPO_ROOT, 'web/src/lib/cards/payload-classifier.ts'), 'utf8'
+    );
+    const hasShadowDropReasonTelemetry =
+      payloadClassifierSource.includes('by_drop_reason') &&
+      payloadClassifierSource.includes('by_card_type_drop_reason') &&
+      payloadClassifierSource.includes('drop_reason');
     if (hasSimplifiedGateFlag && hasShadowCompareFlag && hasShadowCompareTelemetry) {
       console.log('✓ Simplified gate flag and shadow compare telemetry contract present in route\n');
     } else {
       console.log(
         `✗ Missing simplified gate contract: flag=${hasSimplifiedGateFlag} shadow=${hasShadowCompareFlag} telemetry=${hasShadowCompareTelemetry}\n`,
       );
+      process.exit(1);
+    }
+    if (hasShadowDropReasonTelemetry) {
+      console.log('✓ Shadow compare telemetry includes drop-reason groupings\n');
+    } else {
+      console.log('✗ Missing shadow compare drop-reason telemetry groupings\n');
       process.exit(1);
     }
 

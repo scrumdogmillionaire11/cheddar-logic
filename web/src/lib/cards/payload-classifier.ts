@@ -119,32 +119,113 @@ export interface ShadowCompareTelemetry {
     simplified_count: number;
     delta: number;
   }>;
+  by_drop_reason: Array<{
+    drop_reason: string;
+    legacy_count: number;
+    simplified_count: number;
+    delta: number;
+  }>;
+  by_card_type_drop_reason: Array<{
+    card_type: string;
+    drop_reason: string;
+    legacy_count: number;
+    simplified_count: number;
+    delta: number;
+  }>;
+}
+
+export interface ShadowCompareRow {
+  card_type: string;
+  drop_reason: BettingSurfacePayloadDropReason | 'SURFACED';
+}
+
+function incrementCount(counts: Map<string, number>, key: string) {
+  counts.set(key, (counts.get(key) ?? 0) + 1);
 }
 
 export function buildShadowCompareTelemetry(
-  legacyCardTypes: string[],
-  simplifiedCardTypes: string[],
+  legacyRows: ShadowCompareRow[],
+  simplifiedRows: ShadowCompareRow[],
 ): ShadowCompareTelemetry {
   const legacyCounts = new Map<string, number>();
-  for (const ct of legacyCardTypes) {
-    legacyCounts.set(ct, (legacyCounts.get(ct) ?? 0) + 1);
+  const legacyReasonCounts = new Map<string, number>();
+  const legacyCardTypeReasonCounts = new Map<string, number>();
+  for (const row of legacyRows) {
+    incrementCount(legacyCounts, row.card_type);
+    incrementCount(legacyReasonCounts, row.drop_reason);
+    incrementCount(
+      legacyCardTypeReasonCounts,
+      `${row.card_type}\u0000${row.drop_reason}`,
+    );
   }
   const simplifiedCounts = new Map<string, number>();
-  for (const ct of simplifiedCardTypes) {
-    simplifiedCounts.set(ct, (simplifiedCounts.get(ct) ?? 0) + 1);
+  const simplifiedReasonCounts = new Map<string, number>();
+  const simplifiedCardTypeReasonCounts = new Map<string, number>();
+  for (const row of simplifiedRows) {
+    incrementCount(simplifiedCounts, row.card_type);
+    incrementCount(simplifiedReasonCounts, row.drop_reason);
+    incrementCount(
+      simplifiedCardTypeReasonCounts,
+      `${row.card_type}\u0000${row.drop_reason}`,
+    );
   }
   const allTypes = new Set([...legacyCounts.keys(), ...simplifiedCounts.keys()]);
   const by_card_type = Array.from(allTypes)
     .map((ct) => {
       const lc = legacyCounts.get(ct) ?? 0;
       const sc = simplifiedCounts.get(ct) ?? 0;
-      return { card_type: ct, legacy_count: lc, simplified_count: sc, delta: sc - lc };
+      return {
+        card_type: ct,
+        legacy_count: lc,
+        simplified_count: sc,
+        delta: sc - lc,
+      };
     })
     .sort((a, b) => a.card_type.localeCompare(b.card_type));
+  const allReasons = new Set([
+    ...legacyReasonCounts.keys(),
+    ...simplifiedReasonCounts.keys(),
+  ]);
+  const by_drop_reason = Array.from(allReasons)
+    .map((drop_reason) => {
+      const lc = legacyReasonCounts.get(drop_reason) ?? 0;
+      const sc = simplifiedReasonCounts.get(drop_reason) ?? 0;
+      return {
+        drop_reason,
+        legacy_count: lc,
+        simplified_count: sc,
+        delta: sc - lc,
+      };
+    })
+    .sort((a, b) => a.drop_reason.localeCompare(b.drop_reason));
+  const allCardTypeReasons = new Set([
+    ...legacyCardTypeReasonCounts.keys(),
+    ...simplifiedCardTypeReasonCounts.keys(),
+  ]);
+  const by_card_type_drop_reason = Array.from(allCardTypeReasons)
+    .map((key) => {
+      const [card_type, drop_reason] = key.split('\u0000');
+      const lc = legacyCardTypeReasonCounts.get(key) ?? 0;
+      const sc = simplifiedCardTypeReasonCounts.get(key) ?? 0;
+      return {
+        card_type,
+        drop_reason,
+        legacy_count: lc,
+        simplified_count: sc,
+        delta: sc - lc,
+      };
+    })
+    .sort(
+      (a, b) =>
+        a.card_type.localeCompare(b.card_type) ||
+        a.drop_reason.localeCompare(b.drop_reason),
+    );
   return {
-    legacy_count: legacyCardTypes.length,
-    simplified_count: simplifiedCardTypes.length,
-    delta: simplifiedCardTypes.length - legacyCardTypes.length,
+    legacy_count: legacyRows.length,
+    simplified_count: simplifiedRows.length,
+    delta: simplifiedRows.length - legacyRows.length,
     by_card_type,
+    by_drop_reason,
+    by_card_type_drop_reason,
   };
 }

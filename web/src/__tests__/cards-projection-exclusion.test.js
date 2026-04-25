@@ -187,9 +187,22 @@ assert.ok(
 assert.ok(
   payloadClassifierSource.includes('buildShadowCompareTelemetry') &&
     payloadClassifierSource.includes('ShadowCompareTelemetry') &&
+    payloadClassifierSource.includes('ShadowCompareRow') &&
     payloadClassifierSource.includes('legacy_count') &&
-    payloadClassifierSource.includes('simplified_count'),
-  'payload classifier should export shadow compare telemetry type and builder',
+    payloadClassifierSource.includes('simplified_count') &&
+    payloadClassifierSource.includes('by_drop_reason') &&
+    payloadClassifierSource.includes('by_card_type_drop_reason') &&
+    payloadClassifierSource.includes('drop_reason'),
+  'payload classifier should export shadow compare telemetry grouped by card_type and drop_reason',
+);
+
+assert.ok(
+  apiCardsSource.includes('buildShadowCompareRows') &&
+    apiCardsSource.includes('getBettingSurfacePayloadDropReason(normalizedPayload)') &&
+    apiCardsSource.includes("'SURFACED'") &&
+    apiCardsSource.includes('buildShadowCompareRows(legacyRows)') &&
+    apiCardsSource.includes('buildShadowCompareRows(simplifiedRows)'),
+  'route should derive shadow compare drop reasons from canonical classifier outputs',
 );
 
 console.log('✅ Cards projection exclusion source tests passed');

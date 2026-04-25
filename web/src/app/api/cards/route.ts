@@ -78,6 +78,7 @@ import {
   isBettingSurfacePayload,
   normalizePayloadMeta,
   safeJsonParse,
+  type ShadowCompareRow,
   type ShadowCompareTelemetry,
 } from '@/lib/cards/payload-classifier';
 
@@ -261,7 +262,7 @@ function buildCardsDropDiagnostics(
       } else if (
         params.lifecycleEnabled &&
         params.lifecycleMode === 'active' &&
-        ACTIVE_EXCLUDED_STATUSES.includes(
+        (ACTIVE_EXCLUDED_STATUSES as readonly string[]).includes(
           String(row.game_status || '').toUpperCase(),
         )
       ) {
@@ -311,6 +312,20 @@ function buildCardsDropDiagnostics(
           a.reason.localeCompare(b.reason),
       ),
   };
+}
+
+function buildShadowCompareRows(rows: CardRow[]): ShadowCompareRow[] {
+  return rows.map((row) => {
+    const parsed = safeJsonParse(row.payload_data);
+    const normalizedPayload = normalizePayloadMeta(parsed.data);
+    return {
+      card_type: row.card_type || 'unknown',
+      drop_reason:
+        parsed.error || isProjectionSurfaceCardType(row.card_type)
+          ? 'SURFACED'
+          : (getBettingSurfacePayloadDropReason(normalizedPayload) ?? 'SURFACED'),
+    };
+  });
 }
 
 export async function GET(request: NextRequest) {
@@ -561,12 +576,13 @@ export async function GET(request: NextRequest) {
       rows = legacyRows;
     }
 
-    // Shadow compare telemetry: counts by card_type, legacy versus simplified.
+    // Shadow compare telemetry: counts by card_type and drop_reason, legacy
+    // versus simplified.
     const shadowCompareTelemetry: ShadowCompareTelemetry | undefined =
       ENABLE_GATE_SHADOW_COMPARE && simplifiedRows !== null
         ? buildShadowCompareTelemetry(
-            legacyRows.map((r) => r.card_type),
-            simplifiedRows.map((r) => r.card_type),
+            buildShadowCompareRows(legacyRows),
+            buildShadowCompareRows(simplifiedRows),
           )
         : undefined;
 
