@@ -377,6 +377,45 @@ Plans:
 
 ---
 
+### Phase: WI-1179 — Modern MLB/NHL Model Payload Compatibility in Data Extractors
+
+**Goal**: Make POTD model snapshot reads compatible with modern MLB/NHL payload schemas while preserving legacy schema support and non-actionable NHL PASS/evidence filtering.
+
+**Requirements:** [WI-1179-MLB-01, WI-1179-MLB-02, WI-1179-NHL-01, WI-1179-NHL-02, WI-1179-REG-01]
+
+**Plans:** 1 plan in 1 wave
+
+Plans:
+- [x] WI-1179-PLAN.md — Modern MLB extractor path + legacy fallback + NHL PASS/evidence non-actionable filtering + regression coverage (Wave 1)
+
+---
+
+### Phase: WI-1180 — Prevent Silent Consensus Fallback for Incomplete Model Payloads in POTD
+
+**Goal**: Ensure POTD does not silently downgrade incomplete model payloads to consensus candidates and instead records explicit rejection diagnostics.
+
+**Requirements:** [WI-1180-MODEL-01, WI-1180-CONSENSUS-01, WI-1180-MLB-01, WI-1180-NHL-01, WI-1180-REG-01]
+
+**Plans:** 1 plan in 1 wave
+
+Plans:
+- [ ] WI-1180-PLAN.md — Explicit MODEL_SIGNAL_INCOMPLETE diagnostics + contract-limited fallback behavior + regression coverage (Wave 1)
+
+---
+
+### Phase: WI-1181 — Emit Actionable NHL model_signal Payload for POTD
+
+**Goal**: Update NHL producer output so actionable NHL moneyline rows emit a normalized model_signal object consumable by POTD, with explicit blockers for non-actionable rows.
+
+**Requirements:** [WI-1181-SIGNAL-01, WI-1181-BLOCKERS-01, WI-1181-VIS-01, WI-1181-REG-01]
+
+**Plans:** 1 plan in 1 wave
+
+Plans:
+- [ ] WI-1181-PLAN.md — Normalized NHL model_signal payload for actionable rows + explicit blocker semantics for non-actionable rows + producer/consumer regression coverage (Wave 1)
+
+---
+
 ### Phase: WI-1172 — Collapse Dead MLB SIERA/xERA Fallback Weighting To Active Runtime Contract
 
 **Goal**: Remove dead `siera`/`x_era` null-weighting branches from MLB starter-skill fallback projection logic, align runtime behavior with active data availability, and keep ADR-0007 in exact contract parity with implementation.
