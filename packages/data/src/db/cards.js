@@ -1253,6 +1253,7 @@ function insertDecisionEvent(event) {
  * Retrieve the latest NHL goalie model inputs from card_payloads for a given game.
  * Returns { homeGoalie: { savePct, gsax }, awayGoalie: { savePct, gsax } } or null.
  * Supports both primary flat keys (goalie_home_save_pct) and legacy nested keys (goalie.home.save_pct).
+ * Filters out PASS/evidence payloads and payloads without actionable model probability inputs.
  */
 function getLatestNhlModelOutput(gameId) {
   const db = getDatabase();
@@ -1263,13 +1264,28 @@ function getLatestNhlModelOutput(gameId) {
   `).get(gameId);
   if (!row) return null;
   const rd = JSON.parse(row.payload_data);
+  
+  // Filter out PASS and evidence payloads (non-actionable)
+  if (rd.status === 'PASS' || rd.type === 'evidence') {
+    return null;
+  }
+  
+  // Extract save_pct values from modern and legacy paths
+  const homeGoalieSavePct = rd.goalie_home_save_pct ?? rd.goalie?.home?.save_pct ?? null;
+  const awayGoalieSavePct = rd.goalie_away_save_pct ?? rd.goalie?.away?.save_pct ?? null;
+  
+  // If any required model probability is null/non-finite, payload is non-actionable
+  if (!Number.isFinite(homeGoalieSavePct) || !Number.isFinite(awayGoalieSavePct)) {
+    return null;
+  }
+  
   return {
     homeGoalie: {
-      savePct: rd.goalie_home_save_pct ?? rd.goalie?.home?.save_pct ?? null,
+      savePct: homeGoalieSavePct,
       gsax:    rd.goalie_home_gsax    ?? rd.goalie?.home?.gsax    ?? null,
     },
     awayGoalie: {
-      savePct: rd.goalie_away_save_pct ?? rd.goalie?.away?.save_pct ?? null,
+      savePct: awayGoalieSavePct,
       gsax:    rd.goalie_away_gsax    ?? rd.goalie?.away?.gsax    ?? null,
     },
   };
@@ -1284,15 +1300,39 @@ function getLatestMlbModelOutput(gameId) {
   `).get(gameId);
   if (!row) return null;
   const rd = JSON.parse(row.payload_data);
+  
+  // Try modern top-level schema first
+  let modernEdge = rd.edge;
+  let modernProb = rd.model_prob ?? rd.p_fair;
+  let modernSide = rd.selection?.side;
+  
+  if (
+    Number.isFinite(modernProb) &&
+    Number.isFinite(modernEdge) &&
+    (modernSide === 'HOME' || modernSide === 'AWAY')
+  ) {
+    // Modern schema is complete and valid
+    return {
+      modelWinProbHome: modernProb,
+      edge: modernEdge,
+      side: modernSide,
+      projection_source: rd.projection_source ?? 'MLB_FULL_GAME_MODEL',
+      ...(Number.isFinite(rd.price) && { price: rd.price }),
+      ...(Number.isFinite(rd.line) && { line: rd.line }),
+      ...(typeof rd.market_type === 'string' && { market_type: rd.market_type }),
+    };
+  }
+  
+  // Fall back to legacy drivers[0] schema
   const driver = Array.isArray(rd.drivers) ? rd.drivers[0] : null;
   if (!driver) return null;
-  const { win_prob_home, edge, side } = driver;
-  if (!Number.isFinite(win_prob_home) || !Number.isFinite(edge)) return null;
-  if (side !== 'HOME' && side !== 'AWAY') return null;
+  const { win_prob_home, edge: legacyEdge, side: legacySide } = driver;
+  if (!Number.isFinite(win_prob_home) || !Number.isFinite(legacyEdge)) return null;
+  if (legacySide !== 'HOME' && legacySide !== 'AWAY') return null;
   return {
     modelWinProbHome: win_prob_home,
-    edge,
-    side,
+    edge: legacyEdge,
+    side: legacySide,
     projection_source: rd.projection_source ?? 'MLB_FULL_GAME_MODEL',
   };
 }

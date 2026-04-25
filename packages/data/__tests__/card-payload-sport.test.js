@@ -364,6 +364,489 @@ describe('card payload/card_results sport normalization', () => {
     expect(dbModule.getLatestMlbModelOutput('missing-mlb-model-output')).toBeNull();
   });
 
+  test('getLatestMlbModelOutput supports modern top-level schema (model_prob, edge, selection.side)', () => {
+    const db = dbModule.getDatabase();
+    const now = new Date();
+    const gameTimeUtc = new Date(now.getTime() + 60 * 60 * 1000).toISOString();
+    const gameId = 'test-mlb-modern-schema';
+    ensureSettlementTables(db);
+
+    db.prepare(
+      `INSERT INTO games (
+        id, sport, game_id, home_team, away_team, game_time_utc, status
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      'game-mlb-modern-schema',
+      'mlb',
+      gameId,
+      'Home Team',
+      'Away Team',
+      gameTimeUtc,
+      'scheduled'
+    );
+
+    db.prepare(`
+      INSERT INTO card_payloads (
+        id, game_id, sport, card_type, card_title, created_at, expires_at,
+        payload_data, model_output_ids, metadata, run_id, updated_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      'card-mlb-modern-schema',
+      gameId,
+      'mlb',
+      'mlb-full-game',
+      'MLB Full Game',
+      now.toISOString(),
+      null,
+      JSON.stringify({
+        projection_source: 'MLB_FULL_GAME_MODEL',
+        model_prob: 0.602,
+        edge: 0.052,
+        selection: { side: 'AWAY' },
+        price: 1.95,
+        line: -110,
+        market_type: 'moneyline',
+      }),
+      null,
+      null,
+      'run-mlb-modern-schema',
+      now.toISOString()
+    );
+
+    expect(dbModule.getLatestMlbModelOutput(gameId)).toEqual({
+      modelWinProbHome: 0.602,
+      edge: 0.052,
+      side: 'AWAY',
+      projection_source: 'MLB_FULL_GAME_MODEL',
+      price: 1.95,
+      line: -110,
+      market_type: 'moneyline',
+    });
+  });
+
+  test('getLatestMlbModelOutput uses p_fair as fallback when model_prob missing', () => {
+    const db = dbModule.getDatabase();
+    const now = new Date();
+    const gameTimeUtc = new Date(now.getTime() + 60 * 60 * 1000).toISOString();
+    const gameId = 'test-mlb-p-fair-schema';
+    ensureSettlementTables(db);
+
+    db.prepare(
+      `INSERT INTO games (
+        id, sport, game_id, home_team, away_team, game_time_utc, status
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      'game-mlb-p-fair-schema',
+      'mlb',
+      gameId,
+      'Home Team',
+      'Away Team',
+      gameTimeUtc,
+      'scheduled'
+    );
+
+    db.prepare(`
+      INSERT INTO card_payloads (
+        id, game_id, sport, card_type, card_title, created_at, expires_at,
+        payload_data, model_output_ids, metadata, run_id, updated_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      'card-mlb-p-fair-schema',
+      gameId,
+      'mlb',
+      'mlb-full-game',
+      'MLB Full Game',
+      now.toISOString(),
+      null,
+      JSON.stringify({
+        projection_source: 'MLB_FULL_GAME_MODEL',
+        p_fair: 0.555,
+        edge: 0.035,
+        selection: { side: 'HOME' },
+      }),
+      null,
+      null,
+      'run-mlb-p-fair-schema',
+      now.toISOString()
+    );
+
+    expect(dbModule.getLatestMlbModelOutput(gameId)).toEqual({
+      modelWinProbHome: 0.555,
+      edge: 0.035,
+      side: 'HOME',
+      projection_source: 'MLB_FULL_GAME_MODEL',
+    });
+  });
+
+  test('getLatestMlbModelOutput prefers modern schema over legacy drivers[0]', () => {
+    const db = dbModule.getDatabase();
+    const now = new Date();
+    const gameTimeUtc = new Date(now.getTime() + 60 * 60 * 1000).toISOString();
+    const gameId = 'test-mlb-modern-over-legacy';
+    ensureSettlementTables(db);
+
+    db.prepare(
+      `INSERT INTO games (
+        id, sport, game_id, home_team, away_team, game_time_utc, status
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      'game-mlb-modern-over-legacy',
+      'mlb',
+      gameId,
+      'Home Team',
+      'Away Team',
+      gameTimeUtc,
+      'scheduled'
+    );
+
+    db.prepare(`
+      INSERT INTO card_payloads (
+        id, game_id, sport, card_type, card_title, created_at, expires_at,
+        payload_data, model_output_ids, metadata, run_id, updated_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      'card-mlb-modern-over-legacy',
+      gameId,
+      'mlb',
+      'mlb-full-game',
+      'MLB Full Game',
+      now.toISOString(),
+      null,
+      JSON.stringify({
+        projection_source: 'MLB_FULL_GAME_MODEL',
+        model_prob: 0.620,
+        edge: 0.068,
+        selection: { side: 'HOME' },
+        drivers: [{ win_prob_home: 0.500, edge: 0.010, side: 'AWAY' }],
+      }),
+      null,
+      null,
+      'run-mlb-modern-over-legacy',
+      now.toISOString()
+    );
+
+    expect(dbModule.getLatestMlbModelOutput(gameId)).toEqual({
+      modelWinProbHome: 0.620,
+      edge: 0.068,
+      side: 'HOME',
+      projection_source: 'MLB_FULL_GAME_MODEL',
+    });
+  });
+
+  test('getLatestMlbModelOutput falls back to legacy drivers[0] when modern schema incomplete', () => {
+    const db = dbModule.getDatabase();
+    const now = new Date();
+    const gameTimeUtc = new Date(now.getTime() + 60 * 60 * 1000).toISOString();
+    const gameId = 'test-mlb-legacy-fallback';
+    ensureSettlementTables(db);
+
+    db.prepare(
+      `INSERT INTO games (
+        id, sport, game_id, home_team, away_team, game_time_utc, status
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      'game-mlb-legacy-fallback',
+      'mlb',
+      gameId,
+      'Home Team',
+      'Away Team',
+      gameTimeUtc,
+      'scheduled'
+    );
+
+    db.prepare(`
+      INSERT INTO card_payloads (
+        id, game_id, sport, card_type, card_title, created_at, expires_at,
+        payload_data, model_output_ids, metadata, run_id, updated_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      'card-mlb-legacy-fallback',
+      gameId,
+      'mlb',
+      'mlb-full-game',
+      'MLB Full Game',
+      now.toISOString(),
+      null,
+      JSON.stringify({
+        projection_source: 'MLB_FULL_GAME_MODEL',
+        model_prob: 0.620,
+        edge: null,
+        selection: { side: 'HOME' },
+        drivers: [{ win_prob_home: 0.575, edge: 0.041, side: 'AWAY' }],
+      }),
+      null,
+      null,
+      'run-mlb-legacy-fallback',
+      now.toISOString()
+    );
+
+    expect(dbModule.getLatestMlbModelOutput(gameId)).toEqual({
+      modelWinProbHome: 0.575,
+      edge: 0.041,
+      side: 'AWAY',
+      projection_source: 'MLB_FULL_GAME_MODEL',
+    });
+  });
+
+  test('getLatestMlbModelOutput returns null for invalid modern schema (bad side value)', () => {
+    const db = dbModule.getDatabase();
+    const now = new Date();
+    const gameTimeUtc = new Date(now.getTime() + 60 * 60 * 1000).toISOString();
+    const gameId = 'test-mlb-invalid-side';
+    ensureSettlementTables(db);
+
+    db.prepare(
+      `INSERT INTO games (
+        id, sport, game_id, home_team, away_team, game_time_utc, status
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      'game-mlb-invalid-side',
+      'mlb',
+      gameId,
+      'Home Team',
+      'Away Team',
+      gameTimeUtc,
+      'scheduled'
+    );
+
+    db.prepare(`
+      INSERT INTO card_payloads (
+        id, game_id, sport, card_type, card_title, created_at, expires_at,
+        payload_data, model_output_ids, metadata, run_id, updated_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      'card-mlb-invalid-side',
+      gameId,
+      'mlb',
+      'mlb-full-game',
+      'MLB Full Game',
+      now.toISOString(),
+      null,
+      JSON.stringify({
+        projection_source: 'MLB_FULL_GAME_MODEL',
+        model_prob: 0.620,
+        edge: 0.068,
+        selection: { side: 'INVALID' },
+      }),
+      null,
+      null,
+      'run-mlb-invalid-side',
+      now.toISOString()
+    );
+
+    expect(dbModule.getLatestMlbModelOutput(gameId)).toBeNull();
+  });
+
+  test('getLatestNhlModelOutput filters out PASS payloads', () => {
+    const db = dbModule.getDatabase();
+    const now = new Date();
+    const gameTimeUtc = new Date(now.getTime() + 60 * 60 * 1000).toISOString();
+    const gameId = 'test-nhl-pass-filter';
+    ensureSettlementTables(db);
+
+    db.prepare(
+      `INSERT INTO games (
+        id, sport, game_id, home_team, away_team, game_time_utc, status
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      'game-nhl-pass-filter',
+      'nhl',
+      gameId,
+      'Home Team',
+      'Away Team',
+      gameTimeUtc,
+      'scheduled'
+    );
+
+    db.prepare(`
+      INSERT INTO card_payloads (
+        id, game_id, sport, card_type, card_title, created_at, expires_at,
+        payload_data, model_output_ids, metadata, run_id, updated_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      'card-nhl-pass-filter',
+      gameId,
+      'nhl',
+      'nhl-model-output',
+      'NHL Model Output',
+      now.toISOString(),
+      null,
+      JSON.stringify({
+        status: 'PASS',
+        goalie_home_save_pct: 0.918,
+        goalie_home_gsax: 7.4,
+        goalie_away_save_pct: 0.905,
+        goalie_away_gsax: -1.2,
+      }),
+      null,
+      null,
+      'run-nhl-pass-filter',
+      now.toISOString()
+    );
+
+    expect(dbModule.getLatestNhlModelOutput(gameId)).toBeNull();
+  });
+
+  test('getLatestNhlModelOutput filters out evidence payloads', () => {
+    const db = dbModule.getDatabase();
+    const now = new Date();
+    const gameTimeUtc = new Date(now.getTime() + 60 * 60 * 1000).toISOString();
+    const gameId = 'test-nhl-evidence-filter';
+    ensureSettlementTables(db);
+
+    db.prepare(
+      `INSERT INTO games (
+        id, sport, game_id, home_team, away_team, game_time_utc, status
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      'game-nhl-evidence-filter',
+      'nhl',
+      gameId,
+      'Home Team',
+      'Away Team',
+      gameTimeUtc,
+      'scheduled'
+    );
+
+    db.prepare(`
+      INSERT INTO card_payloads (
+        id, game_id, sport, card_type, card_title, created_at, expires_at,
+        payload_data, model_output_ids, metadata, run_id, updated_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      'card-nhl-evidence-filter',
+      gameId,
+      'nhl',
+      'nhl-model-output',
+      'NHL Model Output',
+      now.toISOString(),
+      null,
+      JSON.stringify({
+        type: 'evidence',
+        goalie_home_save_pct: 0.918,
+        goalie_home_gsax: 7.4,
+        goalie_away_save_pct: 0.905,
+        goalie_away_gsax: -1.2,
+      }),
+      null,
+      null,
+      'run-nhl-evidence-filter',
+      now.toISOString()
+    );
+
+    expect(dbModule.getLatestNhlModelOutput(gameId)).toBeNull();
+  });
+
+  test('getLatestNhlModelOutput filters out payloads with null model probabilities', () => {
+    const db = dbModule.getDatabase();
+    const now = new Date();
+    const gameTimeUtc = new Date(now.getTime() + 60 * 60 * 1000).toISOString();
+    const gameId = 'test-nhl-null-probabilities';
+    ensureSettlementTables(db);
+
+    db.prepare(
+      `INSERT INTO games (
+        id, sport, game_id, home_team, away_team, game_time_utc, status
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      'game-nhl-null-probabilities',
+      'nhl',
+      gameId,
+      'Home Team',
+      'Away Team',
+      gameTimeUtc,
+      'scheduled'
+    );
+
+    db.prepare(`
+      INSERT INTO card_payloads (
+        id, game_id, sport, card_type, card_title, created_at, expires_at,
+        payload_data, model_output_ids, metadata, run_id, updated_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      'card-nhl-null-probabilities',
+      gameId,
+      'nhl',
+      'nhl-model-output',
+      'NHL Model Output',
+      now.toISOString(),
+      null,
+      JSON.stringify({
+        goalie_home_save_pct: null,
+        goalie_home_gsax: 7.4,
+        goalie_away_save_pct: 0.905,
+        goalie_away_gsax: -1.2,
+      }),
+      null,
+      null,
+      'run-nhl-null-probabilities',
+      now.toISOString()
+    );
+
+    expect(dbModule.getLatestNhlModelOutput(gameId)).toBeNull();
+  });
+
+  test('getLatestNhlModelOutput returns data for valid actionable payloads with legacy nested fields', () => {
+    const db = dbModule.getDatabase();
+    const now = new Date();
+    const gameTimeUtc = new Date(now.getTime() + 60 * 60 * 1000).toISOString();
+    const gameId = 'test-nhl-legacy-nested-valid';
+    ensureSettlementTables(db);
+
+    db.prepare(
+      `INSERT INTO games (
+        id, sport, game_id, home_team, away_team, game_time_utc, status
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      'game-nhl-legacy-nested-valid',
+      'nhl',
+      gameId,
+      'Home Team',
+      'Away Team',
+      gameTimeUtc,
+      'scheduled'
+    );
+
+    db.prepare(`
+      INSERT INTO card_payloads (
+        id, game_id, sport, card_type, card_title, created_at, expires_at,
+        payload_data, model_output_ids, metadata, run_id, updated_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      'card-nhl-legacy-nested-valid',
+      gameId,
+      'nhl',
+      'nhl-model-output',
+      'NHL Model Output',
+      now.toISOString(),
+      null,
+      JSON.stringify({
+        goalie: {
+          home: { save_pct: 0.925, gsax: 5.1 },
+          away: { save_pct: 0.912, gsax: 2.3 },
+        },
+      }),
+      null,
+      null,
+      'run-nhl-legacy-nested-valid',
+      now.toISOString()
+    );
+
+    expect(dbModule.getLatestNhlModelOutput(gameId)).toEqual({
+      homeGoalie: { savePct: 0.925, gsax: 5.1 },
+      awayGoalie: { savePct: 0.912, gsax: 2.3 },
+    });
+  });
+
   test('backfillCardResultsSportCasing normalizes mixed-case sport values', () => {
     const db = dbModule.getDatabase();
     const now = new Date();
