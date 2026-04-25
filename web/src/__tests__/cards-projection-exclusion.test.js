@@ -168,4 +168,41 @@ assert.ok(
   'PASS cards must suppress driver and market-signal internals in GameCardItem',
 );
 
+// WI-1169: Simplified gate flag and shadow compare wired in route and query
+assert.ok(
+  apiCardsSource.includes('ENABLE_SIMPLIFIED_CARDS_GATE') &&
+    apiCardsSource.includes('ENABLE_GATE_SHADOW_COMPARE') &&
+    apiCardsSource.includes('buildSimplifiedGateWhere') &&
+    apiCardsSource.includes('buildShadowCompareTelemetry') &&
+    apiCardsSource.includes('gate_shadow_compare'),
+  'route should wire simplified gate flag, shadow compare flag, and telemetry contract',
+);
+
+assert.ok(
+  cardsQuerySource.includes('buildSimplifiedGateWhere') &&
+    cardsQuerySource.includes('buildPerTypeRunScopePredicate'),
+  'query module should export buildSimplifiedGateWhere using per-type run-scope predicate',
+);
+
+assert.ok(
+  payloadClassifierSource.includes('buildShadowCompareTelemetry') &&
+    payloadClassifierSource.includes('ShadowCompareTelemetry') &&
+    payloadClassifierSource.includes('ShadowCompareRow') &&
+    payloadClassifierSource.includes('legacy_count') &&
+    payloadClassifierSource.includes('simplified_count') &&
+    payloadClassifierSource.includes('by_drop_reason') &&
+    payloadClassifierSource.includes('by_card_type_drop_reason') &&
+    payloadClassifierSource.includes('drop_reason'),
+  'payload classifier should export shadow compare telemetry grouped by card_type and drop_reason',
+);
+
+assert.ok(
+  apiCardsSource.includes('buildShadowCompareRows') &&
+    apiCardsSource.includes('getBettingSurfacePayloadDropReason(normalizedPayload)') &&
+    apiCardsSource.includes("'SURFACED'") &&
+    apiCardsSource.includes('buildShadowCompareRows(legacyRows)') &&
+    apiCardsSource.includes('buildShadowCompareRows(simplifiedRows)'),
+  'route should derive shadow compare drop reasons from canonical classifier outputs',
+);
+
 console.log('✅ Cards projection exclusion source tests passed');

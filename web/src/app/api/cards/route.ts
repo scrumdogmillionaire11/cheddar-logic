@@ -60,18 +60,26 @@ import {
   isProjectionSurfaceCardType,
 } from '@/lib/games/projection-surface';
 import {
+  ACTIVE_EXCLUDED_STATUSES,
   buildBettingSurfacePayloadPredicate,
+  buildCardTypePreciseSettledPredicate,
+  buildPerTypeRunScopePredicate,
+  buildSimplifiedGateWhere,
   clampNumber,
   getActiveRunIds,
   getRunStatus,
   resolveLifecycleMode,
+  resolveNhlCompatibleSports,
   type LifecycleMode,
 } from '@/lib/cards/query';
 import {
+  buildShadowCompareTelemetry,
   getBettingSurfacePayloadDropReason,
   isBettingSurfacePayload,
   normalizePayloadMeta,
   safeJsonParse,
+  type ShadowCompareRow,
+  type ShadowCompareTelemetry,
 } from '@/lib/cards/payload-classifier';
 
 const ENABLE_WELCOME_HOME =
@@ -81,6 +89,17 @@ const ENABLE_WELCOME_HOME =
 // Server-only API route: do not read NEXT_PUBLIC_ prefix here.
 const ENABLE_CARDS_LIFECYCLE_PARITY =
   process.env.ENABLE_CARDS_LIFECYCLE_PARITY === 'true';
+
+// Simplified gate: single-phase query using per-type run-scope predicate.
+// Default false keeps legacy two-phase behavior until rollout validation completes.
+const ENABLE_SIMPLIFIED_CARDS_GATE =
+  process.env.ENABLE_SIMPLIFIED_CARDS_GATE === 'true';
+
+// Shadow compare: run both legacy and simplified paths and emit count delta
+// telemetry. Consumer receives the active gate result (controlled by
+// ENABLE_SIMPLIFIED_CARDS_GATE). Does not affect response data contract.
+const ENABLE_GATE_SHADOW_COMPARE =
+  process.env.ENABLE_GATE_SHADOW_COMPARE === 'true';
 
 /*
 Source-contract mirror for api-cards-lifecycle-regression:
@@ -101,16 +120,6 @@ PROJECTION_ONLY
 projection_source
 synthetic_fallback
 */
-const ACTIVE_EXCLUDED_STATUSES = [
-  'POSTPONED',
-  'CANCELLED',
-  'CANCELED',
-  'FINAL',
-  'CLOSED',
-  'COMPLETE',
-  'COMPLETED',
-  'FT',
-];
 
 interface CardRow {
   id: string;
@@ -253,7 +262,7 @@ function buildCardsDropDiagnostics(
       } else if (
         params.lifecycleEnabled &&
         params.lifecycleMode === 'active' &&
-        ACTIVE_EXCLUDED_STATUSES.includes(
+        (ACTIVE_EXCLUDED_STATUSES as readonly string[]).includes(
           String(row.game_status || '').toUpperCase(),
         )
       ) {
@@ -303,6 +312,20 @@ function buildCardsDropDiagnostics(
           a.reason.localeCompare(b.reason),
       ),
   };
+}
+
+function buildShadowCompareRows(rows: CardRow[]): ShadowCompareRow[] {
+  return rows.map((row) => {
+    const parsed = safeJsonParse(row.payload_data);
+    const normalizedPayload = normalizePayloadMeta(parsed.data);
+    return {
+      card_type: row.card_type || 'unknown',
+      drop_reason:
+        parsed.error || isProjectionSurfaceCardType(row.card_type)
+          ? 'SURFACED'
+          : (getBettingSurfacePayloadDropReason(normalizedPayload) ?? 'SURFACED'),
+    };
+  });
 }
 
 export async function GET(request: NextRequest) {
@@ -370,10 +393,19 @@ export async function GET(request: NextRequest) {
 
     if (sport) {
       // Request filter gate. Purpose: honor explicit sport selection.
+      // NHL lane: also include nhl_props cards when sport=nhl so game cards and
+      // prop cards surface together without requiring a separate query.
       // Failure semantics: not counted as a hidden-card drop because rows
       // outside the requested sport are intentionally out of scope.
-      requestWhere.push('LOWER(cp.sport) = ?');
-      requestParams.push(sport);
+      const compatibleSports = resolveNhlCompatibleSports(sport);
+      if (compatibleSports && compatibleSports.length > 1) {
+        const sportPlaceholders = compatibleSports.map(() => '?').join(', ');
+        requestWhere.push(`LOWER(cp.sport) IN (${sportPlaceholders})`);
+        requestParams.push(...compatibleSports);
+      } else {
+        requestWhere.push('LOWER(cp.sport) = ?');
+        requestParams.push(sport);
+      }
     }
 
     if (cardType) {
@@ -422,14 +454,11 @@ export async function GET(request: NextRequest) {
     baseWhere.push(
       `(LOWER(cp.card_type) IN (${PROJECTION_SURFACE_CARD_TYPES_SQL}) OR ${buildBettingSurfacePayloadPredicate('cp.payload_data')})`,
     );
-    // Settlement gate. Purpose: hide cards whose game already has settled
-    // card_results. Failure semantics: SETTLED_RESULT.
-    baseWhere.push(`NOT EXISTS (
-      SELECT 1
-      FROM card_results cr
-      WHERE cr.game_id = cp.game_id
-        AND cr.status = 'settled'
-    )`);
+    // Settlement gate. Purpose: hide cards whose specific card_type has settled
+    // results for this game. Uses card-type-precise scope so a settled nhl-totals
+    // row does not suppress unsettled nhl-pace-1p cards from the same game.
+    // Failure semantics: SETTLED_RESULT.
+    baseWhere.push(buildCardTypePreciseSettledPredicate());
     if (!ENABLE_WELCOME_HOME) {
       // Feature-flag gate. Purpose: keep welcome-home experiments hidden unless
       // explicitly enabled. Failure semantics: WELCOME_HOME_DISABLED.
@@ -460,11 +489,13 @@ export async function GET(request: NextRequest) {
     const runScopedParams = [...baseParams];
     if (activeRunIds.length > 0) {
       const runIdPlaceholders = activeRunIds.map(() => '?').join(', ');
-      // Run-scope gate. Purpose: prefer cards from current successful worker
-      // runs. Failure semantics: RUN_SCOPE_EXCLUDED, unless the route's empty
-      // result fallback removes this gate to preserve legacy availability.
-      runScopedWhere.push(`cp.run_id IN (${runIdPlaceholders})`);
-      runScopedParams.push(...activeRunIds);
+      // Run-scope gate with per-type fallback. Purpose: prefer cards from
+      // current successful worker runs while allowing a card type to surface
+      // from older runs if the active run has no rows for that game+type.
+      // Failure semantics: RUN_SCOPE_EXCLUDED (global fallback only).
+      // Callers push activeRunIds twice: once for each IN clause in the predicate.
+      runScopedWhere.push(buildPerTypeRunScopePredicate(runIdPlaceholders));
+      runScopedParams.push(...activeRunIds, ...activeRunIds);
     }
 
     const dedupeMode = dedupe === 'none' ? 'none' : 'latest_per_game_type';
@@ -495,23 +526,65 @@ export async function GET(request: NextRequest) {
         LIMIT ? OFFSET ?
       `;
 
-    const runScopedWhereSql =
-      runScopedWhere.length > 0 ? `WHERE ${runScopedWhere.join(' AND ')}` : '';
-    const runScopedStmt = db.prepare(buildSql(runScopedWhereSql));
-    let rows = runScopedStmt.all(
-      ...runScopedParams,
-      limit,
-      offset,
-    ) as CardRow[];
-
+    // Legacy path: run-scoped query with global fallback when scoped returns empty.
+    // Skipped when simplified gate is active without shadow compare.
+    const runLegacyPath = !ENABLE_SIMPLIFIED_CARDS_GATE || ENABLE_GATE_SHADOW_COMPARE;
+    let legacyRows: CardRow[] = [];
     let runScopeFallbackApplied = false;
-    if (activeRunIds.length > 0 && rows.length === 0) {
-      const baseWhereSql =
-        baseWhere.length > 0 ? `WHERE ${baseWhere.join(' AND ')}` : '';
-      const fallbackStmt = db.prepare(buildSql(baseWhereSql));
-      rows = fallbackStmt.all(...baseParams, limit, offset) as CardRow[];
-      runScopeFallbackApplied = true;
+
+    if (runLegacyPath) {
+      const runScopedWhereSql =
+        runScopedWhere.length > 0 ? `WHERE ${runScopedWhere.join(' AND ')}` : '';
+      legacyRows = db.prepare(buildSql(runScopedWhereSql)).all(
+        ...runScopedParams,
+        limit,
+        offset,
+      ) as CardRow[];
+
+      if (activeRunIds.length > 0 && legacyRows.length === 0) {
+        const baseWhereSql =
+          baseWhere.length > 0 ? `WHERE ${baseWhere.join(' AND ')}` : '';
+        legacyRows = db.prepare(buildSql(baseWhereSql)).all(
+          ...baseParams,
+          limit,
+          offset,
+        ) as CardRow[];
+        runScopeFallbackApplied = true;
+      }
     }
+
+    // Simplified gate: single-phase query — per-type predicate subsumes the
+    // global fallback, so no second query is needed.
+    let simplifiedRows: CardRow[] | null = null;
+    if (ENABLE_SIMPLIFIED_CARDS_GATE || ENABLE_GATE_SHADOW_COMPARE) {
+      const sg = buildSimplifiedGateWhere(baseWhere, baseParams, activeRunIds);
+      const simplifiedWhereSql =
+        sg.where.length > 0 ? `WHERE ${sg.where.join(' AND ')}` : '';
+      simplifiedRows = db.prepare(buildSql(simplifiedWhereSql)).all(
+        ...sg.sqlParams,
+        limit,
+        offset,
+      ) as CardRow[];
+    }
+
+    // Active result selection: simplified takes precedence when its flag is set.
+    let rows: CardRow[];
+    if (ENABLE_SIMPLIFIED_CARDS_GATE && simplifiedRows !== null) {
+      rows = simplifiedRows;
+      runScopeFallbackApplied = false;
+    } else {
+      rows = legacyRows;
+    }
+
+    // Shadow compare telemetry: counts by card_type and drop_reason, legacy
+    // versus simplified.
+    const shadowCompareTelemetry: ShadowCompareTelemetry | undefined =
+      ENABLE_GATE_SHADOW_COMPARE && simplifiedRows !== null
+        ? buildShadowCompareTelemetry(
+            buildShadowCompareRows(legacyRows),
+            buildShadowCompareRows(simplifiedRows),
+          )
+        : undefined;
 
     const response = rows.flatMap((card) => {
       const parsed = safeJsonParse(card.payload_data);
@@ -570,6 +643,7 @@ export async function GET(request: NextRequest) {
           offset,
           limit,
           ...(diagnostics ? { diagnostics } : {}),
+          ...(shadowCompareTelemetry ? { gate_shadow_compare: shadowCompareTelemetry } : {}),
         },
       },
       { headers: { 'Content-Type': 'application/json' } },

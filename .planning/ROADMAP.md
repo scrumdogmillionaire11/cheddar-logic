@@ -30,9 +30,6 @@ web/             → Next.js UI + API routes
 packages/data/   → DB layer (sql.js + migrations)
 packages/odds/   → provider fetch + normalization (NO DB writes)
 ```
-
----
-
 ## Milestone 2: Play of the Day — Web Feature
 
 ### Status: Planning
@@ -200,6 +197,23 @@ Plans:
 
 Plans:
 - [x] discord-hook-results-01-PLAN.md — Structured webhook delivery results + operator-facing partial-failure reporting tests (Wave 3)
+
+---
+
+### Phase: WI-1165 — POTD Near-Miss Capture From Full Eligible Pool
+
+**Goal**: Ensure POTD near-miss shadow candidates are captured from the full eligible daily pool after model-backing, positive-edge, noise-floor, score-gate, and WI-1153 best-edge-per-market/match dedupe, while official nominee persistence remains on the existing one-per-sport nominee path.
+
+**Requirements:** [WI-1165-POOL-01, WI-1165-NOM-01, WI-1165-REG-01]
+
+- `WI-1165-POOL-01`: Near-miss shadow writes use the full eligible post-gate, post-dedupe candidate pool, not the reduced official nominee list
+- `WI-1165-NOM-01`: Official POTD nominee persistence and Discord-facing nominee usage remain on the existing ranked nominee path with one-per-sport behavior intact
+- `WI-1165-REG-01`: Regression coverage proves fired and no-pick terminal paths use the shadow pool correctly and preserve nominee separation
+
+**Plans:** 1 plan in 1 wave
+
+Plans:
+- [ ] WI-1165-01-PLAN.md — Shadow-pool contract, fired/no-pick branch wiring, and regression coverage for nominee separation (Wave 1)
 
 ---
 

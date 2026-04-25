@@ -393,6 +393,79 @@ async function runTests() {
       process.exit(1);
     }
 
+    // Test 6: Per-type run-scope fallback - active run has type A but not type B
+    console.log(
+      '🧪 Test 6: Per-type run-scope fallback - both types visible when active run only covers one type',
+    );
+    const perTypeSuffix = `pt-${testSuffix}`;
+    const perTypeGameId = `test-dedupe-pertype-${perTypeSuffix}`;
+    const activeRun = `active-run-pertype-${perTypeSuffix}`;
+    const oldRun = `old-run-pertype-${perTypeSuffix}`;
+    const typeA = 'nhl-totals';
+    const typeB = 'nhl-pace-1p';
+    const cardTypeAId = `card-${perTypeSuffix}-typeA`;
+    const cardTypeBId = `card-${perTypeSuffix}-typeB`;
+
+    insertGame.run(`game-row-${perTypeGameId}`, sport, perTypeGameId, futureTime);
+
+    // typeA card in active run
+    client.prepare(`INSERT INTO card_payloads
+      (id, game_id, sport, card_type, card_title, payload_data, created_at, expires_at, run_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+      cardTypeAId, perTypeGameId, sport, typeA, 'Totals (active run)',
+      JSON.stringify(payload1), now.toISOString(), new Date(now.getTime() + 3600000).toISOString(), activeRun,
+    );
+
+    // typeB card only in old run (active run has no typeB row for this game)
+    client.prepare(`INSERT INTO card_payloads
+      (id, game_id, sport, card_type, card_title, payload_data, created_at, expires_at, run_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+      cardTypeBId, perTypeGameId, sport, typeB, 'Pace 1P (old run)',
+      JSON.stringify(payload2), new Date(now.getTime() - 60000).toISOString(), new Date(now.getTime() + 3600000).toISOString(), oldRun,
+    );
+
+    // Per-type fallback predicate: include if in active run OR no active-run row for same game+type
+    const activeRunIds2 = [activeRun];
+    const runIdPlaceholders2 = activeRunIds2.map(() => '?').join(', ');
+    const perTypeSql = `
+      WITH ranked AS (
+        SELECT cp.*,
+          ROW_NUMBER() OVER (
+            PARTITION BY cp.game_id, cp.card_type
+            ORDER BY cp.created_at DESC, cp.id DESC
+          ) AS rn
+        FROM card_payloads cp
+        WHERE cp.game_id = ?
+          AND (
+            cp.run_id IN (${runIdPlaceholders2})
+            OR NOT EXISTS (
+              SELECT 1 FROM card_payloads inner_cp
+              WHERE inner_cp.game_id = cp.game_id
+                AND inner_cp.card_type = cp.card_type
+                AND inner_cp.run_id IN (${runIdPlaceholders2})
+            )
+          )
+      )
+      SELECT id, card_type FROM ranked WHERE rn = 1 ORDER BY card_type
+    `;
+
+    const perTypeResult = client.prepare(perTypeSql).all(
+      perTypeGameId, ...activeRunIds2, ...activeRunIds2,
+    );
+
+    if (
+      perTypeResult.length === 2 &&
+      perTypeResult.some((r) => r.id === cardTypeAId && r.card_type === typeA) &&
+      perTypeResult.some((r) => r.id === cardTypeBId && r.card_type === typeB)
+    ) {
+      console.log(`✅ PASS: Both type A (active run) and type B (fallback) returned`);
+      perTypeResult.forEach((r) => console.log(`   ${r.id} (${r.card_type})`));
+      console.log();
+    } else {
+      console.log(`❌ FAIL: Expected both typeA and typeB; got:`, perTypeResult);
+      process.exit(1);
+    }
+
     // Cleanup
     console.log('🧹 Cleaning up test data...');
     client

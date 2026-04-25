@@ -53,6 +53,7 @@ import {
   isProjectionSurfaceCardType,
 } from '@/lib/games/projection-surface';
 import {
+  ACTIVE_EXCLUDED_STATUSES,
   buildBettingSurfacePayloadPredicate,
   clampNumber,
   getActiveRunIds,
@@ -70,8 +71,7 @@ const ENABLE_WELCOME_HOME =
   process.env.NEXT_PUBLIC_ENABLE_WELCOME_HOME === 'true';
 
 const ENABLE_CARDS_LIFECYCLE_PARITY =
-  process.env.ENABLE_CARDS_LIFECYCLE_PARITY === 'true' ||
-  process.env.NEXT_PUBLIC_ENABLE_CARDS_LIFECYCLE_PARITY === 'true';
+  process.env.ENABLE_CARDS_LIFECYCLE_PARITY === 'true';
 
 /*
 Source-contract mirror for api-cards-lifecycle-regression:
@@ -92,16 +92,6 @@ PROJECTION_ONLY
 projection_source
 synthetic_fallback
 */
-const ACTIVE_EXCLUDED_STATUSES = [
-  'POSTPONED',
-  'CANCELLED',
-  'CANCELED',
-  'FINAL',
-  'CLOSED',
-  'COMPLETE',
-  'COMPLETED',
-  'FT',
-];
 
 interface CardRow {
   id: string;

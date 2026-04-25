@@ -521,6 +521,154 @@ async function runTests() {
       process.exit(1);
     }
 
+    // WI-1168: Card-type-precise settled suppression regression
+    console.log('Test 9: Settled card type does not suppress unsettled card type from same game');
+    const mixedSuffix = Date.now().toString(36);
+    const mixedGameId = `test-lifecycle-mixed-settled-${mixedSuffix}`;
+    const settledCardType = 'nhl-totals';
+    const unsettledCardType = 'nhl-pace-1p';
+    const mixedGameTime = new Date(now.getTime() + 3600000).toISOString().substring(0, 19).replace('T', ' ');
+
+    client.prepare(`INSERT INTO games (id, game_id, sport, home_team, away_team, game_time_utc, status)
+      VALUES (?, ?, ?, ?, ?, ?, ?)`).run(
+      `game-${mixedSuffix}`, mixedGameId, 'nhl', 'BOS', 'TOR', mixedGameTime, 'scheduled'
+    );
+    client.prepare(`INSERT INTO card_payloads (id, game_id, sport, card_type, card_title, created_at, payload_data, run_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).run(
+      `card-${mixedSuffix}-settled`, mixedGameId, 'nhl', settledCardType, 'Totals', new Date().toISOString(), '{}', 'run-mixed-1'
+    );
+    client.prepare(`INSERT INTO card_payloads (id, game_id, sport, card_type, card_title, created_at, payload_data, run_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).run(
+      `card-${mixedSuffix}-unsettled`, mixedGameId, 'nhl', unsettledCardType, 'Pace 1P', new Date().toISOString(), '{}', 'run-mixed-1'
+    );
+    // Insert a settled card_results row only for the settled card type
+    client.prepare(`INSERT INTO card_results (id, card_id, game_id, sport, card_type, recommended_bet_type, status)
+      VALUES (?, ?, ?, ?, ?, ?, ?)`).run(
+      `result-${mixedSuffix}`, `card-${mixedSuffix}-settled`, mixedGameId, 'nhl', settledCardType, 'totals', 'settled'
+    );
+
+    // Card-type-precise settled suppression: only exclude the settled card_type
+    const preciseSettledRows = client.prepare(`
+      SELECT cp.id, cp.card_type FROM card_payloads cp
+      WHERE cp.game_id = ?
+        AND NOT EXISTS (
+          SELECT 1 FROM card_results cr
+          WHERE cr.game_id = cp.game_id
+            AND cr.card_type = cp.card_type
+            AND cr.status = 'settled'
+        )
+    `).all(mixedGameId);
+
+    const preciseIds = preciseSettledRows.map((r) => r.id);
+    const preciseTypes = preciseSettledRows.map((r) => r.card_type);
+    if (
+      preciseSettledRows.length === 1 &&
+      preciseIds.includes(`card-${mixedSuffix}-unsettled`) &&
+      !preciseIds.includes(`card-${mixedSuffix}-settled`) &&
+      preciseTypes.includes(unsettledCardType)
+    ) {
+      console.log('✓ Card-type-precise: settled nhl-totals suppressed, unsettled nhl-pace-1p visible\n');
+    } else {
+      console.log(`✗ Expected only unsettled card; got ${JSON.stringify(preciseSettledRows)}\n`);
+      process.exit(1);
+    }
+
+    // Cleanup mixed-settled test rows
+    client.prepare(`DELETE FROM card_results WHERE id = ?`).run(`result-${mixedSuffix}`);
+    client.prepare(`DELETE FROM card_payloads WHERE game_id = ?`).run(mixedGameId);
+    client.prepare(`DELETE FROM games WHERE game_id = ?`).run(mixedGameId);
+
+    // Test 10: Source contract confirms card-type-precise settled gate in route + query
+    console.log('Test 10: Source contract - card-type-precise settled suppression wired in route');
+    const querySource = fs.readFileSync(
+      path.join(REPO_ROOT, 'web/src/lib/cards/query.ts'), 'utf8'
+    );
+    const hasCardTypePreciseSettledGate =
+      cardsRouteSource.includes('buildCardTypePreciseSettledPredicate') &&
+      querySource.includes('cr.card_type = cp.card_type') &&
+      querySource.includes('buildCardTypePreciseSettledPredicate');
+    if (hasCardTypePreciseSettledGate) {
+      console.log('✓ Route uses buildCardTypePreciseSettledPredicate with card_type precision\n');
+    } else {
+      console.log('✗ Missing card-type-precise settled gate in route or query\n');
+      process.exit(1);
+    }
+
+    // Test 11: Source contract confirms per-type run-scope fallback wired in route + query
+    console.log('Test 11: Source contract - per-type run-scope fallback wired in route');
+    const hasPerTypeRunScopeFallback =
+      cardsRouteSource.includes('buildPerTypeRunScopePredicate') &&
+      querySource.includes('inner_cp.card_type = cp.card_type') &&
+      querySource.includes('buildPerTypeRunScopePredicate');
+    if (hasPerTypeRunScopeFallback) {
+      console.log('✓ Route uses buildPerTypeRunScopePredicate for per-type run-scope fallback\n');
+    } else {
+      console.log('✗ Missing per-type run-scope fallback in route or query\n');
+      process.exit(1);
+    }
+
+    // Test 12: WI-1169 simplified gate flag contract wired in route
+    console.log('Test 12: Source contract - simplified gate flag and shadow compare present in route');
+    const hasSimplifiedGateFlag =
+      cardsRouteSource.includes('ENABLE_SIMPLIFIED_CARDS_GATE') &&
+      cardsRouteSource.includes("process.env.ENABLE_SIMPLIFIED_CARDS_GATE === 'true'");
+    const hasShadowCompareFlag =
+      cardsRouteSource.includes('ENABLE_GATE_SHADOW_COMPARE') &&
+      cardsRouteSource.includes("process.env.ENABLE_GATE_SHADOW_COMPARE === 'true'");
+    const hasShadowCompareTelemetry =
+      cardsRouteSource.includes('buildShadowCompareTelemetry') &&
+      cardsRouteSource.includes('gate_shadow_compare') &&
+      cardsRouteSource.includes('buildShadowCompareRows');
+    const payloadClassifierSource = fs.readFileSync(
+      path.join(REPO_ROOT, 'web/src/lib/cards/payload-classifier.ts'), 'utf8'
+    );
+    const hasShadowDropReasonTelemetry =
+      payloadClassifierSource.includes('by_drop_reason') &&
+      payloadClassifierSource.includes('by_card_type_drop_reason') &&
+      payloadClassifierSource.includes('drop_reason');
+    if (hasSimplifiedGateFlag && hasShadowCompareFlag && hasShadowCompareTelemetry) {
+      console.log('✓ Simplified gate flag and shadow compare telemetry contract present in route\n');
+    } else {
+      console.log(
+        `✗ Missing simplified gate contract: flag=${hasSimplifiedGateFlag} shadow=${hasShadowCompareFlag} telemetry=${hasShadowCompareTelemetry}\n`,
+      );
+      process.exit(1);
+    }
+    if (hasShadowDropReasonTelemetry) {
+      console.log('✓ Shadow compare telemetry includes drop-reason groupings\n');
+    } else {
+      console.log('✗ Missing shadow compare drop-reason telemetry groupings\n');
+      process.exit(1);
+    }
+
+    // Test 13: WI-1169 simplified gate wired to buildSimplifiedGateWhere in query
+    console.log('Test 13: Source contract - buildSimplifiedGateWhere present in route and query');
+    const routeHasSimplifiedGateWhere =
+      cardsRouteSource.includes('buildSimplifiedGateWhere');
+    const queryHasSimplifiedGateWhere =
+      querySource.includes('buildSimplifiedGateWhere') &&
+      querySource.includes('buildPerTypeRunScopePredicate');
+    if (routeHasSimplifiedGateWhere && queryHasSimplifiedGateWhere) {
+      console.log('✓ buildSimplifiedGateWhere wired in route and query\n');
+    } else {
+      console.log(
+        `✗ Missing buildSimplifiedGateWhere: route=${routeHasSimplifiedGateWhere} query=${queryHasSimplifiedGateWhere}\n`,
+      );
+      process.exit(1);
+    }
+
+    // Test 14: WI-1169 legacy path skip when simplified gate active (no shadow compare)
+    console.log('Test 14: Source contract - legacy path skipped when simplified gate active without shadow');
+    const hasLegacyPathSkip =
+      cardsRouteSource.includes('runLegacyPath') &&
+      cardsRouteSource.includes('!ENABLE_SIMPLIFIED_CARDS_GATE || ENABLE_GATE_SHADOW_COMPARE');
+    if (hasLegacyPathSkip) {
+      console.log('✓ Legacy path correctly skipped when simplified gate active without shadow compare\n');
+    } else {
+      console.log('✗ Missing legacy path skip guard in route\n');
+      process.exit(1);
+    }
+
     // Clean up
     console.log('📝 Cleaning up test data...');
     client
@@ -529,7 +677,7 @@ async function runTests() {
     client.prepare(`DELETE FROM games WHERE game_id LIKE 'test-lifecycle-%'`).run();
     console.log('✓ Test data cleaned\n');
 
-    console.log('✅ All WI-0392/WI-0447/WI-0902 Lifecycle Parity + Run-State Shield + Behavioral Parity Field Tests Passed!');
+    console.log('✅ All WI-0392/WI-0447/WI-0902/WI-1168/WI-1169 Lifecycle Parity + Run-State Shield + Behavioral Parity Field + Simplified Gate Tests Passed!');
     process.exit(0);
   } catch (error) {
     console.error('❌ Test Error:', error.message);

@@ -114,6 +114,10 @@ Execution order: `WI-0898` ∥ `WI-0899` → `WI-0900` ∥ `WI-0906` → `WI-090
 
 - `WI-0894`: Remove or restore dead Soccer/NCAAM model runner surfaces
 - `WI-0904`: Dead-feature liquidation classification and action plan
+- `WI-1171`: Remove deprecated execution-gate no-op constants
+- `WI-1172`: Collapse dead MLB SIERA/xERA fallback weighting to the active runtime contract
+- `WI-1173`: Prune only truly unused MLB pitcher game-log fields
+- `WI-1174`: Audit legacy web read-path repair branches against live payload reality
 - `WI-0766`: Define NFL data-layer spec before enabling/removing NFL model stub
 - `WI-0662`: Standalone Sage frontend internal-only conversion and runbook cleanup
 

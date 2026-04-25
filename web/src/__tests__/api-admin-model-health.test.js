@@ -11,6 +11,17 @@ import {
   startIsolatedNextServer,
 } from './db-test-runtime.js';
 
+const ET_DATE_FORMATTER = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'America/New_York',
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+});
+
+function getEtDateKey(date = new Date()) {
+  return ET_DATE_FORMATTER.format(date);
+}
+
 function insertSnapshot(client, row) {
   client
     .prepare(
@@ -36,12 +47,89 @@ function insertSnapshot(client, row) {
     );
 }
 
+function seedPotdHealth(client) {
+  const today = getEtDateKey();
+  const nowIso = new Date().toISOString();
+
+  client
+    .prepare(
+      `INSERT INTO potd_daily_stats
+       (play_date, potd_fired, candidate_count, viable_count, top_edge_pct,
+        top_score, selected_edge_pct, selected_score, stake_pct_of_bankroll,
+        created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run(today, 1, 6, 2, 7.5, 88, 6.1, 84, 0.02, nowIso);
+
+  client
+    .prepare(
+      `INSERT INTO potd_shadow_results
+       (play_date, candidate_identity_key, shadow_candidate_id, game_id, sport,
+        market_type, selection, selection_label, line, price, game_time_utc,
+        status, result, virtual_stake_units, pnl_units, settled_at,
+        grading_metadata, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run(
+      today,
+      'MLB|potd-shadow-win|TOTAL|OVER|8.500',
+      null,
+      'potd-shadow-win',
+      'MLB',
+      'TOTAL',
+      'OVER',
+      'Over 8.5',
+      8.5,
+      -110,
+      nowIso,
+      'settled',
+      'win',
+      1,
+      0.91,
+      nowIso,
+      '{}',
+      nowIso,
+      nowIso,
+    );
+  client
+    .prepare(
+      `INSERT INTO potd_shadow_results
+       (play_date, candidate_identity_key, shadow_candidate_id, game_id, sport,
+        market_type, selection, selection_label, line, price, game_time_utc,
+        status, result, virtual_stake_units, pnl_units, settled_at,
+        grading_metadata, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run(
+      today,
+      'MLB|potd-shadow-pending|TOTAL|UNDER|8.500',
+      null,
+      'potd-shadow-pending',
+      'MLB',
+      'TOTAL',
+      'UNDER',
+      'Under 8.5',
+      8.5,
+      -105,
+      nowIso,
+      'pending',
+      null,
+      1,
+      null,
+      null,
+      '{}',
+      nowIso,
+      nowIso,
+    );
+}
+
 async function run() {
   const testRuntime = await setupIsolatedTestDb('api-admin-model-health');
   let server = null;
 
   try {
     const client = db.getDatabase();
+    seedPotdHealth(client);
     insertSnapshot(client, {
       sport: 'NBA',
       runAt: '2026-04-20T12:00:00.000Z',
@@ -151,6 +239,27 @@ async function run() {
       nhl.signals,
       [],
       'non-array signals_json should be sanitized to an empty signal list',
+    );
+    assert.ok(payload.potd_health, 'model-health should include top-level potd_health');
+    assert.equal(
+      payload.potd_health.today_state,
+      'fired',
+      'potd_health should expose today fired/no-pick state',
+    );
+    assert.equal(
+      payload.potd_health.candidate_count,
+      6,
+      'potd_health should expose candidate volume from daily stats',
+    );
+    assert.equal(
+      payload.potd_health.near_miss.counts.settled,
+      1,
+      'potd_health should expose settled near-miss count',
+    );
+    assert.equal(
+      payload.potd_health.near_miss.counts.pending,
+      1,
+      'potd_health should expose pending near-miss count',
     );
 
     console.log('✅ API admin model-health behavioral test passed');

@@ -4,6 +4,17 @@ import { PROJECTION_ONLY_LINE_SOURCES } from './payload-classifier';
 
 export type LifecycleMode = 'pregame' | 'active';
 
+export const ACTIVE_EXCLUDED_STATUSES = [
+  'POSTPONED',
+  'CANCELLED',
+  'CANCELED',
+  'FINAL',
+  'CLOSED',
+  'COMPLETE',
+  'COMPLETED',
+  'FT',
+] as const;
+
 const CORE_RUN_STATE_SPORTS = [
   'nba',
   'nhl',
@@ -136,6 +147,61 @@ export function getActiveRunIds(
   } catch {
     return [];
   }
+}
+
+// Narrowed settled suppression: exclude only the specific card/market type that
+// settled, not every card in the game. Prevents game-level collateral exclusion.
+export function buildCardTypePreciseSettledPredicate(): string {
+  return `NOT EXISTS (
+    SELECT 1
+    FROM card_results cr
+    WHERE cr.game_id = cp.game_id
+      AND cr.card_type = cp.card_type
+      AND cr.status = 'settled'
+  )`;
+}
+
+// Per-type run-scope fallback: include a card when its run_id is active OR when
+// no active-run card exists for the same game+card_type. This prevents valid
+// card types from being hidden just because the active run skipped that type.
+// Callers must push activeRunIds TWICE into params (first IN, then inner IN).
+export function buildPerTypeRunScopePredicate(runIdPlaceholders: string): string {
+  return `(
+    cp.run_id IN (${runIdPlaceholders})
+    OR NOT EXISTS (
+      SELECT 1 FROM card_payloads inner_cp
+      WHERE inner_cp.game_id = cp.game_id
+        AND inner_cp.card_type = cp.card_type
+        AND inner_cp.run_id IN (${runIdPlaceholders})
+    )
+  )`;
+}
+
+// Simplified gate: single-phase WHERE construction using per-type run-scope
+// predicate. Accepts the already-built base WHERE clause and appends the
+// run-scope predicate so no global fallback query is needed. Callers pass
+// activeRunIds into sqlParams twice via buildPerTypeRunScopePredicate.
+export function buildSimplifiedGateWhere(
+  baseWhere: string[],
+  baseParams: Array<string | number>,
+  activeRunIds: string[],
+): { where: string[]; sqlParams: Array<string | number> } {
+  const where = [...baseWhere];
+  const sqlParams = [...baseParams];
+  if (activeRunIds.length > 0) {
+    const runIdPlaceholders = activeRunIds.map(() => '?').join(', ');
+    where.push(buildPerTypeRunScopePredicate(runIdPlaceholders));
+    sqlParams.push(...activeRunIds, ...activeRunIds);
+  }
+  return { where, sqlParams };
+}
+
+// NHL lane compatibility: expand 'nhl' sport filter to also include 'nhl_props'
+// so NHL game cards and NHL prop cards surface together under a single sport param.
+export function resolveNhlCompatibleSports(sport: string | null): string[] | null {
+  if (!sport) return null;
+  if (sport === 'nhl') return ['nhl', 'nhl_props'];
+  return [sport];
 }
 
 export function getRunStatus(

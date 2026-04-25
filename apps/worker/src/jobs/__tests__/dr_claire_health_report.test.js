@@ -2,6 +2,7 @@
 
 const {
   assignStatus,
+  buildPotdHealth,
   floorToFiveMinuteBucketUtc,
   parseArgs,
   persistModelHealthSnapshots,
@@ -220,6 +221,133 @@ describe('persistModelHealthSnapshots', () => {
     expect(runCalls[0][12]).toBe(14);
     expect(runCalls[2][12]).toBe(30);
     expect(runCalls[0][1]).toBe(runCalls[2][1]);
+  });
+});
+
+describe('buildPotdHealth', () => {
+  beforeEach(() => {
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date('2026-04-10T18:00:00Z'));
+  });
+
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
+  function makePotdDb({
+    tables = ['potd_daily_stats', 'potd_plays', 'potd_nominees', 'potd_shadow_candidates', 'potd_shadow_results'],
+    latestDaily = null,
+    todayDaily = null,
+    todayPlay = null,
+    latestPlay = null,
+    nomineeCount = 0,
+    shadowCandidateCount = 0,
+    shadowStatusRows = [],
+    latestShadowResult = null,
+  } = {}) {
+    return {
+      prepare: jest.fn((sql) => {
+        const normalized = sql.replace(/\s+/g, ' ').trim();
+
+        if (normalized.includes("FROM sqlite_master WHERE type='table'")) {
+          return {
+            get: jest.fn((tableName) => (
+              tables.includes(tableName) ? { name: tableName } : null
+            )),
+          };
+        }
+        if (normalized.includes('FROM potd_daily_stats') && normalized.includes('WHERE play_date = ?')) {
+          return { get: jest.fn(() => todayDaily) };
+        }
+        if (normalized.includes('FROM potd_daily_stats')) {
+          return { get: jest.fn(() => latestDaily) };
+        }
+        if (normalized.includes('FROM potd_plays') && normalized.includes('WHERE play_date = ?')) {
+          return { get: jest.fn(() => todayPlay) };
+        }
+        if (normalized.includes('FROM potd_plays')) {
+          return { get: jest.fn(() => latestPlay) };
+        }
+        if (normalized.includes('FROM potd_nominees')) {
+          return { get: jest.fn(() => ({ count: nomineeCount })) };
+        }
+        if (normalized.includes('FROM potd_shadow_candidates')) {
+          return { get: jest.fn(() => ({ count: shadowCandidateCount })) };
+        }
+        if (normalized.includes('FROM potd_shadow_results') && normalized.includes('GROUP BY')) {
+          return { all: jest.fn(() => shadowStatusRows) };
+        }
+        if (normalized.includes('FROM potd_shadow_results')) {
+          return { get: jest.fn(() => latestShadowResult) };
+        }
+
+        return { get: jest.fn(() => null), all: jest.fn(() => []) };
+      }),
+    };
+  }
+
+  test('returns no-data without POTD history', () => {
+    const result = buildPotdHealth(makePotdDb({ tables: [] }));
+
+    expect(result.status).toBe('no-data');
+    expect(result.today_state).toBe('no-data');
+    expect(result.candidate_count).toBe(0);
+    expect(result.near_miss.counts.total).toBe(0);
+    expect(result.signals).toContain('No POTD run history found');
+  });
+
+  test('summarizes fired state, candidate volume, and near-miss settlement freshness', () => {
+    const db = makePotdDb({
+      latestDaily: {
+        play_date: '2026-04-10',
+        potd_fired: 1,
+        candidate_count: 8,
+        viable_count: 3,
+        created_at: '2026-04-10T16:00:00.000Z',
+      },
+      todayDaily: {
+        play_date: '2026-04-10',
+        potd_fired: 1,
+        candidate_count: 8,
+        viable_count: 3,
+        created_at: '2026-04-10T16:00:00.000Z',
+      },
+      todayPlay: {
+        play_date: '2026-04-10',
+        posted_at: '2026-04-10T16:10:00.000Z',
+        created_at: '2026-04-10T16:10:00.000Z',
+      },
+      latestPlay: {
+        play_date: '2026-04-10',
+        posted_at: '2026-04-10T16:10:00.000Z',
+        created_at: '2026-04-10T16:10:00.000Z',
+      },
+      shadowStatusRows: [
+        { status: 'settled', result: 'win', count: 2 },
+        { status: 'settled', result: 'loss', count: 1 },
+        { status: 'pending', result: null, count: 1 },
+      ],
+      latestShadowResult: {
+        settled_at: '2026-04-10T17:00:00.000Z',
+        updated_at: '2026-04-10T17:00:00.000Z',
+        created_at: '2026-04-10T16:30:00.000Z',
+      },
+    });
+
+    const result = buildPotdHealth(db);
+
+    expect(result.status).toBe('healthy');
+    expect(result.today_state).toBe('fired');
+    expect(result.candidate_count).toBe(8);
+    expect(result.viable_count).toBe(3);
+    expect(result.near_miss.counts).toEqual({
+      total: 4,
+      pending: 1,
+      settled: 3,
+      win: 2,
+      loss: 1,
+      push: 0,
+    });
   });
 });
 

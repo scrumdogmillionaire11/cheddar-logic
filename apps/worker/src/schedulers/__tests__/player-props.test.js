@@ -13,6 +13,9 @@ const { DateTime } = require('luxon');
 jest.mock('../../jobs/sync_nhl_sog_player_ids', () => ({
   syncNhlSogPlayerIds: jest.fn(),
 }));
+jest.mock('../../jobs/pull_nhl_player_shots', () => ({
+  pullNhlPlayerShots: jest.fn(),
+}));
 jest.mock('../../jobs/sync_nhl_blk_player_ids', () => ({
   syncNhlBlkPlayerIds: jest.fn(),
 }));
@@ -139,6 +142,7 @@ describe('computePlayerPropsDueJobs', () => {
       const jobNames = result.map((j) => j.jobName);
 
       expect(jobNames).toContain('sync_nhl_sog_player_ids');
+      expect(jobNames).toContain('pull_nhl_player_shots');
       expect(jobNames).toContain('run_nhl_player_shots_model');
       expect(jobNames).not.toContain('pull_nhl_player_shots_props');
       expect(jobNames).not.toContain('run_mlb_prop_pipeline');
@@ -148,21 +152,25 @@ describe('computePlayerPropsDueJobs', () => {
   // ─── 09:00 ET fixed window ────────────────────────────────────────────────
 
   describe('09:00 ET fixed window', () => {
-    it('NHL: queues sync_nhl_sog_player_ids, BLK ingest chain, run_nhl_player_shots_model in order', () => {
+    it('NHL: queues sync_nhl_sog_player_ids, pull_nhl_player_shots, BLK ingest chain, run_nhl_player_shots_model in order', () => {
       const nowEt = makeNowEt('09:00');
       const result = computePlayerPropsDueJobs(nowEt, { games: [], dryRun: false });
 
       const jobNames = result.map((j) => j.jobName);
       expect(jobNames).toContain('sync_nhl_sog_player_ids');
+      expect(jobNames).toContain('pull_nhl_player_shots');
       expect(jobNames).toContain('sync_nhl_blk_player_ids');
       expect(jobNames).toContain('pull_nhl_player_blk');
       expect(jobNames).toContain('ingest_nst_blk_rates');
       expect(jobNames).toContain('run_nhl_player_shots_model');
 
-      // Verify ordering: SOG sync before BLK jobs before model
+      // Verify ordering: SOG sync before SOG pull before BLK jobs before model
       const sogIdx = jobNames.indexOf('sync_nhl_sog_player_ids');
+      const sogPullIdx = jobNames.indexOf('pull_nhl_player_shots');
       const blkIdx = jobNames.indexOf('sync_nhl_blk_player_ids');
       const shotsModelIdx = jobNames.indexOf('run_nhl_player_shots_model');
+      expect(sogIdx).toBeLessThan(sogPullIdx);
+      expect(sogPullIdx).toBeLessThan(blkIdx);
       expect(sogIdx).toBeLessThan(blkIdx);
       expect(blkIdx).toBeLessThan(shotsModelIdx);
     });
@@ -193,6 +201,7 @@ describe('computePlayerPropsDueJobs', () => {
       expect(jobNames).not.toContain('ingest_nst_blk_rates');
 
       expect(jobNames).toContain('sync_nhl_sog_player_ids');
+      expect(jobNames).toContain('pull_nhl_player_shots');
       expect(jobNames).toContain('run_nhl_player_shots_model');
     });
   });
@@ -209,6 +218,7 @@ describe('computePlayerPropsDueJobs', () => {
 
       // No heavy ingest at 15:00
       expect(jobNames).not.toContain('sync_nhl_sog_player_ids');
+      expect(jobNames).not.toContain('pull_nhl_player_shots');
       expect(jobNames).not.toContain('sync_nhl_blk_player_ids');
       expect(jobNames).not.toContain('pull_nhl_player_blk');
       expect(jobNames).not.toContain('ingest_nst_blk_rates');
@@ -238,6 +248,7 @@ describe('computePlayerPropsDueJobs', () => {
       expect(jobNames).toContain('run_nhl_player_shots_model');
       // No heavy ingest at T-60
       expect(jobNames).not.toContain('sync_nhl_sog_player_ids');
+      expect(jobNames).not.toContain('pull_nhl_player_shots');
       expect(jobNames).not.toContain('sync_nhl_blk_player_ids');
     });
 
