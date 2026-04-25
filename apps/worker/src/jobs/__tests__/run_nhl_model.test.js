@@ -21,6 +21,8 @@ const {
   sendEspnNullDiscordAlert,
   applyExecutionGateToNhlCard,
   stampTrainingRowExclusion,
+  buildNhlPotdModelSignal,
+  applyNhlModelSignalToCard,
 } = require('../run_nhl_model');
 const { computeNHLDriverCards } = require('../../models/index');
 
@@ -99,6 +101,106 @@ function buildBaseDecisions() {
     },
   };
 }
+
+describe('WI-1181 NHL model_signal payload contract', () => {
+  test('buildNhlPotdModelSignal emits actionable normalized MONEYLINE signal', () => {
+    const signal = buildNhlPotdModelSignal(
+      {
+        market_type: 'MONEYLINE',
+        selection: { side: 'AWAY', team: 'Away Team' },
+        price: 115,
+        model_prob: 0.57,
+        p_implied: 0.465,
+        edge_pct: 0.105,
+      },
+      {
+        oddsSnapshot: { home_team: 'Home Team', away_team: 'Away Team' },
+        homeGoalieState: { starter_state: 'CONFIRMED' },
+        awayGoalieState: { starter_state: 'CONFIRMED' },
+        source: 'TEST_SIGNAL',
+      },
+    );
+
+    expect(signal).toEqual({
+      eligible_for_potd: true,
+      market_type: 'MONEYLINE',
+      selection_side: 'AWAY',
+      selection_team: 'Away Team',
+      model_prob: 0.57,
+      book_price: 115,
+      implied_prob: 0.465,
+      edge_pct: 0.105,
+      fair_price: -133,
+      edge_available: true,
+      source: 'TEST_SIGNAL',
+      blockers: [],
+    });
+  });
+
+  test('buildNhlPotdModelSignal emits explicit blockers for non-actionable rows', () => {
+    const signal = buildNhlPotdModelSignal(
+      {
+        market_type: 'MONEYLINE',
+        selection: { side: 'HOME', team: 'Home Team' },
+        model_prob: 0.54,
+      },
+      {
+        oddsSnapshot: { home_team: 'Home Team', away_team: 'Away Team' },
+        homeGoalieState: {},
+        awayGoalieState: {},
+        source: 'TEST_SIGNAL',
+      },
+    );
+
+    expect(signal.eligible_for_potd).toBe(false);
+    expect(signal.edge_available).toBe(false);
+    expect(signal.blockers).toEqual(
+      expect.arrayContaining([
+        'NO_MARKET_LINE',
+        'IMPLIED_PROB_MISSING',
+        'EDGE_UNAVAILABLE',
+        'GOALIE_CONTEXT_MISSING',
+      ]),
+    );
+  });
+
+  test('applyNhlModelSignalToCard stamps blocker-rich model_signal for nhl-model-output rows', () => {
+    const card = {
+      cardType: 'nhl-model-output',
+      payloadData: {
+        game_id: 'nhl-1181-model-output',
+        sport: 'NHL',
+      },
+    };
+
+    applyNhlModelSignalToCard(card, {
+      marketDecisions: {
+        ML: {
+          best_candidate: { side: 'HOME' },
+          p_fair: 0.56,
+          p_implied: 0.52,
+          edge: 0.04,
+          projection: { win_prob_home: 0.56 },
+        },
+      },
+      oddsSnapshot: {
+        home_team: 'Home Team',
+        away_team: 'Away Team',
+        h2h_home: null,
+        h2h_away: null,
+      },
+      homeGoalieState: {},
+      awayGoalieState: {},
+    });
+
+    expect(card.payloadData.model_signal).toBeDefined();
+    expect(card.payloadData.model_signal.eligible_for_potd).toBe(false);
+    expect(card.payloadData.model_signal.edge_available).toBe(true);
+    expect(card.payloadData.model_signal.blockers).toEqual(
+      expect.arrayContaining(['NO_MARKET_LINE', 'GOALIE_CONTEXT_MISSING']),
+    );
+  });
+});
 
 async function queryDb(fn) {
   const db = getDatabase();
@@ -706,11 +808,23 @@ describe('generateNHLMarketCallCards independent evaluation (IME-01-04)', () => 
       useOrchestratedMarket: false,
       gameEval,
       primaryDisplayMarket,
+      homeGoalieState: { starter_state: 'CONFIRMED' },
+      awayGoalieState: { starter_state: 'CONFIRMED' },
     });
 
     const cardTypes = cards.map((c) => c.cardType);
     expect(cardTypes).toContain('nhl-moneyline-call');
     expect(cardTypes).toContain('nhl-totals-call');
+
+    const mlCard = cards.find((c) => c.cardType === 'nhl-moneyline-call');
+    expect(mlCard?.payloadData?.model_signal).toMatchObject({
+      eligible_for_potd: true,
+      market_type: 'MONEYLINE',
+      selection_side: 'HOME',
+      source: 'NHL_MONEYLINE_CALL',
+      edge_available: true,
+      blockers: [],
+    });
   });
 
   test('all PASS decisions → no cards generated', () => {
