@@ -1889,3 +1889,367 @@ describe('loadModelHealthGates', () => {
     expect(gates.size).toBe(0);
   });
 });
+
+// ---------------------------------------------------------------------------
+// WI-1175: Same-game POTD near-miss suppression
+// ---------------------------------------------------------------------------
+describe('WI-1175: same-game near-miss suppression', () => {
+  let dataModule;
+
+  beforeAll(async () => {
+    jest.resetModules();
+    process.env.CHEDDAR_DB_PATH = TEST_DB_PATH;
+    process.env.CHEDDAR_DB_AUTODISCOVER = 'false';
+    process.env.CHEDDAR_DB_ALLOW_MULTI_PROCESS = 'false';
+    process.env.POTD_STARTING_BANKROLL = '10';
+    process.env.POTD_KELLY_FRACTION = '0.25';
+    process.env.POTD_MAX_WAGER_PCT = '0.2';
+    dataModule = require('@cheddar-logic/data');
+    dataModule.closeDatabase();
+  });
+
+  beforeEach(() => {
+    dataModule.closeDatabase();
+    resetTables();
+  });
+
+  test('same-game different-line TOTAL variant is suppressed by winner (production bug)', async () => {
+    const { runPotdEngine } = require('../run_potd_engine');
+    const winner = buildSelectedCandidate({
+      gameId: 'nba-sa-por-001',
+      sport: 'NBA',
+      home_team: 'Portland Trail Blazers',
+      away_team: 'San Antonio Spurs',
+      marketType: 'TOTAL',
+      selection: 'UNDER',
+      selectionLabel: 'UNDER 219.5',
+      line: 219.5,
+      edgePct: 0.03,
+      totalScore: 0.75,
+    });
+    const sameGameDifferentLine = buildSelectedCandidate({
+      gameId: 'nba-sa-por-001',
+      sport: 'NBA',
+      home_team: 'Portland Trail Blazers',
+      away_team: 'San Antonio Spurs',
+      marketType: 'TOTAL',
+      selection: 'UNDER',
+      selectionLabel: 'UNDER 220.5',
+      line: 220.5,
+      edgePct: 0.028,
+      totalScore: 0.73,
+    });
+    const otherGame = buildSelectedCandidate({
+      gameId: 'nba-other-001',
+      sport: 'NBA',
+      home_team: 'Los Angeles Lakers',
+      away_team: 'Golden State Warriors',
+      marketType: 'TOTAL',
+      selection: 'OVER',
+      selectionLabel: 'OVER 225.5',
+      line: 225.5,
+      edgePct: 0.022,
+      totalScore: 0.68,
+    });
+    const candidates = [winner, sameGameDifferentLine, otherGame];
+
+    const result = await runPotdEngine({
+      jobKey: 'potd|wi1175-diff-line-suppress',
+      force: true,
+      fetchOddsFn: async () => ({ games: candidates.map((c) => ({ gameId: c.gameId })), errors: [] }),
+      buildCandidatesFn: (game) => candidates.filter((c) => c.gameId === game.gameId),
+      scoreCandidateFn: (v) => v,
+      selectTopPlaysFn: (values) => (values.length > 0 ? [values[0]] : []),
+      kellySizeFn: () => 2.0,
+      sendDiscordMessagesFn: async () => 1,
+    });
+
+    expect(result.success).toBe(true);
+    const shadowRows = readRows('SELECT game_id, market_type, selection, line FROM potd_shadow_candidates');
+    // sameGameDifferentLine must be suppressed; only the other-game near-miss visible
+    expect(shadowRows).toHaveLength(1);
+    expect(shadowRows[0].game_id).toBe(otherGame.gameId);
+  });
+
+  test('TOTAL winner suppresses opposing TOTAL side near-miss for same canonical game', async () => {
+    const { runPotdEngine } = require('../run_potd_engine');
+    const winner = buildSelectedCandidate({
+      gameId: 'nba-total-opp-001',
+      sport: 'NBA',
+      home_team: 'Milwaukee Bucks',
+      away_team: 'Chicago Bulls',
+      marketType: 'TOTAL',
+      selection: 'OVER',
+      selectionLabel: 'OVER 219.5',
+      line: 219.5,
+      edgePct: 0.03,
+      totalScore: 0.73,
+    });
+    const opposingUnder = buildSelectedCandidate({
+      gameId: 'nba-total-opp-001',
+      sport: 'NBA',
+      home_team: 'Milwaukee Bucks',
+      away_team: 'Chicago Bulls',
+      marketType: 'TOTAL',
+      selection: 'UNDER',
+      selectionLabel: 'UNDER 220.5',
+      line: 220.5,
+      edgePct: 0.025,
+      totalScore: 0.70,
+    });
+    const candidates = [winner, opposingUnder];
+
+    const result = await runPotdEngine({
+      jobKey: 'potd|wi1175-total-opp-suppress',
+      force: true,
+      fetchOddsFn: async () => ({ games: [{ gameId: winner.gameId }], errors: [] }),
+      buildCandidatesFn: () => candidates,
+      scoreCandidateFn: (v) => v,
+      selectTopPlaysFn: (values) => (values.length > 0 ? [values[0]] : []),
+      kellySizeFn: () => 2.0,
+      sendDiscordMessagesFn: async () => 1,
+    });
+
+    expect(result.success).toBe(true);
+    expect(readRows('SELECT * FROM potd_shadow_candidates')).toHaveLength(0);
+  });
+
+  test('SPREAD winner suppresses same-game SPREAD near-miss regardless of line value', async () => {
+    const { runPotdEngine } = require('../run_potd_engine');
+    const winner = buildSelectedCandidate({
+      gameId: 'nba-spread-line-001',
+      sport: 'NBA',
+      home_team: 'Oklahoma City Thunder',
+      away_team: 'Memphis Grizzlies',
+      marketType: 'SPREAD',
+      selection: 'HOME',
+      selectionLabel: 'Oklahoma City Thunder -7.5',
+      line: -7.5,
+      edgePct: 0.03,
+      totalScore: 0.73,
+    });
+    const spreadOtherLine = buildSelectedCandidate({
+      gameId: 'nba-spread-line-001',
+      sport: 'NBA',
+      home_team: 'Oklahoma City Thunder',
+      away_team: 'Memphis Grizzlies',
+      marketType: 'SPREAD',
+      selection: 'HOME',
+      selectionLabel: 'Oklahoma City Thunder -8.0',
+      line: -8.0,
+      edgePct: 0.025,
+      totalScore: 0.70,
+    });
+    const candidates = [winner, spreadOtherLine];
+
+    const result = await runPotdEngine({
+      jobKey: 'potd|wi1175-spread-line-suppress',
+      force: true,
+      fetchOddsFn: async () => ({ games: [{ gameId: winner.gameId }], errors: [] }),
+      buildCandidatesFn: () => candidates,
+      scoreCandidateFn: (v) => v,
+      selectTopPlaysFn: (values) => (values.length > 0 ? [values[0]] : []),
+      kellySizeFn: () => 2.0,
+      sendDiscordMessagesFn: async () => 1,
+    });
+
+    expect(result.success).toBe(true);
+    expect(readRows('SELECT * FROM potd_shadow_candidates')).toHaveLength(0);
+  });
+
+  test('MONEYLINE winner suppresses opposing MONEYLINE side near-miss for same canonical game', async () => {
+    const { runPotdEngine } = require('../run_potd_engine');
+    const winner = buildSelectedCandidate({
+      gameId: 'nba-ml-opp-001',
+      sport: 'NBA',
+      home_team: 'Boston Celtics',
+      away_team: 'Miami Heat',
+      marketType: 'MONEYLINE',
+      selection: 'HOME',
+      selectionLabel: 'Boston Celtics',
+      line: null,
+      price: -180,
+      edgePct: 0.03,
+      totalScore: 0.73,
+    });
+    const opposingAway = buildSelectedCandidate({
+      gameId: 'nba-ml-opp-001',
+      sport: 'NBA',
+      home_team: 'Boston Celtics',
+      away_team: 'Miami Heat',
+      marketType: 'MONEYLINE',
+      selection: 'AWAY',
+      selectionLabel: 'Miami Heat',
+      line: null,
+      price: 160,
+      edgePct: 0.025,
+      totalScore: 0.68,
+    });
+    const candidates = [winner, opposingAway];
+
+    const result = await runPotdEngine({
+      jobKey: 'potd|wi1175-ml-opp-suppress',
+      force: true,
+      fetchOddsFn: async () => ({ games: [{ gameId: winner.gameId }], errors: [] }),
+      buildCandidatesFn: () => candidates,
+      scoreCandidateFn: (v) => v,
+      selectTopPlaysFn: (values) => (values.length > 0 ? [values[0]] : []),
+      kellySizeFn: () => 2.0,
+      sendDiscordMessagesFn: async () => 1,
+    });
+
+    expect(result.success).toBe(true);
+    expect(readRows('SELECT * FROM potd_shadow_candidates')).toHaveLength(0);
+  });
+
+  test('null game_id near-miss is suppressed by winner when teams and date match', async () => {
+    const { runPotdEngine } = require('../run_potd_engine');
+    const winner = buildSelectedCandidate({
+      gameId: 'nba-teamref-001',
+      sport: 'NBA',
+      home_team: 'Cleveland Cavaliers',
+      away_team: 'Indiana Pacers',
+      commence_time: '2026-04-10T00:00:00.000Z',
+      marketType: 'TOTAL',
+      selection: 'OVER',
+      selectionLabel: 'OVER 218.5',
+      line: 218.5,
+      edgePct: 0.03,
+      totalScore: 0.73,
+    });
+    const nullGameIdSameTeams = buildSelectedCandidate({
+      gameId: null,
+      sport: 'NBA',
+      home_team: 'Cleveland Cavaliers',
+      away_team: 'Indiana Pacers',
+      commence_time: '2026-04-10T00:00:00.000Z',
+      marketType: 'TOTAL',
+      selection: 'UNDER',
+      selectionLabel: 'UNDER 218.5',
+      line: 218.5,
+      edgePct: 0.025,
+      totalScore: 0.70,
+    });
+    const candidates = [winner, nullGameIdSameTeams];
+
+    const result = await runPotdEngine({
+      jobKey: 'potd|wi1175-null-gameid-suppress',
+      force: true,
+      fetchOddsFn: async () => ({ games: [{ gameId: winner.gameId }], errors: [] }),
+      buildCandidatesFn: () => candidates,
+      scoreCandidateFn: (v) => v,
+      selectTopPlaysFn: (values) => (values.length > 0 ? [values[0]] : []),
+      kellySizeFn: () => 2.0,
+      sendDiscordMessagesFn: async () => 1,
+    });
+
+    expect(result.success).toBe(true);
+    // null-game_id near-miss matches winner by team+date derivation and must be suppressed
+    expect(readRows('SELECT * FROM potd_shadow_candidates')).toHaveLength(0);
+  });
+
+  test('H2H market alias normalized to MONEYLINE for suppression', async () => {
+    const { runPotdEngine } = require('../run_potd_engine');
+    const winner = buildSelectedCandidate({
+      gameId: 'nba-alias-001',
+      sport: 'NBA',
+      home_team: 'Phoenix Suns',
+      away_team: 'Dallas Mavericks',
+      marketType: 'MONEYLINE',
+      selection: 'HOME',
+      selectionLabel: 'Phoenix Suns',
+      line: null,
+      price: -160,
+      edgePct: 0.03,
+      totalScore: 0.73,
+    });
+    const h2hCandidate = buildSelectedCandidate({
+      gameId: 'nba-alias-001',
+      sport: 'NBA',
+      home_team: 'Phoenix Suns',
+      away_team: 'Dallas Mavericks',
+      marketType: 'H2H',
+      selection: 'AWAY',
+      selectionLabel: 'Dallas Mavericks',
+      line: null,
+      price: 140,
+      edgePct: 0.025,
+      totalScore: 0.68,
+    });
+    const candidates = [winner, h2hCandidate];
+
+    const result = await runPotdEngine({
+      jobKey: 'potd|wi1175-h2h-alias-suppress',
+      force: true,
+      fetchOddsFn: async () => ({ games: [{ gameId: winner.gameId }], errors: [] }),
+      buildCandidatesFn: () => candidates,
+      scoreCandidateFn: (v) => v,
+      selectTopPlaysFn: (values) => (values.length > 0 ? [values[0]] : []),
+      kellySizeFn: () => 2.0,
+      sendDiscordMessagesFn: async () => 1,
+    });
+
+    expect(result.success).toBe(true);
+    // H2H normalizes to MONEYLINE; both candidates share the same suppression group
+    expect(readRows('SELECT * FROM potd_shadow_candidates')).toHaveLength(0);
+  });
+
+  test('same-day rerun replaces stale same-game/same-market shadow row when line shifts', async () => {
+    const { runPotdEngine } = require('../run_potd_engine');
+    const firstCandidate = buildSelectedCandidate({
+      gameId: 'nba-rerun-line-shift',
+      sport: 'NBA',
+      home_team: 'San Antonio Spurs',
+      away_team: 'Portland Trail Blazers',
+      marketType: 'TOTAL',
+      selection: 'UNDER',
+      selectionLabel: 'UNDER 219.5',
+      line: 219.5,
+      edgePct: 0.025,
+      totalScore: 0.70,
+    });
+    const updatedCandidate = buildSelectedCandidate({
+      gameId: 'nba-rerun-line-shift',
+      sport: 'NBA',
+      home_team: 'San Antonio Spurs',
+      away_team: 'Portland Trail Blazers',
+      marketType: 'TOTAL',
+      selection: 'UNDER',
+      selectionLabel: 'UNDER 220.5',
+      line: 220.5,
+      edgePct: 0.04,
+      totalScore: 0.72,
+    });
+
+    const baseOptions = {
+      force: true,
+      scoreCandidateFn: (v) => v,
+      selectTopPlaysFn: (values) => values,
+      kellySizeFn: () => 0,
+      sendDiscordMessagesFn: async () => 1,
+    };
+
+    await runPotdEngine({
+      ...baseOptions,
+      jobKey: 'potd|wi1175-line-shift-pass-1',
+      fetchOddsFn: async () => ({ games: [{ gameId: firstCandidate.gameId }], errors: [] }),
+      buildCandidatesFn: () => [firstCandidate],
+    });
+
+    let rows = readRows('SELECT selection, line FROM potd_shadow_candidates');
+    expect(rows).toHaveLength(1);
+    expect(rows[0].line).toBe(219.5);
+
+    await runPotdEngine({
+      ...baseOptions,
+      jobKey: 'potd|wi1175-line-shift-pass-2',
+      fetchOddsFn: async () => ({ games: [{ gameId: updatedCandidate.gameId }], errors: [] }),
+      buildCandidatesFn: () => [updatedCandidate],
+    });
+
+    rows = readRows('SELECT selection, line FROM potd_shadow_candidates');
+    expect(rows).toHaveLength(1);
+    // Stale 219.5 row must be replaced by the updated 220.5 candidate
+    expect(rows[0].line).toBe(220.5);
+  });
+});

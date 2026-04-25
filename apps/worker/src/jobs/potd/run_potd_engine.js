@@ -88,7 +88,16 @@ function resolveShadowGameRef(candidate) {
     normalizeShadowTeam(candidate?.away_team || candidate?.awayTeam),
   ].filter(Boolean).sort();
 
-  return teams.length > 0 ? teams.join('__') : 'UNKNOWN_GAME';
+  if (teams.length > 0) {
+    // Include game date so teams playing twice in a series don't collide.
+    const commenceTime = candidate?.commence_time;
+    if (commenceTime) {
+      const dt = DateTime.fromISO(commenceTime, { zone: 'utc' });
+      if (dt.isValid) return `${dt.toISODate()}|${teams.join('__')}`;
+    }
+    return teams.join('__');
+  }
+  return 'UNKNOWN_GAME';
 }
 
 function normalizeShadowMarketLineContext(candidate) {
@@ -98,6 +107,15 @@ function normalizeShadowMarketLineContext(candidate) {
   if (!isFiniteNumber(line)) return 'NA';
   if (marketType === 'SPREAD') return Math.abs(Number(line)).toFixed(3);
   return Number(line).toFixed(3);
+}
+
+// Canonical market-type aliases: some odds providers emit H2H / TOTALS / HANDICAP
+// instead of MONEYLINE / TOTAL / SPREAD. Normalize so suppression groups converge.
+const POTD_MARKET_ALIASES = Object.freeze({ H2H: 'MONEYLINE', TOTALS: 'TOTAL', HANDICAP: 'SPREAD' });
+
+function normalizePotdMarketKey(candidate) {
+  const raw = String(candidate?.marketType || candidate?.market_type || '').toUpperCase();
+  return POTD_MARKET_ALIASES[raw] || raw;
 }
 
 function buildShadowCandidateIdentity(candidate, canonicalSelection) {
@@ -116,15 +134,47 @@ function shadowCandidateIdentity(candidate) {
   return buildShadowCandidateIdentity(candidate, canonicalSelection);
 }
 
+// Suppression/dedupe group: sport + canonical game ref + normalized market type.
+// Intentionally omits side and line so all variants of the same game+market
+// (e.g. UNDER 219.5 and UNDER 220.5 for the same game) land in the same group.
 function buildShadowMarketMatchGroup(candidate) {
   const sport = String(candidate?.sport || '').toUpperCase();
-  const marketType = String(candidate?.marketType || candidate?.market_type || '').toUpperCase();
-  return [
-    sport,
-    resolveShadowGameRef(candidate),
-    marketType,
-    normalizeShadowMarketLineContext(candidate),
-  ].join('|');
+  const marketType = normalizePotdMarketKey(candidate);
+  return [sport, resolveShadowGameRef(candidate), marketType].join('|');
+}
+
+// Build the full set of suppression group keys for a winner candidate.
+// Includes a team+date derived group as a secondary key so near-miss candidates
+// with a null game_id (but matching teams, date, and sport) are also suppressed.
+function buildWinnerSuppressionGroups(winnerCandidate) {
+  const groups = new Set();
+  if (!winnerCandidate) return groups;
+
+  groups.add(buildShadowMarketMatchGroup(winnerCandidate));
+
+  // Secondary cross-match: derive team+date group from the winner so that
+  // candidates with null game_id but identical teams/date/market are caught.
+  const gameId = String(winnerCandidate?.gameId || winnerCandidate?.game_id || '').trim();
+  if (!gameId) return groups; // winner itself has no game_id; primary group already team-based
+
+  const sport = String(winnerCandidate?.sport || '').toUpperCase();
+  const marketType = normalizePotdMarketKey(winnerCandidate);
+  const teams = [
+    normalizeShadowTeam(winnerCandidate?.home_team || winnerCandidate?.homeTeam),
+    normalizeShadowTeam(winnerCandidate?.away_team || winnerCandidate?.awayTeam),
+  ].filter(Boolean).sort();
+
+  if (teams.length > 0) {
+    const commenceTime = winnerCandidate?.commence_time;
+    let teamRef = teams.join('__');
+    if (commenceTime) {
+      const dt = DateTime.fromISO(commenceTime, { zone: 'utc' });
+      if (dt.isValid) teamRef = `${dt.toISODate()}|${teams.join('__')}`;
+    }
+    groups.add(`${sport}|${teamRef}|${marketType}`);
+  }
+
+  return groups;
 }
 
 function compareShadowCandidatesByEdgeScoreIdentity(left, right) {
@@ -153,13 +203,13 @@ function selectBestEdgeByShadowGroup(candidates) {
 
 function selectNearMissShadowCandidates({ winnerStatus, candidatePool, winnerCandidate }) {
   if (!Array.isArray(candidatePool) || candidatePool.length === 0) return [];
-  const winnerGroup =
+  const winnerGroups =
     winnerStatus === 'FIRED' && winnerCandidate
-      ? buildShadowMarketMatchGroup(winnerCandidate)
-      : null;
+      ? buildWinnerSuppressionGroups(winnerCandidate)
+      : new Set();
 
   const eligibleRows = candidatePool.filter((candidate) =>
-    !winnerGroup || buildShadowMarketMatchGroup(candidate) !== winnerGroup
+    winnerGroups.size === 0 || !winnerGroups.has(buildShadowMarketMatchGroup(candidate))
   );
 
   return selectBestEdgeByShadowGroup(eligibleRows)
