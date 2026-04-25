@@ -110,6 +110,7 @@ async function runMigrations() {
 
   console.log(`[Migrations] Found ${files.length} migration files`);
 
+  let alreadyAppliedCount = 0;
   for (const file of files) {
     // Check if already executed
     const checkStmt = db.prepare(`
@@ -118,7 +119,7 @@ async function runMigrations() {
     const existing = checkStmt.get(file);
 
     if (existing) {
-      console.log(`[Migrations] ✓ ${file} (already applied)`);
+      alreadyAppliedCount++;
       continue;
     }
 
@@ -193,6 +194,9 @@ async function runMigrations() {
     }
   }
 
+  if (alreadyAppliedCount > 0) {
+    console.log(`[Migrations] ${alreadyAppliedCount}/${files.length} already applied`);
+  }
   db.close();
   console.log(`[Migrations] Complete`);
 }
