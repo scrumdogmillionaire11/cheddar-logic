@@ -361,3 +361,16 @@ Plans:
 - [ ] WI-1156-01-PLAN.md — Worker settlement completeness + reproducible historical backfill path for in-scope families (Wave 1)
 - [ ] WI-1156-02-PLAN.md — Shared supported-family contract for projection-settled and projection-accuracy APIs + contract tests (Wave 2)
 - [ ] WI-1156-03-PLAN.md — Desktop projection results table/detail surface + legacy settlement/UI branch retirement verification (Wave 3)
+
+---
+
+### Phase: WI-1178 — Normalize POTD Edge Calculation And Scoring Across Sports
+
+**Goal**: Eliminate structural bias toward NBA totals in POTD selection by replacing the uncalibrated linear edge heuristic with a sigma-based probability model, equalizing noise floors, and adding normalized edge weight to the scoring formula.
+
+**Requirements:** [WI-1178-EDGE-01, WI-1178-SCORE-01, WI-1178-FLOOR-01]
+
+**Plans:** 1 plan in 1 wave
+
+Plans:
+- [ ] WI-1178-01-PLAN.md — Sigma-based NBA total edge + three-term totalScore formula + noise floor raise + 4 new tests (Wave 1)
