@@ -179,6 +179,24 @@ async function runTests() {
       process.exit(1);
     }
 
+    // Test 4: WI-1169 - sport filter contract stable across legacy and simplified gate modes
+    console.log('\n🧪 Test 4: Source contract - sport filter stable across gate modes');
+    const routeHasSimplifiedGate =
+      cardsRouteSource.includes('ENABLE_SIMPLIFIED_CARDS_GATE') &&
+      cardsRouteSource.includes('buildSimplifiedGateWhere');
+    const simplifiedGatePreservesRequestWhere =
+      querySource.includes('buildSimplifiedGateWhere') &&
+      querySource.includes('[...baseWhere]') &&
+      querySource.includes('[...baseParams]');
+    if (routeHasSimplifiedGate && simplifiedGatePreservesRequestWhere) {
+      console.log('✅ PASS: simplified gate inherits request-level sport filter from base WHERE');
+    } else {
+      console.log(
+        `❌ FAIL: routeHasSimplifiedGate=${routeHasSimplifiedGate} preservesFilter=${simplifiedGatePreservesRequestWhere}`
+      );
+      process.exit(1);
+    }
+
     console.log('\n🧹 Cleaning up test data...');
     client
       .prepare(`DELETE FROM card_payloads WHERE id = ? OR game_id = ?`)

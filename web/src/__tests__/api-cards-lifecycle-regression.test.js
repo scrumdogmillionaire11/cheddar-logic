@@ -607,6 +607,54 @@ async function runTests() {
       process.exit(1);
     }
 
+    // Test 12: WI-1169 simplified gate flag contract wired in route
+    console.log('Test 12: Source contract - simplified gate flag and shadow compare present in route');
+    const hasSimplifiedGateFlag =
+      cardsRouteSource.includes('ENABLE_SIMPLIFIED_CARDS_GATE') &&
+      cardsRouteSource.includes("process.env.ENABLE_SIMPLIFIED_CARDS_GATE === 'true'");
+    const hasShadowCompareFlag =
+      cardsRouteSource.includes('ENABLE_GATE_SHADOW_COMPARE') &&
+      cardsRouteSource.includes("process.env.ENABLE_GATE_SHADOW_COMPARE === 'true'");
+    const hasShadowCompareTelemetry =
+      cardsRouteSource.includes('buildShadowCompareTelemetry') &&
+      cardsRouteSource.includes('gate_shadow_compare');
+    if (hasSimplifiedGateFlag && hasShadowCompareFlag && hasShadowCompareTelemetry) {
+      console.log('✓ Simplified gate flag and shadow compare telemetry contract present in route\n');
+    } else {
+      console.log(
+        `✗ Missing simplified gate contract: flag=${hasSimplifiedGateFlag} shadow=${hasShadowCompareFlag} telemetry=${hasShadowCompareTelemetry}\n`,
+      );
+      process.exit(1);
+    }
+
+    // Test 13: WI-1169 simplified gate wired to buildSimplifiedGateWhere in query
+    console.log('Test 13: Source contract - buildSimplifiedGateWhere present in route and query');
+    const routeHasSimplifiedGateWhere =
+      cardsRouteSource.includes('buildSimplifiedGateWhere');
+    const queryHasSimplifiedGateWhere =
+      querySource.includes('buildSimplifiedGateWhere') &&
+      querySource.includes('buildPerTypeRunScopePredicate');
+    if (routeHasSimplifiedGateWhere && queryHasSimplifiedGateWhere) {
+      console.log('✓ buildSimplifiedGateWhere wired in route and query\n');
+    } else {
+      console.log(
+        `✗ Missing buildSimplifiedGateWhere: route=${routeHasSimplifiedGateWhere} query=${queryHasSimplifiedGateWhere}\n`,
+      );
+      process.exit(1);
+    }
+
+    // Test 14: WI-1169 legacy path skip when simplified gate active (no shadow compare)
+    console.log('Test 14: Source contract - legacy path skipped when simplified gate active without shadow');
+    const hasLegacyPathSkip =
+      cardsRouteSource.includes('runLegacyPath') &&
+      cardsRouteSource.includes('!ENABLE_SIMPLIFIED_CARDS_GATE || ENABLE_GATE_SHADOW_COMPARE');
+    if (hasLegacyPathSkip) {
+      console.log('✓ Legacy path correctly skipped when simplified gate active without shadow compare\n');
+    } else {
+      console.log('✗ Missing legacy path skip guard in route\n');
+      process.exit(1);
+    }
+
     // Clean up
     console.log('📝 Cleaning up test data...');
     client
@@ -615,7 +663,7 @@ async function runTests() {
     client.prepare(`DELETE FROM games WHERE game_id LIKE 'test-lifecycle-%'`).run();
     console.log('✓ Test data cleaned\n');
 
-    console.log('✅ All WI-0392/WI-0447/WI-0902/WI-1168 Lifecycle Parity + Run-State Shield + Behavioral Parity Field Tests Passed!');
+    console.log('✅ All WI-0392/WI-0447/WI-0902/WI-1168/WI-1169 Lifecycle Parity + Run-State Shield + Behavioral Parity Field + Simplified Gate Tests Passed!');
     process.exit(0);
   } catch (error) {
     console.error('❌ Test Error:', error.message);

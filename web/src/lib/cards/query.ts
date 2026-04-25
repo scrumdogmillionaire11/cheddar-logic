@@ -177,6 +177,25 @@ export function buildPerTypeRunScopePredicate(runIdPlaceholders: string): string
   )`;
 }
 
+// Simplified gate: single-phase WHERE construction using per-type run-scope
+// predicate. Accepts the already-built base WHERE clause and appends the
+// run-scope predicate so no global fallback query is needed. Callers pass
+// activeRunIds into sqlParams twice via buildPerTypeRunScopePredicate.
+export function buildSimplifiedGateWhere(
+  baseWhere: string[],
+  baseParams: Array<string | number>,
+  activeRunIds: string[],
+): { where: string[]; sqlParams: Array<string | number> } {
+  const where = [...baseWhere];
+  const sqlParams = [...baseParams];
+  if (activeRunIds.length > 0) {
+    const runIdPlaceholders = activeRunIds.map(() => '?').join(', ');
+    where.push(buildPerTypeRunScopePredicate(runIdPlaceholders));
+    sqlParams.push(...activeRunIds, ...activeRunIds);
+  }
+  return { where, sqlParams };
+}
+
 // NHL lane compatibility: expand 'nhl' sport filter to also include 'nhl_props'
 // so NHL game cards and NHL prop cards surface together under a single sport param.
 export function resolveNhlCompatibleSports(sport: string | null): string[] | null {

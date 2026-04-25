@@ -108,3 +108,43 @@ export function getBettingSurfacePayloadDropReason(
 
   return null;
 }
+
+export interface ShadowCompareTelemetry {
+  legacy_count: number;
+  simplified_count: number;
+  delta: number;
+  by_card_type: Array<{
+    card_type: string;
+    legacy_count: number;
+    simplified_count: number;
+    delta: number;
+  }>;
+}
+
+export function buildShadowCompareTelemetry(
+  legacyCardTypes: string[],
+  simplifiedCardTypes: string[],
+): ShadowCompareTelemetry {
+  const legacyCounts = new Map<string, number>();
+  for (const ct of legacyCardTypes) {
+    legacyCounts.set(ct, (legacyCounts.get(ct) ?? 0) + 1);
+  }
+  const simplifiedCounts = new Map<string, number>();
+  for (const ct of simplifiedCardTypes) {
+    simplifiedCounts.set(ct, (simplifiedCounts.get(ct) ?? 0) + 1);
+  }
+  const allTypes = new Set([...legacyCounts.keys(), ...simplifiedCounts.keys()]);
+  const by_card_type = Array.from(allTypes)
+    .map((ct) => {
+      const lc = legacyCounts.get(ct) ?? 0;
+      const sc = simplifiedCounts.get(ct) ?? 0;
+      return { card_type: ct, legacy_count: lc, simplified_count: sc, delta: sc - lc };
+    })
+    .sort((a, b) => a.card_type.localeCompare(b.card_type));
+  return {
+    legacy_count: legacyCardTypes.length,
+    simplified_count: simplifiedCardTypes.length,
+    delta: simplifiedCardTypes.length - legacyCardTypes.length,
+    by_card_type,
+  };
+}

@@ -168,4 +168,28 @@ assert.ok(
   'PASS cards must suppress driver and market-signal internals in GameCardItem',
 );
 
+// WI-1169: Simplified gate flag and shadow compare wired in route and query
+assert.ok(
+  apiCardsSource.includes('ENABLE_SIMPLIFIED_CARDS_GATE') &&
+    apiCardsSource.includes('ENABLE_GATE_SHADOW_COMPARE') &&
+    apiCardsSource.includes('buildSimplifiedGateWhere') &&
+    apiCardsSource.includes('buildShadowCompareTelemetry') &&
+    apiCardsSource.includes('gate_shadow_compare'),
+  'route should wire simplified gate flag, shadow compare flag, and telemetry contract',
+);
+
+assert.ok(
+  cardsQuerySource.includes('buildSimplifiedGateWhere') &&
+    cardsQuerySource.includes('buildPerTypeRunScopePredicate'),
+  'query module should export buildSimplifiedGateWhere using per-type run-scope predicate',
+);
+
+assert.ok(
+  payloadClassifierSource.includes('buildShadowCompareTelemetry') &&
+    payloadClassifierSource.includes('ShadowCompareTelemetry') &&
+    payloadClassifierSource.includes('legacy_count') &&
+    payloadClassifierSource.includes('simplified_count'),
+  'payload classifier should export shadow compare telemetry type and builder',
+);
+
 console.log('✅ Cards projection exclusion source tests passed');

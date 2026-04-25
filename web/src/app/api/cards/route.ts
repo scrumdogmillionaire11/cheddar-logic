@@ -64,6 +64,7 @@ import {
   buildBettingSurfacePayloadPredicate,
   buildCardTypePreciseSettledPredicate,
   buildPerTypeRunScopePredicate,
+  buildSimplifiedGateWhere,
   clampNumber,
   getActiveRunIds,
   getRunStatus,
@@ -72,10 +73,12 @@ import {
   type LifecycleMode,
 } from '@/lib/cards/query';
 import {
+  buildShadowCompareTelemetry,
   getBettingSurfacePayloadDropReason,
   isBettingSurfacePayload,
   normalizePayloadMeta,
   safeJsonParse,
+  type ShadowCompareTelemetry,
 } from '@/lib/cards/payload-classifier';
 
 const ENABLE_WELCOME_HOME =
@@ -85,6 +88,17 @@ const ENABLE_WELCOME_HOME =
 // Server-only API route: do not read NEXT_PUBLIC_ prefix here.
 const ENABLE_CARDS_LIFECYCLE_PARITY =
   process.env.ENABLE_CARDS_LIFECYCLE_PARITY === 'true';
+
+// Simplified gate: single-phase query using per-type run-scope predicate.
+// Default false keeps legacy two-phase behavior until rollout validation completes.
+const ENABLE_SIMPLIFIED_CARDS_GATE =
+  process.env.ENABLE_SIMPLIFIED_CARDS_GATE === 'true';
+
+// Shadow compare: run both legacy and simplified paths and emit count delta
+// telemetry. Consumer receives the active gate result (controlled by
+// ENABLE_SIMPLIFIED_CARDS_GATE). Does not affect response data contract.
+const ENABLE_GATE_SHADOW_COMPARE =
+  process.env.ENABLE_GATE_SHADOW_COMPARE === 'true';
 
 /*
 Source-contract mirror for api-cards-lifecycle-regression:
@@ -497,23 +511,64 @@ export async function GET(request: NextRequest) {
         LIMIT ? OFFSET ?
       `;
 
-    const runScopedWhereSql =
-      runScopedWhere.length > 0 ? `WHERE ${runScopedWhere.join(' AND ')}` : '';
-    const runScopedStmt = db.prepare(buildSql(runScopedWhereSql));
-    let rows = runScopedStmt.all(
-      ...runScopedParams,
-      limit,
-      offset,
-    ) as CardRow[];
-
+    // Legacy path: run-scoped query with global fallback when scoped returns empty.
+    // Skipped when simplified gate is active without shadow compare.
+    const runLegacyPath = !ENABLE_SIMPLIFIED_CARDS_GATE || ENABLE_GATE_SHADOW_COMPARE;
+    let legacyRows: CardRow[] = [];
     let runScopeFallbackApplied = false;
-    if (activeRunIds.length > 0 && rows.length === 0) {
-      const baseWhereSql =
-        baseWhere.length > 0 ? `WHERE ${baseWhere.join(' AND ')}` : '';
-      const fallbackStmt = db.prepare(buildSql(baseWhereSql));
-      rows = fallbackStmt.all(...baseParams, limit, offset) as CardRow[];
-      runScopeFallbackApplied = true;
+
+    if (runLegacyPath) {
+      const runScopedWhereSql =
+        runScopedWhere.length > 0 ? `WHERE ${runScopedWhere.join(' AND ')}` : '';
+      legacyRows = db.prepare(buildSql(runScopedWhereSql)).all(
+        ...runScopedParams,
+        limit,
+        offset,
+      ) as CardRow[];
+
+      if (activeRunIds.length > 0 && legacyRows.length === 0) {
+        const baseWhereSql =
+          baseWhere.length > 0 ? `WHERE ${baseWhere.join(' AND ')}` : '';
+        legacyRows = db.prepare(buildSql(baseWhereSql)).all(
+          ...baseParams,
+          limit,
+          offset,
+        ) as CardRow[];
+        runScopeFallbackApplied = true;
+      }
     }
+
+    // Simplified gate: single-phase query — per-type predicate subsumes the
+    // global fallback, so no second query is needed.
+    let simplifiedRows: CardRow[] | null = null;
+    if (ENABLE_SIMPLIFIED_CARDS_GATE || ENABLE_GATE_SHADOW_COMPARE) {
+      const sg = buildSimplifiedGateWhere(baseWhere, baseParams, activeRunIds);
+      const simplifiedWhereSql =
+        sg.where.length > 0 ? `WHERE ${sg.where.join(' AND ')}` : '';
+      simplifiedRows = db.prepare(buildSql(simplifiedWhereSql)).all(
+        ...sg.sqlParams,
+        limit,
+        offset,
+      ) as CardRow[];
+    }
+
+    // Active result selection: simplified takes precedence when its flag is set.
+    let rows: CardRow[];
+    if (ENABLE_SIMPLIFIED_CARDS_GATE && simplifiedRows !== null) {
+      rows = simplifiedRows;
+      runScopeFallbackApplied = false;
+    } else {
+      rows = legacyRows;
+    }
+
+    // Shadow compare telemetry: counts by card_type, legacy versus simplified.
+    const shadowCompareTelemetry: ShadowCompareTelemetry | undefined =
+      ENABLE_GATE_SHADOW_COMPARE && simplifiedRows !== null
+        ? buildShadowCompareTelemetry(
+            legacyRows.map((r) => r.card_type),
+            simplifiedRows.map((r) => r.card_type),
+          )
+        : undefined;
 
     const response = rows.flatMap((card) => {
       const parsed = safeJsonParse(card.payload_data);
@@ -572,6 +627,7 @@ export async function GET(request: NextRequest) {
           offset,
           limit,
           ...(diagnostics ? { diagnostics } : {}),
+          ...(shadowCompareTelemetry ? { gate_shadow_compare: shadowCompareTelemetry } : {}),
         },
       },
       { headers: { 'Content-Type': 'application/json' } },
