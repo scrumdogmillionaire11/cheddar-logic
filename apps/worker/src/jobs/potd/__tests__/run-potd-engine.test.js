@@ -337,7 +337,7 @@ describe('runPotdEngine', () => {
       selectionLabel: 'OVER 221.5',
       line: 221.5,
       totalScore: 0.91,
-      edgePct: 0.027,
+      edgePct: 0.05,
     });
     const miss1 = buildSelectedCandidate({
       gameId: 'potd-nba-pool-1',
@@ -1924,7 +1924,7 @@ describe('WI-1175: same-game near-miss suppression', () => {
       selection: 'UNDER',
       selectionLabel: 'UNDER 219.5',
       line: 219.5,
-      edgePct: 0.03,
+      edgePct: 0.035,
       totalScore: 0.75,
     });
     const sameGameDifferentLine = buildSelectedCandidate({
@@ -1936,7 +1936,7 @@ describe('WI-1175: same-game near-miss suppression', () => {
       selection: 'UNDER',
       selectionLabel: 'UNDER 220.5',
       line: 220.5,
-      edgePct: 0.028,
+      edgePct: 0.033,
       totalScore: 0.73,
     });
     const otherGame = buildSelectedCandidate({
@@ -1948,8 +1948,8 @@ describe('WI-1175: same-game near-miss suppression', () => {
       selection: 'OVER',
       selectionLabel: 'OVER 225.5',
       line: 225.5,
-      edgePct: 0.022,
-      totalScore: 0.68,
+      edgePct: 0.035,
+      totalScore: 0.72,
     });
     const candidates = [winner, sameGameDifferentLine, otherGame];
 
@@ -2205,7 +2205,7 @@ describe('WI-1175: same-game near-miss suppression', () => {
       selection: 'UNDER',
       selectionLabel: 'UNDER 219.5',
       line: 219.5,
-      edgePct: 0.025,
+      edgePct: 0.035,
       totalScore: 0.70,
     });
     const updatedCandidate = buildSelectedCandidate({

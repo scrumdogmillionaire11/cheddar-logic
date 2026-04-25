@@ -373,7 +373,7 @@ Plans:
 **Plans:** 1 plan in 1 wave
 
 Plans:
-- [ ] WI-1178-01-PLAN.md — Sigma-based NBA total edge + three-term totalScore formula + noise floor raise + 4 new tests (Wave 1)
+- [x] WI-1178-01-PLAN.md — Sigma-based NBA total edge + three-term totalScore formula + noise floor raise + 5 new tests (Wave 1)
 
 ---
 

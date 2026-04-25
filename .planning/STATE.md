@@ -3,14 +3,18 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Model Integrity & Betting Execution Hardening
 status: active
-last_updated: "2026-04-21T18:30:00Z"
-last_activity: "2026-04-23 - Completed quick task 174: WI-1139 Add Frozen-Domain Fail-Closed Runtime Guards NFL and FPL Sage"
+last_updated: "2026-04-25T17:17:53Z"
+last_activity: "2026-04-25 - Completed WI-1178 POTD edge normalization and scoring calibration"
 ---
 
 # Project State
 
 This file is the authoritative sprint plan. Agents must read it before claiming any work item.
 Historical quick-task completions: [COMPLETED_SPRINT_LOG.md](./COMPLETED_SPRINT_LOG.md).
+
+## Latest Activity
+
+- **2026-04-25 — WI-1178 completed:** POTD NBA TOTAL edge now uses sigma-based `computeTotalEdge()` instead of the uncalibrated `/20` shortcut; `totalScore` now includes positive-only normalized edge across all scoring branches; NBA TOTAL noise floor default is `0.03`. Verification: `npm --prefix apps/worker run test -- src/jobs/potd/__tests__/signal-engine.test.js --runInBand` passed with 76 tests, and `npm --prefix apps/worker run test -- src/jobs/potd/ --runInBand --silent` passed with 156 tests.
 
 ## Authoritative Source of Truth
 
