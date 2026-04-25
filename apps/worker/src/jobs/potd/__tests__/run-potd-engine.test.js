@@ -1822,6 +1822,25 @@ describe('buildCandidateAuditEntry', () => {
     expect(entry.source).toBe('CONSENSUS');
   });
 
+  test('MODEL_SIGNAL_INCOMPLETE — explicit diagnostic takes precedence over NON_MODEL_SOURCE/MISSING_EDGE_INPUTS', () => {
+    const entry = buildCandidateAuditEntry(
+      {
+        edgePct: null,
+        totalScore: null,
+        confidenceLabel: 'LOW',
+        edgeSourceTag: 'MODEL',
+        modelWinProb: null,
+        impliedProb: 0.52,
+        price: -110,
+        rejectionDiagnostics: [{ code: 'MODEL_SIGNAL_INCOMPLETE' }],
+      },
+      noiseFloor,
+      minScore,
+    );
+    expect(entry.rejectedReason).toBe('MODEL_SIGNAL_INCOMPLETE');
+    expect(entry.rejectionDiagnostics).toContain('MODEL_SIGNAL_INCOMPLETE');
+  });
+
   test('potd_audit:true is set on all entries — field contract', () => {
     const entry = buildCandidateAuditEntry(
       {

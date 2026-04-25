@@ -1219,6 +1219,197 @@ function toFiniteNumber(value) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function impliedProbabilityFromAmerican(price) {
+  const odds = toFiniteNumber(price);
+  if (!Number.isFinite(odds) || odds === 0) return null;
+  if (odds > 0) return Number((100 / (odds + 100)).toFixed(6));
+  const absOdds = Math.abs(odds);
+  return Number((absOdds / (absOdds + 100)).toFixed(6));
+}
+
+function fairPriceFromProbability(probability) {
+  const prob = toFiniteNumber(probability);
+  if (!Number.isFinite(prob) || prob <= 0 || prob >= 1) return null;
+
+  if (prob >= 0.5) {
+    return Math.round((-100 * prob) / (1 - prob));
+  }
+  return Math.round((100 * (1 - prob)) / prob);
+}
+
+function resolveMoneylineModelProbability(payload, side) {
+  const directModelProb = toFiniteNumber(payload?.model_prob ?? payload?.p_fair);
+  if (Number.isFinite(directModelProb)) {
+    return Number(Math.min(1, Math.max(0, directModelProb)).toFixed(6));
+  }
+
+  const homeWinProb = toFiniteNumber(payload?.projection?.win_prob_home);
+  if (!Number.isFinite(homeWinProb)) return null;
+  if (side === 'HOME') return Number(Math.min(1, Math.max(0, homeWinProb)).toFixed(6));
+  if (side === 'AWAY') return Number(Math.min(1, Math.max(0, 1 - homeWinProb)).toFixed(6));
+  return null;
+}
+
+function buildNhlPotdModelSignal(payload, {
+  oddsSnapshot = null,
+  homeGoalieState = null,
+  awayGoalieState = null,
+  marketTypeOverride = null,
+  source = 'NHL_MONEYLINE_MODEL',
+} = {}) {
+  if (!payload || typeof payload !== 'object') return null;
+
+  const marketTypeRaw = String(
+    marketTypeOverride || payload.market_type || payload.recommended_bet_type || 'MONEYLINE',
+  ).toUpperCase();
+  const marketType =
+    marketTypeRaw === 'ML' || marketTypeRaw === 'H2H'
+      ? 'MONEYLINE'
+      : marketTypeRaw;
+  const side = String(
+    payload.selection?.side ||
+      payload.market_context?.selection_side ||
+      payload.prediction ||
+      '',
+  ).toUpperCase();
+  const normalizedSide = side === 'HOME' || side === 'AWAY' ? side : null;
+
+  const selectionTeam =
+    payload.selection?.team ||
+    (normalizedSide === 'HOME'
+      ? oddsSnapshot?.home_team || null
+      : normalizedSide === 'AWAY'
+        ? oddsSnapshot?.away_team || null
+        : null);
+
+  const modelProb = resolveMoneylineModelProbability(payload, normalizedSide);
+  const bookPrice = toFiniteNumber(
+    payload.price ??
+      payload.market_context?.wager?.called_price ??
+      (normalizedSide === 'HOME'
+        ? oddsSnapshot?.h2h_home
+        : normalizedSide === 'AWAY'
+          ? oddsSnapshot?.h2h_away
+          : null),
+  );
+  const impliedProb =
+    toFiniteNumber(payload.p_implied) ?? impliedProbabilityFromAmerican(bookPrice);
+  const edgePct =
+    toFiniteNumber(payload.edge_pct ?? payload.edge) ??
+    (Number.isFinite(modelProb) && Number.isFinite(impliedProb)
+      ? Number((modelProb - impliedProb).toFixed(6))
+      : null);
+  const fairPrice =
+    toFiniteNumber(payload.fair_price) ?? fairPriceFromProbability(modelProb);
+
+  const goalieStateMissing =
+    !isNonEmptyString(homeGoalieState?.starter_state) ||
+    !isNonEmptyString(awayGoalieState?.starter_state);
+
+  const blockers = [];
+  if (marketType !== 'MONEYLINE') blockers.push('MARKET_NOT_SUPPORTED');
+  if (!normalizedSide) blockers.push('NO_SELECTION_SIDE');
+  if (!Number.isFinite(bookPrice)) blockers.push('NO_MARKET_LINE');
+  if (!Number.isFinite(modelProb)) blockers.push('MODEL_PROB_MISSING');
+  if (!Number.isFinite(impliedProb)) blockers.push('IMPLIED_PROB_MISSING');
+  if (!Number.isFinite(edgePct)) blockers.push('EDGE_UNAVAILABLE');
+  if (goalieStateMissing) blockers.push('GOALIE_CONTEXT_MISSING');
+
+  const uniqueBlockers = Array.from(new Set(blockers));
+  const eligibleForPotd = uniqueBlockers.length === 0;
+  const edgeAvailable =
+    Number.isFinite(edgePct) && Number.isFinite(modelProb) && Number.isFinite(impliedProb);
+
+  return {
+    eligible_for_potd: eligibleForPotd,
+    market_type: marketType,
+    selection_side: normalizedSide,
+    selection_team: selectionTeam || null,
+    model_prob: Number.isFinite(modelProb) ? modelProb : null,
+    book_price: Number.isFinite(bookPrice) ? bookPrice : null,
+    implied_prob: Number.isFinite(impliedProb) ? impliedProb : null,
+    edge_pct: Number.isFinite(edgePct) ? edgePct : null,
+    fair_price: Number.isFinite(fairPrice) ? fairPrice : null,
+    edge_available: edgeAvailable,
+    source,
+    blockers: uniqueBlockers,
+  };
+}
+
+function applyNhlModelSignalToCard(card, {
+  marketDecisions = null,
+  oddsSnapshot = null,
+  homeGoalieState = null,
+  awayGoalieState = null,
+} = {}) {
+  if (!card || !card.payloadData || typeof card.payloadData !== 'object') return;
+
+  if (card.cardType === 'nhl-model-output') {
+    const payload = card.payloadData;
+    const moneylineDecision = marketDecisions?.ML;
+    const side = String(moneylineDecision?.best_candidate?.side || '').toUpperCase();
+
+    const overlayPayload = {
+      ...payload,
+      market_type: 'MONEYLINE',
+      selection: {
+        side: side === 'HOME' || side === 'AWAY' ? side : null,
+        team:
+          side === 'HOME'
+            ? oddsSnapshot?.home_team ?? null
+            : side === 'AWAY'
+              ? oddsSnapshot?.away_team ?? null
+              : null,
+      },
+      price:
+        side === 'HOME'
+          ? oddsSnapshot?.h2h_home ?? null
+          : side === 'AWAY'
+            ? oddsSnapshot?.h2h_away ?? null
+            : null,
+      model_prob: resolveMoneylineModelProbability(
+        {
+          model_prob: payload.model_prob,
+          p_fair: moneylineDecision?.p_fair ?? payload.p_fair,
+          projection: {
+            win_prob_home: moneylineDecision?.projection?.win_prob_home ?? payload?.projection?.win_prob_home,
+          },
+        },
+        side,
+      ),
+      p_fair: toFiniteNumber(moneylineDecision?.p_fair ?? payload.p_fair),
+      p_implied: toFiniteNumber(moneylineDecision?.p_implied ?? payload.p_implied),
+      edge_pct: toFiniteNumber(moneylineDecision?.edge ?? payload.edge_pct ?? payload.edge),
+      edge: toFiniteNumber(moneylineDecision?.edge ?? payload.edge),
+      projection: {
+        ...(payload.projection && typeof payload.projection === 'object' ? payload.projection : {}),
+        win_prob_home: toFiniteNumber(
+          moneylineDecision?.projection?.win_prob_home ?? payload?.projection?.win_prob_home,
+        ),
+      },
+    };
+
+    payload.model_signal = buildNhlPotdModelSignal(overlayPayload, {
+      oddsSnapshot,
+      homeGoalieState,
+      awayGoalieState,
+      marketTypeOverride: 'MONEYLINE',
+      source: 'NHL_MODEL_OUTPUT_MONEYLINE',
+    });
+    return;
+  }
+
+  if (card.cardType === 'nhl-moneyline-call') {
+    card.payloadData.model_signal = buildNhlPotdModelSignal(card.payloadData, {
+      oddsSnapshot,
+      homeGoalieState,
+      awayGoalieState,
+      marketTypeOverride: 'MONEYLINE',
+      source: 'NHL_MONEYLINE_CALL',
+    });
+  }
+}
+
 function isNonEmptyString(value) {
   return typeof value === 'string' && value.trim().length > 0;
 }
@@ -3357,6 +3548,14 @@ function generateNHLMarketCallCards(
         };
       }
 
+      payloadData.model_signal = buildNhlPotdModelSignal(payloadData, {
+        oddsSnapshot,
+        homeGoalieState,
+        awayGoalieState,
+        marketTypeOverride: 'MONEYLINE',
+        source: 'NHL_MONEYLINE_CALL',
+      });
+
       cards.push(
         buildMarketCallCard({
           sport: 'NHL',
@@ -3803,6 +4002,12 @@ async function runNHLModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
           for (const card of cards) {
             applyProjectionInputMetadata(card, projectionGate);
             applyNhlDriverContextMetadata(card, oddsSnapshot);
+            applyNhlModelSignalToCard(card, {
+              marketDecisions,
+              oddsSnapshot,
+              homeGoalieState: canonicalGoalieState?.home,
+              awayGoalieState: canonicalGoalieState?.away,
+            });
             applyNhlSettlementMarketContext(card, oddsSnapshot, sigma1pGatePassed);
             // WI-0789: merge key-player availability flags and cap tier at LEAN
             if (availabilityGate.missingFlags.length > 0 || availabilityGate.uncertainFlags.length > 0) {
@@ -3918,6 +4123,12 @@ async function runNHLModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
           for (const card of marketCallCards) {
             applyProjectionInputMetadata(card, projectionGate);
             applyNhlDriverContextMetadata(card, oddsSnapshot);
+            applyNhlModelSignalToCard(card, {
+              marketDecisions,
+              oddsSnapshot,
+              homeGoalieState: canonicalGoalieState?.home,
+              awayGoalieState: canonicalGoalieState?.away,
+            });
             applyNhlSettlementMarketContext(card, oddsSnapshot, sigma1pGatePassed);
             const validation = validateCardPayload(
               card.cardType,
@@ -4314,4 +4525,6 @@ module.exports = {
   applyNhlFeatureTimelinessGuardToCards,
   isHardProjectionInputBlock,
   stampTrainingRowExclusion,
+  buildNhlPotdModelSignal,
+  applyNhlModelSignalToCard,
 };

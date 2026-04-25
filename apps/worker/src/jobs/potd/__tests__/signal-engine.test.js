@@ -151,6 +151,36 @@ describe('potd signal engine', () => {
     expect(candidates.filter((candidate) => candidate.marketType !== 'MONEYLINE' && candidate.mlbSnapshotSignal)).toHaveLength(0);
   });
 
+  test('marks MODEL-contract candidates with modelPayloadPresent when payload exists but signal is incomplete', () => {
+    const candidates = buildCandidates(
+      buildGame({
+        sport: 'NHL',
+        nhlModelPayloadPresent: true,
+        nhlSnapshot: {
+          model_signal: {
+            eligible_for_potd: false,
+            market_type: 'MONEYLINE',
+            selection_side: 'HOME',
+            selection_team: 'Boston Bruins',
+            model_prob: null,
+            book_price: -115,
+            implied_prob: 0.535,
+            edge_pct: null,
+            fair_price: null,
+            edge_available: false,
+            source: 'NHL_MODEL_OUTPUT_MONEYLINE',
+            blockers: ['MODEL_PROB_MISSING'],
+          },
+          homeGoalie: { savePct: null, gsax: null },
+          awayGoalie: { savePct: null, gsax: null },
+        },
+      }),
+    );
+    const moneylineCandidates = candidates.filter((candidate) => candidate.marketType === 'MONEYLINE');
+    expect(moneylineCandidates).toHaveLength(2);
+    expect(moneylineCandidates.every((candidate) => candidate.modelPayloadPresent === true)).toBe(true);
+  });
+
   test('malformed games return no actionable candidates', () => {
     expect(buildCandidates(null)).toEqual([]);
     expect(buildCandidates({ gameId: 'x', market: {} })).toEqual([]);
@@ -1168,12 +1198,19 @@ describe('resolveNBAModelSignal', () => {
       comparableLines: [225, 224.5, 225],
       comparablePrices: [-110, -110, -112],
       sourceCount: 3,
+      modelPayloadPresent: true,
       nbaSnapshot: { totalProjection: null, projection_source: 'NBA_TOTALS_MODEL' },
     };
     const scored = scoreCandidate(candidate);
     expect(scored).not.toBeNull();
-    // Null totalProjection → falls through to consensus fallback
-    expect(scored.edgeSourceTag).toBe('CONSENSUS_FALLBACK');
+    // WI-1180: payload-present MODEL markets emit explicit rejection diagnostics.
+    expect(scored.edgeSourceTag).toBe('MODEL');
+    expect(scored.edgePct).toBeNull();
+    expect(scored.rejectionDiagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: 'MODEL_SIGNAL_INCOMPLETE' }),
+      ]),
+    );
   });
 
   test('uses NBA totals model projection to compute edgePct when snapshot is valid', () => {
@@ -1270,6 +1307,34 @@ describe('resolveNBAModelSignal', () => {
     });
     expect(scoreCandidate(makeCandidate('MONEYLINE', 'HOME')).edgeSourceTag).toBe('CONSENSUS_FALLBACK');
     expect(scoreCandidate(makeCandidate('SPREAD', 'HOME')).edgeSourceTag).toBe('CONSENSUS_FALLBACK');
+  });
+
+  test('CONSENSUS_FALLBACK markets remain consensus even when modelPayloadPresent is set', () => {
+    const scored = scoreCandidate({
+      gameId: 'mlb-spread-consensus-still-valid',
+      sport: 'MLB',
+      home_team: 'Yankees',
+      away_team: 'Red Sox',
+      commence_time: new Date().toISOString(),
+      marketType: 'SPREAD',
+      selection: 'HOME',
+      selectionLabel: 'Yankees -1.5',
+      line: -1.5,
+      price: -110,
+      consensusLine: -1.5,
+      consensusPrice: -110,
+      counterpartConsensusPrice: -110,
+      consensusImplied: 0.524,
+      counterpartConsensusImplied: 0.524,
+      comparableLines: [-1.5, -1.5],
+      comparablePrices: [-110, -112],
+      sourceCount: 2,
+      modelPayloadPresent: true,
+    });
+
+    expect(scored).not.toBeNull();
+    expect(scored.edgeSourceTag).toBe('CONSENSUS_FALLBACK');
+    expect(scored.rejectionDiagnostics).toBeUndefined();
   });
 });
 
