@@ -374,3 +374,16 @@ Plans:
 
 Plans:
 - [ ] WI-1178-01-PLAN.md — Sigma-based NBA total edge + three-term totalScore formula + noise floor raise + 4 new tests (Wave 1)
+
+---
+
+### Phase: WI-1172 — Collapse Dead MLB SIERA/xERA Fallback Weighting To Active Runtime Contract
+
+**Goal**: Remove dead `siera`/`x_era` null-weighting branches from MLB starter-skill fallback projection logic, align runtime behavior with active data availability, and keep ADR-0007 in exact contract parity with implementation.
+
+**Requirements:** [WI-1172-FALLBACK-01, WI-1172-ADR-01, WI-1172-REG-01]
+
+**Plans:** 1 plan in 1 wave
+
+Plans:
+- [ ] WI-1172-01-PLAN.md — Simplify fallback contract to active signals + regression coverage + ADR contract alignment (Wave 1)
