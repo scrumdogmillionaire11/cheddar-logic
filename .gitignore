@@ -133,3 +133,8 @@ debug_*.js
 Claude-research/
 scripts/tmp_*
 scripts/debug/
+
+# Allow WI-1174 planning artifacts to be tracked
+!.planning/phases/
+!.planning/phases/WI-1174/
+!.planning/phases/WI-1174/WI-1174-01-PLAN.md
