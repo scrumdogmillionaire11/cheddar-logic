@@ -655,6 +655,10 @@ const POTD_MIN_TOTAL_SCORE = Number(process.env.POTD_MIN_TOTAL_SCORE || 0.30);  
 // With 4 active sports the effective ceiling is 4.
 const POTD_MAX_NOMINEES = Number(process.env.POTD_MAX_NOMINEES || 5);
 const POTD_MAX_NEAR_MISS_SHADOW_CANDIDATES = 3;
+const POTD_EMPTY_SELECTION_REJECTION_CODES = new Set([
+  'NO_QUALIFIED_PROPS',
+  'SKIP_MARKET_NO_EDGE',
+]);
 // Set POTD_AUDIT_LOG_ENABLED=false to suppress per-candidate audit lines in production logs.
 const POTD_AUDIT_LOG_ENABLED = process.env.POTD_AUDIT_LOG_ENABLED !== 'false';
 /**
@@ -762,6 +766,17 @@ function buildCandidateAuditEntry(candidate, noiseFloor, minScore) {
     rejectionDiagnostics: rejectionCodes,
     rejectedReason,
   };
+}
+
+function hasEmptySelectionRejectionCode(candidate) {
+  const diagnostics = Array.isArray(candidate?.rejectionDiagnostics)
+    ? candidate.rejectionDiagnostics
+    : [];
+
+  return diagnostics.some((entry) => {
+    const code = String(entry?.code || '').trim().toUpperCase();
+    return POTD_EMPTY_SELECTION_REJECTION_CODES.has(code);
+  });
 }
 
 /**
@@ -1150,6 +1165,20 @@ async function gatherBestCandidate({
           totalScore: c.totalScore,
           edgeSourceTag: c.edgeSourceTag,
           note: 'MODEL candidate blocked — sport health status is critical or stale',
+        }));
+      }
+      return false;
+    }
+    if (hasEmptySelectionRejectionCode(c)) {
+      if (POTD_AUDIT_LOG_ENABLED) {
+        console.log(JSON.stringify({
+          type: 'POTD_EMPTY_SELECTION_REJECTION',
+          sport: c.sport,
+          marketType: c.marketType,
+          selectionLabel: c.selectionLabel,
+          edgePct: c.edgePct,
+          totalScore: c.totalScore,
+          rejectionDiagnostics: c.rejectionDiagnostics,
         }));
       }
       return false;
@@ -1723,5 +1752,6 @@ module.exports = {
     selectNearMissShadowCandidates,
     buildCandidateAuditEntry,
     loadModelHealthGates,
+    hasEmptySelectionRejectionCode,
   },
 };
