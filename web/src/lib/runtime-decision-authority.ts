@@ -10,25 +10,22 @@
  * live exclusively in packages/models/src/decision-authority.js.
  */
 
-import { createRequire } from 'module';
+import type { CanonicalDecisionResult } from '@cheddar-logic/models/decision-authority';
+import * as _decisionAuthority from '@cheddar-logic/models/decision-authority';
 
-const _require = createRequire(import.meta.url);
-const { resolveCanonicalDecision } = _require('@cheddar-logic/models/decision-authority') as {
-  resolveCanonicalDecision: (
-    payload: object | null,
-    options?: {
-      stage?: string;
-      fallbackToLegacy?: boolean;
-      strictSource?: boolean;
-      missingReasonCode?: string;
-    },
-  ) => {
-    official_status: string;
-    is_actionable: boolean;
-    reason_code: string;
-    lifecycle: Array<{ stage: string; status: string; reason_code: string }>;
-  } | null;
-};
+const resolveCanonicalDecision = (
+  _decisionAuthority as unknown as {
+    resolveCanonicalDecision: (
+      payload: object | null,
+      options?: {
+        stage?: string;
+        fallbackToLegacy?: boolean;
+        strictSource?: boolean;
+        missingReasonCode?: string;
+      },
+    ) => CanonicalDecisionResult | null;
+  }
+).resolveCanonicalDecision;
 
 // ---------------------------------------------------------------------------
 // Public types
