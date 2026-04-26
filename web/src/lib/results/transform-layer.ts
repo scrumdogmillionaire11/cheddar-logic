@@ -68,7 +68,18 @@ function normalizeStatusToken(value: string | null): string | null {
 export function resolveDecisionTier(
   payload: Record<string, unknown> | null,
 ): DecisionTierStatus {
-  const decision = readRuntimeCanonicalDecision(payload, { stage: 'read_api' });
+  // Results payloads store decision_v2 under payload.play.decision_v2
+  // (card_payload envelope) or directly at payload.decision_v2.
+  // Normalise to top-level before passing to the authority.
+  const play =
+    payload?.play && typeof payload.play === 'object'
+      ? (payload.play as Record<string, unknown>)
+      : null;
+  const normalizedPayload: Record<string, unknown> = {
+    ...payload,
+    decision_v2: payload?.decision_v2 ?? play?.decision_v2 ?? null,
+  };
+  const decision = readRuntimeCanonicalDecision(normalizedPayload, { stage: 'read_api' });
   return decision.officialStatus;
 }
 
