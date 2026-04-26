@@ -2722,12 +2722,14 @@ function calculateProjectionK(pitcher, matchup, leashTier, weather, options = {}
     homeAwayContext = hasHome && hasAway ? 'MIXED' : 'UNKNOWN';
   }
 
-  // Emit reason codes for command context state.
-  if (commandRiskFlag) projectionFlags.push('COMMAND_RISK_RECENT_BB_RATE');
-  else if (recentBbPctStatus === 'SMALL_SAMPLE') projectionFlags.push('COMMAND_CONTEXT_SMALL_SAMPLE');
-  else if (recentBbPctStatus === 'MISSING') projectionFlags.push('COMMAND_CONTEXT_MISSING');
+  // Command-context reason codes are informational and do not affect projection_source.
+  // They are emitted in a separate array merged into flags at return time.
+  const commandContextFlags = [];
+  if (commandRiskFlag) commandContextFlags.push('COMMAND_RISK_RECENT_BB_RATE');
+  else if (recentBbPctStatus === 'SMALL_SAMPLE') commandContextFlags.push('COMMAND_CONTEXT_SMALL_SAMPLE');
+  else if (recentBbPctStatus === 'MISSING') commandContextFlags.push('COMMAND_CONTEXT_MISSING');
   if (homeAwayContext === 'HOME' || homeAwayContext === 'AWAY') {
-    projectionFlags.push('HOME_AWAY_CONTEXT_SHIFT');
+    commandContextFlags.push('HOME_AWAY_CONTEXT_SHIFT');
   }
 
   // Apply projection penalty for command risk with overlap cap.
@@ -2803,7 +2805,7 @@ function calculateProjectionK(pitcher, matchup, leashTier, weather, options = {}
     },
     fair_prices: ladder.fair_prices,
     probability_ladder: ladder.probability_ladder,
-    flags: projectionFlags,
+    flags: [...projectionFlags, ...commandContextFlags],
     uncalculable: false,
   };
 }
@@ -3714,7 +3716,7 @@ function computePitcherKDriverCards(gameId, oddsSnapshot, options) {
       season_avg_velo: pitcher.season_avg_velo ?? null,
       last3_avg_velo: pitcher.last3_avg_velo ?? null,
       strikeout_history: pitcher.strikeout_history ?? [],
-      // WI-0763: game_role ('home'|'away') lets calculateProjectionK apply home/road split
+      // WI-1173: game_role ('home'|'away') populates home_away_context for command-context derivation
       game_role: role,
     };
 
