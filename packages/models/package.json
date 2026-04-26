@@ -5,7 +5,9 @@
   "main": "src/index.js",
   "exports": {
     ".": "./src/index.js",
-    "./decision-authority": "./src/decision-authority.js"
+    "./decision-authority": "./src/decision-authority.js",
+    "./src/*.js": "./src/*.js",
+    "./src/*": "./src/*.js"
   },
   "keywords": [
     "cards",
