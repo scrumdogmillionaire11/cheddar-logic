@@ -33,6 +33,10 @@ const {
   selectTopPlays,
   kellySize,
 } = require('./signal-engine');
+const {
+  resolveCanonicalDecision,
+  CANONICAL_DECISION_SOURCE,
+} = require('@cheddar-logic/models');
 const { formatPotdDiscordMessage } = require('./format-discord');
 const { sendDiscordMessages } = require('../post_discord_cards');
 
@@ -870,6 +874,22 @@ function recommendedBetTypeFor(marketType) {
 }
 
 function buildCardPayloadData(candidate, { nowIso, wagerAmount, bankrollAtPost, kellyFraction, confidenceMultiplier: confidenceMultiplierValue }) {
+  const canonicalDecision = resolveCanonicalDecision(
+    {
+      decision_v2: {
+        official_status: 'PLAY',
+        primary_reason_code: 'POTD_CANDIDATE_SELECTED',
+        source: CANONICAL_DECISION_SOURCE,
+      },
+    },
+    {
+      stage: 'publisher',
+      fallbackToLegacy: false,
+      strictSource: true,
+      missingReasonCode: 'POTD_CANDIDATE_SELECTED',
+    },
+  );
+
   return {
     game_id: candidate.gameId,
     sport: candidate.sport,
@@ -877,7 +897,26 @@ function buildCardPayloadData(candidate, { nowIso, wagerAmount, bankrollAtPost, 
     action: 'FIRE',
     status: 'FIRE',
     classification: 'BASE',
-    decision_v2: { official_status: 'PLAY' },
+    decision_v2: {
+      official_status: 'PLAY',
+      primary_reason_code: 'POTD_CANDIDATE_SELECTED',
+      source: CANONICAL_DECISION_SOURCE,
+    },
+    canonical_decision:
+      canonicalDecision || {
+        official_status: 'PLAY',
+        is_actionable: true,
+        tier: 'PLAY',
+        reason_code: 'POTD_CANDIDATE_SELECTED',
+        source: CANONICAL_DECISION_SOURCE,
+        lifecycle: [
+          {
+            stage: 'publisher',
+            status: 'CLEARED',
+            reason_code: 'POTD_CANDIDATE_SELECTED',
+          },
+        ],
+      },
     // Canonical play-state: POTD only fires for candidates that cleared the
     // positive-edge and confidence gates in gatherBestCandidate(). Stamp
     // final_play_state explicitly so all downstream surfaces (Discord, /wedge)

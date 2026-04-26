@@ -22,6 +22,7 @@ const {
   deriveWebhookWouldBecomePlay,
   deriveWebhookDropToPass,
   describeEdgeMagnitude,
+  resolveCanonicalDecision,
 } = require('@cheddar-logic/models');
 const { getReasonCodeLabel } = require('@cheddar-logic/data');
 
@@ -121,6 +122,18 @@ function webhookPublishBucket(card) {
   const publishStatus = normalizeWebhookPublishStatus(payload.webhook_publish_status);
   if (publishStatus === 'PLAY') return 'official';
   if (publishStatus === 'SLIGHT_EDGE') return 'lean';
+  return 'pass_blocked';
+}
+
+function resolveCanonicalBucket(payload) {
+  const canonicalDecision = resolveCanonicalDecision(payload, {
+    stage: 'read_api',
+    fallbackToLegacy: false,
+    strictSource: true,
+  });
+  if (!canonicalDecision) return '';
+  if (canonicalDecision.official_status === 'PLAY') return 'official';
+  if (canonicalDecision.official_status === 'SLIGHT_EDGE') return 'lean';
   return 'pass_blocked';
 }
 
@@ -413,6 +426,9 @@ function sportLabel(sport) {
 
 function isNonPassCard(card) {
   const payload = card?.payloadData || null;
+  const canonicalBucket = resolveCanonicalBucket(payload);
+  if (canonicalBucket) return canonicalBucket !== 'pass_blocked';
+
   const statusCandidates = [
     payload?.action,
     payload?.status,
@@ -611,6 +627,8 @@ function classifyDecisionBucket(card) {
   if (normalizeToken(card?.payloadData?.kind) === 'EVIDENCE' && !isFirstPeriodCard(card)) return 'pass_blocked';
   const publishBucket = webhookPublishBucket(card);
   if (publishBucket) return publishBucket;
+  const canonicalBucket = resolveCanonicalBucket(card?.payloadData || {});
+  if (canonicalBucket) return canonicalBucket;
   const bucket = normalizeWebhookBucketToken(card?.payloadData?.webhook_bucket);
   if (bucket === 'official' || bucket === 'lean' || bucket === 'pass_blocked') return bucket;
   return classifyDecisionBucketLegacy(card);
