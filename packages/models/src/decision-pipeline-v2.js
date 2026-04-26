@@ -8,7 +8,9 @@ const {
 const {
   ALL_REASON_CODES: _ALL_REASON_CODES,
 } = require('../../data');
-const { normalizeMarketType } = require('../../data/src/market-contract');
+const {
+  normalizeMarketType: normalizeCanonicalMarketType,
+} = require('../../data/src/market-contract');
 
 // Startup check: all locally-defined reason codes must be canonical or aliased.
 // This catches any future code added to WATCHDOG_REASONS / PRICE_REASONS without registration.
@@ -205,6 +207,30 @@ function asString(value) {
   if (typeof value !== 'string') return null;
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : null;
+}
+
+function normalizeDecisionMarketType(rawValue) {
+  const token = asString(rawValue)
+    ?.toUpperCase()
+    .replace(/[\s-]+/g, '_');
+  if (!token) return null;
+
+  if (
+    token === 'FIRST_PERIOD' ||
+    token === '1P' ||
+    token === 'P1' ||
+    token === 'FIRSTPERIOD'
+  ) {
+    return 'FIRST_PERIOD';
+  }
+  if (token === 'TEAM_TOTAL' || token === 'TEAMTOTAL') {
+    return 'TEAM_TOTAL';
+  }
+  if (token === 'PUCKLINE' || token === 'PUCK_LINE') {
+    return 'PUCKLINE';
+  }
+
+  return normalizeCanonicalMarketType(rawValue);
 }
 
 function uniqueReasonCodes(...reasonGroups) {
@@ -848,7 +874,7 @@ function validateExactWager({ payload, marketType, direction, line, price }) {
     return false;
   }
 
-  const calledMarket = normalizeMarketType(trace?.called_market_type);
+  const calledMarket = normalizeDecisionMarketType(trace?.called_market_type);
   if (calledMarket && calledMarket !== marketType) {
     return false;
   }
@@ -1336,7 +1362,7 @@ function isWave1EligiblePayload(payload) {
   if (!payload || payload.kind !== 'PLAY') return false;
   const sport = normalizeSport(payload.sport);
   if (!WAVE1_SPORTS.has(sport)) return false;
-  const marketType = normalizeMarketType(payload.market_type);
+  const marketType = normalizeDecisionMarketType(payload.market_type);
   return Boolean(marketType && WAVE1_MARKETS.has(marketType));
 }
 
@@ -1345,7 +1371,7 @@ function buildDecisionV2(payload, context = {}) {
 
   try {
     const sport = normalizeSport(payload?.sport);
-    const market_type = normalizeMarketType(
+    const market_type = normalizeDecisionMarketType(
       payload?.market_type ?? payload?.recommended_bet_type,
     );
     const firstPeriodProjectionSignal =
