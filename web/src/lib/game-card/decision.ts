@@ -25,6 +25,7 @@ import {
   GATE,
   type SupportScore,
 } from './driver-scoring';
+import { readRuntimeCanonicalDecision } from '@/lib/runtime-decision-authority';
 
 type DecisionPolarity = 'pro' | 'contra' | 'neutral';
 
@@ -102,29 +103,6 @@ function hasPlaceholderDriverText(value: string): boolean {
   );
 }
 
-function isValidAction(value: unknown): value is PlayDisplayAction {
-  return value === 'FIRE' || value === 'HOLD' || value === 'PASS';
-}
-
-function actionFromClassificationValue(
-  value: unknown,
-): PlayDisplayAction | undefined {
-  if (value === 'BASE' || value === 'PLAY') return 'FIRE';
-  if (value === 'LEAN') return 'HOLD';
-  if (value === 'PASS') return 'PASS';
-  return undefined;
-}
-
-function actionFromOfficialStatus(
-  value: unknown,
-): PlayDisplayAction | undefined {
-  const official = String(value ?? '').toUpperCase();
-  if (official === 'PLAY') return 'FIRE';
-  if (official === 'LEAN') return 'HOLD';
-  if (official === 'PASS') return 'PASS';
-  return undefined;
-}
-
 function classificationFromAction(
   action: PlayDisplayAction,
 ): 'BASE' | 'LEAN' | 'PASS' {
@@ -155,30 +133,16 @@ export function resolvePlayDisplayDecision(
       }
     | null,
 ): ResolvedPlayDisplayDecision {
-  const canonicalAction = actionFromOfficialStatus(
-    play?.decision_v2?.canonical_envelope_v2?.official_status,
+  const authorityDecision = readRuntimeCanonicalDecision(
+    {
+      decision_v2: play?.decision_v2 ?? null,
+      action: play?.action,
+      classification: play?.classification,
+      status: play?.final_market_decision?.surfaced_status,
+    },
+    { stage: 'read_api' },
   );
-
-  const surfacedAction = actionFromOfficialStatus(
-    play?.final_market_decision?.surfaced_status === 'SLIGHT EDGE'
-      ? 'LEAN'
-      : play?.final_market_decision?.surfaced_status,
-  );
-  const explicitAction = isValidAction(play?.action) ? play.action : undefined;
-  const classificationAction = actionFromClassificationValue(
-    play?.classification,
-  );
-  const decisionV2Action = actionFromOfficialStatus(
-    play?.decision_v2?.official_status,
-  );
-
-  const action =
-    canonicalAction ??
-    surfacedAction ??
-    explicitAction ??
-    classificationAction ??
-    decisionV2Action ??
-    'PASS';
+  const action = authorityDecision.action;
 
   return {
     action,

@@ -8,7 +8,6 @@ import {
   deriveModelFamily,
   deriveModelVersion,
   deriveResultCardMode,
-  hasActionableProjectionCall,
 } from '@/app/api/results/projection-metrics';
 import type {
   ActionableSourceRow,
@@ -17,6 +16,7 @@ import type {
   ResultsQueryData,
   ResultsRequestFilters,
 } from './query-layer';
+import { readRuntimeCanonicalDecision } from '@/lib/runtime-decision-authority';
 
 export type DecisionSegmentId = 'play' | 'slight_edge';
 type DecisionTierStatus = 'PLAY' | 'LEAN' | 'PASS_OR_OTHER';
@@ -65,50 +65,13 @@ function normalizeStatusToken(value: string | null): string | null {
   return normalized.length > 0 ? normalized : null;
 }
 
-function resolveLegacyDecisionTierFallback(
-  payload: Record<string, unknown> | null,
-): DecisionTierStatus {
-  const fallbackSignals = [
-    getNestedString(payload, ['decision', 'status']),
-    getNestedString(payload, ['status']),
-    getNestedString(payload, ['play', 'status']),
-    getNestedString(payload, ['action']),
-    getNestedString(payload, ['play', 'action']),
-    getNestedString(payload, ['decision', 'action']),
-  ];
-
-  for (const signal of fallbackSignals) {
-    const normalized = normalizeStatusToken(signal);
-    if (normalized === 'FIRE' || normalized === 'PLAY') return 'PLAY';
-    if (normalized === 'LEAN') return 'LEAN';
-    if (
-      normalized === 'PASS' ||
-      normalized === 'WATCH' ||
-      normalized === 'HOLD'
-    ) {
-      return 'PASS_OR_OTHER';
-    }
-  }
-
-  return 'PASS_OR_OTHER';
-}
-
 export function resolveDecisionTier(
   payload: Record<string, unknown> | null,
 ): DecisionTierStatus {
-  const officialStatus = normalizeStatusToken(
-    getNestedString(payload, ['play', 'decision_v2', 'official_status']) ||
-      getNestedString(payload, ['decision_v2', 'official_status']),
-  );
-  if (officialStatus === 'PLAY') return 'PLAY';
-  if (officialStatus === 'LEAN') return 'LEAN';
-  if (officialStatus === 'PASS') return 'PASS_OR_OTHER';
-
-  if (!hasActionableProjectionCall(payload)) {
-    return 'PASS_OR_OTHER';
-  }
-
-  return resolveLegacyDecisionTierFallback(payload);
+  const decision = readRuntimeCanonicalDecision(payload, { stage: 'read_api' });
+  if (decision.officialStatus === 'PLAY') return 'PLAY';
+  if (decision.officialStatus === 'LEAN') return 'LEAN';
+  return 'PASS_OR_OTHER';
 }
 
 export function deriveDecisionSegment(

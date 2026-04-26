@@ -1,24 +1,39 @@
 import assert from 'node:assert';
-import fs from 'node:fs';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const routeHandlerPath = path.resolve(__dirname, '../lib/games/route-handler.ts');
-const source = fs.readFileSync(routeHandlerPath, 'utf8');
+import { resolveLiveOfficialStatus } from '../lib/games/route-handler';
 
-assert(
-	source.includes('export function shouldSynthesizeProjectionSurfaceDecisionV2('),
-	'expected shouldSynthesizeProjectionSurfaceDecisionV2 export in games route handler',
-);
-assert(
-	source.includes("return lifecycleMode !== 'active';"),
-	'expected active-mode synthesis gate to fail closed',
-);
-assert(
-	source.includes('if (!shouldSynthesizeProjectionSurfaceDecisionV2(lifecycleMode))'),
-	'expected projection-surface fallback branch to reject active-mode synthesis',
-);
+const prevEnforce = process.env.ENFORCE_CANONICAL_DECISION_ONLY;
+process.env.ENFORCE_CANONICAL_DECISION_ONLY = 'true';
 
-console.log('API games reject legacy fallback active source-contract tests passed');
+try {
+  const legacyOnlyPlay = {
+    action: 'FIRE',
+    classification: 'BASE',
+    status: 'FIRE',
+  };
+
+  assert.strictEqual(
+    resolveLiveOfficialStatus(legacyOnlyPlay as never),
+    'PASS',
+    'games runtime read path must ignore legacy action/classification/status when canonical decision is missing',
+  );
+
+  const canonicalPlay = {
+    decision_v2: {
+      official_status: 'PLAY',
+      canonical_envelope_v2: {
+        official_status: 'PLAY',
+      },
+    },
+  };
+
+  assert.strictEqual(
+    resolveLiveOfficialStatus(canonicalPlay as never),
+    'PLAY',
+    'games runtime read path must honor canonical decision_v2',
+  );
+} finally {
+  process.env.ENFORCE_CANONICAL_DECISION_ONLY = prevEnforce;
+}
+
+console.log('API games canonical-only runtime behavior tests passed');

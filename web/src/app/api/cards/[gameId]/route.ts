@@ -105,6 +105,11 @@ interface CardRow {
   model_output_ids: string | null;
 }
 
+function shouldApplyGlobalRunFallback(lifecycleMode: ReturnType<typeof resolveLifecycleMode>): boolean {
+  // Active mode is fail-closed: never widen from scoped runs to global history.
+  return lifecycleMode !== 'active';
+}
+
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ gameId: string }> },
@@ -226,7 +231,11 @@ export async function GET(
       offset,
     ) as CardRow[];
 
-    if (activeRunIds.length > 0 && cards.length === 0) {
+    if (
+      activeRunIds.length > 0 &&
+      cards.length === 0 &&
+      shouldApplyGlobalRunFallback(lifecycleMode)
+    ) {
       const baseWhereSql = baseWhere.join(' AND ');
       const fallbackStmt = db.prepare(buildSql(baseWhereSql));
       cards = fallbackStmt.all(...baseParams, limit, offset) as CardRow[];

@@ -169,7 +169,7 @@ interface CardsDropDiagnostics {
   }>;
 }
 
-export function shouldApplyGlobalRunFallback(lifecycleMode: LifecycleMode): boolean {
+function shouldApplyGlobalRunFallback(lifecycleMode: LifecycleMode): boolean {
   // Active mode is fail-closed: never widen from scoped runs to global history.
   return lifecycleMode !== 'active';
 }
