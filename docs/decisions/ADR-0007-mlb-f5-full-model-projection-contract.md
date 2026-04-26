@@ -8,8 +8,10 @@ MLB F5 totals were previously derived from ERA + WHIP/K9 overlays, and synthetic
 
 ## Decision
 - Use a starter/matchup/environment F5 model whenever the required inputs are present:
-  - starter skill RA9:
-    `0.40 * SIERA + 0.35 * xFIP + 0.25 * xERA`, then K%, BB%, HR/9, and GB% adjustments
+  - starter skill RA9 (active fallback contract, WI-1172): **xFIP-only**
+    `adjusted_starter_ra9 = xFIP`, then K%, BB%, HR/9, and GB% adjustments
+    — SIERA and xERA are **future-only** signals pending a separate ingest WI;
+      they do not contribute to fallback weighting in the current runtime
   - opponent split profile: wRC+, K%, BB%, ISO, xwOBA, hard-hit%, and rolling 14-day wRC+ vs starter handedness
   - environment: park run factor, temperature, wind, roof state
   - leash / exposure: projected starter F5 IP from recent IP + pitch-count average, plus a third-time-through penalty multiplier
@@ -30,7 +32,7 @@ MLB F5 totals were previously derived from ERA + WHIP/K9 overlays, and synthetic
   - `projection_source="DEGRADED_MODEL"` => cap display/action at `WATCH` / `LEAN`
   - `abs(model_total - market_line) < 0.5` => emit a visible `PASS` card with `PASS_NO_EDGE`
 - Do not use ERA as the projection anchor:
-  - synthetic fallback may use weighted SIERA/xFIP/xERA when present, otherwise a neutral floor
+  - synthetic fallback uses xFIP when present, otherwise a neutral floor (4.5)
   - ERA can remain a display/debug field, but not the primary driver
 - Keep MLB F5 in `PROJECTION_ONLY` runtime mode until a later promotion WI explicitly moves the family to `LIVE`.
 

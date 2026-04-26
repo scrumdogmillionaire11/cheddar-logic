@@ -506,18 +506,18 @@ function ensureGameLogsTable(db) {
 
 function upsertGameLogs(db, mlbPitcherId, splits, season) {
   ensureGameLogsTable(db);
+  // WI-1173: hits and earned_runs removed from active write path; columns retained in schema
+  // for historical rows. H/9 and ERA-proxy carry negligible K rate signal value.
   const stmt = db.prepare(`
     INSERT INTO mlb_pitcher_game_logs
       (id, mlb_pitcher_id, game_pk, game_date, season,
-       innings_pitched, strikeouts, walks, hits, earned_runs,
+       innings_pitched, strikeouts, walks,
        number_of_pitches, batters_faced, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
     ON CONFLICT(mlb_pitcher_id, game_pk) DO UPDATE SET
       innings_pitched   = excluded.innings_pitched,
       strikeouts        = excluded.strikeouts,
       walks             = excluded.walks,
-      hits              = excluded.hits,
-      earned_runs       = excluded.earned_runs,
       number_of_pitches = excluded.number_of_pitches,
       batters_faced     = excluded.batters_faced,
       updated_at        = datetime('now')
@@ -541,8 +541,6 @@ function upsertGameLogs(db, mlbPitcherId, splits, season) {
       parseFloat(stat.inningsPitched) || null,
       parseInt(stat.strikeOuts, 10) || null,
       parseInt(stat.baseOnBalls, 10) || null,
-      parseInt(stat.hits, 10) || null,
-      parseInt(stat.earnedRuns, 10) || null,
       parseInt(stat.numberOfPitches, 10) || null,
       parseInt(stat.battersFaced, 10) || null,
     );

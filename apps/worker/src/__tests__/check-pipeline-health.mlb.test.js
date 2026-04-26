@@ -307,13 +307,13 @@ describe('checkOddsFreshness — quota-aware status downgrade', () => {
     }));
   });
 
-  test('writes warning (not failed) when odds are stale and quota tier is MEDIUM', () => {
+  test('writes warning (not failed) when odds are stale and quota tier is MEDIUM', async () => {
     upcomingGames = [{ game_id: 'g-001', game_time_utc: DateTime.utc().plus({ hours: 2 }).toISO() }];
     latestOddsByGame['g-001'] = { captured_at: DateTime.utc().minus({ minutes: 90 }).toISO() };
     mockGetCurrentQuotaTier.mockReturnValue('MEDIUM');
 
     ({ checkOddsFreshness } = require('../jobs/check_pipeline_health'));
-    const result = checkOddsFreshness();
+    const result = await checkOddsFreshness();
 
     expect(result.ok).toBe(false);
     expect(pipelineWrites[0][2]).toBe('warning');
@@ -321,25 +321,25 @@ describe('checkOddsFreshness — quota-aware status downgrade', () => {
     expect(pipelineWrites[0][3]).toContain('paused');
   });
 
-  test('writes failed when odds are stale and quota tier is FULL', () => {
+  test('writes failed when odds are stale and quota tier is FULL', async () => {
     upcomingGames = [{ game_id: 'g-002', game_time_utc: DateTime.utc().plus({ hours: 2 }).toISO() }];
     latestOddsByGame['g-002'] = { captured_at: DateTime.utc().minus({ minutes: 90 }).toISO() };
     mockGetCurrentQuotaTier.mockReturnValue('FULL');
 
     ({ checkOddsFreshness } = require('../jobs/check_pipeline_health'));
-    const result = checkOddsFreshness();
+    const result = await checkOddsFreshness();
 
     expect(result.ok).toBe(false);
     expect(pipelineWrites[0][2]).toBe('failed');
   });
 
-  test('writes ok when odds are fresh regardless of quota tier', () => {
+  test('writes ok when odds are fresh regardless of quota tier', async () => {
     upcomingGames = [{ game_id: 'g-003', game_time_utc: DateTime.utc().plus({ hours: 2 }).toISO() }];
     latestOddsByGame['g-003'] = { captured_at: DateTime.utc().minus({ minutes: 5 }).toISO() };
     mockGetCurrentQuotaTier.mockReturnValue('CRITICAL');
 
     ({ checkOddsFreshness } = require('../jobs/check_pipeline_health'));
-    const result = checkOddsFreshness();
+    const result = await checkOddsFreshness();
 
     expect(result.ok).toBe(true);
     expect(pipelineWrites[0][2]).toBe('ok');

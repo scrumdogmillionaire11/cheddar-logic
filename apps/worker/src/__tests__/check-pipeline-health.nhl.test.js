@@ -366,6 +366,10 @@ describe('checkNhlSogSyncFreshness / checkNhlSogPullFreshness', () => {
     upcomingNhlGameCount = 2;
     pipelineWrites = [];
 
+    jest.doMock('@cheddar-logic/data/src/feature-flags', () => ({
+      isFeatureEnabled: jest.fn(() => true),
+    }));
+
     jest.doMock('@cheddar-logic/data', () => ({
       getDatabase: jest.fn(() => ({
         prepare: jest.fn((sql) => {

@@ -3212,12 +3212,12 @@ function buildPitcherStrikeoutLookback(
     strikeouts: toFiniteNumber(row.strikeouts),
     number_of_pitches: toFiniteNumber(row.number_of_pitches),
     innings_pitched: toFiniteNumber(row.innings_pitched),
-    // WI-0763: walks + batters_faced feed BB% modifier; home_away feeds split adjustment
+    // WI-1173: walks + batters_faced feed command-context BB%; home_away feeds home_away_context.
     walks: toFiniteNumber(row.walks ?? 0),
     batters_faced: toFiniteNumber(row.batters_faced ?? 0),
     home_away: row.home_away ?? null,
-    // hits and earned_runs are fetched by pull_mlb_pitcher_stats.js but intentionally
-    // excluded here — H/9 and ERA-proxy carry negligible K rate signal value.
+    // hits and earned_runs columns exist in schema but are no longer written (WI-1173) and
+    // carry negligible K rate signal value — intentionally excluded from model input.
   }));
 }
 
@@ -3225,11 +3225,8 @@ const PROJECTION_FLOOR_F5_FALLBACK = 4.5;
 
 /**
  * Look up starter skill RA9 for a team from mlb_pitcher_stats.
- * Uses normalized weighted blend: SIERA (0.40) + xFIP (0.35) + xERA (0.25).
- * Only non-null signals contribute; weights are re-normalized so the result is
- * never silently miscalibrated by absent inputs.
- * Currently: SIERA is computed from K%/BB% (estimated via league-avg GB rate);
- * xERA requires Statcast barrel data and is null until that WI ships.
+ * Active contract (WI-1172): x_fip-only. siera and x_era are future signals
+ * pending a separate ingest WI; they do not contribute to fallback weighting.
  * Used as a DB fallback when raw_data has no embedded pitcher info (WITHOUT_ODDS_MODE).
  * Tries all lookup keys (full name + abbreviation) via resolveMlbTeamLookupKeys.
  * @param {string} team - Full team name or abbreviation (e.g. 'Toronto Blue Jays' or 'TOR')
@@ -3240,22 +3237,14 @@ function getPitcherEraFromDb(team) {
   try {
     const db = getDatabase();
     const stmt = db.prepare(
-      'SELECT siera, x_fip, x_era FROM mlb_pitcher_stats WHERE team = ? ORDER BY updated_at DESC LIMIT 1',
+      'SELECT x_fip FROM mlb_pitcher_stats WHERE team = ? ORDER BY updated_at DESC LIMIT 1',
     );
     for (const key of resolveMlbTeamLookupKeys(team)) {
       const row = stmt.get(key);
       if (!row) continue;
-      const parts = [
-        { value: row.siera != null ? toFiniteNumber(row.siera) : null, weight: 0.4 },
-        { value: row.x_fip != null ? toFiniteNumber(row.x_fip) : null, weight: 0.35 },
-        { value: row.x_era != null ? toFiniteNumber(row.x_era) : null, weight: 0.25 },
-      ].filter((part) => part.value !== null);
-      if (parts.length === 0) continue;
-      const totalWeight = parts.reduce((sum, part) => sum + part.weight, 0);
-      return parts.reduce(
-        (sum, part) => sum + (part.value * part.weight),
-        0,
-      ) / totalWeight;
+      const val = row.x_fip != null ? toFiniteNumber(row.x_fip) : null;
+      if (val === null) continue;
+      return val;
     }
     return null;
   } catch (_) {
@@ -3265,9 +3254,8 @@ function getPitcherEraFromDb(team) {
 
 /**
  * Derive a synthetic F5 total projection floor from starter skill metrics.
- * First attempts to read normalized weighted blend SIERA/xFIP/xERA from oddsSnapshot.raw_data.mlb.
- * Only non-null signals contribute; weights are re-normalized automatically.
- * Currently: SIERA computed from K%/BB%; xERA null until Statcast WI ships.
+ * Active contract (WI-1172): x_fip-only. siera and x_era are future signals
+ * pending a separate ingest WI and do not contribute to this computation.
  * Falls back to a direct mlb_pitcher_stats DB lookup by home_team/away_team
  * (used in WITHOUT_ODDS_MODE where raw_data is null).
  * Returns a value rounded to the nearest 0.5, or the fallback constant if
@@ -3281,17 +3269,8 @@ function computeProjectionFloorF5(oddsSnapshot) {
     const rawData = parseMlbRawData(oddsSnapshot);
     const mlb = rawData?.mlb && typeof rawData.mlb === 'object' ? rawData.mlb : {};
     function resolvePitcherSkill(pitcher) {
-      const parts = [
-        { value: pitcher?.siera != null ? toFiniteNumber(pitcher.siera) : null, weight: 0.4 },
-        { value: pitcher?.x_fip != null ? toFiniteNumber(pitcher.x_fip) : null, weight: 0.35 },
-        { value: pitcher?.x_era != null ? toFiniteNumber(pitcher.x_era) : null, weight: 0.25 },
-      ].filter((part) => part.value !== null);
-      if (parts.length === 0) return null;
-      const totalWeight = parts.reduce((sum, part) => sum + part.weight, 0);
-      return parts.reduce(
-        (sum, part) => sum + (part.value * part.weight),
-        0,
-      ) / totalWeight;
+      if (pitcher?.x_fip == null) return null;
+      return toFiniteNumber(pitcher.x_fip);
     }
 
     let homeSkillRa9 = resolvePitcherSkill(mlb.home_pitcher);
@@ -3569,6 +3548,7 @@ function buildPitcherKObject(row) {
     whip: row.whip,
     avg_ip: row.recent_ip,
     x_fip: row.x_fip ?? null,
+    // future signals — not used in fallback weighting until separate ingest WI ships (WI-1172)
     siera: row.siera ?? null,
     x_era: row.x_era ?? null,
     bb_pct: row.bb_pct ?? null,
@@ -3835,6 +3815,7 @@ function enrichMlbPitcherData(
               avg_ip: row.recent_ip,
               handedness: row.handedness ?? null,
               x_fip: row.x_fip ?? null,
+              // future signals — not used in fallback weighting until separate ingest WI ships (WI-1172)
               siera: row.siera ?? null,
               x_era: row.x_era ?? null,
               bb_pct: row.bb_pct ?? null,
@@ -5235,8 +5216,9 @@ module.exports = {
   buildPitcherKObject,
   buildPitcherKLineContract,
   buildPitcherStrikeoutLookback,
-  // Exported for WI-0637 unit tests
+  // Exported for WI-0637 / WI-1172 unit tests
   computeProjectionFloorF5,
+  getPitcherEraFromDb,
   // Exported for WI-0877 unit tests
   computeSyntheticLineF5Driver,
   // Exported for WI-0648 unit tests

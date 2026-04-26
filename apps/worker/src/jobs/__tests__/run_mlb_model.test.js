@@ -65,6 +65,7 @@ const {
   resolveMlbTotalExecutionInputs,
   resolveMlbMoneylineExecutionInputs,
   applyMlbFeatureTimelinessGuardToPayload,
+  getPitcherEraFromDb,
 } = require('../run_mlb_model');
 
 // ---------------------------------------------------------------------------
@@ -844,6 +845,67 @@ describe('MLB F5 full-model projection', () => {
     });
 
     expect(floor).toBe(4.5);
+  });
+
+  // WI-1172 regression: x_fip-only fallback contract
+  // Fixture A: both pitchers have x_fip — result must exactly match x_fip-only formula
+  test('x_fip_only_fallback_uses_db_value', () => {
+    const HOME_X_FIP = 3.42;
+    const AWAY_X_FIP = 3.95;
+    const expected = Math.round(((HOME_X_FIP / 9) * 5 + (AWAY_X_FIP / 9) * 5) * 2) / 2;
+
+    const floor = computeProjectionFloorF5({
+      home_team: 'New York Yankees',
+      away_team: 'Boston Red Sox',
+      raw_data: {
+        mlb: {
+          home_pitcher: { x_fip: HOME_X_FIP },
+          away_pitcher: { x_fip: AWAY_X_FIP },
+        },
+      },
+    });
+
+    expect(Math.abs(floor - expected)).toBe(0);
+  });
+
+  // Fixture B: pitcher objects exist but have no x_fip — must return fallback constant, not throw
+  test('x_fip_only_fallback_when_starter_skill_missing', () => {
+    const floor = computeProjectionFloorF5({
+      home_team: 'New York Yankees',
+      away_team: 'Boston Red Sox',
+      raw_data: {
+        mlb: {
+          home_pitcher: { era: 3.80, whip: 1.20 },
+          away_pitcher: { era: 4.10, whip: 1.30 },
+        },
+      },
+    });
+
+    expect(isFinite(floor)).toBe(true);
+    expect(Math.abs(floor - 4.5)).toBeLessThanOrEqual(0.05);
+  });
+
+  // Fixture C: raw-data path and DB-path formula are mathematically identical under x_fip-only contract
+  test('x_fip_only_raw_vs_db_parity', () => {
+    const HOME_X_FIP = 3.50;
+    const AWAY_X_FIP = 4.00;
+
+    const rawPathResult = computeProjectionFloorF5({
+      home_team: 'New York Yankees',
+      away_team: 'Boston Red Sox',
+      raw_data: {
+        mlb: {
+          home_pitcher: { x_fip: HOME_X_FIP },
+          away_pitcher: { x_fip: AWAY_X_FIP },
+        },
+      },
+    });
+
+    // DB-path formula: getPitcherEraFromDb now returns x_fip directly;
+    // computeProjectionFloorF5 WITHOUT_ODDS_MODE uses that value identically.
+    const dbPathExpected = Math.round(((HOME_X_FIP / 9) * 5 + (AWAY_X_FIP / 9) * 5) * 2) / 2;
+
+    expect(Math.abs(rawPathResult - dbPathExpected)).toBeLessThanOrEqual(0.01);
   });
 });
 

@@ -1,14 +1,15 @@
 /**
  * Pipeline Health Check Watchdog
  *
- * Runs every 5 minutes to check the health of all pipeline phases:
- * 1. Schedule freshness (upcoming games exist)
- * 2. Odds freshness (recent snapshots for upcoming games)
- * 3. Cards freshness (expected recent model windows ran for upcoming games;
- *    card payload age is informational only because some models emit no card)
- * 4. Settlement backlog (final games without results)
+ * Runs every 5 minutes to verify all pipeline phases are healthy and emits
+ * Discord alerts when multiple consecutive failures are detected.
  *
- * Writes failures to pipeline_health table for UI visibility.
+ * Checks: schedule freshness, odds freshness (with self-healing remediation),
+ * cards freshness, settlement backlog, per-sport model freshness, MLB F5/game-line
+ * market availability, NHL SOG sync freshness (feature-aware), calibration kill
+ * switches, and watchdog heartbeat.
+ *
+ * Writes all results to pipeline_health for UI visibility.
  *
  * Env:
  * - ENABLE_PIPELINE_HEALTH_WATCHDOG (default: false)
@@ -34,6 +35,8 @@ const { getCurrentQuotaTier } = require('../schedulers/quota');
 const { keyTminus, TMINUS_BANDS } = require('../schedulers/windows');
 const { sendDiscordMessages } = require('./post_discord_cards');
 const { SPORTS_CONFIG: ODDS_SPORTS_CONFIG } = require('@cheddar-logic/odds/src/config');
+const { isFeatureEnabled } = require('@cheddar-logic/data/src/feature-flags');
+const { refreshStaleOdds } = require('./refresh_stale_odds');
 
 // Align freshness threshold with the fetch slot size so alerts don't fire
 // continuously during the normal gap between pulls. When ODDS_FETCH_SLOT_MINUTES
@@ -178,9 +181,11 @@ function dedupeOddsFreshnessGames(gamesWithFreshness) {
 
 /**
  * Check 2: Odds freshness
- * For games within T-6h, verify latest odds snapshot is < 15 min old
+ * For games within T-6h, verify latest odds snapshot is < 15 min old.
+ * When near-term stale games are detected, attempts bounded remediation via
+ * refreshStaleOdds before writing a final 'failed' status.
  */
-function checkOddsFreshness() {
+async function checkOddsFreshness() {
   const db = getDatabase();
   const nowUtc = DateTime.utc();
   const startUtc = nowUtc;
@@ -306,17 +311,40 @@ function checkOddsFreshness() {
     };
   }
 
-  const reason = `${staleNearTerm.length}/${dedupedGames.length} games within alert window T-${ODDS_FRESHNESS_ALERT_WINDOW_HOURS}h have stale odds (>${ODDS_FRESHNESS_MAX_AGE_MINUTES}m old)${duplicateSuffix}`;
+  // Attempt bounded remediation before writing final fail status.
+  let remediationDiag = { detected: staleGames.length, refreshed: 0, blocked: staleNearTerm.length };
+  try {
+    const remResult = await refreshStaleOdds({ jobKey: null });
+    if (remResult?.staleDiagnostics) {
+      remediationDiag = remResult.staleDiagnostics;
+    }
+  } catch (_err) {
+    // Remediation threw — proceed with original stale classification.
+  }
+
+  // Re-check near-term stale games after remediation.
+  const nowUtcAfter = DateTime.utc();
+  const stillStaleNearTerm = staleNearTerm.filter((game) => {
+    const dbNow = getDatabase();
+    const latest = dbNow
+      .prepare('SELECT captured_at FROM odds_snapshots WHERE game_id = ? ORDER BY captured_at DESC LIMIT 1')
+      .get(game.game_id);
+    const capturedAt = latest?.captured_at ? DateTime.fromISO(latest.captured_at, { zone: 'utc' }) : null;
+    const ageMinutes = capturedAt ? nowUtcAfter.diff(capturedAt, 'minutes').minutes : null;
+    return !capturedAt || ageMinutes > ODDS_FRESHNESS_MAX_AGE_MINUTES;
+  });
+
+  const remSuffix = `remediation: detected=${remediationDiag.detected} refreshed=${remediationDiag.refreshed} blocked=${remediationDiag.blocked}`;
+
+  if (stillStaleNearTerm.length === 0) {
+    const reason = `Stale near-term odds cleared by remediation (${remSuffix})${duplicateSuffix}`;
+    writePipelineHealth('odds', 'freshness', 'ok', reason);
+    return { ok: true, reason, diagnostics: remediationDiag };
+  }
+
+  const reason = `${stillStaleNearTerm.length}/${dedupedGames.length} games within alert window T-${ODDS_FRESHNESS_ALERT_WINDOW_HOURS}h still stale after remediation (${remSuffix})${duplicateSuffix}`;
   writePipelineHealth('odds', 'freshness', 'failed', reason);
-  return {
-    ok: false,
-    reason,
-    diagnostics: {
-      detected: staleGames.length,
-      blocked: staleNearTerm.length,
-      refreshed: 0,
-    },
-  };
+  return { ok: false, reason, diagnostics: remediationDiag };
 }
 
 /**
@@ -1735,8 +1763,7 @@ async function checkPipelineHealth({ jobKey, dryRun }) {
         checkSportModelFreshness('nhl', 'run_nhl_model', 'model_freshness', getModelFreshnessMaxAgeMinutes()),
       nhl_market_call_diagnostics: checkNhlMarketCallDiagnostics,
       nhl_moneyline_coverage: checkNhlMoneylineCoverage,
-      nhl_sog_sync_freshness: () =>
-        checkSportModelFreshness('nhl', 'sync_nhl_sog_player_ids', 'sog_sync_freshness', 1440),
+      nhl_sog_sync_freshness: checkNhlSogSyncFreshness,
       nhl_sog_pull_freshness: () =>
         checkSportModelFreshness('nhl', 'pull_nhl_player_shots', 'sog_pull_freshness', 1440),
       nhl_shots_model_freshness: () =>
@@ -1753,7 +1780,7 @@ async function checkPipelineHealth({ jobKey, dryRun }) {
     let allOk = true;
 
     for (const [checkName, checkFn] of Object.entries(checks)) {
-      const result = checkFn();
+      const result = await checkFn();
       results[checkName] = result;
 
       if (result.ok) {
@@ -1845,6 +1872,11 @@ if (require.main === module) {
 }
 
 function checkNhlSogSyncFreshness() {
+  if (!isFeatureEnabled('nhl', 'sog-sync')) {
+    const reason = 'sync_nhl_sog_player_ids feature disabled';
+    writePipelineHealth('nhl', 'sog_sync_freshness', 'ok', reason);
+    return { ok: true, reason };
+  }
   return checkSportModelFreshness('nhl', 'sync_nhl_sog_player_ids', 'sog_sync_freshness', 1440);
 }
 
