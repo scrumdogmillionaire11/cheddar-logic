@@ -146,10 +146,19 @@ export function resolvePlayDisplayDecision(
         action?: Play['action'];
         classification?: Play['classification'];
         final_market_decision?: Play['final_market_decision'];
-        decision_v2?: { official_status?: 'PLAY' | 'LEAN' | 'PASS' } | null;
+        decision_v2?: {
+          official_status?: 'PLAY' | 'LEAN' | 'PASS';
+          canonical_envelope_v2?: {
+            official_status?: 'PLAY' | 'LEAN' | 'PASS';
+          } | null;
+        } | null;
       }
     | null,
 ): ResolvedPlayDisplayDecision {
+  const canonicalAction = actionFromOfficialStatus(
+    play?.decision_v2?.canonical_envelope_v2?.official_status,
+  );
+
   const surfacedAction = actionFromOfficialStatus(
     play?.final_market_decision?.surfaced_status === 'SLIGHT EDGE'
       ? 'LEAN'
@@ -164,6 +173,7 @@ export function resolvePlayDisplayDecision(
   );
 
   const action =
+    canonicalAction ??
     surfacedAction ??
     explicitAction ??
     classificationAction ??

@@ -395,6 +395,15 @@ function resolveProjectionDirection(
 function hasActionableProjectionCallForRow(
   row: ProjectionMetricInputRow,
 ): boolean {
+  const canonicalEnvelopeOfficial = toUpperToken(
+    getPayloadValue(row.payload, ['play', 'decision_v2', 'canonical_envelope_v2', 'official_status']) ??
+      getPayloadValue(row.payload, ['decision_v2', 'canonical_envelope_v2', 'official_status']),
+  );
+  if (canonicalEnvelopeOfficial === 'PASS') return false;
+  if (canonicalEnvelopeOfficial === 'PLAY' || canonicalEnvelopeOfficial === 'LEAN') {
+    return true;
+  }
+
   const officialStatus = toUpperToken(
     row.officialStatus ??
       getPayloadValue(row.payload, ['play', 'decision_v2', 'official_status']) ??
@@ -403,29 +412,22 @@ function hasActionableProjectionCallForRow(
   if (officialStatus === 'PASS') return false;
   if (officialStatus === 'PLAY' || officialStatus === 'LEAN') return true;
 
-  const fallback = toUpperToken(
-    row.fallbackStatus ??
-      getPayloadValue(row.payload, ['decision', 'status']) ??
-      getPayloadValue(row.payload, ['status']) ??
-      getPayloadValue(row.payload, ['play', 'status']) ??
-      getPayloadValue(row.payload, ['action']) ??
-      getPayloadValue(row.payload, ['play', 'action']) ??
-      getPayloadValue(row.payload, ['decision', 'action']),
-  );
-
-  if (fallback === 'PASS' || fallback === 'HOLD' || fallback === 'WATCH') {
-    return false;
-  }
-  if (fallback === 'PLAY' || fallback === 'LEAN' || fallback === 'FIRE') {
-    return true;
-  }
-
-  return true;
+  // Fail closed: no implicit legacy/action fallback for active projection metrics.
+  return false;
 }
 
 export function hasActionableProjectionCall(
   payload: Record<string, unknown> | null,
 ): boolean {
+  const canonicalEnvelopeOfficial = toUpperToken(
+    getPayloadValue(payload, ['play', 'decision_v2', 'canonical_envelope_v2', 'official_status']) ||
+      getPayloadValue(payload, ['decision_v2', 'canonical_envelope_v2', 'official_status']),
+  );
+  if (canonicalEnvelopeOfficial === 'PASS') return false;
+  if (canonicalEnvelopeOfficial === 'PLAY' || canonicalEnvelopeOfficial === 'LEAN') {
+    return true;
+  }
+
   const officialStatus = toUpperToken(
     getPayloadValue(payload, ['play', 'decision_v2', 'official_status']) ||
       getPayloadValue(payload, ['decision_v2', 'official_status']),
@@ -433,25 +435,8 @@ export function hasActionableProjectionCall(
   if (officialStatus === 'PASS') return false;
   if (officialStatus === 'PLAY' || officialStatus === 'LEAN') return true;
 
-  const fallback = toUpperToken(
-    getPayloadValue(payload, ['decision', 'status']) ||
-      getPayloadValue(payload, ['status']) ||
-      getPayloadValue(payload, ['play', 'status']) ||
-      getPayloadValue(payload, ['action']) ||
-      getPayloadValue(payload, ['play', 'action']) ||
-      getPayloadValue(payload, ['decision', 'action']),
-  );
-
-  if (fallback === 'PASS' || fallback === 'HOLD' || fallback === 'WATCH') {
-    return false;
-  }
-  if (fallback === 'PLAY' || fallback === 'LEAN' || fallback === 'FIRE') {
-    return true;
-  }
-
-  // Legacy payloads may not include explicit status/action fields.
-  // In that case, keep prior behavior and infer actionability from direction.
-  return true;
+  // Fail closed: no implicit legacy/action fallback when canonical status is absent.
+  return false;
 }
 
 function resolveFirstPeriodTotal(

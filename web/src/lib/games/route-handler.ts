@@ -712,11 +712,13 @@ function resolveLiveOfficialStatus(play: Play): 'PLAY' | 'LEAN' | 'PASS' {
   if (explicit === 'PLAY' || explicit === 'LEAN' || explicit === 'PASS') {
     return explicit;
   }
-  if (play.action === 'FIRE') return 'PLAY';
-  if (play.action === 'HOLD') return 'LEAN';
-  if (play.status === 'FIRE') return 'PLAY';
-  if (play.status === 'WATCH') return 'LEAN';
   return 'PASS';
+}
+
+export function shouldSynthesizeProjectionSurfaceDecisionV2(
+  lifecycleMode: LifecycleMode,
+): boolean {
+  return lifecycleMode !== 'active';
 }
 
 function resolveTruePlayStatusRank(play: Play): number {
@@ -3721,6 +3723,15 @@ function mergePropFallbackRows(params: {
               ]),
             );
           } else if (!play.decision_v2) {
+            if (!shouldSynthesizeProjectionSurfaceDecisionV2(lifecycleMode)) {
+              incrementStageCounter(
+                stageCounters,
+                'wave1_skipped_no_d2',
+                parsedSport,
+                parsedMarket,
+              );
+              continue;
+            }
             const fallbackStatus =
               play.action === 'FIRE' || play.classification === 'BASE'
                 ? 'PLAY'

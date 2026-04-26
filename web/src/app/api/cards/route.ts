@@ -169,6 +169,11 @@ interface CardsDropDiagnostics {
   }>;
 }
 
+export function shouldApplyGlobalRunFallback(lifecycleMode: LifecycleMode): boolean {
+  // Active mode is fail-closed: never widen from scoped runs to global history.
+  return lifecycleMode !== 'active';
+}
+
 function normalizeSqlDateTime(value: string | null): number | null {
   if (!value) return null;
   const normalized = value.includes('T') ? value : value.replace(' ', 'T');
@@ -541,7 +546,11 @@ export async function GET(request: NextRequest) {
         offset,
       ) as CardRow[];
 
-      if (activeRunIds.length > 0 && legacyRows.length === 0) {
+      if (
+        activeRunIds.length > 0 &&
+        legacyRows.length === 0 &&
+        shouldApplyGlobalRunFallback(lifecycleMode)
+      ) {
         const baseWhereSql =
           baseWhere.length > 0 ? `WHERE ${baseWhere.join(' AND ')}` : '';
         legacyRows = db.prepare(buildSql(baseWhereSql)).all(
