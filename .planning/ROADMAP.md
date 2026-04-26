@@ -426,3 +426,21 @@ Plans:
 
 Plans:
 - [ ] WI-1172-01-PLAN.md — Simplify fallback contract to active signals + regression coverage + ADR contract alignment (Wave 1)
+
+---
+
+### Phase: WI-1174 — Audit Legacy Web Read-Path Repair Branches Against Live Payload Reality
+
+**Goal**: Determine which legacy game-card repair branches are still required by historical payloads and remove or quarantine only branches that no longer protect real rows.
+
+**Requirements:** [WI-1174-AUDIT-01, WI-1174-LEGACY-01, WI-1174-REG-01, WI-1174-DEBT-01]
+
+- `WI-1174-AUDIT-01`: Every scoped legacy repair branch is evidence-classified as required_now, safe_to_remove_now, or evidence_inconclusive
+- `WI-1174-LEGACY-01`: Only branches proven dead by fixture/payload evidence are removed or explicitly quarantined with follow-on evidence gates
+- `WI-1174-REG-01`: Regression coverage proves active web read-path transforms continue to succeed for representative historical payloads
+- `WI-1174-DEBT-01`: `docs/codebase-techdebt.md` reflects post-audit retained vs removed debt instead of blanket dead-code assumptions
+
+**Plans:** 1 plan in 1 wave
+
+Plans:
+- [ ] WI-1174-01-PLAN.md — Branch-level legacy repair audit + evidence-backed removals/quarantines + regression locks + debt register refresh (Wave 1)
