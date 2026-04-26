@@ -42,7 +42,6 @@ const {
 } = require('@cheddar-logic/data');
 const {
   resolveExplicitOfficialDecisionStatus,
-  resolveLegacyDecisionStatusToken,
   resolveNormalizedDecisionStatus,
 } = require('@cheddar-logic/data/src');
 
@@ -113,7 +112,7 @@ function resolveDecisionBasisForSettlement(payloadData) {
     return 'PROJECTION_ONLY';
   }
 
-  return 'ODDS_BACKED';
+  return 'UNKNOWN';
 }
 
 function isClvEligiblePayload(payloadData) {
@@ -989,12 +988,11 @@ function resolveNonActionableFinalReason(payloadData, row) {
     };
   }
 
-  const legacyStatus = resolveLegacyDecisionStatusToken(payloadData);
-  if (!officialStatus && legacyStatus === 'PASS') {
+  if (!officialStatus) {
     return {
-      code: 'NON_ACTIONABLE_FINAL_PASS',
-      message: 'Card status=PASS is non-actionable',
-      details: { legacyStatus, legacyFallback: true },
+      code: 'NON_ACTIONABLE_MISSING_CANONICAL_STATUS',
+      message: 'Card is missing decision_v2.official_status — failing closed',
+      details: {},
     };
   }
 

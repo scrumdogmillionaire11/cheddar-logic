@@ -33,6 +33,9 @@ function getDatabaseHandle(db) {
 function recordPrediction(entry) {
   if (!entry || typeof entry !== 'object') return false;
 
+  const projectionSource = String(entry.projectionSource ?? entry.projection_source ?? '').trim().toUpperCase();
+  if (projectionSource === 'SYNTHETIC_FALLBACK') return false;
+
   const fairProb = toFiniteProbability(entry.fairProb ?? entry.fair_prob ?? entry.model_prob);
   if (fairProb === null) return false;
 

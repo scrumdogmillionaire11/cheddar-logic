@@ -8,6 +8,7 @@ const {
 const {
   ALL_REASON_CODES: _ALL_REASON_CODES,
 } = require('../../data');
+const { normalizeMarketType } = require('../../data/src/market-contract');
 
 // Startup check: all locally-defined reason codes must be canonical or aliased.
 // This catches any future code added to WATCHDOG_REASONS / PRICE_REASONS without registration.
@@ -352,18 +353,6 @@ function readPath(obj, path) {
 function normalizeSport(value) {
   const raw = asString(value);
   return raw ? raw.toUpperCase() : '';
-}
-
-function normalizeMarketType(value) {
-  const raw = asString(value);
-  if (!raw) return null;
-  const upper = raw.toUpperCase();
-  if (WAVE1_MARKETS.has(upper)) return upper;
-  if (upper === 'FIRSTPERIOD') return 'FIRST_PERIOD';
-  if (upper === 'ML') return 'MONEYLINE';
-  if (upper === 'PUCK_LINE') return 'PUCKLINE';
-  if (upper === 'TEAMTOTAL') return 'TEAM_TOTAL';
-  return upper;
 }
 
 function normalizeDirection(value) {

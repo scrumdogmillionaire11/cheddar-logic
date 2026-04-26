@@ -128,6 +128,20 @@ function resolveDatabasePath({ env = process.env, cwd = process.cwd() } = {}) {
     throw error;
   }
 
+  const nodeEnv = (env.NODE_ENV || '').toLowerCase();
+  const isDevOrTest = nodeEnv === 'development' || nodeEnv === 'test' || nodeEnv === '';
+  const requireExplicit = env.REQUIRE_EXPLICIT_DB_PATH === 'true';
+
+  if (requireExplicit || !isDevOrTest) {
+    const error = new Error(
+      '[DB] CHEDDAR_DB_PATH is not set. ' +
+      'Auto-discovery is only permitted in development/test environments. ' +
+      'Set CHEDDAR_DB_PATH explicitly.',
+    );
+    error.code = 'DB_PATH_MISSING';
+    throw error;
+  }
+
   const dataDir = normalizePath(env.CHEDDAR_DATA_DIR, cwd);
   if (dataDir) {
     // Try to find the best database with card_payloads, preferring -prod

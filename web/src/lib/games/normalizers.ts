@@ -89,15 +89,12 @@ export function normalizeMarketType(value: unknown): MarketType | undefined {
   }
 
   if (upper === 'PUCK_LINE') return 'PUCKLINE';
-  if (upper === 'GAME_TOTAL') return 'TOTAL';
+  if (upper === 'GAME_TOTAL' || upper === 'O_U') return 'TOTAL';
   if (upper === 'TEAMTOTAL') return 'TEAM_TOTAL';
   if (upper === 'FIRSTPERIOD') return 'FIRST_PERIOD';
-  if (upper === 'DOUBLE_CHANCE' || upper === 'DOUBLECHANCE') {
-    return 'MONEYLINE';
-  }
-  if (upper === 'DRAW_NO_BET' || upper === 'DRAWNOBET') {
-    return 'MONEYLINE';
-  }
+  if (upper === 'DOUBLE_CHANCE' || upper === 'DOUBLECHANCE') return 'MONEYLINE';
+  if (upper === 'DRAW_NO_BET' || upper === 'DRAWNOBET') return 'MONEYLINE';
+  if (upper === 'MONEY_LINE' || upper === 'H2H' || upper === 'ML') return 'MONEYLINE';
   if (upper === 'ASIAN_HANDICAP') return 'SPREAD';
   return undefined;
 }

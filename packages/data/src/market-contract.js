@@ -23,9 +23,13 @@ function normalizeMarketType(rawValue) {
   const token = normalizeToken(rawValue);
   if (!token) return null;
 
-  if (token === 'MONEYLINE' || token === 'ML' || token === 'H2H') return 'MONEYLINE';
-  if (token === 'SPREAD' || token === 'PUCK_LINE' || token === 'PUCKLINE') return 'SPREAD';
-  if (token === 'TOTAL' || token === 'TOTALS' || token === 'OVER_UNDER' || token === 'OU') return 'TOTAL';
+  if (token === 'MONEYLINE' || token === 'ML' || token === 'H2H' ||
+      token === 'MONEY_LINE' || token === 'DOUBLE_CHANCE' || token === 'DOUBLECHANCE' ||
+      token === 'DRAW_NO_BET' || token === 'DRAWNOBET') return 'MONEYLINE';
+  if (token === 'SPREAD' || token === 'PUCK_LINE' || token === 'PUCKLINE' ||
+      token === 'PUCK_LINE' || token === 'PUCK LINE') return 'SPREAD';
+  if (token === 'TOTAL' || token === 'TOTALS' || token === 'OVER_UNDER' || token === 'OU' ||
+      token === 'GAME_TOTAL' || token === 'O_U') return 'TOTAL';
   return null;
 }
 

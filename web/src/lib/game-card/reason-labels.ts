@@ -1,11 +1,10 @@
-// Canonical source: packages/data/src/reason-codes.js
+// AUTO-GENERATED — do not edit manually.
+// Source: packages/data/src/reason-codes.js
+// Regenerate: node scripts/generate-reason-labels.js
 // Inlined here to avoid pulling the server-only @cheddar-logic/data package
 // (which depends on better-sqlite3) into the client bundle.
-// Keep in sync with REASON_CODE_LABELS in reason-codes.js.
-// Test: web/src/lib/game-card/__tests__/reason-labels.sync.test.ts
 
 export const REASON_CODE_LABELS: Record<string, string> = Object.freeze({
-  // MODEL
   PASS_NO_EDGE: 'No edge',
   NO_EDGE_AT_PRICE: 'Price too sharp',
   PASS_DRIVER_SUPPORT_WEAK: 'Driver support weak',
@@ -25,7 +24,6 @@ export const REASON_CODE_LABELS: Record<string, string> = Object.freeze({
   NHL_ML_PLAY: 'Play \u2014 ML',
   FIRST_PERIOD_PROJECTION_LEAN: 'Lean \u2014 1P projection',
   FIRST_PERIOD_PROJECTION_PLAY: 'Play \u2014 1P projection',
-  // DATA
   MISSING_DATA_PROJECTION_INPUTS: 'Missing projection inputs',
   MISSING_DATA_DRIVERS: 'Driver output unavailable',
   MISSING_DATA_TEAM_MAPPING: 'Team mapping unresolved',
@@ -54,7 +52,6 @@ export const REASON_CODE_LABELS: Record<string, string> = Object.freeze({
   PRICE_VALIDATION_FAILED: 'Price validation failed',
   STALE_RECOVERY_REFRESH_FAILED: 'Stale recovery failed',
   STALE_RECOVERY_RELOAD_FAILED: 'Stale reload failed',
-  // MARKET
   LINE_NOT_CONFIRMED: 'Line not confirmed',
   EDGE_RECHECK_PENDING: 'Edge needs recheck before action',
   EDGE_NO_LONGER_CONFIRMED: 'Edge no longer clears threshold',
@@ -65,8 +62,13 @@ export const REASON_CODE_LABELS: Record<string, string> = Object.freeze({
   WATCHDOG_MARKET_UNAVAILABLE: 'Market unavailable',
   EDGE_SANITY_NON_TOTAL: 'Edge sanity check failed',
   LINE_MOVE_ADVERSE: 'Line moved adversely',
+  PRICE_STALE: 'Price stale versus signal',
   PLAY_REQUIRES_FRESH_MARKET: 'Play requires fresh market data',
-  // GATE
+  STARTER_UNCONFIRMED: 'Starter not confirmed',
+  STARTER_MISMATCH: 'Starter mismatch versus priced assumption',
+  BEST_LINE_UNCONFIRMED: 'Best line not confirmed',
+  WEATHER_STATUS_PENDING: 'Weather status pending',
+  MARKET_SOURCE_UNCONFIRMED: 'Market source unconfirmed',
   HEAVY_FAVORITE_PRICE_CAP: 'High price cap',
   FIRST_PERIOD_NO_PROJECTION: 'No 1P projection available',
   EXACT_WAGER_MISMATCH: 'Line mismatch',

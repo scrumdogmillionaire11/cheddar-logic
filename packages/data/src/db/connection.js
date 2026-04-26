@@ -307,6 +307,11 @@ function warnDbLockContentionOncePerWindow(message, dbFile, lockPath, ownerPid) 
 function acquireDbFileLock(dbFile) {
   if (!dbFile) return;
   if (process.env.CHEDDAR_DB_ALLOW_MULTI_PROCESS === 'true') {
+    if (process.env.NODE_ENV === 'production') {
+      throw new Error(
+        '[DB] CHEDDAR_DB_ALLOW_MULTI_PROCESS=true is forbidden in production — it bypasses the exclusive DB lock and risks data corruption.',
+      );
+    }
     console.warn(
       `[DB] CHEDDAR_DB_ALLOW_MULTI_PROCESS=true — skipping DB lock for ${dbFile} (WAL mode handles concurrent access).`,
     );

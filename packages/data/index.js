@@ -9,7 +9,6 @@
  */
 
 const db = require('./src/db');
-const dbDualInit = require('./src/db-dual-init');
 const { runMigrations } = require('./src/migrate');
 const { withDb, createJob } = require('./src/job-runtime');
 const auth = require('./src/auth');
@@ -219,18 +218,6 @@ module.exports = {
   insertRevokedToken: db.insertRevokedToken,
   isTokenRevoked: db.isTokenRevoked,
   pruneExpiredRevokedTokens: db.pruneExpiredRevokedTokens,
-
-  /**
-   * DISABLED (WI-1138) — these functions throw on call.
-   * Dual-DB mode is not supported. See ADR-0002.
-   * Retained as exports so call sites fail loudly rather than silently missing a symbol.
-   */
-  initDualDb: dbDualInit.initDualDb,
-  closeDualDb: dbDualInit.closeDualDb,
-  isDualModeActive: dbDualInit.isDualModeActive,
-  getDualDb: dbDualInit.getDb,
-  RECORD_TABLES: dbDualInit.RECORD_TABLES,
-  LOCAL_TABLES: dbDualInit.LOCAL_TABLES,
 
   // projection-accuracy confidence engine
   captureProjectionAccuracyForCard: projAccuracy.captureProjectionAccuracyForCard,

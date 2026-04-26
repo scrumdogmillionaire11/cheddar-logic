@@ -51,7 +51,7 @@ const {
 const { pullOddsHourly } = require('../jobs/pull_odds_hourly');
 const { pullEspnGamesDirect } = require('../jobs/pull_espn_games_direct');
 const { refreshStaleOdds } = require('../jobs/refresh_stale_odds');
-const { checkPipelineHealth } = require('../jobs/check_pipeline_health');
+const { checkPipelineHealth, writePipelineHealth } = require('../jobs/check_pipeline_health');
 const { runDrClaireHealthReport } = require('../jobs/dr_claire_health_report');
 const { checkOddsHealth } = require('../jobs/check_odds_health');
 const { run: refreshTeamMetricsDaily } = require('../jobs/refresh_team_metrics_daily');
@@ -468,7 +468,10 @@ async function tick() {
     if (hasRunningJobRun(job.jobKey)) { console.log(`  running ${job.jobKey} (${job.jobName})`); continue; }
     if (dryRun) { console.log(`  DRY_RUN would run ${job.jobKey} (${job.jobName}) — ${job.reason}`); continue; }
     console.log(`  run ${job.jobKey} (${job.jobName}) — ${job.reason}`);
-    try { await job.execute(job.args); } catch (err) { console.error(`  ${job.jobKey} failed:`, err.message); }
+    try { await job.execute(job.args); } catch (err) {
+      console.error(`  ${job.jobKey} failed:`, err.message);
+      try { writePipelineHealth(job.jobName, 'job_execution', 'failed', err.message); } catch (_e) { /* DB may be unavailable */ }
+    }
   }
 }
 
@@ -490,16 +493,30 @@ async function start() {
   const staleLocks = recoverStaleJobRuns();
   if (staleLocks > 0) console.log(`[SCHEDULER] Stale lock recovery: ${staleLocks} orphaned job_run(s) recovered.`);
 
+  const MAX_TICK_MS = Number(process.env.MAX_TICK_MS || 900_000); // 15 minutes default
   let tickRunning = false;
   function runTick() {
     if (tickRunning) { console.log('[SCHEDULER] Skipping tick — previous tick still running'); return; }
     tickRunning = true;
-    tick().catch((err) => console.error('[SCHEDULER] tick error', err)).finally(() => { tickRunning = false; });
+    const tickDeadline = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error(`[SCHEDULER] Tick exceeded MAX_TICK_MS=${MAX_TICK_MS}ms — releasing lock`)), MAX_TICK_MS),
+    );
+    Promise.race([tick(), tickDeadline])
+      .catch((err) => console.error('[SCHEDULER] tick error', err))
+      .finally(() => { tickRunning = false; });
   }
   runTick();
   const interval = setInterval(runTick, tickMs);
   process.on('SIGTERM', () => { clearInterval(interval); console.log('\n[SCHEDULER] SIGTERM, exiting...'); process.exit(0); });
   process.on('SIGINT', () => { clearInterval(interval); console.log('\n[SCHEDULER] SIGINT, exiting...'); process.exit(0); });
+  process.on('uncaughtException', (err) => {
+    console.error('[SCHEDULER] uncaughtException — exiting:', err);
+    process.exit(1);
+  });
+  process.on('unhandledRejection', (reason) => {
+    console.error('[SCHEDULER] unhandledRejection — exiting:', reason);
+    process.exit(1);
+  });
 }
 
 if (require.main === module) start();

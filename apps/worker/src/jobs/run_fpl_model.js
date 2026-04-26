@@ -193,6 +193,27 @@ async function runFPLModel() {
           throw new Error(integrityCheck.error);
         }
         console.log('[FPLSageAdapter] ✓ FPL Sage DB integrity check passed');
+
+        // Schema version check: verify the FPL DB schema is at the expected version.
+        // Expected version is set via FPL_SCHEMA_VERSION env var; if unset, skip the check.
+        const expectedVersion = process.env.FPL_SCHEMA_VERSION ? Number(process.env.FPL_SCHEMA_VERSION) : null;
+        if (expectedVersion !== null) {
+          const Database = require('better-sqlite3');
+          const fplDb = new Database(fplDbPath, { readonly: true });
+          let actualVersion;
+          try {
+            actualVersion = fplDb.pragma('user_version', { simple: true });
+          } finally {
+            fplDb.close();
+          }
+          if (actualVersion !== expectedVersion) {
+            const msg = `[FPLSageAdapter] FPL DB schema version mismatch: expected=${expectedVersion} actual=${actualVersion}. Run Python schema migration and update FPL_SCHEMA_VERSION.`;
+            console.error(msg);
+            markJobRunFailure(jobRunId, msg);
+            throw new Error(msg);
+          }
+          console.log(`[FPLSageAdapter] ✓ FPL Sage DB schema version check passed (user_version=${actualVersion})`);
+        }
       }
 
       // Get latest FPL odds for all games

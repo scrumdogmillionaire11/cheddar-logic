@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "next dev --webpack",
     "dev:turbo": "next dev --turbo",
+    "prebuild": "node ../scripts/generate-reason-labels.js",
     "build": "next build --webpack && node scripts/copy-native-bindings.cjs",
     "start": "next start",
     "typecheck": "tsc --noEmit",

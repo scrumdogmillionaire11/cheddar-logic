@@ -1596,6 +1596,7 @@ function applyExecutionGateToNbaCard(card, { oddsSnapshot, nowMs = Date.now() } 
     evaluated_at: new Date(nowMs).toISOString(),
     drop_reason: gateResult.drop_reason,
   };
+  payload.freshness_tier = gateResult.freshness_decision?.tier ?? 'UNKNOWN';
 
   if (!gateResult.shouldBet) {
     const passReasonCode = toExecutionGatePassReasonCode(gateResult.reason);

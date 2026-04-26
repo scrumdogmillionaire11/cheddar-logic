@@ -1885,6 +1885,7 @@ function checkNhlSogPullFreshness() {
 }
 
 module.exports = {
+  writePipelineHealth,
   checkPipelineHealth,
   checkNhlSogSyncFreshness,
   checkNhlSogPullFreshness,

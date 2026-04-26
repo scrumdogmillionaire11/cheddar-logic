@@ -988,6 +988,7 @@ function applyExecutionGateToNhlCard(card, { oddsSnapshot, nowMs = Date.now() } 
     snapshot_timestamp: snapshotTimestamp,
     freshness_decision: gateResult.freshness_decision || null,
   };
+  payload.freshness_tier = gateResult.freshness_decision?.tier ?? 'UNKNOWN';
 
   if (!gateResult.shouldBet) {
     const isStaleBlock = String(gateResult.reason || '').startsWith('STALE_SNAPSHOT');

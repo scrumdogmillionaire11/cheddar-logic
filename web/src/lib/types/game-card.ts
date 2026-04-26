@@ -538,6 +538,7 @@ export interface GameCard {
   tags: string[]; // derived for fast filtering
   /** Market signal pills source data. Absent when splits are not yet populated (WI-0666/0667). */
   marketSignals?: MarketSignalData;
+  freshnessTier?: 'FRESH' | 'STALE_VALID' | 'EXPIRED' | 'UNKNOWN' | null;
 }
 
 /**

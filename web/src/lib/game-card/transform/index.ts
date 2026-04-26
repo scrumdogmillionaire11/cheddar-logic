@@ -204,6 +204,7 @@ export interface ApiPlay {
   pass_reason?: string | null;
   basis?: 'PROJECTION_ONLY' | 'ODDS_BACKED';
   execution_status?: 'EXECUTABLE' | 'PROJECTION_ONLY' | 'BLOCKED';
+  freshness_tier?: 'FRESH' | 'STALE_VALID' | 'EXPIRED' | 'UNKNOWN' | null;
   execution_gate?: {
     should_bet?: boolean;
     drop_reason?: {
@@ -3069,6 +3070,17 @@ export function transformToGameCard(game: GameData): GameCard {
       }
     : undefined;
 
+  const FRESHNESS_RANK: Record<string, number> = { FRESH: 0, UNKNOWN: 1, STALE_VALID: 2, EXPIRED: 3 };
+  const freshnessTier = game.plays.reduce<'FRESH' | 'STALE_VALID' | 'EXPIRED' | 'UNKNOWN' | null>(
+    (worst, p) => {
+      const tier = p.freshness_tier ?? null;
+      if (!tier) return worst;
+      if (!worst) return tier;
+      return (FRESHNESS_RANK[tier] ?? 1) > (FRESHNESS_RANK[worst] ?? 1) ? tier : worst;
+    },
+    null,
+  );
+
   return {
     id: game.id,
     gameId: game.gameId,
@@ -3084,6 +3096,7 @@ export function transformToGameCard(game: GameData): GameCard {
     evidence,
     tags: initialTags,
     marketSignals,
+    freshnessTier,
   };
 }
 

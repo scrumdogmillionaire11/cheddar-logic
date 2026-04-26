@@ -174,7 +174,7 @@ function resolveDecisionBasisForSettlement(payloadData) {
     return 'PROJECTION_ONLY';
   }
 
-  return 'ODDS_BACKED';
+  return 'UNKNOWN';
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

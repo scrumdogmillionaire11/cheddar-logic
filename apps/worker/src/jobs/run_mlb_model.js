@@ -2597,6 +2597,7 @@ function applyExecutionGateToMlbPayload(payload, { oddsSnapshot, nowMs = Date.no
     snapshot_timestamp: snapshotTimestamp,
     freshness_decision: gateResult.freshness_decision || null,
   };
+  payload.freshness_tier = gateResult.freshness_decision?.tier ?? 'UNKNOWN';
 
   if (applyHighEdgeOverride || downgradeHighEdgeToLean) {
     payload.status = 'LEAN';
@@ -4056,6 +4057,9 @@ async function runMLBModel({
       console.log(
         `[MLB_LEAGUE_AVG] source=${leagueConstants.source} n=${leagueConstants.n}`,
       );
+      if (!leagueConstants.n || leagueConstants.source === 'static_2024' || leagueConstants.source === 'fallback') {
+        console.warn('[MLB_LEAGUE_AVG] WARNING: using static 2024 fallback league constants — DB query returned no rows. Cards produced this run use degraded baseline inputs.');
+      }
 
       let cardsGenerated = 0;
       let cardsFailed = 0;
