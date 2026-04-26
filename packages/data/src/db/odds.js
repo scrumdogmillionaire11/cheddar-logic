@@ -242,9 +242,17 @@ function getOddsIngestFailureSummary({
  * updateOddsSnapshotRawData call always wins.
  */
 function buildRawDataWithEspnCarryForward(db, gameId, incomingRawData) {
-  const merged = incomingRawData && typeof incomingRawData === 'object'
-    ? { ...incomingRawData }
-    : (incomingRawData ? incomingRawData : {});
+  let merged = {};
+  if (incomingRawData && typeof incomingRawData === 'object') {
+    merged = { ...incomingRawData };
+  } else if (typeof incomingRawData === 'string') {
+    try {
+      const parsed = JSON.parse(incomingRawData);
+      merged = parsed && typeof parsed === 'object' ? { ...parsed } : {};
+    } catch {
+      merged = {};
+    }
+  }
 
   // Only bother if espn_metrics is already missing from the incoming payload
   if (merged.espn_metrics) {

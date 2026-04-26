@@ -23,12 +23,21 @@ function parseRawData(rawData) {
   if (!rawData) return {};
   if (typeof rawData === 'string') {
     try {
-      return JSON.parse(rawData);
+      const parsed = JSON.parse(rawData);
+      if (typeof parsed === 'string') {
+        try {
+          const reparsed = JSON.parse(parsed);
+          return reparsed && typeof reparsed === 'object' ? reparsed : {};
+        } catch {
+          return {};
+        }
+      }
+      return parsed && typeof parsed === 'object' ? parsed : {};
     } catch {
       return {};
     }
   }
-  return rawData;
+  return rawData && typeof rawData === 'object' ? rawData : {};
 }
 
 function hasNumeric(value) {
