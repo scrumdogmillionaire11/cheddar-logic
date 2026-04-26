@@ -19,7 +19,7 @@ import type {
 import { readRuntimeCanonicalDecision } from '@/lib/runtime-decision-authority';
 
 export type DecisionSegmentId = 'play' | 'slight_edge';
-type DecisionTierStatus = 'PLAY' | 'LEAN' | 'PASS_OR_OTHER';
+type DecisionTierStatus = 'PLAY' | 'LEAN' | 'PASS';
 
 type DecisionSegmentMeta = {
   id: DecisionSegmentId;
@@ -69,9 +69,7 @@ export function resolveDecisionTier(
   payload: Record<string, unknown> | null,
 ): DecisionTierStatus {
   const decision = readRuntimeCanonicalDecision(payload, { stage: 'read_api' });
-  if (decision.officialStatus === 'PLAY') return 'PLAY';
-  if (decision.officialStatus === 'LEAN') return 'LEAN';
-  return 'PASS_OR_OTHER';
+  return decision.officialStatus;
 }
 
 export function deriveDecisionSegment(
@@ -173,7 +171,7 @@ export function buildResultsAggregation(
     oddsBackedLedgerIds.push(row.id);
 
     const decisionTier = resolveDecisionTier(payload);
-    if (decisionTier !== 'PLAY' && decisionTier !== 'LEAN') {
+    if (decisionTier === 'PASS') {
       continue;
     }
 
@@ -528,10 +526,7 @@ export function buildLedgerRows(ledger: LedgerRow[]) {
         createdAt: row.created_at,
         prediction,
         tier,
-        decisionTier:
-          decisionTier === 'PLAY' || decisionTier === 'LEAN'
-            ? decisionTier
-            : null,
+        decisionTier: decisionTier !== 'PASS' ? decisionTier : null,
         decisionLabel,
         market,
         marketType,

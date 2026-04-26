@@ -1,5 +1,44 @@
-// Inlines pure decision-authority logic from packages/models/src/decision-authority.js
-// to avoid importing @cheddar-logic/models which pulls in better-sqlite3 (server-only).
+/**
+ * Single web-side decision read adapter.
+ *
+ * Imports the pure `resolveCanonicalDecision` function from the shared
+ * `@cheddar-logic/models/decision-authority` sub-path.  That file has zero
+ * server-only dependencies (no better-sqlite3, no fs) so it is safe to use
+ * in both server and client bundles.
+ *
+ * IMPORTANT: This module must NEVER inline decision logic.  All semantics
+ * live exclusively in packages/models/src/decision-authority.js.
+ */
+
+import { createRequire } from 'module';
+
+const _require = createRequire(import.meta.url);
+const { resolveCanonicalDecision } = _require('@cheddar-logic/models/decision-authority') as {
+  resolveCanonicalDecision: (
+    payload: object | null,
+    options?: {
+      stage?: string;
+      fallbackToLegacy?: boolean;
+      strictSource?: boolean;
+      missingReasonCode?: string;
+    },
+  ) => {
+    official_status: string;
+    is_actionable: boolean;
+    reason_code: string;
+    lifecycle: Array<{ stage: string; status: string; reason_code: string }>;
+  } | null;
+};
+
+// ---------------------------------------------------------------------------
+// Public types
+// ---------------------------------------------------------------------------
+
+export type CanonicalLifecycleEntry = {
+  stage: string;
+  status: string;
+  reason_code: string;
+};
 
 export type RuntimeCanonicalDecision = {
   officialStatus: 'PLAY' | 'LEAN' | 'PASS';
@@ -9,7 +48,10 @@ export type RuntimeCanonicalDecision = {
   isActionable: boolean;
   reasonCode: string;
   missingCanonicalDecision: boolean;
+  lifecycle: CanonicalLifecycleEntry[];
 };
+
+export type LifecycleModeForFallback = 'pregame' | 'active';
 
 type CanonicalDecisionPayload = {
   decision_v2?: Record<string, unknown> | null;
@@ -24,125 +66,30 @@ type ReadRuntimeDecisionOptions = {
   stage?: 'parser' | 'model' | 'publisher' | 'watchdog' | 'read_api';
 };
 
-const CANONICAL_DECISION_SOURCE = 'decision_authority';
+// ---------------------------------------------------------------------------
+// Internal constants
+// ---------------------------------------------------------------------------
+
 const MISSING_CANONICAL_DECISION_REASON = 'MISSING_CANONICAL_DECISION';
 
-function asString(value: unknown): string | null {
-  if (typeof value !== 'string') return null;
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : null;
-}
-
-function toUpperToken(value: unknown): string {
-  const token = asString(value);
-  return token ? token.toUpperCase() : '';
-}
-
-function normalizeAuthorityStatus(value: unknown): 'PLAY' | 'SLIGHT_EDGE' | 'PASS' {
-  const token = toUpperToken(value);
-  if (token === 'PLAY' || token === 'FIRE' || token === 'OFFICIAL_PLAY') return 'PLAY';
-  if (
-    token === 'SLIGHT_EDGE' ||
-    token === 'SLIGHT EDGE' ||
-    token === 'LEAN' ||
-    token === 'WATCH'
-  )
-    return 'SLIGHT_EDGE';
-  return 'PASS';
-}
-
-function isCanonicalDecisionActionable(value: unknown): boolean {
-  const normalized = normalizeAuthorityStatus(value);
-  return normalized === 'PLAY' || normalized === 'SLIGHT_EDGE';
-}
-
-function mapLegacyActionToAuthorityStatus(
-  payload: CanonicalDecisionPayload,
-): 'PLAY' | 'SLIGHT_EDGE' | 'PASS' {
-  const action = toUpperToken(payload?.action);
-  const classification = toUpperToken(payload?.classification);
-  const status = toUpperToken(payload?.status);
-
-  if (
-    action === 'FIRE' ||
-    classification === 'BASE' ||
-    status === 'FIRE' ||
-    status === 'PLAY'
-  )
-    return 'PLAY';
-
-  if (
-    action === 'HOLD' ||
-    classification === 'LEAN' ||
-    status === 'WATCH' ||
-    status === 'LEAN'
-  )
-    return 'SLIGHT_EDGE';
-
-  return 'PASS';
-}
-
-function resolveCanonicalDecisionInternal(
-  payload: CanonicalDecisionPayload | null,
-  options: {
-    stage: string;
-    fallbackToLegacy: boolean;
-    strictSource: boolean;
-    missingReasonCode: string;
+const MISSING_CANONICAL_LIFECYCLE: CanonicalLifecycleEntry[] = [
+  {
+    stage: 'read_api',
+    status: 'PASS',
+    reason_code: MISSING_CANONICAL_DECISION_REASON,
   },
-): {
-  official_status: 'PLAY' | 'SLIGHT_EDGE' | 'PASS';
-  is_actionable: boolean;
-  reason_code: string;
-} | null {
-  const { fallbackToLegacy, strictSource, missingReasonCode } = options;
+];
 
-  const decisionV2 =
-    payload?.decision_v2 && typeof payload.decision_v2 === 'object'
-      ? payload.decision_v2
-      : null;
-
-  const declaredSource =
-    asString(
-      (payload?.canonical_decision as Record<string, unknown> | null)?.source,
-    ) || asString(decisionV2?.source);
-  if (strictSource && declaredSource && declaredSource !== CANONICAL_DECISION_SOURCE) {
-    return null;
-  }
-
-  const explicitStatus =
-    (payload?.canonical_decision as Record<string, unknown> | null)?.official_status ||
-    decisionV2?.official_status ||
-    null;
-
-  if (!explicitStatus && !fallbackToLegacy) {
-    return null;
-  }
-
-  const officialStatus = explicitStatus
-    ? normalizeAuthorityStatus(explicitStatus)
-    : mapLegacyActionToAuthorityStatus(payload!);
-
-  const reasonCode =
-    asString(
-      (payload?.canonical_decision as Record<string, unknown> | null)?.reason_code,
-    ) ||
-    asString(decisionV2?.primary_reason_code) ||
-    asString(payload?.pass_reason_code) ||
-    missingReasonCode;
-
-  return {
-    official_status: officialStatus,
-    is_actionable: isCanonicalDecisionActionable(officialStatus),
-    reason_code: reasonCode,
-  };
-}
+// ---------------------------------------------------------------------------
+// Internal helpers (mapping only — no decision semantics)
+// ---------------------------------------------------------------------------
 
 function canonicalStatusToOfficialStatus(
-  status: 'PLAY' | 'SLIGHT_EDGE' | 'PASS',
+  raw: string,
 ): 'PLAY' | 'LEAN' | 'PASS' {
-  if (status === 'PLAY') return 'PLAY';
-  if (status === 'SLIGHT_EDGE') return 'LEAN';
+  const s = raw.toUpperCase();
+  if (s === 'PLAY') return 'PLAY';
+  if (s === 'SLIGHT_EDGE') return 'LEAN';
   return 'PASS';
 }
 
@@ -170,6 +117,10 @@ function statusFromAction(
   return 'PASS';
 }
 
+// ---------------------------------------------------------------------------
+// Feature flag helpers
+// ---------------------------------------------------------------------------
+
 export function isCanonicalDecisionOnlyEnforced(): boolean {
   return process.env.ENFORCE_CANONICAL_DECISION_ONLY === 'true';
 }
@@ -178,22 +129,46 @@ export function isCanonicalDecisionStrictTestModeEnabled(): boolean {
   return process.env.ENFORCE_CANONICAL_DECISION_ONLY_STRICT_TEST === 'true';
 }
 
+// ---------------------------------------------------------------------------
+// Active-mode run-scope gate (exported for tests)
+// ---------------------------------------------------------------------------
+
+/** Active mode is fail-closed: never widen from scoped runs to global history. */
+export function shouldApplyGlobalRunFallback(
+  lifecycleMode: LifecycleModeForFallback | string,
+): boolean {
+  return lifecycleMode !== 'active';
+}
+
+// ---------------------------------------------------------------------------
+// Core read adapter
+// ---------------------------------------------------------------------------
+
+/**
+ * Read the canonical decision from a card/play payload.
+ *
+ * - NEVER falls back to legacy action/classification/status fields.
+ * - Feature flag controls only whether a missing canonical decision throws
+ *   (strict test mode) — it does NOT restore legacy inference.
+ * - Always returns full lifecycle so callers can surface failure traces.
+ */
 export function readRuntimeCanonicalDecision(
   payload: CanonicalDecisionPayload | null | undefined,
   options: ReadRuntimeDecisionOptions = {},
 ): RuntimeCanonicalDecision {
-  const enforceCanonicalOnly = isCanonicalDecisionOnlyEnforced();
   const strictTestMode = isCanonicalDecisionStrictTestModeEnabled();
 
-  const canonical = resolveCanonicalDecisionInternal(payload ?? null, {
+  const canonical = resolveCanonicalDecision(payload ?? null, {
     stage: options.stage ?? 'read_api',
-    fallbackToLegacy: !enforceCanonicalOnly,
-    strictSource: enforceCanonicalOnly,
+    // Legacy fallback is permanently disabled on web read paths.
+    // The feature flag controls strictness (throw vs silent PASS), not inference.
+    fallbackToLegacy: false,
+    strictSource: true,
     missingReasonCode: MISSING_CANONICAL_DECISION_REASON,
   });
 
   if (!canonical) {
-    if (enforceCanonicalOnly && strictTestMode) {
+    if (strictTestMode) {
       throw new Error('Canonical decision missing');
     }
 
@@ -205,6 +180,7 @@ export function readRuntimeCanonicalDecision(
       isActionable: false,
       reasonCode: MISSING_CANONICAL_DECISION_REASON,
       missingCanonicalDecision: true,
+      lifecycle: MISSING_CANONICAL_LIFECYCLE,
     };
   }
 
@@ -219,12 +195,6 @@ export function readRuntimeCanonicalDecision(
     isActionable: Boolean(canonical.is_actionable),
     reasonCode: String(canonical.reason_code || MISSING_CANONICAL_DECISION_REASON),
     missingCanonicalDecision: false,
+    lifecycle: Array.isArray(canonical.lifecycle) ? canonical.lifecycle : [],
   };
-}
-
-export type LifecycleModeForFallback = 'pregame' | 'active';
-
-/** Active mode is fail-closed: never widen from scoped runs to global history. */
-export function shouldApplyGlobalRunFallback(lifecycleMode: LifecycleModeForFallback | string): boolean {
-  return lifecycleMode !== 'active';
 }
