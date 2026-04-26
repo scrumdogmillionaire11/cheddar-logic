@@ -10,12 +10,13 @@
  *
  * Cadence model
  * -------------
- * 09:00 ET (heavy ingest window):
- *   NHL: sync_nhl_sog_player_ids → pull_nhl_player_shots → [BLK chain] → run_nhl_player_shots_model
- *   MLB: pull_mlb_pitcher_stats → pull_mlb_weather
- *
- * 15:00 ET:
+ * Every fixed window (09:00, 15:00, … per PLAYER_PROPS_FIXED_TIMES_ET):
+ *   NHL: sync_nhl_sog_player_ids (if ENABLE_NHL_SOG_PLAYER_SYNC=true) — catch-up each window
  *   NHL: run_nhl_player_shots_model
+ *
+ * 09:00 ET only (heavy ingest window, first entry in fixed-times list):
+ *   NHL: pull_nhl_player_shots → [BLK chain if enabled]
+ *   MLB: pull_mlb_pitcher_stats → pull_mlb_weather
  *
  * T-60 per game:
  *   NHL: run_nhl_player_shots_model
@@ -217,22 +218,20 @@ function computePlayerPropsDueJobs(
 
     const isHeavyWindow = hhmm === fixedTimes[0]; // first window is heavy-ingest (09:00 by default)
 
-    // NHL fixed window
-    // Heavy (09:00): sync SOG player IDs + pull SOG logs + optional BLK chain + shots model
-    // Light (18:00+): shots prop + model only
-    if (isHeavyWindow) {
-      // SOG player sync — gated on canonical feature flag, same contract as nhl.js
-      if (isFeatureEnabled('nhl', 'sog-sync')) {
-        const sogSyncKey = keyNhlFixed(dateStr, hhmm);
-        jobs.push({
-          jobName: 'sync_nhl_sog_player_ids',
-          jobKey: sogSyncKey,
-          execute: syncNhlSogPlayerIds,
-          args: { jobKey: sogSyncKey, dryRun },
-          reason: `player-props heavy ingest NHL SOG player sync (${hhmm} ET)`,
-        });
-      }
+    // SOG player sync — runs at every fixed window so a single missed morning run
+    // does not leave a full 24h blind spot.  Gated on canonical feature flag.
+    if (isFeatureEnabled('nhl', 'sog-sync')) {
+      const sogSyncKey = keyNhlFixed(dateStr, hhmm);
+      jobs.push({
+        jobName: 'sync_nhl_sog_player_ids',
+        jobKey: sogSyncKey,
+        execute: syncNhlSogPlayerIds,
+        args: { jobKey: sogSyncKey, dryRun },
+        reason: `player-props NHL SOG player sync (${hhmm} ET)`,
+      });
+    }
 
+    if (isHeavyWindow) {
       const sogPullKey = `${keyNhlFixed(dateStr, hhmm)}|shots_pull`;
       jobs.push({
         jobName: 'pull_nhl_player_shots',

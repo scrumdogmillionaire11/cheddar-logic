@@ -28,8 +28,21 @@ jest.mock('../../schedulers/quota', () => ({
   getCurrentQuotaTier: jest.fn(() => 'FULL'),
 }));
 
-const { getDatabase } = require('@cheddar-logic/data');
+jest.mock('../refresh_stale_odds', () => ({
+  refreshStaleOdds: jest.fn().mockResolvedValue({
+    success: true,
+    staleDiagnostics: { detected: 0, refreshed: 0, blocked: 0 },
+  }),
+}));
+
+jest.mock('@cheddar-logic/data/src/feature-flags', () => ({
+  isFeatureEnabled: jest.fn(() => false),
+}));
+
+const { getDatabase, wasJobRecentlySuccessful } = require('@cheddar-logic/data');
 const { sendDiscordMessages } = require('../post_discord_cards');
+const { refreshStaleOdds } = require('../refresh_stale_odds');
+const { isFeatureEnabled } = require('@cheddar-logic/data/src/feature-flags');
 const {
   shouldSendAlert,
   buildHealthAlertMessage,
@@ -38,6 +51,7 @@ const {
   checkMlbF5MarketAvailability,
   checkMlbSeedFreshness,
   checkPipelineHealth,
+  checkNhlSogSyncFreshness,
 } = require('../check_pipeline_health');
 
 // ---------------------------------------------------------------------------
@@ -267,7 +281,7 @@ describe('checkCardsFreshness', () => {
 
 // ===========================================================================
 describe('checkOddsFreshness', () => {
-  test('dedupes ESPN numeric and espndirect duplicates when a fresh canonical matchup exists', () => {
+  test('dedupes ESPN numeric and espndirect duplicates when a fresh canonical matchup exists', async () => {
     const now = DateTime.utc();
     const upcomingGames = [
       {
@@ -299,14 +313,14 @@ describe('checkOddsFreshness', () => {
 
     getDatabase.mockReturnValue(makeDb({ upcomingGames, latestOddsByGame }));
 
-    const result = checkOddsFreshness();
+    const result = await checkOddsFreshness();
 
     expect(result.ok).toBe(true);
     expect(result.reason).toContain('All 1 games within T-6h have fresh odds');
     expect(result.reason).toContain('duplicate game_id rows ignored');
   });
 
-  test('reports one stale matchup when all duplicate rows for the matchup are stale', () => {
+  test('reports one stale matchup still stale after remediation attempt (duplicate dedup intact)', async () => {
     const now = DateTime.utc();
     const upcomingGames = [
       {
@@ -329,15 +343,21 @@ describe('checkOddsFreshness', () => {
     };
 
     getDatabase.mockReturnValue(makeDb({ upcomingGames, latestOddsByGame }));
+    refreshStaleOdds.mockResolvedValueOnce({
+      success: true,
+      staleDiagnostics: { detected: 1, refreshed: 0, blocked: 1 },
+    });
 
-    const result = checkOddsFreshness();
+    const result = await checkOddsFreshness();
 
     expect(result.ok).toBe(false);
-    expect(result.reason).toContain('1/1 games within alert window T-2h have stale odds');
+    expect(result.reason).toContain('still stale after remediation');
+    expect(result.reason).toContain('remediation: detected=1 refreshed=0 blocked=1');
     expect(result.reason).toContain('duplicate game_id rows ignored');
+    expect(refreshStaleOdds).toHaveBeenCalledTimes(1);
   });
 
-  test('returns warning when stale odds are outside alert window', () => {
+  test('returns warning when stale odds are outside alert window', async () => {
     const now = DateTime.utc();
     const upcomingGames = [
       {
@@ -354,11 +374,95 @@ describe('checkOddsFreshness', () => {
 
     getDatabase.mockReturnValue(makeDb({ upcomingGames, latestOddsByGame }));
 
-    const result = checkOddsFreshness();
+    const result = await checkOddsFreshness();
 
     expect(result.ok).toBe(false);
     expect(result.reason).toContain('but none within alert window T-2h');
     expect(result.diagnostics).toEqual({ detected: 1, blocked: 0, refreshed: 0 });
+  });
+});
+
+// ===========================================================================
+describe('checkOddsFreshness remediation-success path', () => {
+  test('returns ok when remediation clears all near-term stale games', async () => {
+    const now = DateTime.utc();
+    const upcomingGames = [
+      {
+        game_id: 'nba-stale-001',
+        sport: 'NBA',
+        away_team: 'Boston Celtics',
+        home_team: 'Miami Heat',
+        game_time_utc: now.plus({ minutes: 30 }).toISO(),
+      },
+    ];
+    const staleOdds = { captured_at: now.minus({ minutes: 200 }).toISO() };
+    const freshOdds = { captured_at: now.minus({ minutes: 3 }).toISO() };
+
+    // Initial check sees stale; after remediation the DB mock returns fresh.
+    getDatabase.mockReturnValue(makeDb({ upcomingGames, latestOddsByGame: { 'nba-stale-001': staleOdds } }));
+    refreshStaleOdds.mockImplementationOnce(async () => {
+      getDatabase.mockReturnValue(makeDb({ upcomingGames, latestOddsByGame: { 'nba-stale-001': freshOdds } }));
+      return { success: true, staleDiagnostics: { detected: 1, refreshed: 1, blocked: 0 } };
+    });
+
+    const result = await checkOddsFreshness();
+
+    expect(result.ok).toBe(true);
+    expect(result.reason).toContain('remediation');
+    expect(result.reason).toContain('remediation: detected=1 refreshed=1 blocked=0');
+    expect(result.diagnostics).toEqual({ detected: 1, refreshed: 1, blocked: 0 });
+    expect(refreshStaleOdds).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ===========================================================================
+describe('checkNhlSogSyncFreshness', () => {
+  afterEach(() => {
+    delete process.env.ENABLE_NHL_SOG_PLAYER_SYNC;
+  });
+
+  test('feature disabled → returns ok with "feature disabled" reason and writes ok health row', () => {
+    isFeatureEnabled.mockReturnValueOnce(false);
+    const writes = [];
+    const db = makeDb();
+    db.prepare = jest.fn((sql) => {
+      if (sql.includes('INSERT INTO pipeline_health')) {
+        return { run: (...args) => writes.push(args) };
+      }
+      return makeDb().prepare(sql);
+    });
+    getDatabase.mockReturnValue(db);
+
+    const result = checkNhlSogSyncFreshness();
+
+    expect(result.ok).toBe(true);
+    expect(result.reason).toMatch(/feature disabled/i);
+    expect(writes).toHaveLength(1);
+    expect(writes[0][2]).toBe('ok');
+  });
+
+  test('feature enabled + stale sync → returns failed with at-risk reason', () => {
+    isFeatureEnabled.mockReturnValueOnce(true);
+    // wasJobRecentlySuccessful returns false → sync is stale
+    wasJobRecentlySuccessful.mockReturnValueOnce(false);
+    // scheduleCount=1 so there are upcoming NHL games for the check to fire
+    getDatabase.mockReturnValue(makeDb({ scheduleCount: 1 }));
+
+    const result = checkNhlSogSyncFreshness();
+
+    expect(result.ok).toBe(false);
+    expect(result.reason).toMatch(/has NOT run successfully/);
+  });
+
+  test('feature enabled + recent successful run → returns ok', () => {
+    isFeatureEnabled.mockReturnValueOnce(true);
+    // wasJobRecentlySuccessful returns true (default)
+    getDatabase.mockReturnValue(makeDb({ scheduleCount: 1 }));
+
+    const result = checkNhlSogSyncFreshness();
+
+    expect(result.ok).toBe(true);
+    expect(result.reason).toMatch(/ran successfully/);
   });
 });
 

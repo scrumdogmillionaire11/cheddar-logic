@@ -209,26 +209,59 @@ describe('computePlayerPropsDueJobs', () => {
   // ─── 15:00 ET fixed window ────────────────────────────────────────────────
 
   describe('15:00 ET fixed window', () => {
-    it('NHL: only run_nhl_player_shots_model (no sync, no BLK)', () => {
+    it('NHL: queues sync_nhl_sog_player_ids (catch-up) and run_nhl_player_shots_model (no BLK, no shots pull)', () => {
       const nowEt = makeNowEt('15:00');
       const result = computePlayerPropsDueJobs(nowEt, { games: [], dryRun: false });
 
       const jobNames = result.map((j) => j.jobName);
+      // SOG sync now runs at every fixed window as a catch-up retry
+      expect(jobNames).toContain('sync_nhl_sog_player_ids');
       expect(jobNames).toContain('run_nhl_player_shots_model');
 
-      // No heavy ingest at 15:00
-      expect(jobNames).not.toContain('sync_nhl_sog_player_ids');
+      // Heavy-ingest-only jobs are still absent at 15:00
       expect(jobNames).not.toContain('pull_nhl_player_shots');
       expect(jobNames).not.toContain('sync_nhl_blk_player_ids');
       expect(jobNames).not.toContain('pull_nhl_player_blk');
       expect(jobNames).not.toContain('ingest_nst_blk_rates');
     });
 
-    it('MLB: queues no jobs at 15:00', () => {
+    it('ENABLE_NHL_SOG_PLAYER_SYNC=false at 15:00 → sync suppressed, model still runs', () => {
+      process.env.ENABLE_NHL_SOG_PLAYER_SYNC = 'false';
       const nowEt = makeNowEt('15:00');
       const result = computePlayerPropsDueJobs(nowEt, { games: [], dryRun: false });
 
-      expect(result.map((j) => j.jobName)).toEqual(['run_nhl_player_shots_model']);
+      const jobNames = result.map((j) => j.jobName);
+      expect(jobNames).not.toContain('sync_nhl_sog_player_ids');
+      expect(jobNames).toContain('run_nhl_player_shots_model');
+    });
+
+    it('MLB: queues no MLB jobs at 15:00', () => {
+      const nowEt = makeNowEt('15:00');
+      const result = computePlayerPropsDueJobs(nowEt, { games: [], dryRun: false });
+
+      const jobNames = result.map((j) => j.jobName);
+      expect(jobNames).not.toContain('pull_mlb_pitcher_stats');
+      expect(jobNames).not.toContain('pull_mlb_weather');
+      expect(jobNames).not.toContain('pull_mlb_statcast');
+    });
+  });
+
+  describe('SOG sync catch-up at both fixed windows', () => {
+    it('sync_nhl_sog_player_ids is queued at 09:00 AND 15:00 with distinct job keys', () => {
+      process.env.ENABLE_NHL_SOG_PLAYER_SYNC = 'true';
+
+      const result09 = computePlayerPropsDueJobs(makeNowEt('09:00'), { games: [], dryRun: false });
+      const result15 = computePlayerPropsDueJobs(makeNowEt('15:00'), { games: [], dryRun: false });
+
+      const sogJob09 = result09.find((j) => j.jobName === 'sync_nhl_sog_player_ids');
+      const sogJob15 = result15.find((j) => j.jobName === 'sync_nhl_sog_player_ids');
+
+      expect(sogJob09).toBeDefined();
+      expect(sogJob15).toBeDefined();
+      // Keys include the window time so they are distinct — both can run on the same day
+      expect(sogJob09.jobKey).toContain('09:00');
+      expect(sogJob15.jobKey).toContain('15:00');
+      expect(sogJob09.jobKey).not.toBe(sogJob15.jobKey);
     });
   });
 
@@ -291,7 +324,7 @@ describe('computePlayerPropsDueJobs', () => {
   });
 
   describe('quota tier gating', () => {
-    it('MEDIUM tier keeps 09:00 MLB non-odds prep jobs', () => {
+    it('MEDIUM tier at 15:00 runs NHL SOG sync (catch-up) and model but no MLB prep jobs', () => {
       const nowEt = makeNowEt('15:00');
       const result = computePlayerPropsDueJobs(nowEt, {
         games: [],
@@ -299,7 +332,13 @@ describe('computePlayerPropsDueJobs', () => {
         quotaTier: 'MEDIUM',
       });
 
-      expect(result.map((j) => j.jobName)).toEqual(['run_nhl_player_shots_model']);
+      const jobNames = result.map((j) => j.jobName);
+      // SOG sync catch-up runs at every fixed window regardless of quota
+      expect(jobNames).toContain('sync_nhl_sog_player_ids');
+      expect(jobNames).toContain('run_nhl_player_shots_model');
+      // MLB non-odds prep requires FULL or MEDIUM and the heavy window (09:00)
+      expect(jobNames).not.toContain('pull_mlb_pitcher_stats');
+      expect(jobNames).not.toContain('pull_mlb_weather');
     });
 
     it('MEDIUM tier suppresses MLB T-60 jobs entirely', () => {
