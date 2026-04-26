@@ -2411,6 +2411,13 @@ const MLB_K_MIN_PROJECTION_STARTS = 3;
 const MLB_K_NO_EDGE_BAND_KS = 0.5;
 const MLB_K_POISSON_THRESHOLDS = [5, 6, 7];
 const MLB_K_PROJECTION_ONLY_PASS_REASON = 'PASS_PROJECTION_ONLY_NO_MARKET';
+// WI-1173: provisional BB% threshold for command risk — calibratable, do not hard-code call sites.
+const COMMAND_RISK_BB_PCT_THRESHOLD = 0.095;
+// WI-1173: SMALL_SAMPLE guard: fewer than 120 BF in the lookback window.
+const COMMAND_RISK_SMALL_SAMPLE_BF = 120;
+// WI-1173: projection penalty for command risk; capped by COMMAND_RISK_OVERLAP_CAP.
+const COMMAND_RISK_PROJECTION_PENALTY = 0.15;
+const COMMAND_RISK_OVERLAP_CAP = 0.30;
 
 const LEASH_TIER_PARAMS = {
   Full:   { score: 2.0, expected_ip: 6.0 },
@@ -2676,57 +2683,65 @@ function calculateProjectionK(pitcher, matchup, leashTier, weather, options = {}
     // 90–94.9: no modifier
   }
 
-  // WI-0763: BB% adjustment derived from game log walks/batters_faced.
-  // High walk-rate pitchers tend to have lower true K rates per batter because
-  // they fall behind in counts more often. Applies a down-weight when
-  // bb_pct_from_logs > 10%. Requires ≥ 3 starts with batters_faced data.
+  // WI-1173: Command-context derivation (supersedes WI-0763 BB% projection modifier).
+  // Lookback is N=10 starts, aligned with buildPitcherStrikeoutLookback limit.
   const strikeoutHistory = pitcher?.strikeout_history ?? [];
-  let bbPctFromLogs = null;
-  let bbPctAdjFactor = 1.0;
-  {
-    const startsWithBf = strikeoutHistory.filter(
-      (s) => Number.isFinite(s.batters_faced) && s.batters_faced > 0,
-    );
-    if (startsWithBf.length >= 3) {
-      const totalWalks = startsWithBf.reduce((sum, s) => sum + (s.walks ?? 0), 0);
-      const totalBf = startsWithBf.reduce((sum, s) => sum + s.batters_faced, 0);
-      bbPctFromLogs = totalBf > 0 ? totalWalks / totalBf : null;
-      if (bbPctFromLogs !== null && bbPctFromLogs > 0.10) {
-        bbPctAdjFactor = clampValue(1 - (bbPctFromLogs - 0.10) * 2.5, 0.88, 1.0);
-        kMean *= bbPctAdjFactor;
-      }
+  const lookback10 = strikeoutHistory.slice(0, 10);
+  const startsWithBf = lookback10.filter(
+    (s) => Number.isFinite(s.batters_faced) && s.batters_faced > 0,
+  );
+
+  let recentBbPct = null;
+  let recentBbPctStatus = 'MISSING';
+  if (startsWithBf.length > 0) {
+    const totalWalks = startsWithBf.reduce((sum, s) => sum + (s.walks ?? 0), 0);
+    const totalBf = startsWithBf.reduce((sum, s) => sum + s.batters_faced, 0);
+    if (totalBf > 0) {
+      recentBbPct = totalWalks / totalBf;
+      recentBbPctStatus = totalBf < COMMAND_RISK_SMALL_SAMPLE_BF ? 'SMALL_SAMPLE' : 'OK';
     }
   }
 
-  // WI-0763: Home/away split adjustment from game log home_away field.
-  // When a pitcher has ≥ 3 starts in each split bucket the model blends in
-  // a 30% weight from the split-specific K rate. Requires game_role ('home'|'away')
-  // passed from computePitcherKDriverCards.
+  const commandRiskFlag =
+    recentBbPctStatus === 'OK' &&
+    recentBbPct !== null &&
+    recentBbPct >= COMMAND_RISK_BB_PCT_THRESHOLD;
+
+  // home_away_context: HOME/AWAY when game_role is attributable; MIXED/UNKNOWN otherwise.
   const gameRole = pitcher?.game_role ?? null;
-  let homeAwayAdjFactor = 1.0;
-  let homeAwayAdjApplied = false;
-  if (gameRole === 'home' || gameRole === 'away') {
-    const isHomeStr = (s) => s.home_away === 'H' || s.home_away === 'home';
-    const isAwayStr = (s) => s.home_away === 'A' || s.home_away === 'away';
-    const homeStarts = strikeoutHistory.filter(isHomeStr);
-    const awayStarts = strikeoutHistory.filter(isAwayStr);
-    if (homeStarts.length >= 3 && awayStarts.length >= 3) {
-      const homeAvgK =
-        homeStarts.reduce((s, r) => s + (r.strikeouts ?? 0), 0) / homeStarts.length;
-      const awayAvgK =
-        awayStarts.reduce((s, r) => s + (r.strikeouts ?? 0), 0) / awayStarts.length;
-      const totalAvgK =
-        (homeAvgK * homeStarts.length + awayAvgK * awayStarts.length) /
-        (homeStarts.length + awayStarts.length);
-      if (totalAvgK > 0) {
-        const splitAvgK = gameRole === 'home' ? homeAvgK : awayAvgK;
-        const rawRatio = clampValue(splitAvgK / totalAvgK, 0.80, 1.20);
-        homeAwayAdjFactor = 0.70 + rawRatio * 0.30;
-        kMean *= homeAwayAdjFactor;
-        homeAwayAdjApplied = true;
-      }
-    }
+  let homeAwayContext;
+  if (gameRole === 'home') {
+    homeAwayContext = 'HOME';
+  } else if (gameRole === 'away') {
+    homeAwayContext = 'AWAY';
+  } else {
+    const isHomeTag = (s) => s.home_away === 'H' || s.home_away === 'home';
+    const isAwayTag = (s) => s.home_away === 'A' || s.home_away === 'away';
+    const hasHome = lookback10.some(isHomeTag);
+    const hasAway = lookback10.some(isAwayTag);
+    homeAwayContext = hasHome && hasAway ? 'MIXED' : 'UNKNOWN';
   }
+
+  // Emit reason codes for command context state.
+  if (commandRiskFlag) projectionFlags.push('COMMAND_RISK_RECENT_BB_RATE');
+  else if (recentBbPctStatus === 'SMALL_SAMPLE') projectionFlags.push('COMMAND_CONTEXT_SMALL_SAMPLE');
+  else if (recentBbPctStatus === 'MISSING') projectionFlags.push('COMMAND_CONTEXT_MISSING');
+  if (homeAwayContext === 'HOME' || homeAwayContext === 'AWAY') {
+    projectionFlags.push('HOME_AWAY_CONTEXT_SHIFT');
+  }
+
+  // Apply projection penalty for command risk with overlap cap.
+  // projection_pre_overlap is defined here, before overlap controls are applied.
+  // Overlap controls: WI-1173 command-context penalty (future leash additive controls go here too).
+  const projectionPreOverlap = kMean;
+  if (commandRiskFlag) {
+    kMean -= COMMAND_RISK_PROJECTION_PENALTY;
+  }
+  kMean = Math.max(kMean, projectionPreOverlap - COMMAND_RISK_OVERLAP_CAP);
+
+  // WI-0763 deprecated traceability fields: retained for audit/test compat; no longer drive projection.
+  // See docs/models__mlb_pitcher_k_inputs.md — marked as deprecated, owner: WI-1173.
+  const bbPctFromLogs = recentBbPct !== null ? Math.round(recentBbPct * 1000) / 1000 : null;
 
   const roundedMean = Math.round(kMean * 10) / 10;
   const ladder = buildPitcherKProbabilityLadder(roundedMean);
@@ -2773,10 +2788,15 @@ function calculateProjectionK(pitcher, matchup, leashTier, weather, options = {}
       swstr_pct: starterSwStrPct,
       season_avg_velo: toFiniteNumberOrNull(pitcher?.season_avg_velo) ?? null,
     },
-    // WI-0763: traceability fields for BB% and home/away adjustments
-    bb_pct_from_logs: bbPctFromLogs !== null ? Math.round(bbPctFromLogs * 1000) / 1000 : null,
-    bb_pct_adjustment: bbPctAdjFactor !== 1.0 ? Math.round(bbPctAdjFactor * 1000) / 1000 : null,
-    home_away_adj: homeAwayAdjApplied ? Math.round(homeAwayAdjFactor * 1000) / 1000 : null,
+    // WI-1173: command-context fields for traceability and downstream audit.
+    recent_bb_pct: recentBbPct !== null ? Math.round(recentBbPct * 1000) / 1000 : null,
+    recent_bb_pct_status: recentBbPctStatus,
+    command_risk_flag: commandRiskFlag,
+    home_away_context: homeAwayContext,
+    // deprecated WI-0763 traceability fields — see docs/models__mlb_pitcher_k_inputs.md
+    bb_pct_from_logs: bbPctFromLogs,
+    bb_pct_adjustment: null,  // WI-1173: multiplicative penalty removed; field retained for compat
+    home_away_adj: null,      // WI-1173: projection impact removed; see HOME_AWAY_CONTEXT_SHIFT
     playability: {
       over_playable_at_or_below: overPlayableAtOrBelow,
       under_playable_at_or_above: underPlayableAtOrAbove,
@@ -3503,7 +3523,25 @@ function scorePitcherK(pitcherInput, matchupInput, umpInput, marketInput, weathe
   // Step 6 — Confidence scoring
   const penalties = calculatePenalties(pitcherInput, matchupInput || {});
   const rawScore  = block1Score + block2Score + block3Score + block4Score + block5Score;
-  const netScore  = Math.max(0, rawScore + penalties.total);
+
+  // WI-1173: command-context confidence deductions (applied after standard penalties).
+  // -5 for command risk, -2 for small sample; mutually exclusive (command_risk requires OK status).
+  let commandContextConfidenceDelta = 0;
+  const commandContextReasonCodes = [];
+  if (projResult.command_risk_flag === true) {
+    commandContextConfidenceDelta -= 5;
+    commandContextReasonCodes.push('COMMAND_RISK_RECENT_BB_RATE');
+  } else if (projResult.recent_bb_pct_status === 'SMALL_SAMPLE') {
+    commandContextConfidenceDelta -= 2;
+    commandContextReasonCodes.push('COMMAND_CONTEXT_SMALL_SAMPLE');
+  } else if (projResult.recent_bb_pct_status === 'MISSING') {
+    commandContextReasonCodes.push('COMMAND_CONTEXT_MISSING');
+  }
+  if (projResult.home_away_context === 'HOME' || projResult.home_away_context === 'AWAY') {
+    commandContextReasonCodes.push('HOME_AWAY_CONTEXT_SHIFT');
+  }
+
+  const netScore  = Math.max(0, rawScore + penalties.total + commandContextConfidenceDelta);
   const tier = getConfidenceTier(netScore);
 
   return {
@@ -3536,10 +3574,16 @@ function scorePitcherK(pitcherInput, matchupInput, umpInput, marketInput, weathe
     tier,
     verdict: 'PASS',
     trap_flags: trapResult.flags,
+    // WI-1173: command-context output fields for traceability.
+    recent_bb_pct: projResult.recent_bb_pct ?? null,
+    recent_bb_pct_status: projResult.recent_bb_pct_status ?? 'MISSING',
+    command_risk_flag: projResult.command_risk_flag ?? false,
+    home_away_context: projResult.home_away_context ?? 'UNKNOWN',
     reason_codes: Array.from(new Set([
       ...reasonCodes,
       ...(leashResult.flag ? [leashResult.flag] : []),
       ...(trapResult.flags || []),
+      ...commandContextReasonCodes,
     ])),
     basis: mode,
     projection_only: projectionOnly,
