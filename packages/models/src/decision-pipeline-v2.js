@@ -1316,14 +1316,14 @@ function computeWatchdog(payload, context = {}) {
 
   // Staleness is no longer a blocking reason in the watchdog. The execution
   // gate (execution-gate.js + execution-gate-freshness-contract.js) owns all
-  // staleness decisions with sport-specific contracts (NBA/NHL: 120-min
-  // hardMax + allowStaleIfNoNewOdds=true). The watchdog only blocks on data
-  // quality issues: missing fields, parse errors, market unavailable.
+  // staleness decisions with sport-specific contracts (MLB/NBA/NHL: 60-min
+  // cadence, 75-min grace window, 120-min hardMax + allowStaleIfNoNewOdds=true).
+  // The watchdog only reports data quality issues: missing fields, parse errors,
+  // market unavailable. Do NOT surface staleness warnings here; they cause false
+  // positives in the UI when data is within the execution gate's freshness contract.
   let watchdogStatus = 'OK';
-  if (staleMinutes !== null && staleMinutes >= 5) {
-    watchdogReasonCodes.push(WATCHDOG_REASONS.STALE_MARKET);
-    watchdogReasonCodes.push(WATCHDOG_REASONS.STALE_SNAPSHOT);
-  }
+  // NOTE: staleMinutes flag is tracked but NOT used to set watchdog status or reasons.
+  // Execution gate has the full context to evaluate staleness correctly.
 
   const hasBlockingReason = watchdogReasonCodes.some(
     (code) =>
@@ -1335,8 +1335,6 @@ function computeWatchdog(payload, context = {}) {
 
   if (hasBlockingReason) {
     watchdogStatus = 'BLOCKED';
-  } else if (staleMinutes !== null && staleMinutes >= 5) {
-    watchdogStatus = 'CAUTION';
   }
 
   const uniqueWatchdogReasonCodes = Array.from(new Set(watchdogReasonCodes));
