@@ -118,6 +118,7 @@ import {
   deriveNhl1PModelCall,
   normalizeDecisionV2,
   resolveDecisionV2EdgePct,
+  applyWave1DecisionFields,
 } from '@/lib/games/market-inference';
 import {
   createStageCounters,
@@ -3693,6 +3694,7 @@ function mergePropFallbackRows(params: {
             );
             continue;
           }
+          applyWave1DecisionFields(play);
           play.reason_codes = Array.from(
             new Set([
               ...(play.reason_codes ?? []),
