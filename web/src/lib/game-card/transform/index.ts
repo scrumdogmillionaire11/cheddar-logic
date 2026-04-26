@@ -542,19 +542,12 @@ function resolveCanonicalOfficialStatus(
 ): string | null {
   if (!play) return null;
   const canonicalEnvelope = getCanonicalEnvelopeFromPlay(play);
-  // Prefer canonical envelope status
+  // Canonical envelope is authoritative; fail closed when absent.
   if (
     canonicalEnvelope?.official_status &&
     typeof canonicalEnvelope.official_status === 'string'
   ) {
     return canonicalEnvelope.official_status;
-  }
-  // Fallback to legacy
-  if (
-    play.decision_v2?.official_status &&
-    typeof play.decision_v2.official_status === 'string'
-  ) {
-    return play.decision_v2.official_status;
   }
   return null;
 }

@@ -12,6 +12,9 @@ const {
   isWave1EligiblePayload,
   mapActionToClassification,
   normalizeOfficialStatus,
+  resolveCanonicalDecision,
+  toPipelineOfficialStatus,
+  CANONICAL_DECISION_SOURCE,
   isRecommendationPayload,
   normalizeMarketType,
   normalizePeriod,
@@ -109,7 +112,11 @@ function deriveTerminalReasonFamilyForPayload({
   watchdogStatus,
   reasonCodes = [],
 }) {
-  if (officialStatus === 'PLAY' || officialStatus === 'LEAN') {
+  if (
+    officialStatus === 'PLAY' ||
+    officialStatus === 'LEAN' ||
+    officialStatus === 'SLIGHT_EDGE'
+  ) {
     return 'PLAY_ELIGIBLE';
   }
   if (watchdogStatus === 'BLOCKED') return 'WATCHDOG_DATA_QUALITY';
@@ -150,27 +157,18 @@ function syncCanonicalDecisionEnvelope(payload, overrides = {}) {
     payload.decision_v2 = {};
   }
 
-  const officialStatus =
-    String(
-      overrides.official_status ||
-        payload.decision_v2.official_status ||
-        payload.status ||
-        'PASS',
-    ).toUpperCase() === 'FIRE'
+  const legacyStatusToken = String(payload.status || '').toUpperCase();
+  const overrideStatusToken = String(overrides.official_status || '').toUpperCase();
+  const normalizedPipelineStatus =
+    overrideStatusToken === 'FIRE'
       ? 'PLAY'
-      : String(
-          overrides.official_status ||
-            payload.decision_v2.official_status ||
-            payload.status ||
-            'PASS',
-        ).toUpperCase() === 'WATCH'
+      : overrideStatusToken === 'WATCH'
         ? 'LEAN'
-        : String(
-            overrides.official_status ||
-              payload.decision_v2.official_status ||
-              payload.status ||
-              'PASS',
-          ).toUpperCase();
+        : legacyStatusToken === 'FIRE'
+          ? 'PLAY'
+          : legacyStatusToken === 'WATCH'
+            ? 'LEAN'
+            : null;
 
   const primaryReasonCode =
     overrides.primary_reason_code ||
@@ -195,8 +193,47 @@ function syncCanonicalDecisionEnvelope(payload, overrides = {}) {
     (officialStatus === 'PASS' ? 'BLOCKED' : 'EXECUTABLE');
 
   const watchdogStatus = payload.decision_v2.watchdog_status || 'READY';
-  const isActionable =
-    officialStatus === 'PLAY' || officialStatus === 'LEAN';
+  const authorityDecision = resolveCanonicalDecision(
+    {
+      ...payload,
+      decision_v2: {
+        ...payload.decision_v2,
+        official_status:
+          normalizedPipelineStatus ||
+          payload.decision_v2.official_status ||
+          payload.status ||
+          'PASS',
+        primary_reason_code: primaryReasonCode,
+        source:
+          payload.decision_v2?.source ||
+          CANONICAL_DECISION_SOURCE,
+      },
+    },
+    {
+      stage: 'publisher',
+      fallbackToLegacy: true,
+      strictSource: false,
+      missingReasonCode: primaryReasonCode,
+    },
+  );
+
+  const canonicalDecision = authorityDecision || {
+    official_status: 'PASS',
+    is_actionable: false,
+    tier: 'PASS',
+    reason_code: primaryReasonCode,
+    source: CANONICAL_DECISION_SOURCE,
+    lifecycle: [
+      {
+        stage: 'publisher',
+        status: 'PASS',
+        reason_code: primaryReasonCode,
+      },
+    ],
+  };
+
+  const officialStatus = toPipelineOfficialStatus(canonicalDecision.official_status);
+  const isActionable = canonicalDecision.is_actionable === true;
   const selectionSide =
     overrides.selection_side ||
     overrides.direction ||
@@ -211,8 +248,9 @@ function syncCanonicalDecisionEnvelope(payload, overrides = {}) {
 
   payload.decision_v2.canonical_envelope_v2 = {
     official_status: officialStatus,
+    authority_status: canonicalDecision.official_status,
     terminal_reason_family: deriveTerminalReasonFamilyForPayload({
-      officialStatus,
+      officialStatus: canonicalDecision.official_status,
       watchdogStatus,
       reasonCodes,
     }),
@@ -223,12 +261,20 @@ function syncCanonicalDecisionEnvelope(payload, overrides = {}) {
     direction: selectionSide,
     selection_side: selectionSide,
     selection_team: selectionTeam,
+    source: CANONICAL_DECISION_SOURCE,
+    lifecycle: Array.isArray(canonicalDecision.lifecycle)
+      ? canonicalDecision.lifecycle
+      : [],
     publish_ready:
       overrides.publish_ready != null
         ? overrides.publish_ready === true
         : payload.publish_ready === true ||
           (isActionable && executionStatus === 'EXECUTABLE'),
   };
+
+  payload.canonical_decision = canonicalDecision;
+  payload.decision_v2.official_status = officialStatus;
+  payload.decision_v2.source = CANONICAL_DECISION_SOURCE;
 
   return payload;
 }

@@ -119,9 +119,6 @@ import {
   normalizeDecisionV2,
   resolveDecisionV2EdgePct,
   applyWave1DecisionFields,
-  actionFromClassification,
-  classificationFromAction,
-  statusFromAction,
 } from '@/lib/games/market-inference';
 import {
   createStageCounters,
@@ -165,6 +162,7 @@ import {
   hasMlbFallbackMarketContext,
   getMlbFallbackSnapshotEpoch,
 } from '@/lib/game-card/transform/adapters/v1-legacy-repair';
+import { readRuntimeCanonicalDecision } from '@/lib/runtime-decision-authority';
 
 const { getDatabaseReadOnly, closeReadOnlyInstance } = cheddarData as {
   getDatabaseReadOnly: typeof import('@cheddar-logic/data').getDatabaseReadOnly;
@@ -693,30 +691,18 @@ function buildDropReasonMeta(
   };
 }
 
-function getCanonicalEnvelope(play: Play) {
-  const envelope = play?.decision_v2?.canonical_envelope_v2;
-  if (!envelope || typeof envelope !== 'object') return null;
-  return envelope;
-}
-
-function resolveLiveOfficialStatus(play: Play): 'PLAY' | 'LEAN' | 'PASS' {
-  const envelopeOfficial = getCanonicalEnvelope(play)?.official_status;
-  if (
-    envelopeOfficial === 'PLAY' ||
-    envelopeOfficial === 'LEAN' ||
-    envelopeOfficial === 'PASS'
-  ) {
-    return envelopeOfficial;
-  }
-  const explicit = play.decision_v2?.official_status;
-  if (explicit === 'PLAY' || explicit === 'LEAN' || explicit === 'PASS') {
-    return explicit;
-  }
-  if (play.action === 'FIRE') return 'PLAY';
-  if (play.action === 'HOLD') return 'LEAN';
-  if (play.status === 'FIRE') return 'PLAY';
-  if (play.status === 'WATCH') return 'LEAN';
-  return 'PASS';
+export function resolveLiveOfficialStatus(play: Play): 'PLAY' | 'LEAN' | 'PASS' {
+  const decision = readRuntimeCanonicalDecision(
+    {
+      decision_v2: (play?.decision_v2 ?? null) as Record<string, unknown> | null,
+      action: play?.action,
+      classification: play?.classification,
+      status: play?.status,
+      pass_reason_code: play?.pass_reason_code,
+    },
+    { stage: 'read_api' },
+  );
+  return decision.officialStatus;
 }
 
 function resolveTruePlayStatusRank(play: Play): number {
@@ -3073,21 +3059,20 @@ function mergePropFallbackRows(params: {
         const dedupedReasonCodes = combinedReasonCodes;
         const dedupedTags = Array.from(new Set(combinedTags));
 
-        const resolvedActionBase: Play['action'] | undefined =
-          normalizedAction ??
-          actionFromClassification(normalizedClassification) ??
-          (normalizedStatus === 'FIRE'
-            ? 'FIRE'
-            : normalizedStatus === 'WATCH'
-              ? 'HOLD'
-              : normalizedStatus === 'PASS'
-                ? 'PASS'
-                : undefined);
-        const resolvedAction: Play['action'] | undefined = resolvedActionBase;
-        const resolvedClassification: Play['classification'] | undefined =
-          normalizedClassification ?? classificationFromAction(resolvedAction);
-        const resolvedStatus: Play['status'] | undefined =
-          statusFromAction(resolvedAction) ?? normalizedStatus;
+        const runtimeDecision = readRuntimeCanonicalDecision(
+          {
+            decision_v2: (normalizedDecisionV2 ?? null) as Record<string, unknown> | null,
+            action: normalizedAction,
+            classification: normalizedClassification,
+            status: normalizedStatus,
+            pass_reason_code: normalizedPassReasonCode,
+          },
+          { stage: 'read_api' },
+        );
+        const resolvedAction: Play['action'] = runtimeDecision.action;
+        const resolvedClassification: Play['classification'] =
+          runtimeDecision.classification;
+        const resolvedStatus: Play['status'] = runtimeDecision.status;
         const onePModelCall =
           cardRow.card_type === 'nhl-pace-1p'
             ? deriveNhl1PModelCall(dedupedReasonCodes, normalizedPrediction)
@@ -3698,78 +3683,28 @@ function mergePropFallbackRows(params: {
         // wave-1 path for them so they aren't silently dropped.
         const isPropPlay = play.market_type === 'PROP';
 
-        const shouldSkipWave1DecisionV2Enforcement =
-          isProjectionSurfaceType;
-
         if (wave1Eligible && !isPropPlay) {
-          if (!shouldSkipWave1DecisionV2Enforcement) {
-            // Wave-1 rows MUST have decision_v2 from worker - skip if missing
-            if (!play.decision_v2) {
-              incrementStageCounter(
-                stageCounters,
-                'wave1_skipped_no_d2',
-                parsedSport,
-                parsedMarket,
-              );
-              continue; // Skip plays without decision_v2 in wave-1
-            }
-            applyWave1DecisionFields(play);
-            play.reason_codes = Array.from(
-              new Set([
-                ...(play.reason_codes ?? []),
-                play.decision_v2.primary_reason_code,
-              ]),
+          // Wave-1 rows MUST have worker-published canonical decision_v2.
+          if (!play.decision_v2) {
+            incrementStageCounter(
+              stageCounters,
+              'wave1_skipped_no_d2',
+              parsedSport,
+              parsedMarket,
             );
-          } else if (!play.decision_v2) {
-            const fallbackStatus =
-              play.action === 'FIRE' || play.classification === 'BASE'
-                ? 'PLAY'
-                : play.action === 'HOLD' || play.classification === 'LEAN'
-                  ? 'LEAN'
-                  : 'PASS';
-            const fallbackReasonCode =
-              normalizePassReasonCode(
-                firstString(play.pass_reason_code, ...(play.reason_codes ?? [])),
-              ) ?? 'PROJECTION_SURFACE_FALLBACK';
-            play.decision_v2 = {
-              direction: 'NONE',
-              support_score: 0,
-              conflict_score: 0,
-              drivers_used: [],
-              driver_reasons: [],
-              watchdog_status: 'BLOCKED',
-              watchdog_reason_codes: [],
-              missing_data: {
-                missing_fields: [],
-                source_attempts: [],
-                severity: 'INFO',
-              },
-              consistency: {
-                pace_tier: 'unknown',
-                event_env: 'unknown',
-                event_direction_tag: 'none',
-                vol_env: 'unknown',
-                total_bias: 'INSUFFICIENT_DATA',
-              },
-              fair_prob: null,
-              implied_prob: null,
-              edge_pct: null,
-              sharp_price_status: 'UNPRICED',
-              price_reason_codes: [],
-              official_status: fallbackStatus,
-              play_tier: 'BAD',
-              primary_reason_code: fallbackReasonCode,
-              pipeline_version: 'v2',
-              decided_at: new Date().toISOString(),
-            };
-            play.reason_codes = Array.from(
-              new Set([...(play.reason_codes ?? []), fallbackReasonCode]),
-            );
+            continue;
           }
+          applyWave1DecisionFields(play);
+          play.reason_codes = Array.from(
+            new Set([
+              ...(play.reason_codes ?? []),
+              play.decision_v2.primary_reason_code,
+            ]),
+          );
         }
 
         if (
-          (!wave1Eligible || isPropPlay || shouldSkipWave1DecisionV2Enforcement) &&
+          (!wave1Eligible || isPropPlay) &&
           !play.consistency?.total_bias
         ) {
           const nativeTotalStatus =

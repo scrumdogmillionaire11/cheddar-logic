@@ -3,6 +3,12 @@
   "version": "1.0.0",
   "description": "Shared card model contract and edge calculations",
   "main": "src/index.js",
+  "exports": {
+    ".": "./src/index.js",
+    "./decision-authority": "./src/decision-authority.js",
+    "./src/*.js": "./src/*.js",
+    "./src/*": "./src/*.js"
+  },
   "keywords": [
     "cards",
     "models",
