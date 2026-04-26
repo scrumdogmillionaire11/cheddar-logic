@@ -118,11 +118,38 @@ function expressionStatusFromAction(
   return action;
 }
 
+function resolveLegacyDisplayAction(
+  play:
+    | {
+        action?: Play['action'];
+        classification?: Play['classification'];
+        status?: Play['status'];
+        final_market_decision?: Play['final_market_decision'];
+      }
+    | null
+    | undefined,
+): PlayDisplayAction | null {
+  const surfacedStatus = play?.final_market_decision?.surfaced_status;
+  if (surfacedStatus === 'PLAY') return 'FIRE';
+  if (surfacedStatus === 'SLIGHT EDGE') return 'HOLD';
+  if (surfacedStatus === 'PASS') return 'PASS';
+
+  if (play?.action === 'FIRE' || play?.classification === 'BASE') return 'FIRE';
+  if (play?.action === 'HOLD' || play?.classification === 'LEAN') return 'HOLD';
+  if (play?.action === 'PASS' || play?.classification === 'PASS') return 'PASS';
+  if (play?.status === 'FIRE') return 'FIRE';
+  if (play?.status === 'WATCH') return 'HOLD';
+  if (play?.status === 'PASS') return 'PASS';
+
+  return null;
+}
+
 export function resolvePlayDisplayDecision(
   play?:
     | {
         action?: Play['action'];
         classification?: Play['classification'];
+        status?: Play['status'];
         final_market_decision?: Play['final_market_decision'];
         decision_v2?: {
           official_status?: 'PLAY' | 'LEAN' | 'PASS';
@@ -133,12 +160,23 @@ export function resolvePlayDisplayDecision(
       }
     | null,
 ): ResolvedPlayDisplayDecision {
+  // For rows with no decision_v2, use legacy display fields before running the
+  // canonical fail-closed resolver (which would default everything to PASS).
+  const legacyAction = !play?.decision_v2 ? resolveLegacyDisplayAction(play) : null;
+  if (legacyAction) {
+    return {
+      action: legacyAction,
+      status: expressionStatusFromAction(legacyAction),
+      classification: classificationFromAction(legacyAction),
+    };
+  }
+
   const authorityDecision = readRuntimeCanonicalDecision(
     {
       decision_v2: play?.decision_v2 ?? null,
       action: play?.action,
       classification: play?.classification,
-      status: play?.final_market_decision?.surfaced_status,
+      status: play?.status ?? play?.final_market_decision?.surfaced_status,
     },
     { stage: 'read_api' },
   );

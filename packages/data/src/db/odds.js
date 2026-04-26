@@ -232,6 +232,54 @@ function getOddsIngestFailureSummary({
  * @param {string} snapshot.jobRunId - Associated job run ID
  * @param {object} snapshot.rawData - Full odds object (stringified)
  */
+/**
+ * Carry forward espn_metrics (and moneypuck fields) from the previous snapshot for
+ * the same game into the new raw_data blob. This prevents hourly odds re-pulls from
+ * wiping model-enriched team metrics that were written by run_nhl_model / run_nba_model
+ * after a prior odds ingest.
+ *
+ * Only copies fields that are absent in the incoming rawData so the model's own
+ * updateOddsSnapshotRawData call always wins.
+ */
+function buildRawDataWithEspnCarryForward(db, gameId, incomingRawData) {
+  const merged = incomingRawData && typeof incomingRawData === 'object'
+    ? { ...incomingRawData }
+    : (incomingRawData ? incomingRawData : {});
+
+  // Only bother if espn_metrics is already missing from the incoming payload
+  if (merged.espn_metrics) {
+    return JSON.stringify(merged);
+  }
+
+  try {
+    const prev = db
+      .prepare(
+        `SELECT raw_data FROM odds_snapshots
+         WHERE game_id = ?
+           AND raw_data IS NOT NULL
+           AND json_extract(raw_data, '$.espn_metrics') IS NOT NULL
+         ORDER BY captured_at DESC
+         LIMIT 1`,
+      )
+      .get(gameId);
+
+    if (prev && prev.raw_data) {
+      const prevParsed = JSON.parse(prev.raw_data);
+      if (prevParsed && typeof prevParsed === 'object' && prevParsed.espn_metrics) {
+        merged.espn_metrics = prevParsed.espn_metrics;
+        // Carry forward moneypuck_context if present and absent from incoming
+        if (!merged.moneypuck_context && prevParsed.moneypuck_context) {
+          merged.moneypuck_context = prevParsed.moneypuck_context;
+        }
+      }
+    }
+  } catch {
+    // Non-critical: fall through and write without carry-forward
+  }
+
+  return JSON.stringify(merged);
+}
+
 function insertOddsSnapshot(snapshot) {
   const db = getDatabase();
   const normalizedSport = normalizeSportValue(snapshot.sport, 'insertOddsSnapshot');
@@ -332,7 +380,7 @@ function insertOddsSnapshot(snapshot) {
     toNullableNumber(snapshot.total1pLine),
     toNullableNumber(snapshot.total1pOver),
     toNullableNumber(snapshot.total1pUnder),
-    snapshot.rawData ? JSON.stringify(snapshot.rawData) : null,
+    buildRawDataWithEspnCarryForward(db, snapshot.gameId, snapshot.rawData),
     snapshot.jobRunId
   );
 }

@@ -43,11 +43,15 @@ const gamesRouteHandlerSource = fs.readFileSync(
   'utf8',
 );
 
-// Verify both paths use the same PROJECTION_ONLY detection logic
+// Verify both paths use the same PROJECTION_ONLY detection logic.
+// Cards route delegates to isBettingSurfacePayload() in payload-classifier
+// (WI-1133 extracted the inline logic), so accept either direct or delegated form.
 assert(
   cardsRouteSource.includes("basis === 'PROJECTION_ONLY'") ||
-    cardsRouteSource.includes("'PROJECTION_ONLY'"),
-  'Expected cards route to detect PROJECTION_ONLY status',
+    cardsRouteSource.includes("'PROJECTION_ONLY'") ||
+    (cardsRouteSource.includes('isBettingSurfacePayload') &&
+      cardsRouteSource.includes('payload-classifier')),
+  'Expected cards route to detect PROJECTION_ONLY status (directly or via payload-classifier delegation)',
 );
 
 assert(
