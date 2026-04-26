@@ -628,9 +628,10 @@ function finalizeDecisionFields(payload, context = {}) {
     action === 'FIRE' ? 'FIRE' : action === 'HOLD' ? 'WATCH' : 'PASS';
   payload.classification = mapActionToClassification(action);
   payload.execution_status = resolveExecutionStatus(payload);
-  if (payload.decision_v2) {
-    syncCanonicalDecisionEnvelope(payload);
-  }
+  // Always populate canonical_decision for all PLAY payloads, regardless of wave1-eligibility.
+  // MLB and other non-wave1 sports must also get the canonical_decision field set so that
+  // the web layer (readRuntimeCanonicalDecision) can properly evaluate them instead of defaulting to PASS.
+  syncCanonicalDecisionEnvelope(payload);
   syncSelectionCompatibilityFields(payload);
   payload.final_play_state = resolveCanonicalPlayState(payload);
 
