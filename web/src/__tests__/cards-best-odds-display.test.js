@@ -231,12 +231,12 @@ function buildCard(playOverrides = {}) {
 
 {
   const card = buildCard({ play: { execution_status: null, reason_codes: ['MISSING_DATA_PROJECTION_INPUTS'], decision_v2: null, transform_meta: null } });
-  assert.equal(classifyPassReasonBucket(card), 'projection-only', 'reason_codes MISSING_DATA_PROJECTION_INPUTS');
+  assert.equal(classifyPassReasonBucket(card), 'data-error', 'reason_codes MISSING_DATA_PROJECTION_INPUTS');
 }
 
 {
   const card = buildCard({ play: { execution_status: null, reason_codes: ['MISSING_DATA_DRIVERS'], decision_v2: null, transform_meta: null } });
-  assert.equal(classifyPassReasonBucket(card), 'projection-only', 'reason_codes MISSING_DATA_DRIVERS');
+  assert.equal(classifyPassReasonBucket(card), 'data-error', 'reason_codes MISSING_DATA_DRIVERS');
 }
 
 // odds-blocked via execution_status

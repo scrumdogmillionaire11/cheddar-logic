@@ -59,9 +59,6 @@ const ODDS_BLOCKED_PASS_CODES = new Set([
 
 const PROJECTION_ONLY_PASS_CODES = new Set([
   'PROJECTION_ONLY_EXCLUSION',
-  'MISSING_DATA_PROJECTION_INPUTS',
-  'MISSING_DATA_DRIVERS',
-  'PASS_MISSING_DRIVER_INPUTS',
 ]);
 
 function getReasonCodes(card: GameCard): string[] {
