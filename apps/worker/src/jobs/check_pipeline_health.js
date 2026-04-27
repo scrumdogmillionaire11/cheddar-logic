@@ -32,6 +32,8 @@ const {
   markJobRunFailure,
   createJob,
   wasJobRecentlySuccessful,
+  writePipelineHealthState,
+  buildPipelineHealthCheckId,
 } = require('@cheddar-logic/data');
 const { getContractForSport } = require('./execution-gate-freshness-contract');
 const { buildMlbMarketAvailability } = require('./run_mlb_model');
@@ -191,17 +193,41 @@ const CARD_HEALTH_MODEL_JOB_BY_SPORT = Object.freeze({
   nfl: { jobName: 'run_nfl_model', env: 'ENABLE_NFL_MODEL' },
 });
 
+const CHECK_ID_BY_PHASE_AND_NAME = Object.values(CHECK_REGISTRY).reduce((acc, entry) => {
+  acc[`${entry.phase}:${entry.checkName}`] = entry.checkId;
+  return acc;
+}, {});
+
+function resolveCheckId(phase, checkName) {
+  if (typeof buildPipelineHealthCheckId !== 'function') {
+    return `${phase}:${checkName}`;
+  }
+  return CHECK_ID_BY_PHASE_AND_NAME[`${phase}:${checkName}`]
+    || buildPipelineHealthCheckId(phase, checkName);
+}
+
 /**
  * Write health check result to pipeline_health table
  */
 function writePipelineHealth(phase, check, status, reason) {
-  const db = getDatabase();
-  const stmt = db.prepare(`
-    INSERT INTO pipeline_health (phase, check_name, status, reason, created_at)
-    VALUES (?, ?, ?, ?, ?)
-  `);
+  if (typeof writePipelineHealthState !== 'function') {
+    const db = getDatabase();
+    const stmt = db.prepare(`
+      INSERT INTO pipeline_health (phase, check_name, status, reason, created_at)
+      VALUES (?, ?, ?, ?, ?)
+    `);
+    stmt.run(phase, check, status, reason, DateTime.utc().toISO());
+    return;
+  }
 
-  stmt.run(phase, check, status, reason, DateTime.utc().toISO());
+  writePipelineHealthState({
+    phase,
+    checkName: check,
+    status,
+    reason,
+    checkId: resolveCheckId(phase, check),
+    createdAt: DateTime.utc().toISO(),
+  });
 }
 
 function summarizeErrorMessage(message, maxLength = 180) {
@@ -1994,8 +2020,36 @@ function checkCalibrationKillSwitches() {
  * streak threshold. Continued failed runs remain persisted in pipeline_health
  * but do not re-alert until the streak resets and crosses the threshold again.
  */
-function shouldSendAlert(phase, checkName, consecutiveRequired, cooldownMinutes) {
+function shouldSendAlert(phase, checkName, _consecutiveRequired, cooldownMinutes) {
   const db = getDatabase();
+  try {
+    const activeRow = db
+      .prepare(
+        `SELECT status, first_seen_at, last_seen_at
+         FROM pipeline_health
+         WHERE phase = ?
+           AND check_name = ?
+           AND resolved_at IS NULL
+         ORDER BY id DESC
+         LIMIT 1`,
+      )
+      .get(phase, checkName);
+
+    if (activeRow) {
+      if (activeRow.status !== 'failed') return false;
+      if (String(activeRow.first_seen_at || '') !== String(activeRow.last_seen_at || '')) {
+        return false;
+      }
+
+      const firstSeenAt = DateTime.fromISO(activeRow.first_seen_at, { zone: 'utc' });
+      const ageMinutes = DateTime.utc().diff(firstSeenAt, 'minutes').minutes;
+      return ageMinutes <= cooldownMinutes;
+    }
+  } catch (_error) {
+    // Pre-migration fallback handled below.
+  }
+
+  const consecutiveRequired = Math.max(Number(_consecutiveRequired) || 1, 1);
   const rows = db
     .prepare(
       `SELECT status, created_at
@@ -2013,7 +2067,6 @@ function shouldSendAlert(phase, checkName, consecutiveRequired, cooldownMinutes)
   const priorRow = rows[consecutiveRequired];
   if (priorRow?.status === 'failed') return false;
 
-  // oldest row in the streak is the last element (DESC order)
   const oldestRow = currentStreak[consecutiveRequired - 1];
   const oldestAt = DateTime.fromISO(oldestRow.created_at, { zone: 'utc' });
   const ageMinutes = DateTime.utc().diff(oldestAt, 'minutes').minutes;

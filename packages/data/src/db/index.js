@@ -149,6 +149,8 @@ module.exports = {
 
   // pipeline_health — read surface for WI-0761 Model Health Dashboard
   getPipelineHealth: pipelineHealth.getPipelineHealth,
+  writePipelineHealthState: pipelineHealth.writePipelineHealthState,
+  buildPipelineHealthCheckId: pipelineHealth.buildPipelineHealthCheckId,
 
   // WI-0840: dynamic MLB league constants
   computeMLBLeagueAverages: mlbStats.computeMLBLeagueAverages,

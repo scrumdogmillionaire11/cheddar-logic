@@ -88,6 +88,8 @@ module.exports = {
   
   // Convenience exports - pipeline_health (WI-0761)
   getPipelineHealth: db.getPipelineHealth,
+  writePipelineHealthState: db.writePipelineHealthState,
+  buildPipelineHealthCheckId: db.buildPipelineHealthCheckId,
 
   // Convenience exports - model_outputs
   insertModelOutput: db.insertModelOutput,
