@@ -17,6 +17,8 @@
 
 require('dotenv').config();
 require('dotenv').config({ path: require('path').resolve(__dirname, '../../.env.local'), override: false });
+const fs = require('fs');
+const path = require('path');
 
 const { DateTime } = require('luxon');
 const {
@@ -89,6 +91,8 @@ const ENABLE_ODDS_NEAR_TIP_BACKSTOP = process.env.ENABLE_ODDS_NEAR_TIP_BACKSTOP 
 const ENABLE_PULL_SCHEDULE_NBA = process.env.ENABLE_PULL_SCHEDULE_NBA !== 'false';
 const ENABLE_PULL_SCHEDULE_NHL = process.env.ENABLE_PULL_SCHEDULE_NHL !== 'false';
 const ENABLE_POTD = process.env.ENABLE_POTD === 'true';
+const SCHEDULER_HEARTBEAT_FILE =
+  process.env.CHEDDAR_SCHEDULER_HEARTBEAT_FILE || '/opt/data/cheddar-worker-heartbeat.json';
 
 const SPORT_JOBS = {
   nhl: { env: 'ENABLE_NHL_MODEL' },
@@ -104,6 +108,31 @@ function enabledSports() {
 }
 
 function nowET() { return DateTime.now().setZone(TZ); }
+
+function writeSchedulerHeartbeat(patch = {}) {
+  try {
+    const nowIso = new Date().toISOString();
+    const current =
+      fs.existsSync(SCHEDULER_HEARTBEAT_FILE)
+        ? JSON.parse(fs.readFileSync(SCHEDULER_HEARTBEAT_FILE, 'utf8'))
+        : {};
+    const payload = {
+      ...current,
+      pid: process.pid,
+      updated_at: nowIso,
+      ...patch,
+    };
+    const dir = path.dirname(SCHEDULER_HEARTBEAT_FILE);
+    fs.mkdirSync(dir, { recursive: true });
+    const tmp = `${SCHEDULER_HEARTBEAT_FILE}.tmp`;
+    fs.writeFileSync(tmp, `${JSON.stringify(payload)}\n`, 'utf8');
+    fs.renameSync(tmp, SCHEDULER_HEARTBEAT_FILE);
+  } catch (error) {
+    console.warn(
+      `[SCHEDULER] Heartbeat write failed (${SCHEDULER_HEARTBEAT_FILE}): ${error.message}`,
+    );
+  }
+}
 
 function computePotdScheduleMetadata(nowEt, games = []) {
   const eligibleSports = new Set(
@@ -487,6 +516,12 @@ async function start() {
   console.log('='.repeat(60) + '\n');
 
   console.log('[SCHEDULER] Database ready.');
+  writeSchedulerHeartbeat({
+    state: 'starting',
+    tick_ms: tickMs,
+    timezone: TZ,
+    enabled_sports: enabledSports(),
+  });
   purgeStaleTminusPullLog();
   purgeStalePropOddsUsageLog();
   purgeExpiredPropEventMappings();
@@ -496,24 +531,75 @@ async function start() {
   const MAX_TICK_MS = Number(process.env.MAX_TICK_MS || 900_000); // 15 minutes default
   let tickRunning = false;
   function runTick() {
-    if (tickRunning) { console.log('[SCHEDULER] Skipping tick — previous tick still running'); return; }
+    if (tickRunning) {
+      console.log('[SCHEDULER] Skipping tick — previous tick still running');
+      writeSchedulerHeartbeat({
+        state: 'tick_skipped_lock_held',
+        last_tick_skipped_at: new Date().toISOString(),
+      });
+      return;
+    }
     tickRunning = true;
+    const tickStartedAt = new Date().toISOString();
+    writeSchedulerHeartbeat({
+      state: 'running',
+      last_tick_started_at: tickStartedAt,
+    });
     const tickDeadline = new Promise((_, reject) =>
       setTimeout(() => reject(new Error(`[SCHEDULER] Tick exceeded MAX_TICK_MS=${MAX_TICK_MS}ms — releasing lock`)), MAX_TICK_MS),
     );
     Promise.race([tick(), tickDeadline])
-      .catch((err) => console.error('[SCHEDULER] tick error', err))
+      .then(() => {
+        writeSchedulerHeartbeat({
+          state: 'idle',
+          last_tick_completed_at: new Date().toISOString(),
+          last_tick_ok: true,
+          last_tick_error: null,
+        });
+      })
+      .catch((err) => {
+        console.error('[SCHEDULER] tick error', err);
+        writeSchedulerHeartbeat({
+          state: 'tick_error',
+          last_tick_completed_at: new Date().toISOString(),
+          last_tick_ok: false,
+          last_tick_error: err?.message || String(err),
+        });
+      })
       .finally(() => { tickRunning = false; });
   }
   runTick();
   const interval = setInterval(runTick, tickMs);
-  process.on('SIGTERM', () => { clearInterval(interval); console.log('\n[SCHEDULER] SIGTERM, exiting...'); process.exit(0); });
-  process.on('SIGINT', () => { clearInterval(interval); console.log('\n[SCHEDULER] SIGINT, exiting...'); process.exit(0); });
+  process.on('SIGTERM', () => {
+    clearInterval(interval);
+    writeSchedulerHeartbeat({ state: 'stopping', stop_signal: 'SIGTERM' });
+    console.log('\n[SCHEDULER] SIGTERM, exiting...');
+    process.exit(0);
+  });
+  process.on('SIGINT', () => {
+    clearInterval(interval);
+    writeSchedulerHeartbeat({ state: 'stopping', stop_signal: 'SIGINT' });
+    console.log('\n[SCHEDULER] SIGINT, exiting...');
+    process.exit(0);
+  });
   process.on('uncaughtException', (err) => {
+    writeSchedulerHeartbeat({
+      state: 'crashed',
+      crash_type: 'uncaughtException',
+      crash_message: err?.message || String(err),
+    });
     console.error('[SCHEDULER] uncaughtException — exiting:', err);
     process.exit(1);
   });
   process.on('unhandledRejection', (reason) => {
+    writeSchedulerHeartbeat({
+      state: 'crashed',
+      crash_type: 'unhandledRejection',
+      crash_message:
+        reason && typeof reason === 'object' && reason.message
+          ? reason.message
+          : String(reason),
+    });
     console.error('[SCHEDULER] unhandledRejection — exiting:', reason);
     process.exit(1);
   });

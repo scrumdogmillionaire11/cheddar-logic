@@ -2521,7 +2521,14 @@ function buildNhl1PDecision({ payload, selection, line, sidePrice, oddsSnapshot,
       payload?.projection?.projected_total ??
       payload?.driver?.inputs?.predicted_1p_total,
   );
-  const marketAvailable = toFiniteNumber(oddsSnapshot?.total_1p) !== null;
+  const hasFirstPeriodLine = toFiniteNumber(oddsSnapshot?.total_1p) !== null;
+  // Treat core market lines as baseline market availability and 1P line as an enhancement lane.
+  // This avoids mislabeling cards as MARKET_UNAVAILABLE when full-game odds are present.
+  const marketAvailable =
+    hasFirstPeriodLine ||
+    hasMoneylineOdds(oddsSnapshot) ||
+    hasSpreadOdds(oddsSnapshot) ||
+    hasTotalOdds(oddsSnapshot);
   const priceAvailable = sidePrice !== null;
   const directionExists = selection === 'OVER' || selection === 'UNDER';
   const projectionExists =
