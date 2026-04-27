@@ -115,6 +115,7 @@ function insertScenario({
     line,
     price: lockedPrice,
     period,
+    decision_v2: { official_status: 'PLAY' },
   };
 
   runInsert(

@@ -2398,10 +2398,17 @@ let _leagueAvgKPct = LEAGUE_AVG_K_PCT;        // covers LEAGUE_AVG_K_PCT + MLB_F
 let _defaultXfip   = MLB_F5_DEFAULT_XFIP;
 let _defaultBbPct  = MLB_F5_DEFAULT_TEAM_BB_PCT;
 
+let _usingStaticFallbacks = true;
+
 function setLeagueConstants({ kPct, xfip, bbPct } = {}) {
   _leagueAvgKPct = kPct  != null ? kPct  : LEAGUE_AVG_K_PCT;
   _defaultXfip   = xfip  != null ? xfip  : MLB_F5_DEFAULT_XFIP;
   _defaultBbPct  = bbPct != null ? bbPct : MLB_F5_DEFAULT_TEAM_BB_PCT;
+  _usingStaticFallbacks = (kPct == null && xfip == null && bbPct == null);
+}
+
+function isUsingStaticFallbacks() {
+  return _usingStaticFallbacks;
 }
 const MLB_K_DEFAULT_SWSTR_PCT = 0.112;
 const MLB_K_DEFAULT_OPP_OBP = 0.315;

@@ -51,8 +51,6 @@ const PRIMARY_REASON_PRECEDENCE = [
   'MISSING_DATA_TEAM_MAPPING',
   'MISSING_DATA_DRIVERS',
   'PASS_MISSING_DRIVER_INPUTS',
-  'PROJECTION_INPUTS_STALE_FALLBACK',
-  'TEAM_METRICS_FALLBACK_PREV_DAY',
   // Market verification blockers come next.
   'LINE_NOT_CONFIRMED',
   'EDGE_RECHECK_PENDING',
@@ -62,6 +60,12 @@ const PRIMARY_REASON_PRECEDENCE = [
   'BLOCKED_BET_VERIFICATION_REQUIRED',
   'GATE_LINE_MOVEMENT',
   'MISSING_DATA_NO_ODDS',
+  // Feature freshness/degraded model should be shown after market availability.
+  'MISSING_DATA_FEATURE_FRESHNESS',
+  'PROJECTION_INPUTS_STALE_FALLBACK',
+  'TEAM_METRICS_FALLBACK_PREV_DAY',
+  // Edge sanity checks come after core+market+feature failures.
+  'EDGE_SANITY_NON_TOTAL',
   // No-edge reasons are only primary when data/verification are healthy.
   'PASS_EXECUTION_GATE_NET_EDGE_INSUFFICIENT',
   'NO_EDGE_AT_PRICE',

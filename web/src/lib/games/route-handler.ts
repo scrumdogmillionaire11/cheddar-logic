@@ -424,6 +424,16 @@ export interface Play {
     };
   };
   reason_codes?: string[];
+    projection_inputs_complete?: boolean | null;
+    missing_inputs?: string[];
+    core_inputs_complete?: boolean | null;
+    core_missing_inputs?: string[];
+    feature_flags?: string[];
+    market_status?: {
+      has_odds?: boolean | null;
+      freshness_tier?: string | null;
+      execution_blocked?: boolean | null;
+    } | null;
   tags?: string[];
   consistency?: {
     total_bias?:
@@ -433,8 +443,6 @@ export interface Play {
       | 'VOLATILE_ENV'
       | 'UNKNOWN';
   };
-  projection_inputs_complete?: boolean | null;
-  missing_inputs?: string[];
   source_mapping_ok?: boolean | null;
   source_mapping_failures?: string[];
   ingest_failure_reason_code?: string | null;
@@ -585,6 +593,69 @@ export interface Play {
   true_play_authority_version?: 'ADR-0003';
   true_play_authority_rationale?: string;
 }
+
+function normalizeApiMarketStatus(value: unknown): {
+  has_odds?: boolean | null;
+  freshness_tier?: string | null;
+  execution_blocked?: boolean | null;
+} | null {
+  if (!value || typeof value !== 'object') return null;
+  const raw = value as Record<string, unknown>;
+  return {
+    has_odds: typeof raw.has_odds === 'boolean' ? raw.has_odds : null,
+    freshness_tier:
+      typeof raw.freshness_tier === 'string' ? raw.freshness_tier : null,
+    execution_blocked:
+      typeof raw.execution_blocked === 'boolean'
+        ? raw.execution_blocked
+        : null,
+  };
+}
+
+function normalizeDiagnosticToken(value: unknown): string | null {
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : null;
+  }
+  if (!value || typeof value !== 'object') return null;
+
+  const entry = value as Record<string, unknown>;
+  const code =
+    typeof entry.code === 'string'
+      ? entry.code.trim()
+      : typeof entry.status === 'string'
+        ? entry.status.trim().toUpperCase()
+        : '';
+  const team = typeof entry.team === 'string' ? entry.team.trim() : '';
+  const sport = typeof entry.sport === 'string' ? entry.sport.trim().toUpperCase() : '';
+  if (code && sport && team) return `${code}:${sport}:${team}`;
+  if (code && team) return `${code}:${team}`;
+  if (code && sport) return `${code}:${sport}`;
+
+  for (const key of ['reason', 'code', 'label', 'message', 'field', 'key']) {
+    if (typeof entry[key] === 'string' && entry[key]!.trim().length > 0) {
+      return entry[key]!.trim();
+    }
+  }
+
+  try {
+    const json = JSON.stringify(value);
+    return json && json !== '{}' ? json : null;
+  } catch {
+    return null;
+  }
+}
+
+function normalizeDiagnosticArray(values: unknown[]): string[] {
+  return Array.from(
+    new Set(
+      values
+        .map((value) => normalizeDiagnosticToken(value))
+        .filter((value): value is string => Boolean(value)),
+    ),
+  );
+}
+
 const TRUE_PLAY_AUTHORITY_SOURCE = 'CARD_PAYLOADS_DECISION_V2' as const;
 const TRUE_PLAY_AUTHORITY_VERSION = 'ADR-0003' as const;
 const TRUE_PLAY_AUTHORITY_RATIONALE =
@@ -852,6 +923,28 @@ function parseCardPayloadData(payloadData: string): Record<string, unknown> | nu
   } catch {
     return null;
   }
+}
+
+export function isNativeTotalBiasActionable(play: {
+  market_type?: Play['market_type'] | null;
+  status?: Play['status'] | null;
+  line?: number | null;
+  edge_pct?: number | null;
+  edge?: number | null;
+}): boolean {
+  const nativeTotalStatus =
+    typeof play.status === 'string' ? play.status.toUpperCase() : null;
+  const nativeTotalLine = typeof play.line === 'number';
+  const nativeTotalEdge =
+    typeof play.edge_pct === 'number' || typeof play.edge === 'number';
+
+  return Boolean(
+    play.market_type === 'TOTAL' &&
+      nativeTotalStatus !== null &&
+      nativeTotalStatus !== 'PASS' &&
+      nativeTotalLine &&
+      nativeTotalEdge,
+  );
 }
 
 function isEligibleMlbGameLineFallbackRow(params: {
@@ -3059,20 +3152,83 @@ function mergePropFallbackRows(params: {
         const dedupedReasonCodes = combinedReasonCodes;
         const dedupedTags = Array.from(new Set(combinedTags));
 
-        const runtimeDecision = readRuntimeCanonicalDecision(
-          {
-            decision_v2: (normalizedDecisionV2 ?? null) as Record<string, unknown> | null,
-            action: normalizedAction,
-            classification: normalizedClassification,
-            status: normalizedStatus,
-            pass_reason_code: normalizedPassReasonCode,
-          },
-          { stage: 'read_api' },
+        // MLB full-game legacy rows (no decision_v2) carry native status/edge
+        // directly in payload fields. Preserve those statuses without relaxing
+        // fail-closed canonical reads for modern/non-MLB rows.
+        const isMlbFullGameCardType = (MLB_GAME_LINE_FALLBACK_CARD_TYPES as readonly string[]).includes(
+          cardRow.card_type,
         );
-        const resolvedAction: Play['action'] = runtimeDecision.action;
+        const hasLegacyNativeDecisionFields =
+          normalizedDecisionV2 == null &&
+          (typeof payload.status === 'string' ||
+            typeof payload.action === 'string' ||
+            typeof payload.classification === 'string' ||
+            typeof payloadPlay?.status === 'string' ||
+            typeof payloadPlay?.action === 'string' ||
+            typeof payloadPlay?.classification === 'string');
+        const isMlbFullGameLegacyDecisionPlay =
+          isMlbFullGameCardType && hasLegacyNativeDecisionFields;
+        const runtimeDecision = isMlbFullGameLegacyDecisionPlay
+          ? null
+          : readRuntimeCanonicalDecision(
+              {
+                decision_v2: (normalizedDecisionV2 ?? null) as Record<string, unknown> | null,
+                action: normalizedAction,
+                classification: normalizedClassification,
+                status: normalizedStatus,
+                pass_reason_code: normalizedPassReasonCode,
+              },
+              { stage: 'read_api' },
+            );
+        const resolvedAction: Play['action'] = runtimeDecision?.action ?? normalizedAction;
         const resolvedClassification: Play['classification'] =
-          runtimeDecision.classification;
-        const resolvedStatus: Play['status'] = runtimeDecision.status;
+          runtimeDecision?.classification ?? normalizedClassification;
+        const resolvedStatus: Play['status'] = runtimeDecision?.status ?? normalizedStatus;
+        const legacyMlbDecisionV2 = (isMlbFullGameLegacyDecisionPlay
+          ? {
+              official_status:
+                resolvedAction === 'FIRE'
+                  ? 'PLAY'
+                  : resolvedAction === 'HOLD'
+                    ? 'LEAN'
+                    : 'PASS',
+              direction:
+                normalizedSelectionSide === 'HOME' ||
+                normalizedSelectionSide === 'AWAY' ||
+                normalizedSelectionSide === 'OVER' ||
+                normalizedSelectionSide === 'UNDER'
+                  ? normalizedSelectionSide
+                  : 'NONE',
+              fair_prob: normalizedPFair ?? null,
+              implied_prob: normalizedPImplied ?? null,
+              edge_pct: normalizedEdgePct ?? null,
+              edge_delta_pct: normalizedEdgePct ?? null,
+              play_tier: null,
+              support_score: null,
+              conflict_score: null,
+              drivers_used: [],
+              driver_reasons: [],
+              primary_reason_code: normalizedPassReasonCode ?? 'EDGE_CLEAR',
+              watchdog_status: 'OK',
+              watchdog_reason_codes: [],
+              sharp_price_status: null,
+              price_reason_codes: [],
+              missing_data: {
+                missing_fields: [],
+                source_attempts: [],
+                severity: 'INFO',
+              },
+              consistency: {
+                total_bias: 'UNKNOWN',
+              },
+              pricing_trace: {
+                line_source: null,
+                price_source: null,
+              },
+              pipeline_version: 'v2',
+              decided_at: cardRow.created_at,
+            }
+          : normalizedDecisionV2) as Play['decision_v2'];
         const onePModelCall =
           cardRow.card_type === 'nhl-pace-1p'
             ? deriveNhl1PModelCall(dedupedReasonCodes, normalizedPrediction)
@@ -3277,7 +3433,7 @@ function mergePropFallbackRows(params: {
           goalie_away_name: normalizedGoalieAwayName ?? null,
           goalie_home_status: normalizedGoalieHomeStatus ?? null,
           goalie_away_status: normalizedGoalieAwayStatus ?? null,
-          decision_v2: normalizedDecisionV2,
+          decision_v2: legacyMlbDecisionV2,
           kind:
             payload.kind === 'PLAY' || payload.kind === 'EVIDENCE'
               ? (payload.kind as 'PLAY' | 'EVIDENCE')
@@ -3415,37 +3571,67 @@ function mergePropFallbackRows(params: {
             : undefined,
           reason_codes: dedupedReasonCodes,
           projection_inputs_complete:
-            typeof payload.projection_inputs_complete === 'boolean'
-              ? payload.projection_inputs_complete
-              : typeof payloadPlay?.projection_inputs_complete === 'boolean'
-                ? payloadPlay.projection_inputs_complete
+            typeof payload.core_inputs_complete === 'boolean'
+              ? payload.core_inputs_complete
+              : typeof payloadPlay?.core_inputs_complete === 'boolean'
+                ? payloadPlay.core_inputs_complete
+                : typeof payload.projection_inputs_complete === 'boolean'
+                  ? payload.projection_inputs_complete
+                  : typeof payloadPlay?.projection_inputs_complete === 'boolean'
+                    ? payloadPlay.projection_inputs_complete
+                    : null,
+          core_inputs_complete:
+            typeof payload.core_inputs_complete === 'boolean'
+              ? payload.core_inputs_complete
+              : typeof payloadPlay?.core_inputs_complete === 'boolean'
+                ? payloadPlay.core_inputs_complete
                 : null,
-          missing_inputs: Array.from(
-            new Set([
-              ...(Array.isArray(payload.missing_inputs)
-                ? payload.missing_inputs
+          missing_inputs: normalizeDiagnosticArray([
+              ...(Array.isArray(payload.core_missing_inputs)
+                ? payload.core_missing_inputs
+                : Array.isArray(payload.missing_inputs)
+                  ? payload.missing_inputs
+                  : []),
+              ...(Array.isArray(payloadPlay?.core_missing_inputs)
+                ? payloadPlay.core_missing_inputs
                 : []),
               ...(Array.isArray(payloadPlay?.missing_inputs)
                 ? payloadPlay.missing_inputs
                 : []),
+            ]),
+          core_missing_inputs: normalizeDiagnosticArray([
+              ...(Array.isArray(payload.core_missing_inputs)
+                ? payload.core_missing_inputs
+                : []),
+              ...(Array.isArray(payloadPlay?.core_missing_inputs)
+                ? payloadPlay.core_missing_inputs
+                : []),
+            ]),
+          feature_flags: Array.from(
+            new Set([
+              ...(Array.isArray(payload.feature_flags) ? payload.feature_flags : []),
+              ...(Array.isArray(payloadPlay?.feature_flags)
+                ? payloadPlay.feature_flags
+                : []),
             ].map((value) => String(value))),
           ),
+          market_status:
+            normalizeApiMarketStatus(payload.market_status) ??
+            normalizeApiMarketStatus(payloadPlay?.market_status),
           source_mapping_ok:
             typeof payload.source_mapping_ok === 'boolean'
               ? payload.source_mapping_ok
               : typeof payloadPlay?.source_mapping_ok === 'boolean'
                 ? payloadPlay.source_mapping_ok
                 : null,
-          source_mapping_failures: Array.from(
-            new Set([
+          source_mapping_failures: normalizeDiagnosticArray([
               ...(Array.isArray(payload.source_mapping_failures)
                 ? payload.source_mapping_failures
                 : []),
               ...(Array.isArray(payloadPlay?.source_mapping_failures)
                 ? payloadPlay.source_mapping_failures
                 : []),
-            ].map((value) => String(value))),
-          ),
+            ]),
           tags: dedupedTags,
           run_id: normalizedRunId,
           created_at: normalizedCreatedAt ?? cardRow.created_at,
@@ -3681,43 +3867,36 @@ function mergePropFallbackRows(params: {
         // PROP plays (nhl-player-shots etc.) carry action/status directly in the
         // payload — they don't use the wave-1 decision_v2 pipeline.  Skip the
         // wave-1 path for them so they aren't silently dropped.
+        // isMlbFullGameLegacyDecisionPlay is computed above (before readRuntimeCanonicalDecision).
         const isPropPlay = play.market_type === 'PROP';
 
         if (wave1Eligible && !isPropPlay) {
-          // Wave-1 rows MUST have worker-published canonical decision_v2.
-          if (!play.decision_v2) {
-            incrementStageCounter(
-              stageCounters,
-              'wave1_skipped_no_d2',
-              parsedSport,
-              parsedMarket,
+          if (!isMlbFullGameLegacyDecisionPlay) {
+            // Wave-1 rows MUST have worker-published canonical decision_v2.
+            if (!play.decision_v2) {
+              incrementStageCounter(
+                stageCounters,
+                'wave1_skipped_no_d2',
+                parsedSport,
+                parsedMarket,
+              );
+              continue;
+            }
+            applyWave1DecisionFields(play);
+            play.reason_codes = Array.from(
+              new Set([
+                ...(play.reason_codes ?? []),
+                play.decision_v2.primary_reason_code,
+              ]),
             );
-            continue;
           }
-          applyWave1DecisionFields(play);
-          play.reason_codes = Array.from(
-            new Set([
-              ...(play.reason_codes ?? []),
-              play.decision_v2.primary_reason_code,
-            ]),
-          );
         }
 
         if (
-          (!wave1Eligible || isPropPlay) &&
+          (!wave1Eligible || isPropPlay || isMlbFullGameLegacyDecisionPlay) &&
           !play.consistency?.total_bias
         ) {
-          const nativeTotalStatus =
-            typeof play.status === 'string' ? play.status.toUpperCase() : null;
-          const nativeTotalLine = typeof play.line === 'number';
-          const nativeTotalEdge =
-            typeof play.edge_pct === 'number' || typeof play.edge === 'number';
-          const nativeTotalBiasOk =
-            play.market_type === 'TOTAL' &&
-            nativeTotalStatus !== null &&
-            nativeTotalStatus !== 'PASS' &&
-            nativeTotalLine &&
-            nativeTotalEdge;
+          const nativeTotalBiasOk = isNativeTotalBiasActionable(play);
           const totalDecision =
             payload.all_markets &&
             typeof payload.all_markets === 'object' &&

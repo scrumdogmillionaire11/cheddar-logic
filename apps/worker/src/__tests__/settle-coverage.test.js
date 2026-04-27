@@ -102,7 +102,7 @@ function insertSeedData(db) {
     'nba-model-output',
     'P1',
     now,
-    JSON.stringify({ home_team: 'Home A', away_team: 'Away A' }),
+    JSON.stringify({ home_team: 'Home A', away_team: 'Away A', kind: 'PLAY', decision_v2: { official_status: 'PLAY' } }),
   );
   runInsert(
     db,
@@ -144,7 +144,7 @@ function insertSeedData(db) {
     'nhl-model-output',
     'P4',
     now,
-    JSON.stringify({ home_team: 'Home B', away_team: 'Away B' }),
+    JSON.stringify({ home_team: 'Home B', away_team: 'Away B', kind: 'PLAY', decision_v2: { official_status: 'PLAY' } }),
   );
   runInsert(
     db,
@@ -167,6 +167,7 @@ function insertSeedData(db) {
       price: -120,
       home_team: 'Home B',
       away_team: 'Away B',
+      decision_v2: { official_status: 'PLAY' },
     }),
   );
 
@@ -739,6 +740,8 @@ describe('settlement coverage parity', () => {
         home_team: 'Dup Home',
         away_team: 'Dup Away',
         confidence_pct: 62,
+        kind: 'PLAY',
+        decision_v2: { official_status: 'PLAY' },
       }),
     );
 
@@ -759,6 +762,8 @@ describe('settlement coverage parity', () => {
         home_team: 'Dup Home',
         away_team: 'Dup Away',
         confidence_pct: 74,
+        kind: 'PLAY',
+        decision_v2: { official_status: 'PLAY' },
       }),
     );
 

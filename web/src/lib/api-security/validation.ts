@@ -17,6 +17,7 @@ const ALLOWED_QUERY_PARAMS: Record<string, Set<string>> = {
     'offset',
     'lifecycle',
     'date',
+    'surface',
   ]),
   '/api/cards/[gameId]': new Set([
     'cardType',

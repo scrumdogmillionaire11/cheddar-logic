@@ -1,7 +1,10 @@
 import assert from 'node:assert';
 
 import { resolvePlayDisplayDecision } from '../lib/game-card/decision';
-import { resolveLiveOfficialStatus } from '../lib/games/route-handler';
+import {
+  isNativeTotalBiasActionable,
+  resolveLiveOfficialStatus,
+} from '../lib/games/route-handler';
 import { readRuntimeCanonicalDecision } from '../lib/runtime-decision-authority';
 
 // resolveDecisionTier now returns canonical status directly
@@ -72,6 +75,108 @@ withEnv({ ENFORCE_CANONICAL_DECISION_ONLY: 'false', ENFORCE_CANONICAL_DECISION_O
   assert.strictEqual(result.officialStatus, 'PLAY', 'canonical PLAY must resolve to PLAY regardless of flag state');
   assert.strictEqual(result.isActionable, true, 'canonical PLAY must be actionable');
 });
+
+// ---------------------------------------------------------------------------
+// MLB full-game legacy (no decision_v2) preserves native PLAY/SLIGHT EDGE/PASS
+// ---------------------------------------------------------------------------
+{
+  const mlbLegacyLeanPayload = {
+    cardType: 'mlb-full-game',
+    market_type: 'TOTAL',
+    action: 'PASS',
+    classification: 'PASS',
+    status: 'PASS',
+    final_market_decision: { surfaced_status: 'SLIGHT EDGE' },
+  };
+  assert.strictEqual(
+    resolvePlayDisplayDecision(mlbLegacyLeanPayload as never).action,
+    'HOLD',
+    'MLB full-game legacy SLIGHT EDGE must remain HOLD/LEAN',
+  );
+
+  const mlbLegacyPlayPayload = {
+    cardType: 'mlb-full-game',
+    market_type: 'TOTAL',
+    action: 'FIRE',
+    classification: 'BASE',
+    status: 'FIRE',
+  };
+  assert.strictEqual(
+    resolvePlayDisplayDecision(mlbLegacyPlayPayload as never).action,
+    'FIRE',
+    'MLB full-game legacy PLAY must remain FIRE',
+  );
+
+  const mlbLegacyPassPayload = {
+    cardType: 'mlb-full-game',
+    market_type: 'TOTAL',
+    action: 'PASS',
+    classification: 'PASS',
+    status: 'PASS',
+  };
+  assert.strictEqual(
+    resolvePlayDisplayDecision(mlbLegacyPassPayload as never).action,
+    'PASS',
+    'MLB full-game legacy PASS must remain PASS',
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Modern MLB decision_v2 remains authoritative over native legacy fields
+// ---------------------------------------------------------------------------
+{
+  const modernMlbPayload = {
+    cardType: 'mlb-full-game',
+    market_type: 'TOTAL',
+    action: 'PASS',
+    classification: 'PASS',
+    status: 'PASS',
+    decision_v2: {
+      official_status: 'PLAY',
+      canonical_envelope_v2: { official_status: 'PLAY' },
+    },
+  };
+  assert.strictEqual(
+    resolvePlayDisplayDecision(modernMlbPayload as never).action,
+    'FIRE',
+    'decision_v2 must override native legacy PASS fields for modern MLB rows',
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Non-MLB legacy rows without decision_v2 remain fail-closed PASS
+// ---------------------------------------------------------------------------
+{
+  const nonMlbLegacyPayload = {
+    cardType: 'nhl-moneyline-call',
+    market_type: 'MONEYLINE',
+    action: 'FIRE',
+    classification: 'BASE',
+    status: 'FIRE',
+  };
+  assert.strictEqual(
+    resolvePlayDisplayDecision(nonMlbLegacyPayload as never).action,
+    'PASS',
+    'non-MLB rows must not bypass canonical fail-closed behavior',
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Native total bias eligibility remains true for actionable MLB legacy totals
+// ---------------------------------------------------------------------------
+{
+  assert.strictEqual(
+    isNativeTotalBiasActionable({
+      market_type: 'TOTAL',
+      status: 'WATCH',
+      line: 8.5,
+      edge_pct: 0.06,
+      edge: 0.06,
+    }),
+    true,
+    'native actionable total rows must continue to set total_bias eligibility true',
+  );
+}
 
 // ---------------------------------------------------------------------------
 // Lifecycle: present on canonical result

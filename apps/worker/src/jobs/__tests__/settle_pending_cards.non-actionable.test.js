@@ -119,7 +119,7 @@ describe('autoCloseNonActionableFinalPendingRows', () => {
     expect(result.failures).toBe(0);
   });
 
-  test('warns when a recent card auto-closes through legacy decision fallback', () => {
+  test('card missing decision_v2.official_status fails closed with NON_ACTIONABLE_MISSING_CANONICAL_STATUS', () => {
     const candidateRows = [
       makeCandidateRow({
         result_id: 'r-legacy-001',
@@ -138,23 +138,13 @@ describe('autoCloseNonActionableFinalPendingRows', () => {
       }),
     ];
     const db = buildDbStub({ candidateRows, runThrows: null, countClosedResult: 1 });
-    const warnMessages = [];
-    const origWarn = console.warn;
-    console.warn = (...args) => {
-      warnMessages.push(args.join(' '));
-    };
 
-    try {
-      autoCloseNonActionableFinalPendingRows(db, '2026-04-01T00:00:00.000Z');
-    } finally {
-      console.warn = origWarn;
-    }
+    const result = autoCloseNonActionableFinalPendingRows(db, '2026-04-01T00:00:00.000Z');
 
-    expect(warnMessages).toEqual([
-      expect.stringContaining('Legacy decision fallback used for non-historical card'),
-    ]);
-    expect(warnMessages[0]).toContain('cardId=c-legacy-001');
-    expect(warnMessages[0]).toContain('legacyStatus=PASS');
+    expect(result.closed).toBe(1);
+    expect(result.reasonCounts).toMatchObject({
+      NON_ACTIONABLE_MISSING_CANONICAL_STATUS: 1,
+    });
   });
 
   // ─────────────────────────────────────────────────────────────────────────

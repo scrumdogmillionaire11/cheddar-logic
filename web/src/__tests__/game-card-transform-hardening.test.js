@@ -124,6 +124,55 @@ function makeNhlTotalsPlay(status, action = 'HOLD') {
   );
 }
 
+{
+  const game = makeBaseGame({
+    id: 'nba-missing-ml-diagnostics',
+    gameId: 'nba-missing-ml-diagnostics',
+    sport: 'NBA',
+    odds: {
+      h2hHome: null,
+      h2hAway: null,
+      total: 228.5,
+      spreadHome: -3.5,
+      spreadAway: 3.5,
+      spreadPriceHome: -110,
+      spreadPriceAway: -110,
+      totalPriceOver: -112,
+      totalPriceUnder: -108,
+      capturedAt: '2026-04-13T20:05:00Z',
+    },
+    plays: [
+      {
+        source_card_id: 'card-nba-missing-ml',
+        cardType: 'nba-spread-call',
+        cardTitle: 'NBA Spread Call: Home -3.5',
+        prediction: 'HOME',
+        confidence: 0.54,
+        tier: 'WATCH',
+        reasoning: 'Spread edge exists but moneyline market is unavailable.',
+        evPassed: false,
+        driverKey: 'nba-spread-call',
+        market_type: 'SPREAD',
+        selection: { side: 'HOME' },
+        line: -3.5,
+        price: -110,
+        status: 'PASS',
+        classification: 'PASS',
+        action: 'PASS',
+        reason_codes: ['PASS_EXECUTION_GATE_NET_EDGE_INSUFFICIENT'],
+      },
+    ],
+  });
+
+  const card = transformToGameCard(game);
+  assert(card.play, 'NBA missing-ML diagnostic should still produce a surfaced play row');
+  assert.deepStrictEqual(
+    card.play.transform_meta?.missing_market_types,
+    ['ML'],
+    'NBA missing moneyline should be reported in transform_meta.missing_market_types',
+  );
+}
+
 function makeBasePropGame(overrides = {}) {
   return makeBaseGame({
     id: 'props-hardening-base',

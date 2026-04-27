@@ -110,6 +110,7 @@ function buildBlkGames(blocksByGame = [], rawDataOverrides = {}) {
 }
 
 function buildBlkRateRow(overrides = {}) {
+  const maxUpdatedAt = new Date().toISOString();
   return {
     ev_blocks_season_per60: 4.2,
     ev_blocks_l10_per60: 4.4,
@@ -118,7 +119,8 @@ function buildBlkRateRow(overrides = {}) {
     pk_blocks_l10_per60: 1.2,
     pk_blocks_l5_per60: 1.3,
     pk_toi_per_game: 1.8,
-    max_updated_at: new Date().toISOString(),
+    updated_at: maxUpdatedAt,
+    max_updated_at: maxUpdatedAt,
     ...overrides,
   };
 }
@@ -131,6 +133,7 @@ function buildMockDb({
   playerLogs = [],
   playerBlkLogs = [],
   playerBlkRateRow = null,
+  blkRatesJobRunMaxStartedAt = null,
   playerPropLines = [],
   availabilityRow = null,
   teamMetricsRow = null,
@@ -157,6 +160,15 @@ function buildMockDb({
       }
       if (s.includes('from player_blk_rates')) {
         return { get: jest.fn(() => playerBlkRateRow) };
+      }
+      if (s.includes('from job_runs') && s.includes("pull_nst_blk_rates")) {
+        return {
+          get: jest.fn(() =>
+            blkRatesJobRunMaxStartedAt
+              ? { max_started_at: blkRatesJobRunMaxStartedAt }
+              : { max_started_at: null },
+          ),
+        };
       }
       if (s.includes('from player_prop_lines')) {
         return {
@@ -260,7 +272,7 @@ function loadFreshModule() {
       opportunity_score: null,
       flags: [],
     })),
-    projectBlkV1: jest.fn(() => ({
+    projectBlkSimple: jest.fn(() => ({
       blk_mu: 0,
       blk_sigma: 0,
       flags: [],
@@ -3269,7 +3281,7 @@ describe('run_nhl_player_shots_model', () => {
     process.env.NHL_BLK_CARDS_ENABLED = 'true';
     const { mod, data, shots } = loadFreshModule();
 
-    shots.projectBlkV1.mockImplementation((inputs = {}) => ({
+    shots.projectBlkSimple.mockImplementation((inputs = {}) => ({
       blk_mu:
         2.1 *
         Number(inputs.opponent_attempt_factor || 1) *
@@ -3311,8 +3323,8 @@ describe('run_nhl_player_shots_model', () => {
 
     await mod.runNHLPlayerShotsModel();
 
-    expect(shots.projectBlkV1).toHaveBeenCalledTimes(1);
-    expect(shots.projectBlkV1).toHaveBeenCalledWith(
+    expect(shots.projectBlkSimple).toHaveBeenCalledTimes(1);
+    expect(shots.projectBlkSimple).toHaveBeenCalledWith(
       expect.objectContaining({
         opponent_attempt_factor: 1.03,
         defensive_zone_factor: 1.05,
@@ -3337,11 +3349,57 @@ describe('run_nhl_player_shots_model', () => {
     expect(blkCard.payloadData.drivers.blk_context_tag).toBe('UNDERDOG_HIGH_PRESSURE');
   });
 
+  test('BLK model no longer emits block-rate freshness flags or payload fields', async () => {
+    process.env.NHL_BLK_CARDS_ENABLED = 'true';
+    const { mod, data, shots } = loadFreshModule();
+
+    shots.projectBlkSimple.mockImplementation((inputs = {}) => ({
+      blk_mu: 2.0,
+      blk_sigma: 1.0,
+      role_stability: 'HIGH',
+      fair_over_prob_by_line: { [String(inputs.market_line)]: 0.52 },
+      fair_under_prob_by_line: { [String(inputs.market_line)]: 0.48 },
+      edge_over_pp: null,
+      edge_under_pp: null,
+      ev_over: null,
+      ev_under: null,
+      opportunity_score: null,
+      flags: [],
+    }));
+
+    const staleUpdatedAt = new Date(Date.now() - 11 * 24 * 60 * 60 * 1000).toISOString();
+    data.getDatabase.mockReturnValue(buildMockDb({
+      games: [buildFutureGame({ game_id: 'blk-simple-no-freshness-01' })],
+      players: [buildPlayer({ player_id: 9152, player_name: 'Simple BLK Defender' })],
+      playerLogs: [],
+      playerBlkLogs: buildBlkGames([3, 2, 2, 3, 2]),
+      playerBlkRateRow: buildBlkRateRow({
+        updated_at: staleUpdatedAt,
+        max_updated_at: staleUpdatedAt,
+      }),
+      availabilityRow: { status: 'ACTIVE', checked_at: new Date().toISOString() },
+      teamMetricsRow: {
+        opponent_shots_against_pg: 31.2,
+        league_avg_shots_against_pg: 30,
+      },
+      oddsSnapshotRow: {
+        h2h_home: -110,
+        h2h_away: 100,
+      },
+    }));
+
+    await mod.runNHLPlayerShotsModel();
+
+    const blkCard = getSingleBlkCard(data);
+    expect((blkCard.payloadData.feature_flags || []).join(' ')).not.toContain('FEATURE_BLOCK_RATES_');
+    expect(blkCard.payloadData.raw_data?.blk_rates_freshness).toBeUndefined();
+  });
+
   test('WI-0915: BLK missing context defaults factors and emits flags', async () => {
     process.env.NHL_BLK_CARDS_ENABLED = 'true';
     const { mod, data, shots } = loadFreshModule();
 
-    shots.projectBlkV1.mockImplementation((inputs = {}) => ({
+    shots.projectBlkSimple.mockImplementation((inputs = {}) => ({
       blk_mu:
         1.8 *
         Number(inputs.opponent_attempt_factor || 1) *
@@ -3372,7 +3430,7 @@ describe('run_nhl_player_shots_model', () => {
 
     await mod.runNHLPlayerShotsModel();
 
-    expect(shots.projectBlkV1).toHaveBeenCalledWith(
+    expect(shots.projectBlkSimple).toHaveBeenCalledWith(
       expect.objectContaining({
         opponent_attempt_factor: 1,
         defensive_zone_factor: 1,
@@ -3403,7 +3461,7 @@ describe('run_nhl_player_shots_model', () => {
     process.env.NHL_BLK_CARDS_ENABLED = 'true';
     const { mod, data, shots } = loadFreshModule();
 
-    shots.projectBlkV1.mockImplementation((inputs = {}) => ({
+    shots.projectBlkSimple.mockImplementation((inputs = {}) => ({
       blk_mu:
         2 *
         Number(inputs.opponent_attempt_factor || 1) *
@@ -3444,7 +3502,7 @@ describe('run_nhl_player_shots_model', () => {
 
     await mod.runNHLPlayerShotsModel();
 
-    const blkInputs = shots.projectBlkV1.mock.calls[0][0];
+    const blkInputs = shots.projectBlkSimple.mock.calls[0][0];
     expect(blkInputs.opponent_attempt_factor).toBe(1.12);
     expect(
       blkInputs.opponent_attempt_factor *
@@ -3468,7 +3526,7 @@ describe('run_nhl_player_shots_model', () => {
 
     const runScenario = async ({ gameId, teamMetricsRow, oddsSnapshotRow }) => {
       const { mod, data, shots } = loadFreshModule();
-      shots.projectBlkV1.mockImplementation((inputs = {}) => ({
+      shots.projectBlkSimple.mockImplementation((inputs = {}) => ({
         blk_mu:
           1.9 *
           Number(inputs.opponent_attempt_factor || 1) *
@@ -3502,7 +3560,7 @@ describe('run_nhl_player_shots_model', () => {
       await mod.runNHLPlayerShotsModel();
 
       return {
-        blkInputs: shots.projectBlkV1.mock.calls[0][0],
+        blkInputs: shots.projectBlkSimple.mock.calls[0][0],
         blkCard: getSingleBlkCard(data),
       };
     };
@@ -3543,11 +3601,11 @@ describe('run_nhl_player_shots_model', () => {
     );
   });
 
-  test('BLK parity fallback: zero stored rolling rates use lookback-derived rates', async () => {
+  test('BLK model uses L5 lookback directly (no stored EV/PK rolling-rate dependency)', async () => {
     process.env.NHL_BLK_CARDS_ENABLED = 'true';
     const { mod, data, shots } = loadFreshModule();
 
-    shots.projectBlkV1.mockImplementation((inputs = {}) => ({
+    shots.projectBlkSimple.mockImplementation((inputs = {}) => ({
       blk_mu: 1.9,
       blk_sigma: 1.1,
       block_rate_ev_per60: 4.8,
@@ -3579,21 +3637,19 @@ describe('run_nhl_player_shots_model', () => {
 
     await mod.runNHLPlayerShotsModel();
 
-    expect(shots.projectBlkV1).toHaveBeenCalled();
-    const blkInputs = shots.projectBlkV1.mock.calls[0][0];
-    expect(blkInputs.ev_blocks_l10_per60).toBeGreaterThan(0);
-    expect(blkInputs.ev_blocks_l5_per60).toBeGreaterThan(0);
-    expect(blkInputs.pk_blocks_l10_per60).toBeGreaterThan(0);
-    expect(blkInputs.pk_blocks_l5_per60).toBeGreaterThan(0);
+    expect(shots.projectBlkSimple).toHaveBeenCalled();
+    const blkInputs = shots.projectBlkSimple.mock.calls[0][0];
+    expect(blkInputs.l5_mean).toBeGreaterThan(0);
+    expect(blkInputs.l5_game_count).toBe(5);
 
     const blkCard = getSingleBlkCard(data);
-    expect(blkCard.payloadData.prop_decision.flags).toContain('BLK_RATE_LOOKBACK_FALLBACK');
+    expect(blkCard.payloadData.prop_decision.flags || []).not.toContain('BLK_RATE_LOOKBACK_FALLBACK');
   });
   test('WI-0911: nhl-player-blk payloads include settlement_policy.grading_eligible === false', async () => {
     process.env.NHL_BLK_CARDS_ENABLED = 'true';
     const { mod, data, shots } = loadFreshModule();
 
-    shots.projectBlkV1.mockImplementation((inputs = {}) => ({
+    shots.projectBlkSimple.mockImplementation((inputs = {}) => ({
       blk_mu: 1.8,
       blk_sigma: 1.05,
       block_rate_ev_per60: 2.1,

@@ -31,6 +31,22 @@ test('validators smoke', () => {
   assert.equal(mapping.source_mapping_ok, false);
   assert.deepEqual(mapping.source_mapping_failures, ['team_alias_miss']);
 
+  const objectMapping = deriveSourceMappingHealth({
+    espn_metrics: {
+      source_contract: {
+        mapping_ok: false,
+        mapping_failures: [
+          { code: 'TEAM_ALIAS_MISS', team: 'Tampa Bay Rays' },
+          { reason: 'home_team_missing' },
+        ],
+      },
+    },
+  });
+  assert.deepEqual(objectMapping.source_mapping_failures, [
+    'TEAM_ALIAS_MISS:Tampa Bay Rays',
+    'home_team_missing',
+  ]);
+
   assert.equal(
     hasMinimumViability(
       { selection: { side: 'OVER' }, line: 5.5, price: null },

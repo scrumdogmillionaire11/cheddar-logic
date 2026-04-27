@@ -6,7 +6,7 @@
 const DEFAULT_BASE_URL = 'http://localhost:3000';
 const LIVE_COMMAND =
   'CARDS_API_BASE_URL=http://127.0.0.1:3000 npm --prefix web run test:api:games:repair-budget';
-const WAVE1_SPORTS = new Set(['NBA', 'NHL']);
+const WAVE1_SPORTS = new Set(['NBA', 'NHL', 'MLB']);
 const WAVE1_MARKETS = new Set([
   'MONEYLINE',
   'SPREAD',

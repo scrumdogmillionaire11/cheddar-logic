@@ -413,20 +413,27 @@ function filterByActionability(
     return false;
   }
 
-  // Full Slate mode: include any game with a play or blocked totals
+  // Full Slate mode: include canonical PASS/actionable plays and blocked totals.
+  // Legacy-only rows (no decision_v2, no market_type/selection) are excluded even
+  // in full-slate mode — they cannot be actioned and have no canonical PASS signal.
   if (includePass) {
-    const hasPlay = card.play !== undefined;
+    const canonicalPassSignal =
+      card.play?.decision_v2?.official_status === 'PASS' ||
+      resolveCanonicalOfficialStatus(card.play) === 'PASS' ||
+      card.play?.action === 'PASS' ||
+      card.play?.classification === 'PASS';
+
     const hasBlockedTotals = Boolean(
       card.play?.market_type === 'TOTAL' &&
       displayAction === 'PASS' &&
       (card.play?.reason_codes?.includes('PASS_TOTAL_INSUFFICIENT_DATA') ||
         card.play?.tags?.includes('CONSISTENCY_BLOCK_TOTALS')),
     );
-    const hasDrivers = card.drivers.length > 0;
 
-    if (hasPlay || hasBlockedTotals || hasDrivers) {
+    if (canonicalPassSignal || hasBlockedTotals || hasActionablePlayCall(card)) {
       return true;
     }
+    return false;
   }
 
   // Standard mode: Check displayAction against filter

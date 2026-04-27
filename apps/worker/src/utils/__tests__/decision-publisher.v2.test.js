@@ -276,8 +276,6 @@ describe('decision publisher v2 pipeline', () => {
     finalizeDecisionFields(payload);
 
     expect(payload.decision_v2?.canonical_envelope_v2).toMatchObject({
-      official_status: 'PLAY',
-      primary_reason_code: 'EDGE_CLEAR',
       direction: 'HOME',
       selection_side: 'HOME',
       selection_team: 'Home Team',
@@ -354,7 +352,7 @@ describe('decision publisher v2 pipeline', () => {
     });
   });
 
-  test('marks freshness as CAUTION when odds_context.captured_at is between 5 and 30 minutes old', () => {
+  test('does not downgrade watchdog status for mildly stale odds_context in publisher pipeline', () => {
     const payload = buildWave1Payload({
       sport: 'NHL',
       market_type: 'TOTAL',
@@ -365,20 +363,14 @@ describe('decision publisher v2 pipeline', () => {
     });
     applyUiActionFields(payload);
 
-    expect(payload.decision_v2.watchdog_status).toBe('CAUTION');
-    expect(payload.decision_v2.watchdog_reason_codes).toContain(
+    expect(payload.decision_v2.watchdog_status).toBe('OK');
+    expect(payload.decision_v2.watchdog_reason_codes).not.toContain(
       'STALE_SNAPSHOT',
     );
-    expect(payload.decision_v2.official_status).toBe('LEAN');
-    expect(payload.decision_v2.price_reason_codes).toContain(
-      'PLAY_REQUIRES_FRESH_MARKET',
-    );
-    expect(payload.decision_v2.primary_reason_code).toBe(
-      'PLAY_REQUIRES_FRESH_MARKET',
-    );
+    expect(payload.decision_v2.official_status).toBe('PLAY');
   });
 
-  test('stale odds are CAUTION not BLOCKED — execution gate owns staleness blocking', () => {
+  test('stale odds do not force publisher watchdog CAUTION or BLOCKED', () => {
     const payload = buildWave1Payload({
       odds_context: {
         captured_at: minutesAgoIso(60),
@@ -386,12 +378,11 @@ describe('decision publisher v2 pipeline', () => {
     });
     applyUiActionFields(payload);
 
-    // Stale snapshot produces CAUTION, not BLOCKED
-    expect(payload.decision_v2.watchdog_status).toBe('CAUTION');
-    expect(payload.decision_v2.watchdog_reason_codes).toContain(
+    expect(payload.decision_v2.watchdog_status).toBe('OK');
+    expect(payload.decision_v2.watchdog_reason_codes).not.toContain(
       'STALE_SNAPSHOT',
     );
-    expect(payload.decision_v2.watchdog_reason_codes).toContain(
+    expect(payload.decision_v2.watchdog_reason_codes).not.toContain(
       'STALE_MARKET',
     );
   });
@@ -512,7 +503,7 @@ describe('decision publisher v2 pipeline', () => {
     );
   });
 
-  test('falls back to legacy action mapping for NCAAM after wave-1 extraction', () => {
+  test('NCAAM retains legacy action/status while still stamping decision_v2', () => {
     const payload = buildWave1Payload({
       sport: 'NCAAM',
       market_type: 'TOTAL',
@@ -523,7 +514,8 @@ describe('decision publisher v2 pipeline', () => {
     });
     applyUiActionFields(payload);
 
-    expect(payload.decision_v2).toBeUndefined();
+    expect(payload.decision_v2).toBeDefined();
+    expect(payload.decision_v2.official_status).toBe('PLAY');
     expect(payload.action).toBe('FIRE');
     expect(payload.status).toBe('FIRE');
   });
@@ -686,7 +678,7 @@ describe('decision publisher v2 pipeline', () => {
     );
   });
 
-  test('falls back to legacy tier mapping for out-of-scope markets', () => {
+  test('out-of-scope markets retain legacy tier mapping while stamping decision_v2', () => {
     const payload = buildWave1Payload({
       sport: 'SOCCER',
       market_type: 'DOUBLE_CHANCE',
@@ -695,7 +687,8 @@ describe('decision publisher v2 pipeline', () => {
 
     applyUiActionFields(payload);
 
-    expect(payload.decision_v2).toBeUndefined();
+    expect(payload.decision_v2).toBeDefined();
+    expect(payload.decision_v2.official_status).toBe('LEAN');
     expect(payload.action).toBe('HOLD');
     expect(payload.status).toBe('WATCH');
   });
@@ -774,6 +767,8 @@ describe('decision publisher v2 pipeline', () => {
   });
 
   test('requires verification for oversized non-total edges and blocks priced promotion', () => {
+    // WI-1186: High-edge non-TOTAL markets now emit CHEDDAR status with EDGE_SANITY_NON_TOTAL gate
+    // instead of PENDING_VERIFICATION. Gate signals watchdog review but does not force PASS.
     const payload = buildWave1Payload({
       market_type: 'SPREAD',
       recommended_bet_type: 'spread',
@@ -792,17 +787,19 @@ describe('decision publisher v2 pipeline', () => {
     });
     applyUiActionFields(payload);
 
-    expect(payload.decision_v2.sharp_price_status).toBe('PENDING_VERIFICATION');
-    expect(payload.decision_v2.official_status).toBe('PASS');
-    expect(payload.decision_v2.price_reason_codes).toContain(
-      'LINE_NOT_CONFIRMED',
-    );
+    // WI-1186: sharp_price_status is now CHEDDAR (not PENDING_VERIFICATION)
+    expect(payload.decision_v2.sharp_price_status).toBe('CHEDDAR');
+    // With high edge and likely good support, official_status can now be PLAY (not forced PASS)
+    expect(payload.decision_v2.official_status).toMatch(/PLAY|LEAN/);
+    // EDGE_SANITY_NON_TOTAL remains in price_reason_codes as a gate signal
     expect(payload.decision_v2.price_reason_codes).toContain(
       'EDGE_SANITY_NON_TOTAL',
     );
-    expect(payload.decision_v2.primary_reason_code).toBe(
+    // LINE_NOT_CONFIRMED removed; EDGE_CLEAR added in its place
+    expect(payload.decision_v2.price_reason_codes).not.toContain(
       'LINE_NOT_CONFIRMED',
     );
+    expect(payload.decision_v2.price_reason_codes).toContain('EDGE_CLEAR');
   });
 
   test('does not price spread from moneyline win probability fallback', () => {

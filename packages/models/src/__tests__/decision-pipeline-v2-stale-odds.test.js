@@ -52,12 +52,11 @@ describe('stale odds threshold configuration', () => {
       },
     });
 
-    // Stale snapshot is noted as CAUTION, not BLOCKED — execution gate handles blocking
-    expect(result.watchdog_status).toBe('CAUTION');
-    expect(result.watchdog_reason_codes).toContain('STALE_MARKET');
-    expect(result.watchdog_reason_codes).toContain('STALE_SNAPSHOT');
-    // watchdog_status is CAUTION, not BLOCKED — staleness does not block here
-    expect(result.watchdog_status).not.toBe('BLOCKED');
+    // Staleness is now owned entirely by execution gate, not watchdog
+    // watchdog_status is 'OK' (not BLOCKED); execution gate owns freshness decisions
+    expect(result.watchdog_status).toBe('OK');
+    expect(result.watchdog_reason_codes).not.toContain('STALE_MARKET');
+    expect(result.watchdog_reason_codes).not.toContain('STALE_SNAPSHOT');
   });
 
   test('goalie uncertainty reason code produces LEAN instead of PASS', () => {

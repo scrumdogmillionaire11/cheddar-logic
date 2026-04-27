@@ -29,8 +29,7 @@ const {
   calcFairLine,
   calcFairLine1p,
   projectSogV2,
-  projectBlkV1,
-  weightedRateBlendBLK,
+  projectBlkSimple,
 } = require('../models/nhl-player-shots');
 const { fetchMoneyPuckSnapshot } = require('../moneypuck');
 const { applyNhlDecisionBasisMeta } = require('../utils/nhl-shots-patch');
@@ -666,73 +665,6 @@ function computePpMatchupFactor({
 function computeL5Mean(l5Sog) {
   if (!Array.isArray(l5Sog) || l5Sog.length === 0) return 0;
   return l5Sog.reduce((sum, value) => sum + value, 0) / l5Sog.length;
-}
-
-function computeBlkRatePer60FromLookback(games, windowSize) {
-  if (!Array.isArray(games) || games.length === 0) return null;
-  const window = games.slice(0, windowSize);
-  if (window.length === 0) return null;
-  const totals = window.reduce(
-    (acc, row) => {
-      const blocks = Number(row?.blocked_shots);
-      const toi = Number(row?.toi_minutes);
-      if (Number.isFinite(blocks) && Number.isFinite(toi) && toi > 0) {
-        acc.blocks += blocks;
-        acc.toi += toi;
-      }
-      return acc;
-    },
-    { blocks: 0, toi: 0 },
-  );
-  if (!Number.isFinite(totals.toi) || totals.toi <= 0) return null;
-  return (totals.blocks / totals.toi) * 60;
-}
-
-function resolveBlkRateInputs({
-  blkRateRow,
-  playerBlkLookbackGames,
-  playerId,
-  playerName,
-}) {
-  const lookbackL10 = computeBlkRatePer60FromLookback(playerBlkLookbackGames, 10);
-  const lookbackL5 = computeBlkRatePer60FromLookback(playerBlkLookbackGames, 5);
-
-  const normalizeRolling = (storedValue, lookbackValue, label) => {
-    const stored = Number(storedValue);
-    const lookback = Number(lookbackValue);
-    const hasStored = Number.isFinite(stored) && stored > 0;
-    const hasLookback = Number.isFinite(lookback) && lookback > 0;
-    if (!hasStored && hasLookback) {
-      console.warn(
-        '[' + JOB_NAME + '] BLK rolling-rate fallback for ' + playerName + ' (' + playerId + ') ' + label + ': ' +
-          'stored=' + (Number.isFinite(stored) ? stored : 'null') + ' lookback=' + lookback.toFixed(3),
-      );
-      return lookback;
-    }
-    return Number.isFinite(stored) ? stored : null;
-  };
-
-  const evL10 = normalizeRolling(blkRateRow?.ev_blocks_l10_per60, lookbackL10, 'ev_l10');
-  const evL5 = normalizeRolling(blkRateRow?.ev_blocks_l5_per60, lookbackL5, 'ev_l5');
-  const pkL10 = normalizeRolling(blkRateRow?.pk_blocks_l10_per60, lookbackL10, 'pk_l10');
-  const pkL5 = normalizeRolling(blkRateRow?.pk_blocks_l5_per60, lookbackL5, 'pk_l5');
-
-  return {
-    evSeason: Number.isFinite(Number(blkRateRow?.ev_blocks_season_per60))
-      ? Number(blkRateRow?.ev_blocks_season_per60)
-      : null,
-    evL10,
-    evL5,
-    pkSeason: Number.isFinite(Number(blkRateRow?.pk_blocks_season_per60))
-      ? Number(blkRateRow?.pk_blocks_season_per60)
-      : null,
-    pkL10,
-    pkL5,
-    usedLookbackFallback:
-      (!Number.isFinite(Number(blkRateRow?.ev_blocks_l10_per60)) || Number(blkRateRow?.ev_blocks_l10_per60) <= 0) &&
-      Number.isFinite(lookbackL10) &&
-      lookbackL10 > 0,
-  };
 }
 
 function computeL5StdDev(l5Sog, mean) {
@@ -2154,16 +2086,6 @@ async function runNHLPlayerShotsModel() {
       );
       const nhlSeasonKey = resolveNhlSeasonKey();
 
-      // Hoist block-rates staleness check — single DB query per model run (not per player).
-      const blkRatesMaxAge = db.prepare(
-        `SELECT MAX(updated_at) AS max_updated_at FROM player_blk_rates WHERE season = ?`
-      ).get(nhlSeasonKey);
-      const blkRatesStale = (() => {
-        if (!blkRatesMaxAge?.max_updated_at) return true;
-        const ageMs = Date.now() - new Date(blkRatesMaxAge.max_updated_at).getTime();
-        return ageMs > 8 * 24 * 60 * 60 * 1000;
-      })();
-
       if (excludedPlayerIds.size > 0) {
         console.log(
           `[${JOB_NAME}] Applying NHL_SOG_EXCLUDE_PLAYER_IDS (${excludedPlayerIds.size} players)`,
@@ -3575,18 +3497,6 @@ async function runNHLPlayerShotsModel() {
                 }
               }
 
-              const blkRateRow = db.prepare(`
-                SELECT *
-                FROM player_blk_rates
-                WHERE nhl_player_id = ?
-                  AND season = ?
-                LIMIT 1
-              `).get(String(player.player_id), nhlSeasonKey);
-
-              if (!blkRateRow) {
-                console.warn(`[run-nhl-player-shots-model] WARN: no player_blk_rates row for player ${player.player_id} season ${nhlSeasonKey} — BLK mu will be 0`);
-              }
-
               const blkLineCandidates = EVENT_PRICING_DISABLED
                 ? []
                 : resolvePlayerPropLineCandidatesWithFallback({
@@ -3613,26 +3523,11 @@ async function runNHLPlayerShotsModel() {
                 );
 
               if (blkMarket) {
-                const blkRateInputs = resolveBlkRateInputs({
-                  blkRateRow,
-                  playerBlkLookbackGames,
-                  playerId: player.player_id,
-                  playerName,
-                });
                 const blkUsingRealLine =
                   !EVENT_PRICING_DISABLED &&
                   blkLineCandidates.length > 0 &&
                   blkMarket.over_price != null &&
                   blkMarket.under_price != null;
-                const blkToiProjPk =
-                  Number.isFinite(blkRateRow?.pk_toi_per_game) &&
-                  blkRateRow.pk_toi_per_game > 0
-                    ? blkRateRow.pk_toi_per_game
-                    : 0;
-                const blkToiProjEv = Math.max(
-                  (Number.isFinite(blkTotalToi) ? blkTotalToi : 0) - blkToiProjPk,
-                  0,
-                );
                 const blkLeanSide =
                   Number.isFinite(l5BlkMean) && Number.isFinite(blkMarket.line)
                     ? l5BlkMean >= Math.ceil(blkMarket.line)
@@ -3640,8 +3535,6 @@ async function runNHLPlayerShotsModel() {
                       : 'UNDER'
                     : 'OVER';
                 // BLK: playoff tightening — games in NHL playoff window (Apr 19 – Jun 30).
-                // Established blockers (non-LOW stability, L5-heavy EV blend >= 5.0/60) get 1.07.
-                // Standard playoff baseline: 1.06. Regular season: 1.00.
                 const blkGameDate = new Date(game.game_time_utc);
                 const blkGameMonth = blkGameDate.getUTCMonth() + 1; // 1-12
                 const blkGameDay = blkGameDate.getUTCDate();
@@ -3649,18 +3542,7 @@ async function runNHLPlayerShotsModel() {
                   (blkGameMonth === 4 && blkGameDay >= 19) ||
                   blkGameMonth === 5 ||
                   blkGameMonth === 6;
-                const blkEvBlendedRate = weightedRateBlendBLK(
-                  blkRateInputs.evSeason,
-                  blkRateInputs.evL10,
-                  blkRateInputs.evL5,
-                );
-                const blkIsEstablished =
-                  blkInPlayoffs &&
-                  roleStability !== 'LOW' &&
-                  blkEvBlendedRate >= 5.0;
-                const blkBlockerProfile = blkIsEstablished ? 'ESTABLISHED' : 'STANDARD';
-                const blkPlayoffBonus = blkIsEstablished ? 0.01 : 0;
-                const blkPlayoffFactor = blkInPlayoffs ? (1.06 + blkPlayoffBonus) : 1.0;
+                const blkPlayoffFactor = blkInPlayoffs ? 1.06 : 1.0;
                 const blkUnderdogContext = computeBlkUnderdogScriptContext({
                   db,
                   resolvedGameId,
@@ -3679,9 +3561,6 @@ async function runNHLPlayerShotsModel() {
                 if (blkUnderdogContext.missing) {
                   blkContextFlags.push('BLK_UNDERDOG_FACTOR_MISSING');
                 }
-                if (blkRateInputs.usedLookbackFallback) {
-                  blkContextFlags.push('BLK_RATE_LOOKBACK_FALLBACK');
-                }
                 const blkCombinedDynamic =
                   blkOppAttemptFactor *
                   blkDefensiveZoneFactor *
@@ -3699,9 +3578,6 @@ async function runNHLPlayerShotsModel() {
                   defensive_zone_factor: roundMetric(blkDefensiveZoneFactorFinal, 4),
                   underdog_script_factor: roundMetric(blkUnderdogScriptFactorFinal, 4),
                   playoff_tightening_factor: roundMetric(blkPlayoffFactor, 4),
-                  playoff_blocker_bonus: blkPlayoffBonus,
-                  blocker_profile: blkBlockerProfile,
-                  blk_rate_ev_blended: roundMetric(blkEvBlendedRate, 4),
                 };
                 const blkContextTag =
                   blkUnderdogScriptFactorFinal > 1.0 &&
@@ -3712,17 +3588,11 @@ async function runNHLPlayerShotsModel() {
                       ? 'FAVORITE_LOW_BLOCK'
                       : 'NEUTRAL';
 
-                const blkProjection = projectBlkV1({
+                const blkProjection = projectBlkSimple({
                   player_id: player.player_id,
                   game_id: resolvedGameId,
-                  ev_blocks_season_per60: blkRateInputs.evSeason,
-                  ev_blocks_l10_per60: blkRateInputs.evL10,
-                  ev_blocks_l5_per60: blkRateInputs.evL5,
-                  pk_blocks_season_per60: blkRateInputs.pkSeason,
-                  pk_blocks_l10_per60: blkRateInputs.pkL10,
-                  pk_blocks_l5_per60: blkRateInputs.pkL5,
-                  toi_proj_ev: blkToiProjEv,
-                  toi_proj_pk: blkToiProjPk,
+                  l5_mean: l5BlkMean,
+                  l5_game_count: blkGames.length,
                   role_stability: roleStability,
                   market_line: blkMarket.line,
                   market_price_over: blkMarket.over_price,
@@ -3739,7 +3609,7 @@ async function runNHLPlayerShotsModel() {
                 if (blkLineCandidates.length > 1) {
                   console.debug(`[${JOB_NAME}] [blk-multi-line] ${playerName}: pricing ${blkLineCandidates.length} lines: ${blkLineCandidates.map((c) => c.line).join(', ')}`);
                 }
-                const blkConfidence = Math.max(
+                let blkConfidence = Math.max(
                   0.55,
                   Math.min(
                     0.8,
@@ -3896,10 +3766,6 @@ async function runNHLPlayerShotsModel() {
                     l5_avg: l5BlkMean,
                     l5_blk: l5Blk,
                     proj_toi_total: blkTotalToi,
-                    proj_toi_pk: blkToiProjPk,
-                    proj_toi_ev: blkToiProjEv,
-                    ev_block_rate: blkProjection.block_rate_ev_per60,
-                    pk_block_rate: blkProjection.block_rate_pk_per60,
                     role_stability: blkProjection.role_stability ?? roleStability,
                     blk_factor_inputs: blkFactorInputs,
                     blk_factor_source: blkFactorSource,
@@ -3907,9 +3773,26 @@ async function runNHLPlayerShotsModel() {
                   },
                 };
 
-                if (blkRatesStale) {
-                  payloadDataBlk.missing_inputs = ['block_rates_stale'];
-                }
+                payloadDataBlk.core_inputs_complete =
+                  payloadDataBlk.projection_inputs_complete !== false;
+                payloadDataBlk.core_missing_inputs = Array.isArray(
+                  payloadDataBlk.missing_inputs,
+                )
+                  ? payloadDataBlk.missing_inputs
+                  : [];
+                payloadDataBlk.market_status = {
+                  has_odds: Boolean(blkUsingRealLine),
+                  freshness_tier: payloadDataBlk.freshness_tier
+                    ? String(payloadDataBlk.freshness_tier).toLowerCase()
+                    : 'unknown',
+                  execution_blocked:
+                    String(payloadDataBlk.execution_status || '').toUpperCase() ===
+                      'BLOCKED' ||
+                    (typeof payloadDataBlk.pass_reason_code === 'string' &&
+                      payloadDataBlk.pass_reason_code.startsWith(
+                        'PASS_EXECUTION_GATE_',
+                      )),
+                };
 
                 applyNhlDecisionBasisMeta(payloadDataBlk, {
                   usingRealLine: blkUsingRealLine,

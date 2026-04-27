@@ -108,7 +108,7 @@ const OPPOSITE_DIRECTION: Partial<Record<Direction, Direction>> = {
 const PROXY_SIGNAL_TAGS = new Set<string>([
   'PROXY_MODEL_PROB_INFERRED',
 ]);
-const WAVE1_SPORTS = new Set(['NBA', 'NHL']);
+const WAVE1_SPORTS = new Set(['NBA', 'NHL', 'MLB']);
 const WAVE1_MARKETS = new Set<CanonicalMarketType>([
   'MONEYLINE',
   'SPREAD',
@@ -116,6 +116,7 @@ const WAVE1_MARKETS = new Set<CanonicalMarketType>([
   'PUCKLINE',
   'TEAM_TOTAL',
   'FIRST_PERIOD',
+  'FIRST_5_INNINGS',
 ]);
 const PROJECTION_ONLY_LINE_SOURCES = new Set<string>([
   'PROJECTION_FLOOR',
@@ -123,6 +124,12 @@ const PROJECTION_ONLY_LINE_SOURCES = new Set<string>([
 ]);
 
 type ApiPropDisplayState = 'PLAY' | 'WATCH' | 'PROJECTION_ONLY';
+
+type ApiMarketStatus = {
+  has_odds?: boolean | null;
+  freshness_tier?: string | null;
+  execution_blocked?: boolean | null;
+};
 
 interface ApiPropDecision {
   verdict?: string;
@@ -204,6 +211,7 @@ export interface ApiPlay {
   pass_reason?: string | null;
   basis?: 'PROJECTION_ONLY' | 'ODDS_BACKED';
   execution_status?: 'EXECUTABLE' | 'PROJECTION_ONLY' | 'BLOCKED';
+  freshness_tier?: 'FRESH' | 'STALE_VALID' | 'EXPIRED' | 'UNKNOWN' | null;
   execution_gate?: {
     should_bet?: boolean;
     drop_reason?: {
@@ -236,6 +244,10 @@ export interface ApiPlay {
   reason_codes?: string[];
   projection_inputs_complete?: boolean | null;
   missing_inputs?: string[];
+  core_inputs_complete?: boolean | null;
+  core_missing_inputs?: string[];
+  feature_flags?: string[];
+  market_status?: ApiMarketStatus | null;
   source_mapping_ok?: boolean | null;
   source_mapping_failures?: string[];
   tags?: string[];
@@ -299,6 +311,10 @@ interface GameData {
   } | null;
   projection_inputs_complete?: boolean | null;
   projection_missing_inputs?: string[];
+  core_inputs_complete?: boolean | null;
+  core_missing_inputs?: string[];
+  feature_flags?: string[];
+  market_status?: ApiMarketStatus | null;
   source_mapping_ok?: boolean | null;
   source_mapping_failures?: string[];
   ingest_failure_reason_code?: string | null;
@@ -484,6 +500,163 @@ function normalizeMissingInputs(values: unknown): string[] {
   return normalized;
 }
 
+const FEATURE_FRESHNESS_INPUT_TOKENS = new Set([
+  'block_rates_stale',
+  'feature_freshness:block_rates_stale',
+]);
+
+const MARKET_INPUT_TOKENS = new Set([
+  'market_line',
+  'missing_market_odds',
+  'no_odds',
+  'odds_snapshot_missing',
+]);
+
+function splitProjectionMissingInputs(inputs: string[]): {
+  projectionCoreMissingInputs: string[];
+  featureFreshnessMissingInputs: string[];
+  marketMissingInputs: string[];
+} {
+  const projectionCoreMissingInputs: string[] = [];
+  const featureFreshnessMissingInputs: string[] = [];
+  const marketMissingInputs: string[] = [];
+
+  for (const input of inputs) {
+    const normalized = input.trim().toLowerCase();
+    if (FEATURE_FRESHNESS_INPUT_TOKENS.has(normalized)) {
+      featureFreshnessMissingInputs.push(input);
+      continue;
+    }
+    if (MARKET_INPUT_TOKENS.has(normalized)) {
+      marketMissingInputs.push(input);
+      continue;
+    }
+    projectionCoreMissingInputs.push(input);
+  }
+
+  return {
+    projectionCoreMissingInputs,
+    featureFreshnessMissingInputs,
+    marketMissingInputs,
+  };
+}
+
+function resolveCoreInputsComplete(entity: {
+  core_inputs_complete?: boolean | null;
+  projection_inputs_complete?: boolean | null;
+} | null | undefined): boolean | null {
+  if (!entity) return null;
+  if (typeof entity.core_inputs_complete === 'boolean') {
+    return entity.core_inputs_complete;
+  }
+  if (typeof entity.projection_inputs_complete === 'boolean') {
+    return entity.projection_inputs_complete;
+  }
+  return null;
+}
+
+function resolveCoreMissingInputs(entity: {
+  core_missing_inputs?: unknown;
+  missing_inputs?: unknown;
+} | null | undefined): string[] {
+  if (!entity) return [];
+  if (Array.isArray(entity.core_missing_inputs)) {
+    return normalizeMissingInputs(entity.core_missing_inputs);
+  }
+  const { projectionCoreMissingInputs } = splitProjectionMissingInputs(
+    normalizeMissingInputs(entity.missing_inputs),
+  );
+  return projectionCoreMissingInputs;
+}
+
+function resolveFeatureFreshnessInputs(entity: {
+  feature_flags?: unknown;
+  missing_inputs?: unknown;
+} | null | undefined): string[] {
+  if (!entity) return [];
+
+  const fromFeatureFlags = Array.isArray(entity.feature_flags)
+    ? entity.feature_flags
+        .map((value) => String(value).trim().toUpperCase())
+        .filter((value) => value.startsWith('FEATURE_BLOCK_RATES_'))
+        .map(() => 'feature_freshness:block_rates_stale')
+    : [];
+  const { featureFreshnessMissingInputs } = splitProjectionMissingInputs(
+    normalizeMissingInputs(entity.missing_inputs),
+  );
+
+  return Array.from(new Set([
+    ...fromFeatureFlags,
+    ...featureFreshnessMissingInputs,
+  ]));
+}
+
+function deriveMarketStatus(game: GameData): {
+  hasOdds: boolean | null;
+  executionBlocked: boolean;
+  freshnessTier: string | null;
+} {
+  const statuses = [game.market_status, ...game.plays.map((play) => play.market_status)]
+    .filter((status): status is ApiMarketStatus => Boolean(status));
+
+  const hasOddsSignals = statuses
+    .map((status) => status.has_odds)
+    .filter((value): value is boolean => typeof value === 'boolean');
+  const executionBlocked = statuses.some(
+    (status) => status.execution_blocked === true,
+  );
+  const freshnessRank: Record<string, number> = {
+    expired: 3,
+    stale: 2,
+    warn: 1,
+    fresh: 0,
+  };
+  const freshnessTierRaw = statuses
+    .map((status) => status.freshness_tier)
+    .filter((value): value is string =>
+      typeof value === 'string' && value.trim().length > 0,
+    )
+    .map((value) => value.toLowerCase())
+    .sort((a, b) => (freshnessRank[b] ?? -1) - (freshnessRank[a] ?? -1))[0];
+
+  return {
+    hasOdds:
+      hasOddsSignals.length === 0
+        ? null
+        : hasOddsSignals.some((value) => value === true),
+    executionBlocked,
+    freshnessTier:
+      typeof freshnessTierRaw === 'string' ? freshnessTierRaw.toLowerCase() : null,
+  };
+}
+
+function detectMissingMarketTypes(game: GameData): string[] {
+  const sport = normalizeSport(game.sport);
+  if (sport !== 'NBA') return [];
+  if (!game.odds) return ['ML', 'SPREAD', 'TOTAL'];
+
+  const missing: string[] = [];
+  const hasMoneyline =
+    typeof game.odds.h2hHome === 'number' &&
+    Number.isFinite(game.odds.h2hHome) &&
+    typeof game.odds.h2hAway === 'number' &&
+    Number.isFinite(game.odds.h2hAway);
+  if (!hasMoneyline) missing.push('ML');
+
+  const hasSpread =
+    typeof game.odds.spreadHome === 'number' &&
+    Number.isFinite(game.odds.spreadHome) &&
+    typeof game.odds.spreadAway === 'number' &&
+    Number.isFinite(game.odds.spreadAway);
+  if (!hasSpread) missing.push('SPREAD');
+
+  const hasTotal =
+    typeof game.odds.total === 'number' && Number.isFinite(game.odds.total);
+  if (!hasTotal) missing.push('TOTAL');
+
+  return missing;
+}
+
 function normalizeDropReasonMeta(
   value: ApiPlay['execution_gate'] extends { drop_reason?: infer T } ? T : unknown,
 ): DropReasonMeta | null {
@@ -641,7 +814,7 @@ function collectNoActionablePlayInputs(game: GameData): string[] {
   if (game.source_mapping_ok === false) {
     push('fetch_failure:source_mapping_failed');
   }
-  if (game.projection_inputs_complete === false) {
+  if (resolveCoreInputsComplete(game) === false) {
     push('fetch_failure:projection_inputs_incomplete');
   }
 
@@ -672,7 +845,7 @@ function collectNoActionablePlayInputs(game: GameData): string[] {
         unknownSignalCodes.push(code);
       }
     }
-    for (const missingInput of normalizeMissingInputs(play.missing_inputs)) {
+    for (const missingInput of resolveCoreMissingInputs(play)) {
       push(toDiagnosticToken('fetch_missing', missingInput));
     }
     for (const mappingFailure of play.source_mapping_failures ?? []) {
@@ -1309,6 +1482,14 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
     const canonicalSelectionDirection = normalizeSideToken(canonicalSelection.side);
     const effectiveDecisionV2: DecisionV2 = {
       ...decisionV2,
+      primary_reason_code: decisionV2.primary_reason_code ?? 'EDGE_CLEAR',
+      watchdog_reason_codes: Array.isArray(decisionV2.watchdog_reason_codes)
+        ? decisionV2.watchdog_reason_codes
+        : [],
+      price_reason_codes: Array.isArray(decisionV2.price_reason_codes)
+        ? decisionV2.price_reason_codes
+        : [],
+      consistency: decisionV2.consistency ?? { total_bias: 'UNKNOWN' },
       direction:
         canonicalSelectionDirection !== 'NONE'
           ? canonicalSelectionDirection
@@ -1442,29 +1623,38 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
         : decisionV2.play_tier === 'OK'
           ? 'OK'
           : 'BAD';
+    const watchdogReasonCodes = Array.isArray(
+      effectiveDecisionV2.watchdog_reason_codes,
+    )
+      ? effectiveDecisionV2.watchdog_reason_codes
+      : [];
+    const priceReasonCodes = Array.isArray(effectiveDecisionV2.price_reason_codes)
+      ? effectiveDecisionV2.price_reason_codes
+      : [];
     const mergedReasonCodes = Array.from(
       new Set([
         ...(wave1DecisionPlay.reason_codes ?? []),
-        ...effectiveDecisionV2.watchdog_reason_codes,
-        ...effectiveDecisionV2.price_reason_codes,
+        ...watchdogReasonCodes,
+        ...priceReasonCodes,
         effectiveDecisionV2.primary_reason_code,
         ...(edgeVerificationBlocked
           ? ['BLOCKED_BET_VERIFICATION_REQUIRED']
           : []),
       ]),
     );
+    const decisionV2TotalBias = decisionV2.consistency?.total_bias;
     const tags = Array.from(new Set([...(wave1DecisionPlay.tags ?? [])]));
     if (edgeVerificationBlocked) {
       tags.push('LINE_NOT_CONFIRMED');
     }
     if (
       effectiveDecisionV2.proxy_capped === true ||
-      effectiveDecisionV2.price_reason_codes.includes('PROXY_EDGE_CAPPED') ||
-      effectiveDecisionV2.price_reason_codes.includes('PROXY_EDGE_BLOCKED')
+      priceReasonCodes.includes('PROXY_EDGE_CAPPED') ||
+      priceReasonCodes.includes('PROXY_EDGE_BLOCKED')
     ) {
       tags.push('PROXY_CARD');
     }
-    const gates: CanonicalGate[] = effectiveDecisionV2.watchdog_reason_codes.map((code) => ({
+    const gates: CanonicalGate[] = watchdogReasonCodes.map((code) => ({
       code,
       severity: effectiveDecisionV2.watchdog_status === 'BLOCKED' ? 'BLOCK' : 'WARN',
       blocks_bet: effectiveDecisionV2.watchdog_status === 'BLOCKED',
@@ -1517,12 +1707,12 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
       evidence_count: scopedEvidenceCandidates.length,
       consistency: {
         total_bias:
-          decisionV2.consistency.total_bias === 'OK' ||
-          decisionV2.consistency.total_bias === 'INSUFFICIENT_DATA' ||
-          decisionV2.consistency.total_bias === 'CONFLICTING_SIGNALS' ||
-          decisionV2.consistency.total_bias === 'VOLATILE_ENV' ||
-          decisionV2.consistency.total_bias === 'UNKNOWN'
-            ? decisionV2.consistency.total_bias
+          decisionV2TotalBias === 'OK' ||
+          decisionV2TotalBias === 'INSUFFICIENT_DATA' ||
+          decisionV2TotalBias === 'CONFLICTING_SIGNALS' ||
+          decisionV2TotalBias === 'VOLATILE_ENV' ||
+          decisionV2TotalBias === 'UNKNOWN'
+            ? decisionV2TotalBias
             : 'UNKNOWN',
       },
       selection: wave1DecisionPlay.selection
@@ -1632,19 +1822,46 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
     );
     const projectionMissingInputs = Array.from(
       new Set([
-        ...normalizeMissingInputs(game.projection_missing_inputs),
+        ...resolveCoreMissingInputs(game),
         ...game.plays.flatMap((play) =>
-          normalizeMissingInputs(play.missing_inputs),
+          resolveCoreMissingInputs(play),
         ),
       ]),
     );
+    const { projectionCoreMissingInputs, marketMissingInputs } =
+      splitProjectionMissingInputs(projectionMissingInputs);
+    const featureFreshnessMissingInputs = Array.from(
+      new Set([
+        ...resolveFeatureFreshnessInputs(game),
+        ...game.plays.flatMap((play) => resolveFeatureFreshnessInputs(play)),
+      ]),
+    );
+    const marketStatus = deriveMarketStatus(game);
     const hasMappingFailure =
       game.ingest_failure_reason_code === 'TEAM_MAPPING_UNMAPPED' ||
       game.source_mapping_ok === false || sourceMappingFailures.length > 0;
+    const coreInputsCompleteSignals = [
+      resolveCoreInputsComplete(game),
+      ...game.plays.map((play) => resolveCoreInputsComplete(play)),
+    ].filter((value): value is boolean => typeof value === 'boolean');
+    const coreMissingInputs = Array.from(
+      new Set([
+        ...resolveCoreMissingInputs(game),
+        ...game.plays.flatMap((play) => resolveCoreMissingInputs(play)),
+      ]),
+    );
     const hasProjectionInputsFailure =
-      game.projection_inputs_complete === false ||
-      game.plays.some((play) => play.projection_inputs_complete === false) ||
-      projectionMissingInputs.length > 0;
+      coreInputsCompleteSignals.includes(false) ||
+      coreMissingInputs.length > 0 ||
+      projectionCoreMissingInputs.length > 0;
+    const hasFeatureFreshnessFailure = featureFreshnessMissingInputs.length > 0;
+    const missingMarketTypes = detectMissingMarketTypes(game);
+    const hasMarketFailure =
+      marketStatus.hasOdds === false ||
+      marketMissingInputs.length > 0 ||
+      missingMarketTypes.length > 0 ||
+      marketStatus.freshnessTier === 'stale' ||
+      marketStatus.freshnessTier === 'expired';
     const noActionablePlayInputs = hasEvidenceOnly
       ? collectNoActionablePlayInputs(game)
       : [];
@@ -1655,6 +1872,10 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
         ? 'MISSING_DATA_NO_ODDS'
         : hasMappingFailure
           ? 'MISSING_DATA_TEAM_MAPPING'
+          : hasMarketFailure
+            ? 'MISSING_DATA_NO_ODDS'
+          : hasFeatureFreshnessFailure
+            ? 'MISSING_DATA_FEATURE_FRESHNESS'
           : hasProjectionInputsFailure
             ? 'MISSING_DATA_PROJECTION_INPUTS'
             : hasNoPlays
@@ -1667,8 +1888,12 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
         ? 'No odds available'
         : hasMappingFailure
           ? `Team mapping unresolved${game.ingest_failure_reason_detail ? `: ${game.ingest_failure_reason_detail}` : sourceMappingFailures.length ? `: ${sourceMappingFailures.join(', ')}` : ''}`
+          : hasMarketFailure
+            ? `Market unavailable${marketStatus.freshnessTier ? ` (${marketStatus.freshnessTier})` : ''}`
+          : hasFeatureFreshnessFailure
+            ? `Feature freshness stale${featureFreshnessMissingInputs.length ? `: ${featureFreshnessMissingInputs.join(', ')}` : ''}`
           : hasProjectionInputsFailure
-            ? `Missing projection inputs${projectionMissingInputs.length ? `: ${projectionMissingInputs.join(', ')}` : ''}`
+            ? `Missing projection inputs${projectionCoreMissingInputs.length ? `: ${projectionCoreMissingInputs.join(', ')}` : ''}`
             : hasNoPlays
               ? 'Driver output unavailable'
             : hasEvidenceOnly
@@ -1680,9 +1905,21 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
       ? sourceMappingFailures.length > 0
         ? sourceMappingFailures
         : ['team_mapping']
+      : hasFeatureFreshnessFailure
+        ? featureFreshnessMissingInputs.length > 0
+          ? featureFreshnessMissingInputs
+          : ['feature_freshness_stale']
+      : hasMarketFailure
+        ? marketMissingInputs.length > 0
+          ? marketMissingInputs
+          : missingMarketTypes.length > 0
+            ? [`missing_market_types:${missingMarketTypes.join('|')}`]
+          : ['market_unavailable']
       : hasProjectionInputsFailure
-        ? projectionMissingInputs.length > 0
-          ? projectionMissingInputs
+        ? coreMissingInputs.length > 0
+          ? coreMissingInputs
+          : projectionCoreMissingInputs.length > 0
+            ? projectionCoreMissingInputs
           : ['projection_inputs']
         : hasEvidenceOnly
           ? hasFetchFailureInputs
@@ -1719,6 +1956,7 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
       transform_meta: {
         quality: isHealthyNoEdge ? 'OK' : 'DEGRADED',
         missing_inputs: missingInputs,
+        missing_market_types: missingMarketTypes,
         placeholders_found: [],
         drop_reason: null,
       },
@@ -2853,7 +3091,10 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
   const finalAction = actionFromDecision(finalDecision);
   const finalClassificationLabel =
     decisionClassificationFromAction(finalAction);
-  const resolvedDisplayDecision = resolvePlayDisplayDecision({
+  const resolvedDisplayDecision: {
+    action: 'FIRE' | 'HOLD' | 'PASS';
+    classification: 'BASE' | 'LEAN' | 'PASS';
+  } = {
     action: finalAction,
     classification:
       finalAction === 'FIRE'
@@ -2861,7 +3102,7 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
         : finalAction === 'HOLD'
           ? 'LEAN'
           : 'PASS',
-  });
+  };
 
   const pickWithContext = pick;
   if (!finalBet) {
@@ -2918,11 +3159,13 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
     transform_meta: {
       quality,
       missing_inputs: Array.from(missingInputs),
+      missing_market_types: detectMissingMarketTypes(game),
       placeholders_found: placeholdersFound,
       drop_reason: resolvePlayDropReason(
         propPlay ?? spreadPlay ?? totalPlay ?? scopedPlayCandidates[0],
       ),
     },
+    cardType: sourcePlay?.cardType,
     market_type: resolvedMarketType,
     kind: 'PLAY',
     evidence_count: linkedEvidence.length,
@@ -3069,6 +3312,17 @@ export function transformToGameCard(game: GameData): GameCard {
       }
     : undefined;
 
+  const FRESHNESS_RANK: Record<string, number> = { FRESH: 0, UNKNOWN: 1, STALE_VALID: 2, EXPIRED: 3 };
+  const freshnessTier = game.plays.reduce<'FRESH' | 'STALE_VALID' | 'EXPIRED' | 'UNKNOWN' | null>(
+    (worst, p) => {
+      const tier = p.freshness_tier ?? null;
+      if (!tier) return worst;
+      if (!worst) return tier;
+      return (FRESHNESS_RANK[tier] ?? 1) > (FRESHNESS_RANK[worst] ?? 1) ? tier : worst;
+    },
+    null,
+  );
+
   return {
     id: game.id,
     gameId: game.gameId,
@@ -3084,6 +3338,7 @@ export function transformToGameCard(game: GameData): GameCard {
     evidence,
     tags: initialTags,
     marketSignals,
+    freshnessTier,
   };
 }
 
@@ -3598,7 +3853,7 @@ export function transformPropGames(games: GameData[]): PropGameCard[] {
         rawPropDecision?.projection_source ?? play.projection_source ?? null;
       const statusCap = rawPropDecision?.status_cap ?? play.status_cap ?? null;
       const missingInputs = normalizeMissingInputs(
-        rawPropDecision?.missing_inputs ?? play.missing_inputs,
+        rawPropDecision?.missing_inputs ?? play.core_missing_inputs ?? play.missing_inputs,
       );
       const passReasonCode =
         rawPropDecision?.pass_reason_code ?? play.pass_reason_code ?? null;

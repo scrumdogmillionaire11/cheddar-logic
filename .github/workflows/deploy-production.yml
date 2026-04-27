@@ -481,6 +481,12 @@ jobs:
             sudo systemctl restart cheddar-worker
             restart_web_with_diagnostics
             sudo systemctl restart cheddar-fpl-sage || { echo "WARNING: cheddar-fpl-sage failed to restart — continuing deploy (web/worker unaffected)"; true; }
+            # Restart PM2-managed processes if PM2 is active (keeps pm2 list in sync after deploy)
+            if [ -n "$PM2_BIN" ]; then
+              "$PM2_BIN" restart cheddar-worker || true
+              "$PM2_BIN" restart cheddar-web || true
+              echo "PM2 processes restarted"
+            fi
             sleep 5
             if ! sudo systemctl is-active --quiet cheddar-worker; then
               fail_worker_smoke "worker-smoke-1" "cheddar-worker is not active after restart"

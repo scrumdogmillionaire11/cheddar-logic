@@ -829,4 +829,185 @@ function projectBlkV1(inputs) {
   };
 }
 
-module.exports = { calcMu, calcMu1p, classifyEdge, calcFairLine, calcFairLine1p, projectSogV2, projectBlkV1, weightedRateBlendBLK };
+/**
+ * Simplified NHL BLK projection: L5 mean × context multipliers.
+ *
+ * Replaces projectBlkV1's EV/PK situational-rate model with a simple
+ * L5-lookback base. No dependency on player_blk_rates (NST/MoneyPuck).
+ *
+ * @param {object} inputs
+ * @returns {NhlBlockedShotsProjection}
+ */
+function projectBlkSimple(inputs) {
+  const {
+    player_id,
+    game_id,
+    l5_mean,
+    l5_game_count = 5,
+    opponent_attempt_factor: rawOppAttempt = 1.0,
+    defensive_zone_factor: rawDzFactor = 1.0,
+    underdog_script_factor: rawUnderdogScript = 1.0,
+    playoff_tightening_factor: rawPlayoffTightening = 1.0,
+    role_stability = 'HIGH',
+    market_line = null,
+    market_price_over = null,
+    market_price_under = null,
+    lines_to_price = [],
+    play_direction = 'OVER',
+  } = inputs || {};
+
+  const flags = [];
+
+  if (l5_mean === null || l5_mean === undefined || !Number.isFinite(l5_mean)) {
+    flags.push('LOW_SAMPLE');
+  }
+  if (l5_game_count < 3) {
+    flags.push('LOW_SAMPLE');
+  }
+  if (role_stability === 'LOW') {
+    flags.push('ROLE_IN_FLUX');
+  }
+  if (
+    market_line !== null &&
+    market_line !== undefined &&
+    (market_price_over === null ||
+      market_price_over === undefined ||
+      market_price_under === null ||
+      market_price_under === undefined)
+  ) {
+    flags.push('MISSING_PRICE');
+  }
+
+  const opp_attempt_factor = clamp(rawOppAttempt ?? 1.0, 0.90, 1.12);
+  const dz_factor = clamp(rawDzFactor ?? 1.0, 0.95, 1.08);
+  const underdog_script_factor = clamp(rawUnderdogScript ?? 1.0, 0.95, 1.10);
+  const playoff_tightening_factor = clamp(rawPlayoffTightening ?? 1.0, 1.00, 1.08);
+
+  const base = Math.max(0, l5_mean ?? 0);
+  const blk_mu = Math.max(
+    0.0,
+    base *
+      opp_attempt_factor *
+      dz_factor *
+      underdog_script_factor *
+      playoff_tightening_factor,
+  );
+  const blk_sigma = Math.sqrt(blk_mu);
+
+  const allLines = [
+    ...new Set([
+      ...lines_to_price,
+      ...(market_line !== null && market_line !== undefined ? [market_line] : []),
+    ]),
+  ];
+
+  const fair_over_prob_by_line = {};
+  const fair_under_prob_by_line = {};
+  const fair_price_over_by_line = {};
+  const fair_price_under_by_line = {};
+
+  for (const line of allLines) {
+    const key = String(line);
+    fair_over_prob_by_line[key] = poissonOverProb(blk_mu, line);
+    fair_under_prob_by_line[key] = poissonUnderProb(blk_mu, line);
+    fair_price_over_by_line[key] = probToAmerican(fair_over_prob_by_line[key]);
+    fair_price_under_by_line[key] = probToAmerican(fair_under_prob_by_line[key]);
+  }
+
+  let edge_over_pp = null;
+  let edge_under_pp = null;
+  let ev_over = null;
+  let ev_under = null;
+
+  if (
+    market_price_over !== null &&
+    market_price_over !== undefined &&
+    market_line !== null &&
+    market_line !== undefined
+  ) {
+    const fairOverProb = fair_over_prob_by_line[String(market_line)];
+    const impliedOverProb =
+      twoSidedFairProb(market_price_over, market_price_under) ??
+      americanToImplied(market_price_over);
+    edge_over_pp =
+      fairOverProb != null && impliedOverProb != null
+        ? fairOverProb - impliedOverProb
+        : null;
+    const payoutDm1 =
+      market_price_over >= 0
+        ? market_price_over / 100
+        : 100 / Math.abs(market_price_over);
+    ev_over = fairOverProb * payoutDm1 - (1 - fairOverProb);
+  }
+
+  if (
+    market_price_under !== null &&
+    market_price_under !== undefined &&
+    market_line !== null &&
+    market_line !== undefined
+  ) {
+    const fairUnderProb = fair_under_prob_by_line[String(market_line)];
+    const impliedUnderProb =
+      twoSidedFairProb(market_price_under, market_price_over) ??
+      americanToImplied(market_price_under);
+    edge_under_pp =
+      fairUnderProb != null && impliedUnderProb != null
+        ? fairUnderProb - impliedUnderProb
+        : null;
+    const payoutDm1 =
+      market_price_under >= 0
+        ? market_price_under / 100
+        : 100 / Math.abs(market_price_under);
+    ev_under = fairUnderProb * payoutDm1 - (1 - fairUnderProb);
+  }
+
+  let opportunity_score = null;
+  if (play_direction === 'UNDER') {
+    if (
+      market_line !== null &&
+      market_price_under !== null &&
+      edge_under_pp !== null &&
+      ev_under !== null
+    ) {
+      opportunity_score =
+        0.45 * edge_under_pp +
+        0.20 * ev_under +
+        0.35 * (market_line - blk_mu);
+    }
+  } else {
+    if (
+      market_line !== null &&
+      market_price_over !== null &&
+      edge_over_pp !== null &&
+      ev_over !== null
+    ) {
+      opportunity_score =
+        0.45 * edge_over_pp +
+        0.20 * ev_over +
+        0.35 * (blk_mu - market_line);
+    }
+  }
+
+  return {
+    player_id,
+    game_id,
+    blk_mu,
+    blk_sigma,
+    role_stability,
+    fair_over_prob_by_line,
+    fair_under_prob_by_line,
+    fair_price_over_by_line,
+    fair_price_under_by_line,
+    market_line: market_line ?? null,
+    market_price_over: market_price_over ?? null,
+    market_price_under: market_price_under ?? null,
+    edge_over_pp,
+    edge_under_pp,
+    ev_over,
+    ev_under,
+    opportunity_score,
+    flags,
+  };
+}
+
+module.exports = { calcMu, calcMu1p, classifyEdge, calcFairLine, calcFairLine1p, projectSogV2, projectBlkV1, projectBlkSimple, weightedRateBlendBLK };

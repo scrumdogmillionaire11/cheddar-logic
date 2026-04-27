@@ -179,25 +179,33 @@ function computePlayerPropsDueJobs(
   const fixedTimes = getPlayerPropsFixedTimes();
   const blkEnabled = isFeatureEnabled('nhl', 'blk-ingest');
   const mpBlkEnabled = blkEnabled && isFeatureEnabled('nhl', 'moneypuck-blk');
+  const blkRatesDailyBackstopEnabled = process.env.ENABLE_NHL_BLK_RATES_BACKSTOP_DAILY !== 'false';
   const mlbFixedRefreshAllowed = quotaTier === 'FULL' || quotaTier === 'MEDIUM';
   const jobs = [];
 
-  // ── Weekly BLK rates pulls (Monday 09:00 ET) ────────────────────────────
+  // ── BLK rates pulls (primary weekly + daily 09:00 ET backstop) ──────────
   // Two complementary sources — both run weekly on Monday so data refreshes
-  // after weekend game activity.  Both are idempotent within the ISO week.
+  // after weekend game activity. Keys remain weekly idempotent, so daily
+  // backstop windows only execute when the weekly pull has not succeeded.
   //
   // pull_nst_blk_rates: NST CSV export (requires NHL_BLK_NST_*_CSV_URL env vars;
   //   warns and returns cleanly when URLs are unset).
   // pull_moneypuck_blk_rates: MoneyPuck season-summary CSV (no env vars needed;
   //   URL is derived from the calendar date and updated nightly).
-  if (blkEnabled && nowEt.weekday === 1 && isFixedDue(nowEt, '09:00')) {
+  const isBlkRatesPrimaryWindow = nowEt.weekday === 1 && isFixedDue(nowEt, '09:00');
+  const isBlkRatesBackstopWindow =
+    blkRatesDailyBackstopEnabled &&
+    nowEt.weekday !== 1 &&
+    isFixedDue(nowEt, '09:00');
+  if (blkEnabled && (isBlkRatesPrimaryWindow || isBlkRatesBackstopWindow)) {
+    const pullMode = isBlkRatesPrimaryWindow ? 'weekly primary' : 'daily backstop';
     const nstBlkKey = keyNstBlkRatesWeekly(nowEt);
     jobs.push({
       jobName: 'pull_nst_blk_rates',
       jobKey: nstBlkKey,
       execute: pullNstBlkRates,
       args: { jobKey: nstBlkKey, dryRun },
-      reason: `weekly NST BLK rates pull (Monday 09:00 ET, week ${nowEt.year}-W${String(nowEt.weekNumber).padStart(2, '0')})`,
+      reason: `${pullMode} NST BLK rates pull (09:00 ET, week ${nowEt.year}-W${String(nowEt.weekNumber).padStart(2, '0')})`,
     });
 
     const mpBlkKey = keyMoneyPuckBlkRatesWeekly(nowEt);
@@ -207,7 +215,7 @@ function computePlayerPropsDueJobs(
         jobKey: mpBlkKey,
         execute: pullMoneyPuckBlkRates,
         args: { jobKey: mpBlkKey, dryRun },
-        reason: `weekly MoneyPuck BLK rates pull (Monday 09:00 ET, week ${nowEt.year}-W${String(nowEt.weekNumber).padStart(2, '0')})`,
+        reason: `${pullMode} MoneyPuck BLK rates pull (09:00 ET, week ${nowEt.year}-W${String(nowEt.weekNumber).padStart(2, '0')})`,
       });
     }
   }

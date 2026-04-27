@@ -622,6 +622,79 @@ function uniqueReasonCodes(codes = []) {
   );
 }
 
+function applyDecisionNamespaceMetadata(payload) {
+  if (!payload || typeof payload !== 'object') return;
+
+  const legacyMissingInputs = Array.isArray(payload.missing_inputs)
+    ? payload.missing_inputs.map((value) => String(value))
+    : [];
+
+  const featureTokenSet = new Set([
+    'block_rates_stale',
+    'feature_freshness:block_rates_stale',
+  ]);
+  const marketTokenSet = new Set([
+    'market_line',
+    'missing_market_odds',
+    'no_odds',
+    'odds_snapshot_missing',
+  ]);
+
+  const derivedFeatureFlagsFromLegacy = legacyMissingInputs
+    .filter((token) => featureTokenSet.has(String(token).toLowerCase()))
+    .map((token) => `FEATURE_${String(token).trim().toUpperCase()}`);
+  const featureFlags = Array.from(
+    new Set([
+      ...(Array.isArray(payload.feature_flags) ? payload.feature_flags : []),
+      ...derivedFeatureFlagsFromLegacy,
+    ]),
+  );
+
+  const coreMissingInputs = Array.isArray(payload.core_missing_inputs)
+    ? payload.core_missing_inputs.map((value) => String(value))
+    : legacyMissingInputs.filter((token) => {
+      const normalized = String(token).toLowerCase();
+      return !featureTokenSet.has(normalized) && !marketTokenSet.has(normalized);
+    });
+
+  const coreInputsComplete =
+    typeof payload.core_inputs_complete === 'boolean'
+      ? payload.core_inputs_complete && coreMissingInputs.length === 0
+      : payload.projection_inputs_complete !== false && coreMissingInputs.length === 0;
+
+  payload.feature_flags = featureFlags;
+  payload.core_missing_inputs = Array.from(new Set(coreMissingInputs));
+  payload.core_inputs_complete = coreInputsComplete;
+
+  // Compatibility mirror: legacy fields are derived from namespaced authority.
+  payload.projection_inputs_complete = coreInputsComplete;
+  payload.missing_inputs = Array.from(new Set(payload.core_missing_inputs));
+
+  const executionStatus = String(payload.execution_status || '').toUpperCase();
+  const basis = String(payload.basis || '').toUpperCase();
+  const freshnessTier = payload.freshness_tier
+    ? String(payload.freshness_tier).toLowerCase()
+    : 'unknown';
+
+  const executionBlocked =
+    executionStatus === 'BLOCKED' ||
+    (typeof payload.pass_reason_code === 'string' &&
+      payload.pass_reason_code.startsWith('PASS_EXECUTION_GATE_')) ||
+    payload.execution_gate?.should_bet === false;
+
+  const hasOdds =
+    basis === 'ODDS_BACKED' ||
+    Number.isFinite(payload.price) ||
+    Number.isFinite(payload.market_price_over) ||
+    Number.isFinite(payload.market_price_under);
+
+  payload.market_status = {
+    has_odds: Boolean(hasOdds),
+    freshness_tier: freshnessTier,
+    execution_blocked: executionBlocked,
+  };
+}
+
 function normalizeSlotStartIso(value) {
   const parsed = new Date(value || Date.now());
   if (!Number.isFinite(parsed.getTime())) {
@@ -787,6 +860,36 @@ function resolveMlbTeamAbbreviation(teamName) {
     }
   }
   return null;
+}
+
+function deriveMlbTeamMappingHealth(oddsSnapshot) {
+  const homeTeam =
+    typeof oddsSnapshot?.home_team === 'string' ? oddsSnapshot.home_team.trim() : '';
+  const awayTeam =
+    typeof oddsSnapshot?.away_team === 'string' ? oddsSnapshot.away_team.trim() : '';
+
+  const failures = [];
+  const homeTeamAbbr = homeTeam ? resolveMlbTeamAbbreviation(homeTeam) : null;
+  const awayTeamAbbr = awayTeam ? resolveMlbTeamAbbreviation(awayTeam) : null;
+
+  if (!homeTeam) {
+    failures.push('home_team_missing');
+  } else if (!homeTeamAbbr) {
+    failures.push(`TEAM_ALIAS_MISS:${homeTeam}`);
+  }
+
+  if (!awayTeam) {
+    failures.push('away_team_missing');
+  } else if (!awayTeamAbbr) {
+    failures.push(`TEAM_ALIAS_MISS:${awayTeam}`);
+  }
+
+  return {
+    ok: failures.length === 0,
+    home_team_abbr: homeTeamAbbr,
+    away_team_abbr: awayTeamAbbr,
+    failures: uniqueReasonCodes(failures),
+  };
 }
 
 function resolveMlbSnapshotGameDate(oddsSnapshot) {
@@ -1200,6 +1303,7 @@ function buildMlbMarketAvailability(oddsSnapshot, { expectF5Ml = false, withoutO
 function buildMlbPipelineState({
   oddsSnapshot,
   marketAvailability,
+  teamMappingHealth,
   projectionReady,
   driversReady,
   pricingReady,
@@ -1226,20 +1330,25 @@ function buildMlbPipelineState({
           (envelope) => envelope?._publish_state?.emit_allowed === true,
         )
       : cardReady === true;
+  const mappingHealth = teamMappingHealth || deriveMlbTeamMappingHealth(oddsSnapshot);
+  const blockingReasonCodes = uniqueReasonCodes([
+    ...(Array.isArray(availability.blocking_reason_codes)
+      ? availability.blocking_reason_codes
+      : []),
+    ...mappingHealth.failures,
+  ]);
 
   return {
     ...buildPipelineState({
       ingested: Boolean(oddsSnapshot),
-      team_mapping_ok: Boolean(
-        oddsSnapshot?.home_team && oddsSnapshot?.away_team,
-      ),
-      odds_ok: Boolean(oddsSnapshot?.captured_at) && marketLinesOk,
+      team_mapping_ok: mappingHealth.ok,
+      odds_ok: Boolean(oddsSnapshot?.captured_at) && marketLinesOk && mappingHealth.ok,
       market_lines_ok: marketLinesOk,
-      projection_ready: projectionReady === true,
-      drivers_ready: driversReady === true,
+      projection_ready: projectionReady === true && mappingHealth.ok,
+      drivers_ready: driversReady === true && mappingHealth.ok,
       pricing_ready: derivedPricingReady,
       card_ready: derivedCardReady,
-      blocking_reason_codes: availability.blocking_reason_codes,
+      blocking_reason_codes: blockingReasonCodes,
     }),
     f5_line_ok: availability.f5_line_ok,
     f5_ml_ok: availability.f5_ml_ok,
@@ -2597,6 +2706,7 @@ function applyExecutionGateToMlbPayload(payload, { oddsSnapshot, nowMs = Date.no
     snapshot_timestamp: snapshotTimestamp,
     freshness_decision: gateResult.freshness_decision || null,
   };
+  payload.freshness_tier = gateResult.freshness_decision?.tier ?? 'UNKNOWN';
 
   if (applyHighEdgeOverride || downgradeHighEdgeToLean) {
     payload.status = 'LEAN';
@@ -4056,6 +4166,9 @@ async function runMLBModel({
       console.log(
         `[MLB_LEAGUE_AVG] source=${leagueConstants.source} n=${leagueConstants.n}`,
       );
+      if (!leagueConstants.n || leagueConstants.source === 'static_2024' || leagueConstants.source === 'fallback') {
+        console.warn('[MLB_LEAGUE_AVG] WARNING: using static 2024 fallback league constants — DB query returned no rows. Cards produced this run use degraded baseline inputs.');
+      }
 
       let cardsGenerated = 0;
       let cardsFailed = 0;
@@ -4074,6 +4187,23 @@ async function runMLBModel({
             forKEngine: false,
             useF5ProjectionFloor: withoutOddsMode,
           });
+          const teamMappingHealth = deriveMlbTeamMappingHealth(gameOddsSnapshot);
+          if (!teamMappingHealth.ok) {
+            gamePipelineStates[gameId] = buildMlbPipelineState({
+              oddsSnapshot: gameOddsSnapshot,
+              marketAvailability: buildMlbMarketAvailability(gameOddsSnapshot),
+              teamMappingHealth,
+              projectionReady: false,
+              driversReady: false,
+              pricingReady: false,
+              cardReady: false,
+              executionEnvelopes: [],
+            });
+            console.warn(
+              `[MLB_TEAM_MAPPING_BLOCK] ${gameId}: ${teamMappingHealth.failures.join(', ')}`,
+            );
+            continue;
+          }
           let pitcherKOddsSnapshot = enrichMlbPitcherData(baseOddsSnapshot, {
             forKEngine: true,
           });
@@ -4410,7 +4540,12 @@ async function runMLBModel({
                   projection_source: 'SYNTHETIC_FALLBACK',
                   status_cap: 'PASS',
                   reason_codes: ['PASS_SYNTHETIC_FALLBACK'],
-                  missing_inputs: ['market_line'],
+                  missing_inputs: [],
+                  market_status: {
+                    has_odds: false,
+                    freshness_tier: 'unknown',
+                    execution_blocked: false,
+                  },
                   pass_reason_code: 'PASS_SYNTHETIC_FALLBACK',
                   playability: {
                     over_playable_at_or_below: projectionFloorF5 - 0.5,
@@ -4457,6 +4592,7 @@ async function runMLBModel({
             gamePipelineStates[gameId] = buildMlbPipelineState({
               oddsSnapshot: gameOddsSnapshot,
               marketAvailability,
+              teamMappingHealth,
               projectionReady: gameEval.status !== 'SKIP_GAME_INPUT_FAILURE',
               driversReady: false,
               pricingReady: false,
@@ -4555,6 +4691,7 @@ async function runMLBModel({
           const pipelineState = buildMlbPipelineState({
             oddsSnapshot: gameOddsSnapshot,
             marketAvailability,
+            teamMappingHealth,
             projectionReady: true,
             driversReady:
               gameDriverCards.length > 0 || pitcherKDriverCards.length > 0 || projectionFloorDriver !== null,
@@ -4920,6 +5057,7 @@ async function runMLBModel({
             });
             applyMlbVerificationContract({ payloadData });
             assertMlbExecutionInvariant(payloadData);
+            applyDecisionNamespaceMetadata(payloadData);
 
             const cardTitle = isF5
               ? `F5 ${driver.prediction}: ${gameOddsSnapshot?.away_team ?? '?'} @ ${gameOddsSnapshot?.home_team ?? '?'}`
@@ -5186,6 +5324,7 @@ module.exports = {
   buildNeutralBullpenContext,
   MLB_PIPELINE_REASON_CODES,
   resolveMlbTeamLookupKeys,
+  deriveMlbTeamMappingHealth,
   selectPitcherRowForTeam,
   getProbableStarterMapRow,
   getProbableStarterIdentity,

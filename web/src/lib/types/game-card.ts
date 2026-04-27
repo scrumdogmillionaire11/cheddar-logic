@@ -294,6 +294,7 @@ export interface PitcherKFairPrices {
 export interface TransformMeta {
   quality: CardQuality;
   missing_inputs: string[];
+  missing_market_types?: string[];
   placeholders_found: string[];
   drop_reason?: { drop_reason_code: string; drop_reason_layer: string } | null;
 }
@@ -538,6 +539,7 @@ export interface GameCard {
   tags: string[]; // derived for fast filtering
   /** Market signal pills source data. Absent when splits are not yet populated (WI-0666/0667). */
   marketSignals?: MarketSignalData;
+  freshnessTier?: 'FRESH' | 'STALE_VALID' | 'EXPIRED' | 'UNKNOWN' | null;
 }
 
 /**

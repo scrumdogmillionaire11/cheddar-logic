@@ -35,6 +35,7 @@ const {
   upsertQuotaLedger,
   isQuotaCircuitOpen,
   resolveSnapshotAge,
+  enrichOddsSnapshotWithEspnMetrics,
 } = require('@cheddar-logic/data');
 
 const { resolveTeamVariant } = require('@cheddar-logic/data/src/normalize');
@@ -447,6 +448,45 @@ async function pullOddsHourly({ jobKey = null, dryRun = false } = {}) {
               gamesUpserted++;
               kpis.gamesUpserted += 1;
 
+              // Enrich with ESPN metrics before inserting snapshot
+              // Build a temporary snapshot for enrichment
+              let enrichedRawData = {
+                ...(normalized.market && typeof normalized.market === 'object'
+                  ? normalized.market
+                  : {}),
+                _execution_pairs: {
+                  total_same_book_under_for_over:
+                    normalized.odds?.totalSameBookUnderForOver ?? null,
+                  total_same_book_over_for_under:
+                    normalized.odds?.totalSameBookOverForUnder ?? null,
+                  spread_same_book_away_for_home:
+                    normalized.odds?.spreadSameBookAwayForHome ?? null,
+                  spread_same_book_home_for_away:
+                    normalized.odds?.spreadSameBookHomeForAway ?? null,
+                  h2h_same_book_away_for_home:
+                    normalized.odds?.h2hSameBookAwayForHome ?? null,
+                  h2h_same_book_home_for_away:
+                    normalized.odds?.h2hSameBookHomeForAway ?? null,
+                },
+              };
+
+              try {
+                const tempSnapshot = {
+                  sport: normalized.sport,
+                  home_team: normalized.homeTeam,
+                  away_team: normalized.awayTeam,
+                  raw_data: enrichedRawData,
+                };
+                const enrichedSnapshot =
+                  await enrichOddsSnapshotWithEspnMetrics(tempSnapshot);
+                enrichedRawData = enrichedSnapshot.raw_data || enrichedRawData;
+              } catch (enrichErr) {
+                // Log enrichment error but continue — ESPN enrichment is optional
+                console.warn(
+                  `[PullOdds] ⚠️  ESPN enrichment failed for ${normalized.sport}/${normalized.gameId}: ${enrichErr.message}`,
+                );
+              }
+
               // Insert odds snapshot
               insertOddsSnapshot({
                 id: `odds-${sport.toLowerCase()}-${normalized.gameId}-${uuidV4().slice(0, 8)}`,
@@ -513,25 +553,7 @@ async function pullOddsHourly({ jobKey = null, dryRun = false } = {}) {
                 totalF5Under: normalized.odds?.totalF5Under ?? null,
                 // Deprecated F5 / 1P snapshot columns remain in the schema but are
                 // now intentionally left null by the shared odds normalizer.
-                rawData: {
-                  ...(normalized.market && typeof normalized.market === 'object'
-                    ? normalized.market
-                    : {}),
-                  _execution_pairs: {
-                    total_same_book_under_for_over:
-                      normalized.odds?.totalSameBookUnderForOver ?? null,
-                    total_same_book_over_for_under:
-                      normalized.odds?.totalSameBookOverForUnder ?? null,
-                    spread_same_book_away_for_home:
-                      normalized.odds?.spreadSameBookAwayForHome ?? null,
-                    spread_same_book_home_for_away:
-                      normalized.odds?.spreadSameBookHomeForAway ?? null,
-                    h2h_same_book_away_for_home:
-                      normalized.odds?.h2hSameBookAwayForHome ?? null,
-                    h2h_same_book_home_for_away:
-                      normalized.odds?.h2hSameBookHomeForAway ?? null,
-                  },
-                },
+                rawData: enrichedRawData,
                 jobRunId,
               });
               

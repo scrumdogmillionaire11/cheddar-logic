@@ -41,9 +41,77 @@ function parseCsv(content) {
   return rows;
 }
 
+function normalizeHeaderToken(value) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '');
+}
+
+function parseCsvHeaderRow(content) {
+  const firstLine = String(content || '').split(/\r?\n/)[0] || '';
+  const values = [];
+  let current = '';
+  let inQuotes = false;
+
+  for (const ch of firstLine) {
+    if (ch === '"') {
+      inQuotes = !inQuotes;
+    } else if (ch === ',' && !inQuotes) {
+      values.push(current.trim().replace(/^"|"$/g, ''));
+      current = '';
+    } else {
+      current += ch;
+    }
+  }
+
+  values.push(current.trim().replace(/^"|"$/g, ''));
+  return values;
+}
+
+function assertNstSchemaIntegrity(csvText, sourceLabel) {
+  const headers = parseCsvHeaderRow(csvText);
+  const normalizedHeaders = new Set(
+    headers.map((header) => normalizeHeaderToken(header)).filter(Boolean),
+  );
+
+  const requiredGroups = [
+    { label: 'player id', aliases: ['playerid', 'player_id', 'playeridnumber'] },
+    { label: 'player name', aliases: ['player', 'player_name', 'name'] },
+    { label: 'ev blocks', aliases: ['evblk', 'evblocks', 'ev_blocks'] },
+    { label: 'ev toi', aliases: ['evtoi', 'ev_toi'] },
+    { label: 'pk blocks', aliases: ['pkblk', 'pkblocks', 'pk_blocks'] },
+    { label: 'pk toi', aliases: ['pktoi', 'pk_toi'] },
+  ];
+
+  const missingGroups = requiredGroups
+    .filter((group) =>
+      !group.aliases.some((alias) => normalizedHeaders.has(normalizeHeaderToken(alias))),
+    )
+    .map((group) => group.label);
+
+  if (missingGroups.length > 0) {
+    throw new Error(
+      `[SCHEMA_DRIFT] NST ${sourceLabel} CSV missing required headers: ${missingGroups.join(', ')}`,
+    );
+  }
+}
+
+function buildRowAliasMap(row) {
+  const aliasMap = new Map();
+  if (!row || typeof row !== 'object') return aliasMap;
+
+  for (const [key, value] of Object.entries(row)) {
+    aliasMap.set(normalizeHeaderToken(key), value);
+  }
+  return aliasMap;
+}
+
 function getFirstValue(row, keys) {
+  const aliasMap = buildRowAliasMap(row);
   for (const key of keys) {
-    const value = row?.[key];
+    const value =
+      row?.[key] ?? aliasMap.get(normalizeHeaderToken(key));
     if (value !== undefined && value !== null && String(value).trim() !== '') {
       return String(value).trim();
     }
@@ -127,6 +195,10 @@ async function ingestNstBlkRates({
     fetchCsv(l5Url, fetchImpl),
   ]);
 
+  assertNstSchemaIntegrity(seasonCsv, 'season');
+  assertNstSchemaIntegrity(l10Csv, 'l10');
+  assertNstSchemaIntegrity(l5Csv, 'l5');
+
   const seasonRows = normalizeSplitRows(parseCsv(seasonCsv));
   const l10Rows = normalizeSplitRows(parseCsv(l10Csv));
   const l5Rows = normalizeSplitRows(parseCsv(l5Csv));
@@ -179,6 +251,7 @@ if (require.main === module) {
 module.exports = {
   ingestNstBlkRates,
   parseCsv,
+  assertNstSchemaIntegrity,
   normalizeSplitRows,
   fetchCsv,
 };

@@ -124,11 +124,9 @@ describe('Settlement contract (post-legacy)', () => {
     ).toBe('PROJECTION_ONLY');
   });
 
-  test('CLV guard treats legacy payloads as odds-backed', () => {
-    expect(__private.resolveDecisionBasisForSettlement({})).toBe('ODDS_BACKED');
-    expect(__private.isClvEligiblePayload({ market_type: 'MONEYLINE' })).toBe(
-      true,
-    );
+  test('CLV guard treats payloads with no basis as UNKNOWN (not CLV-eligible)', () => {
+    expect(__private.resolveDecisionBasisForSettlement({})).toBe('UNKNOWN');
+    expect(__private.isClvEligiblePayload({ market_type: 'MONEYLINE' })).toBe(false);
   });
 
   test('resolves closing odds using market-specific precedence', () => {

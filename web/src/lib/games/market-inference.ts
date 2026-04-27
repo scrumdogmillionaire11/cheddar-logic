@@ -105,7 +105,7 @@ export interface DecisionV2Shape {
   };
 }
 
-const WAVE1_SPORTS = new Set(['NBA', 'NHL']);
+const WAVE1_SPORTS = new Set(['NBA', 'NHL', 'MLB']);
 const WAVE1_MARKETS = new Set<MarketType>([
   'MONEYLINE',
   'SPREAD',

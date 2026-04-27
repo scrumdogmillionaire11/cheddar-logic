@@ -160,7 +160,10 @@ describe('buildDecisionV2 — sigma fallback safety gate integration', () => {
     expect(result.official_status).toBe('LEAN');
   });
 
-  it('clamped NHL total does not stay PLAY under computed sigma', () => {
+  it('clamped NHL total stays PLAY under computed sigma (staleness no longer gating)', () => {
+    // Prior: stale odds (10 min old) would trigger watchdog_status='CAUTION' → downgrade to LEAN
+    // Now: staleness handled by execution gate; watchdog only reports data quality issues
+    // Computed sigma doesn't auto-downgrade; edge is evaluated normally
     const payload = buildNhlTotalPlayPayload({
       projection: { total: 8.5 },
       odds_context: {
@@ -174,8 +177,10 @@ describe('buildDecisionV2 — sigma fallback safety gate integration', () => {
 
     const result = buildDecisionV2(payload, context);
     expect(result).not.toBeNull();
-    expect(result.watchdog_status).toBe('CAUTION');
-    expect(result.official_status).toBe('LEAN');
+    // watchdog_status is 'OK' (staleness no longer gating in watchdog)
+    expect(result.watchdog_status).toBe('OK');
+    // Computed sigma leaves status unchanged from edge evaluation
+    expect(result.official_status).toBe('PLAY');
   });
 
   it('PLAY card emits SIGMA_FALLBACK_DEGRADED reason code under fallback sigma', () => {

@@ -226,6 +226,87 @@ console.log('🧪 final_market_decision contract tests');
     decision_v2: {
       official_status: 'PASS',
       sharp_price_status: 'CHEDDAR',
+      primary_reason_code: 'PASS_NO_EDGE',
+      play_tier: null,
+      edge_delta_pct: null,
+    },
+  });
+  game.plays = [];
+  game.true_play = undefined;
+  game.feature_flags = ['FEATURE_BLOCK_RATES_STALE'];
+  game.core_inputs_complete = true;
+  game.core_missing_inputs = [];
+
+  const card = transformToGameCard(game);
+  const decision = card.play?.final_market_decision;
+  assert.equal(decision?.surfaced_status, 'PASS');
+  assert.equal(decision?.surfaced_reason, 'Feature freshness stale');
+  assert.equal(decision?.projection_input_status, 'COMPLETE');
+}
+
+{
+  const game = buildGame({
+    action: 'PASS',
+    classification: 'PASS',
+    status: 'PASS',
+    decision_v2: {
+      official_status: 'PASS',
+      sharp_price_status: 'CHEDDAR',
+      primary_reason_code: 'PASS_NO_EDGE',
+      play_tier: null,
+      edge_delta_pct: null,
+    },
+  });
+  game.plays[0].core_inputs_complete = true;
+  game.plays[0].core_missing_inputs = [];
+  game.plays[0].projection_inputs_complete = false; // conflicting legacy field
+  game.plays[0].missing_inputs = ['espn_pace'];
+  game.true_play = game.plays[0];
+
+  const card = transformToGameCard(game);
+  const decision = card.play?.final_market_decision;
+  assert.equal(decision?.projection_input_status, 'COMPLETE');
+  assert.notEqual(decision?.surfaced_reason, 'Missing projection inputs');
+}
+
+{
+  const game = buildGame({
+    action: 'PASS',
+    classification: 'PASS',
+    status: 'PASS',
+    decision_v2: {
+      official_status: 'PASS',
+      sharp_price_status: 'CHEDDAR',
+      primary_reason_code: 'PASS_NO_EDGE',
+      play_tier: null,
+      edge_delta_pct: null,
+    },
+  });
+  game.plays = [];
+  game.true_play = undefined;
+  game.market_status = {
+    has_odds: false,
+    freshness_tier: 'expired',
+    execution_blocked: true,
+  };
+  game.core_inputs_complete = true;
+  game.core_missing_inputs = [];
+
+  const card = transformToGameCard(game);
+  const decision = card.play?.final_market_decision;
+  assert.equal(decision?.surfaced_status, 'PASS');
+  assert.match(decision?.surfaced_reason || '', /Odds unavailable|Market unavailable/i);
+  assert.equal(decision?.projection_input_status, 'COMPLETE');
+}
+
+{
+  const game = buildGame({
+    action: 'PASS',
+    classification: 'PASS',
+    status: 'PASS',
+    decision_v2: {
+      official_status: 'PASS',
+      sharp_price_status: 'CHEDDAR',
       primary_reason_code: 'PASS_EXECUTION_GATE_NO_EDGE_COMPUTED',
       play_tier: null,
       edge_delta_pct: null,

@@ -5,6 +5,49 @@
 
 import { parseJsonObject, toFiniteNumber } from './normalizers';
 
+function formatMappingFailureToken(value: unknown): string | null {
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : null;
+  }
+
+  if (!value || typeof value !== 'object') return null;
+  const entry = value as Record<string, unknown>;
+  const code =
+    typeof entry.code === 'string'
+      ? entry.code.trim()
+      : typeof entry.status === 'string'
+        ? entry.status.trim().toUpperCase()
+        : '';
+  const team = typeof entry.team === 'string' ? entry.team.trim() : '';
+  const sport = typeof entry.sport === 'string' ? entry.sport.trim().toUpperCase() : '';
+  const detail =
+    team ||
+    (typeof entry.message === 'string'
+      ? entry.message.trim()
+      : typeof entry.detail === 'string'
+        ? entry.detail.trim()
+        : '');
+
+  if (code && sport && detail) return `${code}:${sport}:${detail}`;
+  if (code && detail) return `${code}:${detail}`;
+  if (code && sport) return `${code}:${sport}`;
+  if (code) return code;
+
+  for (const key of ['reason', 'label', 'field', 'key']) {
+    if (typeof entry[key] === 'string' && entry[key]!.trim().length > 0) {
+      return entry[key]!.trim();
+    }
+  }
+
+  try {
+    const json = JSON.stringify(value);
+    return json && json !== '{}' ? json : null;
+  } catch {
+    return null;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Pure validation helpers (no DB)
 // ---------------------------------------------------------------------------
@@ -109,7 +152,13 @@ export function deriveSourceMappingHealth(rawData: unknown): {
         ? (sourceContract.mapping_ok as boolean)
         : null,
     source_mapping_failures: Array.isArray(sourceContract?.mapping_failures)
-      ? sourceContract.mapping_failures.map((item) => String(item))
+      ? Array.from(
+          new Set(
+            sourceContract.mapping_failures
+              .map((item) => formatMappingFailureToken(item))
+              .filter((item): item is string => Boolean(item)),
+          ),
+        )
       : [],
   };
 }

@@ -53,6 +53,7 @@ const {
   buildMlbMarketAvailability,
   hydrateCanonicalMlbMarketLines,
   buildMlbPipelineState,
+  deriveMlbTeamMappingHealth,
   buildMlbBullpenContext,
   resolveMlbBullpenContext,
   selectPitcherRowForTeam,
@@ -2456,6 +2457,49 @@ describe('resolveMlbTeamLookupKeys — MLB team join fallback', () => {
   test('returns empty array for empty input', () => {
     expect(resolveMlbTeamLookupKeys('')).toEqual([]);
     expect(resolveMlbTeamLookupKeys(null)).toEqual([]);
+  });
+});
+
+describe('MLB team mapping integrity', () => {
+  test('deriveMlbTeamMappingHealth emits readable TEAM_ALIAS_MISS tokens', () => {
+    const health = deriveMlbTeamMappingHealth({
+      home_team: 'Tampa Bay Rays',
+      away_team: 'Unknown Franchise',
+    });
+
+    expect(health.ok).toBe(false);
+    expect(health.failures).toEqual(
+      expect.arrayContaining(['TEAM_ALIAS_MISS:Unknown Franchise']),
+    );
+  });
+
+  test('buildMlbPipelineState marks team_mapping_ok=false when aliases cannot be resolved', () => {
+    const pipelineState = buildMlbPipelineState({
+      oddsSnapshot: {
+        home_team: 'Unknown Home Club',
+        away_team: 'New York Yankees',
+        captured_at: '2026-03-26T17:15:00Z',
+      },
+      marketAvailability: {
+        f5_line_ok: true,
+        f5_ml_ok: true,
+        full_game_total_ok: true,
+        full_game_ml_ok: true,
+        expect_f5_total: true,
+        expect_f5_ml: true,
+        blocking_reason_codes: [],
+      },
+      projectionReady: true,
+      driversReady: true,
+      pricingReady: true,
+      cardReady: true,
+      executionEnvelopes: [],
+    });
+
+    expect(pipelineState.team_mapping_ok).toBe(false);
+    expect(pipelineState.blocking_reason_codes).toEqual(
+      expect.arrayContaining(['TEAM_ALIAS_MISS:Unknown Home Club']),
+    );
   });
 });
 

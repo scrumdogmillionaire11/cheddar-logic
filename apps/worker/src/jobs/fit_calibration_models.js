@@ -96,7 +96,26 @@ async function run(dbOverride) {
     return;
   }
 
-  const upsert = db.prepare(`
+  const shadowTableCheck = db
+    .prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='calibration_models_shadow'")
+    .get();
+  const hasShadowTable = !!shadowTableCheck;
+
+  const upsertShadow = hasShadowTable
+    ? db.prepare(`
+        INSERT INTO calibration_models_shadow (sport, market_type, fitted_at, breakpoints_json, n_samples, isotonic_brier, promoted, promoted_at)
+        VALUES (?, ?, ?, ?, ?, ?, 0, NULL)
+        ON CONFLICT(sport, market_type) DO UPDATE SET
+          fitted_at        = excluded.fitted_at,
+          breakpoints_json = excluded.breakpoints_json,
+          n_samples        = excluded.n_samples,
+          isotonic_brier   = excluded.isotonic_brier,
+          promoted         = 0,
+          promoted_at      = NULL
+      `)
+    : null;
+
+  const promoteToLive = db.prepare(`
     INSERT INTO calibration_models (sport, market_type, fitted_at, breakpoints_json, n_samples, isotonic_brier)
     VALUES (?, ?, ?, ?, ?, ?)
     ON CONFLICT(sport, market_type) DO UPDATE SET
@@ -106,10 +125,42 @@ async function run(dbOverride) {
       isotonic_brier   = excluded.isotonic_brier
   `);
 
+  const markShadowPromoted = hasShadowTable
+    ? db.prepare(`
+        UPDATE calibration_models_shadow
+        SET promoted = 1, promoted_at = ?
+        WHERE sport = ? AND market_type = ?
+      `)
+    : null;
+
+  const getIncumbentBrier = db.prepare(
+    `SELECT isotonic_brier FROM calibration_models WHERE sport = ? AND market_type = ?`,
+  );
+
+  const PROMOTE_EPSILON = 0.0001;
+
   const fittedAt = new Date().toISOString();
   const runUpserts = db.transaction((rows) => {
     for (const row of rows) {
-      upsert.run(row.sport, row.marketType, fittedAt, row.breakpointsJson, row.nSamples, row.isotonicBrier);
+      if (upsertShadow) {
+        upsertShadow.run(row.sport, row.marketType, fittedAt, row.breakpointsJson, row.nSamples, row.isotonicBrier);
+      }
+
+      const incumbent = getIncumbentBrier.get(row.sport, row.marketType);
+      const incumbentBrier = incumbent?.isotonic_brier ?? null;
+      const shouldPromote = incumbentBrier === null || (incumbentBrier - row.isotonicBrier) >= PROMOTE_EPSILON;
+
+      if (shouldPromote) {
+        promoteToLive.run(row.sport, row.marketType, fittedAt, row.breakpointsJson, row.nSamples, row.isotonicBrier);
+        if (markShadowPromoted) markShadowPromoted.run(fittedAt, row.sport, row.marketType);
+        console.log(
+          `[CAL_FIT] promoted sport=${row.sport} market=${row.marketType} incumbent_brier=${incumbentBrier?.toFixed(4) ?? 'none'} new_brier=${row.isotonicBrier.toFixed(4)}`,
+        );
+      } else {
+        console.log(
+          `[CAL_FIT] skipped promotion sport=${row.sport} market=${row.marketType} — new brier=${row.isotonicBrier.toFixed(4)} not better than incumbent ${incumbentBrier.toFixed(4)} by epsilon=${PROMOTE_EPSILON}`,
+        );
+      }
     }
   });
 
@@ -124,6 +175,7 @@ async function run(dbOverride) {
          WHERE market = ?
            AND outcome IS NOT NULL
            AND fair_prob IS NOT NULL
+           AND (model_status IS NULL OR model_status != 'SYNTHETIC_FALLBACK')
          ORDER BY fair_prob ASC`,
       )
       .all(market);

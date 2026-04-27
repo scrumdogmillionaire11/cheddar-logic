@@ -1,430 +1,0 @@
-Script started on Fri Mar 20 20:32:31 2026
-[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[Jajcolubiale@Mac cheddar-logic % [K[?2004h[?2004l
-[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[Jajcolubiale@Mac cheddar-logic % [K[?2004h  node /tmp/discord_dry_run.cjs 2>&1[?2004l
-node:internal/modules/cjs/loader:1424
-  throw err;
-  ^
-
-Error: Cannot find module '/tmp/discord_dry_run.cjs'
-[90m    at Module._resolveFilename (node:internal/modules/cjs/loader:1421:15)[39m
-[90m    at defaultResolveImpl (node:internal/modules/cjs/loader:1059:19)[39m
-[90m    at resolveForCJSWithHooks (node:internal/modules/cjs/loader:1064:22)[39m
-[90m    at Module._load (node:internal/modules/cjs/loader:1227:37)[39m
-[90m    at TracingChannel.traceSync (node:diagnostics_channel:328:14)[39m
-[90m    at wrapModuleLoad (node:internal/modules/cjs/loader:245:24)[39m
-[90m    at Module.executeUserEntryPoint [as runMain] (node:internal/modules/run_main:154:5)[39m
-[90m    at node:internal/main/run_main_module:33:47[39m {
-  code: [32m'MODULE_NOT_FOUND'[39m,
-  requireStack: []
-}
-
-Node.js v24.11.1
-[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[Jajcolubiale@Mac cheddar-logic % [K[?2004h[?2004l
-[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[Jajcolubiale@Mac cheddar-logic % [K[?2004h  node /tmp/discord_dry_run.cjs 2>&1[?2004l
-node:internal/modules/cjs/loader:1424
-  throw err;
-  ^
-
-Error: Cannot find module '/Users/ajcolubiale/projects/cheddar-logic/packages/data/src/index.js'
-Require stack:
-- /private/tmp/discord_dry_run.cjs
-[90m    at Module._resolveFilename (node:internal/modules/cjs/loader:1421:15)[39m
-[90m    at defaultResolveImpl (node:internal/modules/cjs/loader:1059:19)[39m
-[90m    at resolveForCJSWithHooks (node:internal/modules/cjs/loader:1064:22)[39m
-[90m    at Module._load (node:internal/modules/cjs/loader:1227:37)[39m
-[90m    at TracingChannel.traceSync (node:diagnostics_channel:328:14)[39m
-[90m    at wrapModuleLoad (node:internal/modules/cjs/loader:245:24)[39m
-[90m    at Module.require (node:internal/modules/cjs/loader:1504:12)[39m
-[90m    at require (node:internal/modules/helpers:152:16)[39m
-    at Object.<anonymous> (/private/tmp/discord_dry_run.cjs:7:33)
-[90m    at Module._compile (node:internal/modules/cjs/loader:1761:14)[39m {
-  code: [32m'MODULE_NOT_FOUND'[39m,
-  requireStack: [ [32m'/private/tmp/discord_dry_run.cjs'[39m ]
-}
-
-Node.js v24.11.1
-[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[Jajcolubiale@Mac cheddar-logic % [K[?2004h[?2004l
-[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[Jajcolubiale@Mac cheddar-logic % [K[?2004h  cat /Users/ajcolubiale/projects/cheddar-logic/p [Kaackages/data/package.json | grep -E '"main"|"exports"' | head -5[?2004l
-  "main": "index.js",
-[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[Jajcolubiale@Mac cheddar-logic % [K[?2004h[?2004l
-[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[Jajcolubiale@Mac cheddar-logic % [K[?2004h  cp /tmp/discord_dry_run.cjs /Users/ajcolubiale/ [Kpprojects/cheddar-logic/discord_dry_run.cjs && cd /Users/ajcolubiale/projects/che [Kdddar-logic && node discord_dry_run.cjs 2>&1; rm discord_dry_run.cjs[?2004l
-node:internal/modules/cjs/loader:1424
-  throw err;
-  ^
-
-Error: Cannot find module '@cheddar-logic/data'
-Require stack:
-- /Users/ajcolubiale/projects/cheddar-logic/discord_dry_run.cjs
-[90m    at Module._resolveFilename (node:internal/modules/cjs/loader:1421:15)[39m
-[90m    at defaultResolveImpl (node:internal/modules/cjs/loader:1059:19)[39m
-[90m    at resolveForCJSWithHooks (node:internal/modules/cjs/loader:1064:22)[39m
-[90m    at Module._load (node:internal/modules/cjs/loader:1227:37)[39m
-[90m    at TracingChannel.traceSync (node:diagnostics_channel:328:14)[39m
-[90m    at wrapModuleLoad (node:internal/modules/cjs/loader:245:24)[39m
-[90m    at Module.require (node:internal/modules/cjs/loader:1504:12)[39m
-[90m    at require (node:internal/modules/helpers:152:16)[39m
-    at Object.<anonymous> [90m(/Users/ajcolubiale/projects/cheddar-logic/[39mdiscord_dry_run.cjs:7:33[90m)[39m
-[90m    at Module._compile (node:internal/modules/cjs/loader:1761:14)[39m {
-  code: [32m'MODULE_NOT_FOUND'[39m,
-  requireStack: [ [32m'/Users/ajcolubiale/projects/cheddar-logic/discord_dry_run.cjs'[39m ]
-}
-
-Node.js v24.11.1
-[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[Jajcolubiale@Mac cheddar-logic % [K[?2004h[?2004l
-[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[Jajcolubiale@Mac cheddar-logic % [K[?2004h  ls /Users/ajcolubiale/projects/cheddar-logic/ap [Kpps/worker/node_modules/@cheddar-logic 2>/dev/null || echo "no local node_modules [K"" && ls /Users/ajcolubiale/projects/cheddar-logic/node_modules/@cheddar-logic 2> [K//dev/null | head -5[?2004l
-adapters	data		models		odds
-[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[Jajcolubiale@Mac cheddar-logic % [K[?2004h[?2004l
-[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[Jajcolubiale@Mac cheddar-logic % [K[?2004h  cp /tmp/discord_dry_run.cjs /Users/ajcolubiale/ [Kpprojects/cheddar-logic/apps/worker/discord_dry_run.cjs && cd /Users/ajcolubiale/ [Kpprojects/cheddar-logic/apps/worker && node discord_dry_run.cjs 2>&1; rm discord_ [Kddry_run.cjs[?2004l
-node:internal/modules/cjs/loader:1424
-  throw err;
-  ^
-
-Error: Cannot find module './apps/worker/src/jobs/post_discord_cards.js'
-Require stack:
-- /Users/ajcolubiale/projects/cheddar-logic/apps/worker/discord_dry_run.cjs
-[90m    at Module._resolveFilename (node:internal/modules/cjs/loader:1421:15)[39m
-[90m    at defaultResolveImpl (node:internal/modules/cjs/loader:1059:19)[39m
-[90m    at resolveForCJSWithHooks (node:internal/modules/cjs/loader:1064:22)[39m
-[90m    at Module._load (node:internal/modules/cjs/loader:1227:37)[39m
-[90m    at TracingChannel.traceSync (node:diagnostics_channel:328:14)[39m
-[90m    at wrapModuleLoad (node:internal/modules/cjs/loader:245:24)[39m
-[90m    at Module.require (node:internal/modules/cjs/loader:1504:12)[39m
-[90m    at require (node:internal/modules/helpers:152:16)[39m
-    at Object.<anonymous> [90m(/Users/ajcolubiale/projects/cheddar-logic/apps/worker/[39mdiscord_dry_run.cjs:6:55[90m)[39m
-[90m    at Module._compile (node:internal/modules/cjs/loader:1761:14)[39m {
-  code: [32m'MODULE_NOT_FOUND'[39m,
-  requireStack: [
-    [32m'/Users/ajcolubiale/projects/cheddar-logic/apps/worker/discord_dry_run.cjs'[39m
-  ]
-}
-
-Node.js v24.11.1
-[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[Jajcolubiale@Mac worker % [K[?2004h[?2004l
-[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[Jajcolubiale@Mac worker % [K[?2004h  cp /tmp/discord_dry_run.cjs /Users/ajcolubiale/project [Kss/cheddar-logic/apps/worker/discord_dry_run.cjs && cd /Users/ajcolubiale/project [Kss/cheddar-logic/apps/worker && node discord_dry_run.cjs 2>&1; rm discord_dry_run [K..cjs[?2004l
-[Migrations] Resolved directory: /Users/ajcolubiale/projects/cheddar-logic/packages/data/db/migrations (33 files)
-[Migrations] Found 33 migration files
-[Migrations] ✓ 001_create_job_runs.sql (already applied)
-[Migrations] ✓ 002_create_games.sql (already applied)
-[Migrations] ✓ 003_create_odds_snapshots.sql (already applied)
-[Migrations] ✓ 004_create_model_outputs.sql (already applied)
-[Migrations] ✓ 005_create_card_payloads.sql (already applied)
-[Migrations] ✓ 006_add_job_key_to_job_runs.sql (already applied)
-[Migrations] ✓ 007_create_card_results.sql (already applied)
-[Migrations] ✓ 008_create_game_results.sql (already applied)
-[Migrations] ✓ 009_create_tracking_stats.sql (already applied)
-[Migrations] ✓ 010_create_auth_tables.sql (already applied)
-[Migrations] ✓ 011_add_spread_total_prices.sql (already applied)
-[Migrations] ✓ 012_create_decision_records.sql (already applied)
-[Migrations] ✓ 013_create_game_id_map.sql (already applied)
-[Migrations] ✓ 014_protect_payload_audit_integrity.sql (already applied)
-[Migrations] ✓ 015_create_player_shot_logs.sql (already applied)
-[Migrations] ✓ 016_add_market_contract_to_card_results.sql (already applied)
-[Migrations] ✓ 017_create_pipeline_health.sql (already applied)
-[Migrations] ✓ 018_create_run_state.sql (already applied)
-[Migrations] ✓ 019_create_card_display_log.sql (already applied)
-[Migrations] ✓ 020_add_card_payloads_run_id.sql (already applied)
-[Migrations] ✓ 021_add_sport_to_run_state.sql (already applied)
-[Migrations] ✓ 022_add_job_runs_idempotency_guard.sql (already applied)
-[Migrations] ✓ 023_normalize_card_payloads_sport.sql (already applied)
-[Migrations] ✓ 024_add_card_payloads_sport_check.sql (already applied)
-[Migrations] ✓ 025_create_team_metrics_cache.sql (already applied)
-[Migrations] ✓ 026_fix_sport_case_to_lowercase.sql (already applied)
-[Migrations] ✓ 027_fix_team_metrics_cache_schema.sql (already applied)
-[Migrations] ✓ 028_create_odds_ingest_failures.sql (already applied)
-[Migrations] ✓ 029_create_player_prop_lines.sql (already applied)
-[Migrations] ✓ 030_add_player_availability.sql (already applied)
-[Migrations] ✓ 031_create_tracked_players.sql (already applied)
-[Migrations] ✓ 032_create_player_pp_rates.sql (already applied)
-[Migrations] ✓ 033_add_pp_rolling_splits.sql (already applied)
-[Migrations] Complete
-
-=== PREVIEW: 12 game(s) | 12 message(s) | Play:0 Lean:20 Pass:42 ===
-
---- [1/12] ---
-🏒 NHL | 8:40 PM ET
-COL @ CHI
-Snapshot: 8:37 PM ET
-
-🟡 LEAN
-- TOTAL | UNDER 6.5 (-125)
-  Line: 6.5
-
-⚪ PASS
-No edge
-
-🧠 NOTES
-No official play — edge too thin
-
---- [2/12] ---
-🏒 NHL | 9:10 PM ET
-FLA @ CF
-Snapshot: 8:37 PM ET
-
-🟡 LEAN
-- TOTAL | UNDER 5.5 (105)
-  Line: 5.5
-
-⚪ PASS
-No edge
-
-🧠 NOTES
-No official play — edge too thin
-
---- [3/12] ---
-🏀 NBA | 9:10 PM ET
-TOR @ DEN
-Snapshot: 8:37 PM ET
-
-🟡 LEAN
-- TOTAL | OVER 238.5 (-110)
-  Line: 238.5 | Edge: 0.1677
-
-⚪ PASS
-Price too sharp
-
-🧠 NOTES
-No official play — edge too thin
-
---- [4/12] ---
-🏒 NHL | 10:00 PM ET
-AD @ UM
-Snapshot: 8:37 PM ET
-
-🟡 LEAN
-- PROP | Lean Cutter Gauthier Under 3.5 SOG | Proj 2.9 · Fair 3 · Edge -0.1
-
-🧠 NOTES
-No official play — edge too thin
-
---- [5/12] ---
-🎯 NCAAM | 10:10 PM ET
-MT @ MH
-Snapshot: 8:37 PM ET
-
-🟡 LEAN
-- SPREAD | HOME -1.5 (-115)
-  Line: -1.5 | Edge: 0.0301
-
-🧠 NOTES
-No official play — edge too thin
-
---- [6/12] ---
-🏒 NHL | 10:10 PM ET
-AD @ UM
-Snapshot: 8:37 PM ET
-
-🟡 LEAN
-- TOTAL | UNDER 6.5 (102)
-  Line: 6.5
-
-⚪ PASS
-No edge
-
-🧠 NOTES
-No official play — edge too thin
-
---- [7/12] ---
-🏒 NHL | 1:00 PM ET
-WPG @ PIT
-Snapshot: 8:37 PM ET
-
-🟡 LEAN
-- PROP | Lean Kyle Connor Over 2.5 SOG | Proj 3.3 · Fair 2.5 · Edge +0.9
-- 1P | OVER 1.5
-  Line: 1.5
-- TOTAL | OVER 6.5 (110)
-  Line: 6.5
-
-⚪ PASS
-Price too sharp
-
-🧠 NOTES
-No official play — edge too thin
-
---- [8/12] ---
-🏒 NHL | 2:00 PM ET
-VGK @ NSH
-Snapshot: 8:37 PM ET
-
-🟡 LEAN
-- PROP | Lean Filip Forsberg Under 2.5 SOG | Proj 1.4 · Fair 2 · Edge -0.7
-- 1P | UNDER 1.5
-  Line: 1.5
-
-⚪ PASS
-Price too sharp
-
-🧠 NOTES
-No official play — edge too thin
-
---- [9/12] ---
-🏒 NHL | 4:00 PM ET
-BS @ LAK
-Snapshot: 8:37 PM ET
-
-🟡 LEAN
-- PROP | Lean Tage Thompson Under 2.5 SOG | Proj 1.4 · Fair 1.5 · Edge -0.1
-- 1P | UNDER 1.5
-  Line: 1.5
-- TOTAL | UNDER 6.5 (-130)
-  Line: 6.5
-
-⚪ PASS
-Price too sharp
-
-🧠 NOTES
-No official play — edge too thin
-
---- [10/12] ---
-🏒 NHL | 4:00 PM ET
-PHI @ SJS
-Snapshot: 8:37 PM ET
-
-🟡 LEAN
-- PROP | Lean Macklin Celebrini Under 2.5 SOG | Proj 1.1 · Fair 1.5 · Edge -0.5
-- 1P | 1.5
-  Line: 1.5
-- TOTAL | UNDER 6.5 (-122)
-  Line: 6.5
-
-🧠 NOTES
-No official play — edge too thin
-
---- [11/12] ---
-🏒 NHL | 4:00 PM ET
-DAL @ MIN
-Snapshot: 8:37 PM ET
-
-🟡 LEAN
-- PROP | Lean Quinn Hughes Under 2.5 SOG | Proj 1.5 · Fair 2 · Edge -0.4
-- 1P | UNDER 1.5
-  Line: 1.5
-
-🧠 NOTES
-No official play — edge too thin
-
---- [12/12] ---
-🏒 NHL | 5:00 PM ET
-SEA @ CBJ
-Snapshot: 8:37 PM ET
-
-🟡 LEAN
-- PROP | Lean Adam Fantilli Over 2.5 SOG | Proj 4.2 · Fair 3.5 · Edge +0.7
-
-🧠 NOTES
-No official play — edge too thin
-
-[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[Jajcolubiale@Mac worker % [K[?2004h[?2004l
-[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[Jajcolubiale@Mac worker % [K[?2004h  cd /Users/ajcolubiale/projects/cheddar-logic/apps/work [Keer && ENABLE_DISCORD_CARD_WEBHOOKS=true node src/jobs/post_discord_cards.js && e [Kccho "SENT OK" 2>&1[?2004l
-SENT OK
-[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[Jajcolubiale@Mac worker % [K[?2004h[?2004l
-[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[Jajcolubiale@Mac worker % [K[?2004h  cd /Users/ajcolubiale/projects/cheddar-logic/apps/work [Keer && grep -h "DISCORD_CARD_WEBHOOK_URL" .env.local ../.env.local ../.env 2>/dev [K//null | head -3[?2004l
-[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[Jajcolubiale@Mac worker % [K[?2004h[?2004l
-[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[Jajcolubiale@Mac worker % [K[?2004h  grep "DISCORD_CARD_WEBHOOK_URL" .env .env.local 2>/dev [K//null[?2004l
-[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[Jajcolubiale@Mac worker % [K[?2004h[?2004l
-[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[Jajcolubiale@Mac worker % [K[?2004h  grep "DISCORD_CARD_WEBHOOK_URL" /Users/ajcolubiale/pro [Kjjects/cheddar-logic/.env /Users/ajcolubiale/projects/cheddar-logic/.env.local 2> [K//dev/null[?2004l
-/Users/ajcolubiale/projects/cheddar-logic/.env:DISCORD_CARD_WEBHOOK_URL="https://discord.com/api/webhooks/1462596704384848047/yxDaMgI1c4Mm1Iv4579B4-9_qVoivZG89mOrAaxyRYcVUeo3JVE5sFxMJFT_qJeDZaWZ"
-/Users/ajcolubiale/projects/cheddar-logic/.env.local:DISCORD_CARD_WEBHOOK_URL="https://discord.com/api/webhooks/1462596704384848047/yxDaMgI1c4Mm1Iv4579B4-9_qVoivZG89mOrAaxyRYcVUeo3JVE5sFxMJFT_qJeDZaWZ"
-[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[Jajcolubiale@Mac worker % [K[?2004h[?2004l
-[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[Jajcolubiale@Mac worker % [K[?2004h  ENABLE_DISCORD_CARD_WEBHOOKS=true DISCORD_CARD_WEBHOOK [K__URL="https://discord.com/api/webhooks/1462596704384848047/yxDaMgI1c4Mm1Iv4579B4 [K--9_qVoivZG89mOrAaxyRYcVUeo3JVE5sFxMJFT_qJeDZaWZ" CHEDDAR_DB_PATH=/Users/ajcolubi [Kaale/projects/cheddar-logic/packages/data/cheddar.db node /Users/ajcolubiale/proj [Keects/cheddar-logic/apps/worker/src/jobs/post_discord_cards.js 2>&1[?2004l
-[Migrations] Resolved directory: /Users/ajcolubiale/projects/cheddar-logic/packages/data/db/migrations (33 files)
-[Migrations] Found 33 migration files
-[Migrations] ✓ 001_create_job_runs.sql (already applied)
-[Migrations] ✓ 002_create_games.sql (already applied)
-[Migrations] ✓ 003_create_odds_snapshots.sql (already applied)
-[Migrations] ✓ 004_create_model_outputs.sql (already applied)
-[Migrations] ✓ 005_create_card_payloads.sql (already applied)
-[Migrations] ✓ 006_add_job_key_to_job_runs.sql (already applied)
-[Migrations] ✓ 007_create_card_results.sql (already applied)
-[Migrations] ✓ 008_create_game_results.sql (already applied)
-[Migrations] ✓ 009_create_tracking_stats.sql (already applied)
-[Migrations] ✓ 010_create_auth_tables.sql (already applied)
-[Migrations] ✓ 011_add_spread_total_prices.sql (already applied)
-[Migrations] ✓ 012_create_decision_records.sql (already applied)
-[Migrations] ✓ 013_create_game_id_map.sql (already applied)
-[Migrations] ✓ 014_protect_payload_audit_integrity.sql (already applied)
-[Migrations] ✓ 015_create_player_shot_logs.sql (already applied)
-[Migrations] ✓ 016_add_market_contract_to_card_results.sql (already applied)
-[Migrations] ✓ 017_create_pipeline_health.sql (already applied)
-[Migrations] ✓ 018_create_run_state.sql (already applied)
-[Migrations] ✓ 019_create_card_display_log.sql (already applied)
-[Migrations] ✓ 020_add_card_payloads_run_id.sql (already applied)
-[Migrations] ✓ 021_add_sport_to_run_state.sql (already applied)
-[Migrations] ✓ 022_add_job_runs_idempotency_guard.sql (already applied)
-[Migrations] ✓ 023_normalize_card_payloads_sport.sql (already applied)
-[Migrations] ✓ 024_add_card_payloads_sport_check.sql (already applied)
-[Migrations] ✓ 025_create_team_metrics_cache.sql (already applied)
-[Migrations] ✓ 026_fix_sport_case_to_lowercase.sql (already applied)
-[Migrations] ✓ 027_fix_team_metrics_cache_schema.sql (already applied)
-[Migrations] ✓ 028_create_odds_ingest_failures.sql (already applied)
-[Migrations] ✓ 029_create_player_prop_lines.sql (already applied)
-[Migrations] ✓ 030_add_player_availability.sql (already applied)
-[Migrations] ✓ 031_create_tracked_players.sql (already applied)
-[Migrations] ✓ 032_create_player_pp_rates.sql (already applied)
-[Migrations] ✓ 033_add_pp_rolling_splits.sql (already applied)
-[Migrations] Complete
-[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[Jajcolubiale@Mac worker % [K[?2004h[?2004l
-[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[Jajcolubiale@Mac worker % [K[?2004h  echo "check"[?2004l
-check
-[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[Jajcolubiale@Mac worker % [K[?2004h[?2004l
-[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[Jajcolubiale@Mac worker % [K[?2004h  ENABLE_DISCORD_CARD_WEBHOOKS=true DISCORD_CARD_WEBHOOK [K__URL="https://discord.com/api/webhooks/1462596704384848047/yxDaMgI1c4Mm1Iv4579B4 [K--9_qVoivZG89mOrAaxyRYcVUeo3JVE5sFxMJFT_qJeDZaWZ" CHEDDAR_DB_PATH=/Users/ajcolubi [Kaale/projects/cheddar-logic/packages/data/cheddar.db node -e "[?2004l
-[0m[27m[24m[Jdquote> [K[?2004hcconst { postDiscordCards } = require('/Users/ajcolubiale/projects/chedda [Krr-logic/apps/worker/src/jobs/post_discord_cards.js');[?2004l
-[0m[27m[24m[Jdquote> [K[?2004hppostDiscordCards().then(r => { console.log('RESULT:', JSON.stringify(r)) [K;; }).catch(e => console.error('ERR:', e.message));[?2004l
-[0m[27m[24m[Jdquote> [K[?2004h"" 2>&1 | grep -E "RESULT|ERR|skipped|chunks|error"[?2004l
-RESULT: {"success":true,"jobRunId":"job-post_discord_cards-2026-03-21T00:39:32-0bbb807c","chunks":18,"totalCards":108,"sectionCounts":{"official":1,"lean":28,"passBlocked":79}}
-[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[Jajcolubiale@Mac worker % [K[?2004h[?2004l
-[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[Jajcolubiale@Mac worker % [K[?2004h  q[?2004l
-zsh: command not found: q
-[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[Jajcolubiale@Mac worker % [K[?2004h[?2004l
-[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[Jajcolubiale@Mac worker % [K[?2004h  cd /Users/ajcolubiale/projects/cheddar-logic/apps/work [Keer && node fire_discord.cjs 2>&1 | grep -v "^\[Migrations\]"; rm fire_discord.cj [Ks[?2004l
-RESULT: {
-  "success": false,
-  "jobRunId": "job-post_discord_cards-2026-03-21T00:39:55-86122e99",
-  "error": "Discord webhook failed (429): {\"message\": \"You are being rate limited.\", \"retry_after\": 0.3, \"global\": false}"
-}
-[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[Jajcolubiale@Mac worker % [K[?2004h[?2004l
-[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[Jajcolubiale@Mac worker % [K[?2004h  echo done[?2004l
-done
-[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[Jajcolubiale@Mac worker % [K[?2004h[?2004l
-[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[Jajcolubiale@Mac worker % [K[?2004h  cd /Users/ajcolubiale/projects/cheddar-logic/apps/work [Keer && node fire_discord.cjs 2>&1 | tail -15; rm fire_discord.cjs[?2004l
-[Migrations] ✓ 028_create_odds_ingest_failures.sql (already applied)
-[Migrations] ✓ 029_create_player_prop_lines.sql (already applied)
-[Migrations] ✓ 030_add_player_availability.sql (already applied)
-[Migrations] ✓ 031_create_tracked_players.sql (already applied)
-[Migrations] ✓ 032_create_player_pp_rates.sql (already applied)
-[Migrations] ✓ 033_add_pp_rolling_splits.sql (already applied)
-[Migrations] Complete
-=== RESULT ===
-success: false
-skipped: false
-reason: none
-chunks sent: undefined
-totalGames: undefined
-sectionCounts: undefined
-error: Discord webhook failed (429): {"message": "You are being rate limited.", "retry_after": 0.3, "global": false}
-[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[Jajcolubiale@Mac worker % [K[?2004h[?2004l
-[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[Jajcolubiale@Mac worker % [K[?2004h  ls /Users/ajcolubiale/projects/cheddar-logic/apps/work [Keer/fire_discord.cjs 2>/dev/null && echo "still exists" || echo "deleted (complet [Keed)"[?2004l
-deleted (completed)
-[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[Jajcolubiale@Mac worker % [K[?2004h[?2004l
-[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[Jajcolubiale@Mac worker % [K[?2004h  cd /Users/ajcolubiale/projects/cheddar-logic/apps/work [Keer && node src/jobs/post_discord_cards.js --dry-run 2>&1 | grep "post_discord_ca [Krrds"[?2004l
-[post_discord_cards] skipped — disabled: ENABLE_DISCORD_CARD_WEBHOOKS != true
-[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[Jajcolubiale@Mac worker % [K[?2004h[?2004l
-[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[Jajcolubiale@Mac worker % [K[?2004h  cd /Users/ajcolubiale/projects/cheddar-logic/apps/work [Keer && ENABLE_DISCORD_CARD_WEBHOOKS=true DISCORD_CARD_WEBHOOK_URL=dummy node src/ [Kjjobs/post_discord_cards.js --dry-run 2>&1 | grep "post_discord_cards"[?2004l
-[post_discord_cards] dry-run — games:17 chunks:17 cards:99 play:1 lean:27 pass:71
-[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[Jajcolubiale@Mac worker % [K[?2004h[?2004l
-[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[Jajcolubiale@Mac worker % [K[?2004h  git add apps/worker/src/jobs/post_discord_cards.js &&  [Kggit commit -m "fix(discord-cards): log result on all exit paths instead of silen [Ktt exit"[?2004l
-warning: could not open directory 'apps/worker/apps/worker/src/jobs/': No such file or directory
-fatal: pathspec 'apps/worker/src/jobs/post_discord_cards.js' did not match any files
-[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[Jajcolubiale@Mac worker % [K[?2004h[?2004l
-[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[Jajcolubiale@Mac worker % [K[?2004h  git add apps/worker/src/jobs/post_discord_cards.js &&  [Kggit commit -m "fix(discord-cards): log result on all exit paths instead of silen [Ktt exit"[?2004l
-warning: could not open directory 'apps/worker/apps/worker/src/jobs/': No such file or directory
-fatal: pathspec 'apps/worker/src/jobs/post_discord_cards.js' did not match any files
-[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[Jajcolubiale@Mac worker % [K[?2004h[?2004l
-[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[Jajcolubiale@Mac worker % [K[?2004h  git -C /Users/ajcolubiale/projects/cheddar-logic add a [Kppps/worker/src/jobs/post_discord_cards.js && git -C /Users/ajcolubiale/projects/ [Kccheddar-logic commit -m "fix(discord-cards): log result on all exit paths instea [Kdd of silent exit"[?2004l
-[33m[Pre-commit] Validating 1 file(s)...[0m
-
-[32m✓ All validations passed[0m
-
-[feature/new-models 622fd30] fix(discord-cards): log result on all exit paths instead of silent exit
- 1 file changed, 18 insertions(+), 2 deletions(-)
-[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[Jajcolubiale@Mac worker % [K[?2004h

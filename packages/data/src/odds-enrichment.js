@@ -45,6 +45,19 @@ function mapOddsSportToEspnSport(sport) {
   return normalized || sport;
 }
 
+function isEspnTeamMetricsSport(sport) {
+  return sport === 'NBA' || sport === 'NHL' || sport === 'NCAAM';
+}
+
+function parseRawData(rawData) {
+  if (!rawData) return {};
+  try {
+    return typeof rawData === 'string' ? JSON.parse(rawData) : rawData;
+  } catch {
+    return {};
+  }
+}
+
 /**
  * Enrich a single odds snapshot with ESPN team metrics.
  * Fetches metrics for both home and away teams, merges into raw_data.
@@ -66,6 +79,35 @@ async function enrichOddsSnapshotWithEspnMetrics(oddsSnapshot, options = {}) {
     const includeGames = options.include_games === true;
     const gameLimit = Number.isFinite(options.game_limit) ? options.game_limit : 5;
     const strictTeamMapping = options.strict_team_mapping !== false;
+
+    // MLB and other non-ESPN-team-metrics sports should not emit source mapping
+    // failures from this enrichment path.
+    if (!isEspnTeamMetricsSport(espnSport)) {
+      const rawData = parseRawData(oddsSnapshot.raw_data);
+      const enriched = {
+        ...oddsSnapshot,
+        raw_data: {
+          ...rawData,
+          espn_metrics: {
+            ...(rawData.espn_metrics && typeof rawData.espn_metrics === 'object'
+              ? rawData.espn_metrics
+              : {}),
+            source_contract: {
+              strict_team_mapping: strictTeamMapping,
+              mapping_ok: true,
+              mapping_failures: [],
+              mapping_skipped: true,
+              mapping_skip_reason: 'unsupported_sport',
+              sport: espnSport,
+            },
+          },
+        },
+      };
+      if (typeof oddsSnapshot.raw_data === 'string') {
+        enriched.raw_data = JSON.stringify(enriched.raw_data);
+      }
+      return enriched;
+    }
 
     const [homeData, awayData] = await Promise.all([
       getTeamMetricsWithGames(oddsSnapshot.home_team, espnSport, {

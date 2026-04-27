@@ -8,6 +8,9 @@ const {
 const {
   ALL_REASON_CODES: _ALL_REASON_CODES,
 } = require('../../data');
+const {
+  normalizeMarketType: normalizeCanonicalMarketType,
+} = require('../../data/src/market-contract');
 
 // Startup check: all locally-defined reason codes must be canonical or aliased.
 // This catches any future code added to WATCHDOG_REASONS / PRICE_REASONS without registration.
@@ -29,7 +32,7 @@ function _assertPipelineCodesRegistered(constantMap, label) {
 // See CANONICAL_EDGE_CONTRACT in decision-gate.js for the authoritative definition.
 const EDGE_UNITS = 'decimal_fraction';
 
-const WAVE1_SPORTS = new Set(['NBA', 'NHL']);
+const WAVE1_SPORTS = new Set(['NBA', 'NHL', 'MLB']);
 const WAVE1_MARKETS = new Set([
   'MONEYLINE',
   'SPREAD',
@@ -170,8 +173,9 @@ const HARD_INVALIDATION_PRICE_REASONS = new Set([
   PRICE_REASONS.EXACT_WAGER_MISMATCH,
   PRICE_REASONS.MARKET_EDGE_UNAVAILABLE,
   PRICE_REASONS.PROXY_EDGE_BLOCKED,
-  PRICE_REASONS.LINE_NOT_CONFIRMED,
-  PRICE_REASONS.EDGE_RECHECK_PENDING,
+  // WI-1186: LINE_NOT_CONFIRMED and EDGE_RECHECK_PENDING removed from hard-invalidation set.
+  // These are now gate warnings (emitted in reason_codes) rather than status blockers.
+  // PRICE_SYNC_PENDING remains hard-invalid (external system state unconfirmed).
   PRICE_REASONS.PRICE_SYNC_PENDING,
 ]);
 const PLAY_CAPPED_PRICE_REASONS = new Set([
@@ -204,6 +208,30 @@ function asString(value) {
   if (typeof value !== 'string') return null;
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : null;
+}
+
+function normalizeDecisionMarketType(rawValue) {
+  const token = asString(rawValue)
+    ?.toUpperCase()
+    .replace(/[\s-]+/g, '_');
+  if (!token) return null;
+
+  if (
+    token === 'FIRST_PERIOD' ||
+    token === '1P' ||
+    token === 'P1' ||
+    token === 'FIRSTPERIOD'
+  ) {
+    return 'FIRST_PERIOD';
+  }
+  if (token === 'TEAM_TOTAL' || token === 'TEAMTOTAL') {
+    return 'TEAM_TOTAL';
+  }
+  if (token === 'PUCKLINE' || token === 'PUCK_LINE') {
+    return 'PUCKLINE';
+  }
+
+  return normalizeCanonicalMarketType(rawValue);
 }
 
 function uniqueReasonCodes(...reasonGroups) {
@@ -352,18 +380,6 @@ function readPath(obj, path) {
 function normalizeSport(value) {
   const raw = asString(value);
   return raw ? raw.toUpperCase() : '';
-}
-
-function normalizeMarketType(value) {
-  const raw = asString(value);
-  if (!raw) return null;
-  const upper = raw.toUpperCase();
-  if (WAVE1_MARKETS.has(upper)) return upper;
-  if (upper === 'FIRSTPERIOD') return 'FIRST_PERIOD';
-  if (upper === 'ML') return 'MONEYLINE';
-  if (upper === 'PUCK_LINE') return 'PUCKLINE';
-  if (upper === 'TEAMTOTAL') return 'TEAM_TOTAL';
-  return upper;
 }
 
 function normalizeDirection(value) {
@@ -653,12 +669,14 @@ function classifyPrice({
   }
 
   if (marketType !== 'TOTAL' && edgePct > EDGE_SANITY_NON_TOTAL_THRESHOLD) {
+    // WI-1186: High edge on non-TOTAL markets warrants sanity check gate, not PASS override.
+    // If odds are successfully fetched, line IS confirmed. Emit gate for watchdog/UI review
+    // but let market classify normally based on edge vs thresholds (PLAY/LEAN/PASS).
     return {
-      sharp_price_status: 'PENDING_VERIFICATION',
+      sharp_price_status: 'CHEDDAR',
       price_reason_codes: [
-        PRICE_REASONS.LINE_NOT_CONFIRMED,
-        PRICE_REASONS.EDGE_RECHECK_PENDING,
         PRICE_REASONS.EDGE_SANITY_NON_TOTAL,
+        PRICE_REASONS.EDGE_CLEAR,
       ],
       proxy_capped: false,
     };
@@ -859,7 +877,7 @@ function validateExactWager({ payload, marketType, direction, line, price }) {
     return false;
   }
 
-  const calledMarket = normalizeMarketType(trace?.called_market_type);
+  const calledMarket = normalizeDecisionMarketType(trace?.called_market_type);
   if (calledMarket && calledMarket !== marketType) {
     return false;
   }
@@ -966,6 +984,8 @@ function computeOfficialStatus({
     );
     return hasNonHoldBlockingReason ? 'PASS' : 'LEAN';
   }
+  // WI-1186: PENDING_VERIFICATION status is no longer emitted (edge sanity is now a gate).
+  // This branch preserved for backward compat with pre-WI-1186 payloads only.
   if (sharpPriceStatus === 'PENDING_VERIFICATION') return 'PASS';
   if (sharpPriceStatus === 'UNPRICED' || sharpPriceStatus === 'COTTAGE') {
     return 'PASS';
@@ -1091,6 +1111,8 @@ function resolvePrimaryReason({
     return watchdogReasonCodes[0];
   }
 
+  // WI-1186: PENDING_VERIFICATION no longer used. Edge sanity is a gate, not a blocker.
+  // This branch is preserved for backward compat but should not be reached.
   if (sharpPriceStatus === 'PENDING_VERIFICATION') {
     return priceReasonCodes[0] || PRICE_REASONS.LINE_NOT_CONFIRMED;
   }
@@ -1281,10 +1303,7 @@ function computeWatchdog(payload, context = {}) {
       source: 'odds_context.captured_at',
       result: 'MISSING',
     });
-  }
-
-  let staleMinutes = null;
-  if (capturedAt) {
+  } else {
     const capturedTs = Date.parse(capturedAt);
     if (Number.isNaN(capturedTs)) {
       sourceAttempts.push({
@@ -1294,21 +1313,16 @@ function computeWatchdog(payload, context = {}) {
         note: 'invalid timestamp',
       });
       watchdogReasonCodes.push(WATCHDOG_REASONS.PARSE_FAILURE);
-    } else {
-      staleMinutes = (Date.now() - capturedTs) / 60000;
     }
   }
 
-  // Staleness is no longer a blocking reason in the watchdog. The execution
-  // gate (execution-gate.js + execution-gate-freshness-contract.js) owns all
-  // staleness decisions with sport-specific contracts (NBA/NHL: 120-min
-  // hardMax + allowStaleIfNoNewOdds=true). The watchdog only blocks on data
-  // quality issues: missing fields, parse errors, market unavailable.
+  // Staleness decisions are owned entirely by the execution gate
+  // (execution-gate.js + execution-gate-freshness-contract.js) via sport-specific
+  // freshness contracts (MLB/NBA/NHL: 60-min cadence, 120-min hardMax with
+  // allowStaleIfNoNewOdds=true). The watchdog reports only data quality issues:
+  // missing fields, parse errors, market unavailable. This prevents false positives
+  // in the UI for data that passes the execution gate's freshness validation.
   let watchdogStatus = 'OK';
-  if (staleMinutes !== null && staleMinutes >= 5) {
-    watchdogReasonCodes.push(WATCHDOG_REASONS.STALE_MARKET);
-    watchdogReasonCodes.push(WATCHDOG_REASONS.STALE_SNAPSHOT);
-  }
 
   const hasBlockingReason = watchdogReasonCodes.some(
     (code) =>
@@ -1320,8 +1334,6 @@ function computeWatchdog(payload, context = {}) {
 
   if (hasBlockingReason) {
     watchdogStatus = 'BLOCKED';
-  } else if (staleMinutes !== null && staleMinutes >= 5) {
-    watchdogStatus = 'CAUTION';
   }
 
   const uniqueWatchdogReasonCodes = Array.from(new Set(watchdogReasonCodes));
@@ -1347,7 +1359,7 @@ function isWave1EligiblePayload(payload) {
   if (!payload || payload.kind !== 'PLAY') return false;
   const sport = normalizeSport(payload.sport);
   if (!WAVE1_SPORTS.has(sport)) return false;
-  const marketType = normalizeMarketType(payload.market_type);
+  const marketType = normalizeDecisionMarketType(payload.market_type);
   return Boolean(marketType && WAVE1_MARKETS.has(marketType));
 }
 
@@ -1356,7 +1368,7 @@ function buildDecisionV2(payload, context = {}) {
 
   try {
     const sport = normalizeSport(payload?.sport);
-    const market_type = normalizeMarketType(
+    const market_type = normalizeDecisionMarketType(
       payload?.market_type ?? payload?.recommended_bet_type,
     );
     const firstPeriodProjectionSignal =
