@@ -767,6 +767,8 @@ describe('decision publisher v2 pipeline', () => {
   });
 
   test('requires verification for oversized non-total edges and blocks priced promotion', () => {
+    // WI-1186: High-edge non-TOTAL markets now emit CHEDDAR status with EDGE_SANITY_NON_TOTAL gate
+    // instead of PENDING_VERIFICATION. Gate signals watchdog review but does not force PASS.
     const payload = buildWave1Payload({
       market_type: 'SPREAD',
       recommended_bet_type: 'spread',
@@ -785,17 +787,19 @@ describe('decision publisher v2 pipeline', () => {
     });
     applyUiActionFields(payload);
 
-    expect(payload.decision_v2.sharp_price_status).toBe('PENDING_VERIFICATION');
-    expect(payload.decision_v2.official_status).toBe('PASS');
-    expect(payload.decision_v2.price_reason_codes).toContain(
-      'LINE_NOT_CONFIRMED',
-    );
+    // WI-1186: sharp_price_status is now CHEDDAR (not PENDING_VERIFICATION)
+    expect(payload.decision_v2.sharp_price_status).toBe('CHEDDAR');
+    // With high edge and likely good support, official_status can now be PLAY (not forced PASS)
+    expect(payload.decision_v2.official_status).toMatch(/PLAY|LEAN/);
+    // EDGE_SANITY_NON_TOTAL remains in price_reason_codes as a gate signal
     expect(payload.decision_v2.price_reason_codes).toContain(
       'EDGE_SANITY_NON_TOTAL',
     );
-    expect(payload.decision_v2.primary_reason_code).toBe(
+    // LINE_NOT_CONFIRMED removed; EDGE_CLEAR added in its place
+    expect(payload.decision_v2.price_reason_codes).not.toContain(
       'LINE_NOT_CONFIRMED',
     );
+    expect(payload.decision_v2.price_reason_codes).toContain('EDGE_CLEAR');
   });
 
   test('does not price spread from moneyline win probability fallback', () => {
