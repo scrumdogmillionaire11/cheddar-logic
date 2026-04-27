@@ -3908,8 +3908,36 @@ async function runNHLPlayerShotsModel() {
                 };
 
                 if (blkRatesStale) {
-                  payloadDataBlk.missing_inputs = ['block_rates_stale'];
+                  payloadDataBlk.feature_flags = Array.from(
+                    new Set([
+                      ...(Array.isArray(payloadDataBlk.feature_flags)
+                        ? payloadDataBlk.feature_flags
+                        : []),
+                      'FEATURE_BLOCK_RATES_STALE',
+                    ]),
+                  );
                 }
+
+                payloadDataBlk.core_inputs_complete =
+                  payloadDataBlk.projection_inputs_complete !== false;
+                payloadDataBlk.core_missing_inputs = Array.isArray(
+                  payloadDataBlk.missing_inputs,
+                )
+                  ? payloadDataBlk.missing_inputs
+                  : [];
+                payloadDataBlk.market_status = {
+                  has_odds: Boolean(blkUsingRealLine),
+                  freshness_tier: payloadDataBlk.freshness_tier
+                    ? String(payloadDataBlk.freshness_tier).toLowerCase()
+                    : 'unknown',
+                  execution_blocked:
+                    String(payloadDataBlk.execution_status || '').toUpperCase() ===
+                      'BLOCKED' ||
+                    (typeof payloadDataBlk.pass_reason_code === 'string' &&
+                      payloadDataBlk.pass_reason_code.startsWith(
+                        'PASS_EXECUTION_GATE_',
+                      )),
+                };
 
                 applyNhlDecisionBasisMeta(payloadDataBlk, {
                   usingRealLine: blkUsingRealLine,

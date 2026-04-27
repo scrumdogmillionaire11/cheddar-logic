@@ -124,6 +124,12 @@ const PROJECTION_ONLY_LINE_SOURCES = new Set<string>([
 
 type ApiPropDisplayState = 'PLAY' | 'WATCH' | 'PROJECTION_ONLY';
 
+type ApiMarketStatus = {
+  has_odds?: boolean | null;
+  freshness_tier?: string | null;
+  execution_blocked?: boolean | null;
+};
+
 interface ApiPropDecision {
   verdict?: string;
   lean_side?: string | null;
@@ -237,6 +243,10 @@ export interface ApiPlay {
   reason_codes?: string[];
   projection_inputs_complete?: boolean | null;
   missing_inputs?: string[];
+  core_inputs_complete?: boolean | null;
+  core_missing_inputs?: string[];
+  feature_flags?: string[];
+  market_status?: ApiMarketStatus | null;
   source_mapping_ok?: boolean | null;
   source_mapping_failures?: string[];
   tags?: string[];
@@ -300,6 +310,10 @@ interface GameData {
   } | null;
   projection_inputs_complete?: boolean | null;
   projection_missing_inputs?: string[];
+  core_inputs_complete?: boolean | null;
+  core_missing_inputs?: string[];
+  feature_flags?: string[];
+  market_status?: ApiMarketStatus | null;
   source_mapping_ok?: boolean | null;
   source_mapping_failures?: string[];
   ingest_failure_reason_code?: string | null;
@@ -490,12 +504,21 @@ const FEATURE_FRESHNESS_INPUT_TOKENS = new Set([
   'feature_freshness:block_rates_stale',
 ]);
 
+const MARKET_INPUT_TOKENS = new Set([
+  'market_line',
+  'missing_market_odds',
+  'no_odds',
+  'odds_snapshot_missing',
+]);
+
 function splitProjectionMissingInputs(inputs: string[]): {
   projectionCoreMissingInputs: string[];
   featureFreshnessMissingInputs: string[];
+  marketMissingInputs: string[];
 } {
   const projectionCoreMissingInputs: string[] = [];
   const featureFreshnessMissingInputs: string[] = [];
+  const marketMissingInputs: string[] = [];
 
   for (const input of inputs) {
     const normalized = input.trim().toLowerCase();
@@ -503,10 +526,44 @@ function splitProjectionMissingInputs(inputs: string[]): {
       featureFreshnessMissingInputs.push(input);
       continue;
     }
+    if (MARKET_INPUT_TOKENS.has(normalized)) {
+      marketMissingInputs.push(input);
+      continue;
+    }
     projectionCoreMissingInputs.push(input);
   }
 
-  return { projectionCoreMissingInputs, featureFreshnessMissingInputs };
+  return {
+    projectionCoreMissingInputs,
+    featureFreshnessMissingInputs,
+    marketMissingInputs,
+  };
+}
+
+function deriveMarketStatus(game: GameData): {
+  hasOdds: boolean | null;
+  executionBlocked: boolean;
+  freshnessTier: string | null;
+} {
+  const statuses = [game.market_status, ...game.plays.map((play) => play.market_status)]
+    .filter((status): status is ApiMarketStatus => Boolean(status));
+
+  const hasOddsSignal = statuses
+    .map((status) => status.has_odds)
+    .find((value) => typeof value === 'boolean');
+  const executionBlocked = statuses.some(
+    (status) => status.execution_blocked === true,
+  );
+  const freshnessTierRaw = statuses
+    .map((status) => status.freshness_tier)
+    .find((value) => typeof value === 'string' && value.trim().length > 0);
+
+  return {
+    hasOdds: typeof hasOddsSignal === 'boolean' ? hasOddsSignal : null,
+    executionBlocked,
+    freshnessTier:
+      typeof freshnessTierRaw === 'string' ? freshnessTierRaw.toLowerCase() : null,
+  };
 }
 
 function normalizeDropReasonMeta(
@@ -1663,16 +1720,41 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
         ),
       ]),
     );
-    const { projectionCoreMissingInputs, featureFreshnessMissingInputs } =
+    const { projectionCoreMissingInputs, featureFreshnessMissingInputs, marketMissingInputs } =
       splitProjectionMissingInputs(projectionMissingInputs);
+    const marketStatus = deriveMarketStatus(game);
     const hasMappingFailure =
       game.ingest_failure_reason_code === 'TEAM_MAPPING_UNMAPPED' ||
       game.source_mapping_ok === false || sourceMappingFailures.length > 0;
+    const coreInputsCompleteSignals = [
+      game.core_inputs_complete,
+      ...game.plays.map((play) => play.core_inputs_complete),
+    ].filter((value): value is boolean => typeof value === 'boolean');
+    const coreMissingInputs = Array.from(
+      new Set([
+        ...(Array.isArray(game.core_missing_inputs)
+          ? normalizeMissingInputs(game.core_missing_inputs)
+          : []),
+        ...game.plays.flatMap((play) =>
+          Array.isArray(play.core_missing_inputs)
+            ? normalizeMissingInputs(play.core_missing_inputs)
+            : [],
+        ),
+      ]),
+    );
     const hasProjectionInputsFailure =
+      coreInputsCompleteSignals.includes(false) ||
+      coreMissingInputs.length > 0 ||
       game.projection_inputs_complete === false ||
       game.plays.some((play) => play.projection_inputs_complete === false) ||
       projectionCoreMissingInputs.length > 0;
     const hasFeatureFreshnessFailure = featureFreshnessMissingInputs.length > 0;
+    const hasMarketFailure =
+      marketStatus.hasOdds === false ||
+      marketStatus.executionBlocked ||
+      marketMissingInputs.length > 0 ||
+      marketStatus.freshnessTier === 'stale' ||
+      marketStatus.freshnessTier === 'expired';
     const noActionablePlayInputs = hasEvidenceOnly
       ? collectNoActionablePlayInputs(game)
       : [];
@@ -1683,6 +1765,8 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
         ? 'MISSING_DATA_NO_ODDS'
         : hasMappingFailure
           ? 'MISSING_DATA_TEAM_MAPPING'
+          : hasMarketFailure
+            ? 'MISSING_DATA_NO_ODDS'
           : hasFeatureFreshnessFailure
             ? 'MISSING_DATA_FEATURE_FRESHNESS'
           : hasProjectionInputsFailure
@@ -1697,6 +1781,8 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
         ? 'No odds available'
         : hasMappingFailure
           ? `Team mapping unresolved${game.ingest_failure_reason_detail ? `: ${game.ingest_failure_reason_detail}` : sourceMappingFailures.length ? `: ${sourceMappingFailures.join(', ')}` : ''}`
+          : hasMarketFailure
+            ? `Market unavailable${marketStatus.freshnessTier ? ` (${marketStatus.freshnessTier})` : ''}`
           : hasFeatureFreshnessFailure
             ? `Feature freshness stale${featureFreshnessMissingInputs.length ? `: ${featureFreshnessMissingInputs.join(', ')}` : ''}`
           : hasProjectionInputsFailure
@@ -1716,9 +1802,15 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
         ? featureFreshnessMissingInputs.length > 0
           ? featureFreshnessMissingInputs
           : ['feature_freshness_stale']
+      : hasMarketFailure
+        ? marketMissingInputs.length > 0
+          ? marketMissingInputs
+          : ['market_unavailable']
       : hasProjectionInputsFailure
-        ? projectionCoreMissingInputs.length > 0
-          ? projectionCoreMissingInputs
+        ? coreMissingInputs.length > 0
+          ? coreMissingInputs
+          : projectionCoreMissingInputs.length > 0
+            ? projectionCoreMissingInputs
           : ['projection_inputs']
         : hasEvidenceOnly
           ? hasFetchFailureInputs

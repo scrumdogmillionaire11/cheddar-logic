@@ -250,6 +250,35 @@ console.log('🧪 final_market_decision contract tests');
     decision_v2: {
       official_status: 'PASS',
       sharp_price_status: 'CHEDDAR',
+      primary_reason_code: 'PASS_NO_EDGE',
+      play_tier: null,
+      edge_delta_pct: null,
+    },
+  });
+  game.plays = [];
+  game.true_play = undefined;
+  game.market_status = {
+    has_odds: false,
+    freshness_tier: 'expired',
+    execution_blocked: true,
+  };
+  game.projection_missing_inputs = ['market_line'];
+
+  const card = transformToGameCard(game);
+  const decision = card.play?.final_market_decision;
+  assert.equal(decision?.surfaced_status, 'PASS');
+  assert.match(decision?.surfaced_reason || '', /Odds unavailable|Market unavailable/i);
+  assert.equal(decision?.projection_input_status, 'COMPLETE');
+}
+
+{
+  const game = buildGame({
+    action: 'PASS',
+    classification: 'PASS',
+    status: 'PASS',
+    decision_v2: {
+      official_status: 'PASS',
+      sharp_price_status: 'CHEDDAR',
       primary_reason_code: 'PASS_EXECUTION_GATE_NO_EDGE_COMPUTED',
       play_tier: null,
       edge_delta_pct: null,

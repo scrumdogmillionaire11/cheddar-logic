@@ -3337,6 +3337,52 @@ describe('run_nhl_player_shots_model', () => {
     expect(blkCard.payloadData.drivers.blk_context_tag).toBe('UNDERDOG_HIGH_PRESSURE');
   });
 
+  test('BLK stale rates are emitted as feature flags, not missing core inputs', async () => {
+    process.env.NHL_BLK_CARDS_ENABLED = 'true';
+    const { mod, data, shots } = loadFreshModule();
+
+    shots.projectBlkV1.mockImplementation((inputs = {}) => ({
+      blk_mu: 1.9,
+      blk_sigma: 1.05,
+      block_rate_ev_per60: Number(inputs.ev_blocks_l5_per60 || 0),
+      block_rate_pk_per60: Number(inputs.pk_blocks_l5_per60 || 0),
+      role_stability: 'HIGH',
+      fair_over_prob_by_line: { [String(inputs.market_line)]: 0.52 },
+      fair_under_prob_by_line: { [String(inputs.market_line)]: 0.48 },
+      edge_over_pp: null,
+      edge_under_pp: null,
+      ev_over: null,
+      ev_under: null,
+      opportunity_score: null,
+      flags: [],
+    }));
+
+    const staleUpdatedAt = new Date(Date.now() - 9 * 24 * 60 * 60 * 1000).toISOString();
+    data.getDatabase.mockReturnValue(buildMockDb({
+      games: [buildFutureGame({ game_id: 'blk-stale-feature-flag-01' })],
+      players: [buildPlayer({ player_id: 9152, player_name: 'Stale BLK Defender' })],
+      playerLogs: [],
+      playerBlkLogs: buildBlkGames([3, 2, 2, 3, 2]),
+      playerBlkRateRow: buildBlkRateRow({ max_updated_at: staleUpdatedAt }),
+      availabilityRow: { status: 'ACTIVE', checked_at: new Date().toISOString() },
+      teamMetricsRow: {
+        opponent_shots_against_pg: 31.2,
+        league_avg_shots_against_pg: 30,
+      },
+      oddsSnapshotRow: {
+        h2h_home: -110,
+        h2h_away: 100,
+      },
+    }));
+
+    await mod.runNHLPlayerShotsModel();
+
+    const blkCard = getSingleBlkCard(data);
+    expect(blkCard.payloadData.missing_inputs || []).not.toContain('block_rates_stale');
+    expect(blkCard.payloadData.feature_flags || []).toContain('FEATURE_BLOCK_RATES_STALE');
+    expect(blkCard.payloadData.core_inputs_complete).toBe(true);
+  });
+
   test('WI-0915: BLK missing context defaults factors and emits flags', async () => {
     process.env.NHL_BLK_CARDS_ENABLED = 'true';
     const { mod, data, shots } = loadFreshModule();

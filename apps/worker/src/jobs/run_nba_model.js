@@ -1195,6 +1195,66 @@ function applyProjectionInputMetadata(card, projectionGate) {
     : [];
 }
 
+function applyDecisionNamespaceMetadata(card) {
+  if (!card?.payloadData || typeof card.payloadData !== 'object') return;
+  const payload = card.payloadData;
+  const missingInputs = Array.isArray(payload.missing_inputs)
+    ? payload.missing_inputs.map((value) => String(value))
+    : [];
+  const featureTokenSet = new Set([
+    'block_rates_stale',
+    'feature_freshness:block_rates_stale',
+  ]);
+  const marketTokenSet = new Set([
+    'market_line',
+    'missing_market_odds',
+    'no_odds',
+    'odds_snapshot_missing',
+  ]);
+
+  const featureFlags = Array.from(
+    new Set([
+      ...(Array.isArray(payload.feature_flags) ? payload.feature_flags : []),
+      ...missingInputs
+        .filter((token) => featureTokenSet.has(String(token).toLowerCase()))
+        .map((token) => `FEATURE_${String(token).trim().toUpperCase()}`),
+    ]),
+  );
+
+  const coreMissingInputs = missingInputs.filter((token) => {
+    const normalized = String(token).toLowerCase();
+    return !featureTokenSet.has(normalized) && !marketTokenSet.has(normalized);
+  });
+
+  payload.feature_flags = featureFlags;
+  payload.core_missing_inputs = coreMissingInputs;
+  payload.core_inputs_complete =
+    payload.projection_inputs_complete !== false && coreMissingInputs.length === 0;
+
+  const executionStatus = String(payload.execution_status || '').toUpperCase();
+  const basis = String(payload.basis || '').toUpperCase();
+  const freshnessTier = payload.freshness_tier
+    ? String(payload.freshness_tier).toLowerCase()
+    : 'unknown';
+  const executionBlocked =
+    executionStatus === 'BLOCKED' ||
+    (typeof payload.pass_reason_code === 'string' &&
+      payload.pass_reason_code.startsWith('PASS_EXECUTION_GATE_')) ||
+    payload.execution_gate?.should_bet === false;
+
+  const hasOdds =
+    basis === 'ODDS_BACKED' ||
+    Number.isFinite(payload.price) ||
+    Number.isFinite(payload.market_price_over) ||
+    Number.isFinite(payload.market_price_under);
+
+  payload.market_status = {
+    has_odds: Boolean(hasOdds),
+    freshness_tier: freshnessTier,
+    execution_blocked: executionBlocked,
+  };
+}
+
 function hasFiniteNumber(value) {
   return typeof value === 'number' && Number.isFinite(value);
 }
@@ -2818,6 +2878,7 @@ async function runNBAModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
             }
             applyNbaSettlementMarketContext(card);
             assignExecutionStatus(card, { withoutOddsMode });
+            applyDecisionNamespaceMetadata(card);
             // WI-0768: cap execution_status at PROJECTION_ONLY when nba_team_context absent
             if (
               teamCtx.teamContextMissingInputs.length > 0 &&
@@ -2945,6 +3006,7 @@ async function runNBAModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
             };
             applyNbaSettlementMarketContext(card);
             assignExecutionStatus(card, { withoutOddsMode });
+            applyDecisionNamespaceMetadata(card);
             // WI-0768: cap execution_status at PROJECTION_ONLY when nba_team_context absent
             if (
               teamCtx.teamContextMissingInputs.length > 0 &&

@@ -622,6 +622,68 @@ function uniqueReasonCodes(codes = []) {
   );
 }
 
+function applyDecisionNamespaceMetadata(payload) {
+  if (!payload || typeof payload !== 'object') return;
+
+  const missingInputs = Array.isArray(payload.missing_inputs)
+    ? payload.missing_inputs.map((value) => String(value))
+    : [];
+
+  const featureTokenSet = new Set([
+    'block_rates_stale',
+    'feature_freshness:block_rates_stale',
+  ]);
+  const marketTokenSet = new Set([
+    'market_line',
+    'missing_market_odds',
+    'no_odds',
+    'odds_snapshot_missing',
+  ]);
+
+  const featureFlags = Array.from(
+    new Set([
+      ...(Array.isArray(payload.feature_flags) ? payload.feature_flags : []),
+      ...missingInputs
+        .filter((token) => featureTokenSet.has(String(token).toLowerCase()))
+        .map((token) => `FEATURE_${String(token).trim().toUpperCase()}`),
+    ]),
+  );
+
+  const coreMissingInputs = missingInputs.filter((token) => {
+    const normalized = String(token).toLowerCase();
+    return !featureTokenSet.has(normalized) && !marketTokenSet.has(normalized);
+  });
+
+  payload.feature_flags = featureFlags;
+  payload.core_missing_inputs = coreMissingInputs;
+  payload.core_inputs_complete =
+    payload.projection_inputs_complete !== false && coreMissingInputs.length === 0;
+
+  const executionStatus = String(payload.execution_status || '').toUpperCase();
+  const basis = String(payload.basis || '').toUpperCase();
+  const freshnessTier = payload.freshness_tier
+    ? String(payload.freshness_tier).toLowerCase()
+    : 'unknown';
+
+  const executionBlocked =
+    executionStatus === 'BLOCKED' ||
+    (typeof payload.pass_reason_code === 'string' &&
+      payload.pass_reason_code.startsWith('PASS_EXECUTION_GATE_')) ||
+    payload.execution_gate?.should_bet === false;
+
+  const hasOdds =
+    basis === 'ODDS_BACKED' ||
+    Number.isFinite(payload.price) ||
+    Number.isFinite(payload.market_price_over) ||
+    Number.isFinite(payload.market_price_under);
+
+  payload.market_status = {
+    has_odds: Boolean(hasOdds),
+    freshness_tier: freshnessTier,
+    execution_blocked: executionBlocked,
+  };
+}
+
 function normalizeSlotStartIso(value) {
   const parsed = new Date(value || Date.now());
   if (!Number.isFinite(parsed.getTime())) {
@@ -4414,7 +4476,12 @@ async function runMLBModel({
                   projection_source: 'SYNTHETIC_FALLBACK',
                   status_cap: 'PASS',
                   reason_codes: ['PASS_SYNTHETIC_FALLBACK'],
-                  missing_inputs: ['market_line'],
+                  missing_inputs: [],
+                  market_status: {
+                    has_odds: false,
+                    freshness_tier: 'unknown',
+                    execution_blocked: false,
+                  },
                   pass_reason_code: 'PASS_SYNTHETIC_FALLBACK',
                   playability: {
                     over_playable_at_or_below: projectionFloorF5 - 0.5,
@@ -4924,6 +4991,7 @@ async function runMLBModel({
             });
             applyMlbVerificationContract({ payloadData });
             assertMlbExecutionInvariant(payloadData);
+            applyDecisionNamespaceMetadata(payloadData);
 
             const cardTitle = isF5
               ? `F5 ${driver.prediction}: ${gameOddsSnapshot?.away_team ?? '?'} @ ${gameOddsSnapshot?.home_team ?? '?'}`
