@@ -15,9 +15,9 @@ function toUpperToken(value) {
   return String(value).trim().toUpperCase();
 }
 
-function normalizeDecisionBasis(value, fallback = 'ODDS_BACKED') {
+function normalizeDecisionBasis(value, fallback = 'UNKNOWN') {
   const token = toUpperToken(value);
-  if (token === 'PROJECTION_ONLY' || token === 'ODDS_BACKED') return token;
+  if (token === 'PROJECTION_ONLY' || token === 'ODDS_BACKED' || token === 'UNKNOWN') return token;
   return fallback;
 }
 
@@ -43,16 +43,17 @@ function ensureClvLedgerSchema(db) {
       volatility_band TEXT,
       recorded_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       closed_at TEXT,
-      decision_basis TEXT NOT NULL DEFAULT 'ODDS_BACKED',
-      CONSTRAINT clv_ledger_no_projection
-        CHECK (decision_basis = 'ODDS_BACKED')
+      decision_basis TEXT NOT NULL DEFAULT 'UNKNOWN',
+      CONSTRAINT clv_ledger_basis_known
+        CHECK (decision_basis IN ('ODDS_BACKED', 'UNKNOWN'))
     );
   `);
 }
 
 function recordClvEntry(entry = {}) {
   if (!isFlagEnabled('ENABLE_CLV_LEDGER')) return;
-  if (normalizeDecisionBasis(entry.decisionBasis) === 'PROJECTION_ONLY') return;
+  const normalizedBasis = normalizeDecisionBasis(entry.decisionBasis, 'UNKNOWN');
+  if (normalizedBasis === 'PROJECTION_ONLY') return;
 
   const cardId = entry.cardId ? String(entry.cardId).trim() : '';
   const gameId = entry.gameId ? String(entry.gameId).trim() : '';
@@ -64,7 +65,7 @@ function recordClvEntry(entry = {}) {
     INSERT OR IGNORE INTO clv_ledger (
       id, card_id, game_id, sport, market_type, prop_type,
       selection, line, odds_at_pick, volatility_band, decision_basis
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ODDS_BACKED')
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   stmt.run(
@@ -78,6 +79,7 @@ function recordClvEntry(entry = {}) {
     entry.line ?? null,
     entry.oddsAtPick ?? null,
     entry.volatilityBand || null,
+    normalizedBasis,
   );
 }
 
