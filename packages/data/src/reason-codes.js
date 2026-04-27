@@ -39,6 +39,10 @@ const MODEL_REASON_CODES = Object.freeze(new Set([
   // First-period projection signals
   'FIRST_PERIOD_PROJECTION_LEAN',
   'FIRST_PERIOD_PROJECTION_PLAY',
+  // MLB model signals
+  'PASS_NO_DISTRIBUTION',
+  'PASS_UNKNOWN',
+  'SOFT_WEAK_DRIVER_SUPPORT',
 ]));
 
 // DATA: inputs are missing, stale at the snapshot level, or unparseable.
@@ -78,6 +82,16 @@ const DATA_REASON_CODES = Object.freeze(new Set([
   'PRICE_VALIDATION_FAILED',
   'STALE_RECOVERY_REFRESH_FAILED',
   'STALE_RECOVERY_RELOAD_FAILED',
+  // MLB model data-quality signals
+  'MARKET_SANITY_FAIL',
+  'MODEL_DEGRADED_INPUTS',
+  'PASS_DEGRADED_TOTAL_MODEL',
+  'PASS_INPUTS_INCOMPLETE',
+  'PASS_MODEL_DEGRADED',
+  'PASS_PROJECTION_ONLY_NO_MARKET',
+  'PASS_SYNTHETIC_FALLBACK',
+  'SOFT_DEGRADED_TOTAL_MODEL',
+  'SOFT_MARKET_SANITY_FAIL',
 ]));
 
 // Subset of DATA codes that are hard blockers warranting WATCH state when edge exists.
@@ -145,6 +159,9 @@ const GATE_REASON_CODES = Object.freeze(new Set([
   'PASS_EXECUTION_GATE_NO_EDGE',
   'PASS_EXECUTION_GATE_STALE_SNAPSHOT',
   'PASS_EXECUTION_GATE_MIXED_BOOK_SOURCE_MISMATCH',
+  // Execution-gate drop-reason codes
+  'PASS_CONFIDENCE_GATE',
+  'PROJECTION_ONLY_EXCLUSION',
 ]));
 
 // Master list for validation, tests, documentation, and fingerprinting.
@@ -156,7 +173,7 @@ const ALL_REASON_CODES = Object.freeze([
   ...GATE_REASON_CODES,
 ]);
 
-const REASON_CODE_SCHEMA_VERSION = 2;
+const REASON_CODE_SCHEMA_VERSION = 3;
 
 // ─── Human-readable labels ───────────────────────────────────────────────────
 // Every code in ALL_REASON_CODES must appear here.
@@ -273,6 +290,23 @@ const REASON_CODE_LABELS = Object.freeze({
   PASS_EXECUTION_GATE_NO_EDGE: 'No edge at execution',
   PASS_EXECUTION_GATE_STALE_SNAPSHOT: 'Stale snapshot at execution',
   PASS_EXECUTION_GATE_MIXED_BOOK_SOURCE_MISMATCH: 'Book source mismatch',
+  // Execution-gate drop-reason codes
+  PASS_CONFIDENCE_GATE: 'Edge present — blocked by confidence gate',
+  PROJECTION_ONLY_EXCLUSION: 'Excluded — projection-only path',
+  // MLB model signals (MODEL bucket)
+  PASS_NO_DISTRIBUTION: 'No probability distribution computed',
+  PASS_UNKNOWN: 'Pass — reason unknown',
+  SOFT_WEAK_DRIVER_SUPPORT: 'Soft advisory — weak driver support',
+  // MLB model data-quality signals (DATA bucket)
+  MARKET_SANITY_FAIL: 'Market sanity check failed',
+  MODEL_DEGRADED_INPUTS: 'Model received degraded inputs',
+  PASS_DEGRADED_TOTAL_MODEL: 'Pass — total model degraded',
+  PASS_INPUTS_INCOMPLETE: 'Pass — required inputs incomplete',
+  PASS_MODEL_DEGRADED: 'Pass — model degraded',
+  PASS_PROJECTION_ONLY_NO_MARKET: 'Pass — projection only, no market line',
+  PASS_SYNTHETIC_FALLBACK: 'Pass — synthetic fallback data used',
+  SOFT_DEGRADED_TOTAL_MODEL: 'Soft advisory — total model degraded',
+  SOFT_MARKET_SANITY_FAIL: 'Soft advisory — market sanity check failed',
   // Legacy aliases also need labels so inlined clients don't fall through
   EDGE_CLEAR: 'Edge clear',
   EDGE_FOUND_SIDE: 'Edge found',

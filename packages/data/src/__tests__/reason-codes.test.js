@@ -1,4 +1,9 @@
-const { BLOCKER_REASON_CODES, REASON_CODE_LABELS, getReasonCodeLabel } = require('../reason-codes');
+const {
+  BLOCKER_REASON_CODES,
+  REASON_CODE_LABELS,
+  REASON_CODE_SCHEMA_VERSION,
+  getReasonCodeLabel,
+} = require('../reason-codes');
 
 const NHL_TOTALS_STATUS_REASON_CODES = [
   'PASS_MISSING_REQUIRED_INPUTS',
@@ -61,5 +66,43 @@ describe('reason-codes canonical registry', () => {
       expect(typeof REASON_CODE_LABELS[code]).toBe('string');
       expect(getReasonCodeLabel(code)).toBe(REASON_CODE_LABELS[code]);
     }
+  });
+
+  test('mlb-model surfaced reason codes are in the canonical registry with labels', () => {
+    const MLB_MODEL_REASON_CODES = [
+      'PASS_SYNTHETIC_FALLBACK',
+      'PASS_DEGRADED_TOTAL_MODEL',
+      'PASS_CONFIDENCE_GATE',
+      'PASS_MODEL_DEGRADED',
+      'PASS_INPUTS_INCOMPLETE',
+      'PASS_NO_DISTRIBUTION',
+      'PASS_UNKNOWN',
+      'PASS_PROJECTION_ONLY_NO_MARKET',
+      'MODEL_DEGRADED_INPUTS',
+      'MARKET_SANITY_FAIL',
+      'SOFT_DEGRADED_TOTAL_MODEL',
+      'SOFT_MARKET_SANITY_FAIL',
+      'SOFT_WEAK_DRIVER_SUPPORT',
+    ];
+    for (const code of MLB_MODEL_REASON_CODES) {
+      expect(REASON_CODE_LABELS[code]).toBeDefined();
+      expect(typeof REASON_CODE_LABELS[code]).toBe('string');
+      expect(getReasonCodeLabel(code)).toBe(REASON_CODE_LABELS[code]);
+    }
+  });
+
+  test('execution-gate drop-reason codes are in the canonical registry with labels', () => {
+    const EXECUTION_GATE_REASON_CODES = [
+      'PROJECTION_ONLY_EXCLUSION',
+    ];
+    for (const code of EXECUTION_GATE_REASON_CODES) {
+      expect(REASON_CODE_LABELS[code]).toBeDefined();
+      expect(typeof REASON_CODE_LABELS[code]).toBe('string');
+      expect(getReasonCodeLabel(code)).toBe(REASON_CODE_LABELS[code]);
+    }
+  });
+
+  test('REASON_CODE_SCHEMA_VERSION is current (3)', () => {
+    expect(REASON_CODE_SCHEMA_VERSION).toBe(3);
   });
 });
