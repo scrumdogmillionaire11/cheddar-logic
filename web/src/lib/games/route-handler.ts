@@ -2469,15 +2469,17 @@ function mergePropFallbackRows(params: {
                 externalToCanonicalMap,
               });
 
-              const latestOddsCapturedAtByCanonicalId = new Map<string, string | null>(
-                rows.map((row) => [row.game_id, row.odds_captured_at]),
-              );
-              cardRows = mergeMlbGameLineFallbackRows({
-                currentRows: cardRows,
-                fallbackRows,
-                externalToCanonicalMap,
-                latestOddsCapturedAtByCanonicalId,
-              });
+              // DISABLED (DEAD_CODE_CLEANUP): MLB game-line fallback injection removed.
+              // Current-run MLB full-game/ML cards are now required to be present.
+              // If missing, the API serves empty/PASS for the missing game to avoid
+              // stale card injection from previous model runs.
+              // See: DEAD_CODE_AND_PIPELINE_CLEANUP.md, Phase 1, highest-risk ghost path
+              // Former implementation:
+              //   const latestOddsCapturedAtByCanonicalId = new Map(
+              //     rows.map(row => [row.game_id, row.odds_captured_at])
+              //   );
+              //   cardRows = mergeMLBGameLineFallback(cardRows, fallbackRows, externalToCanonicalMap, latestOddsCapturedAtByCanonicalId);
+              // Now removed: no fallback merge occurs
             }
           }
         }

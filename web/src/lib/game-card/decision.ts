@@ -90,6 +90,13 @@ const DIRECTION_OPPOSITE: Partial<Record<Direction, Direction>> = {
 };
 const MLB_FULL_GAME_CARD_TYPES = new Set(['mlb-full-game', 'mlb-full-game-ml']);
 
+/**
+ * V2 stabilization cutover epoch (2026-04-25T00:00:00Z).
+ * Cards created after this date MUST have canonical decision_v2.
+ * Legacy display fallback is only allowed for pre-cutover cards.
+ */
+const MLB_LEGACY_DISPLAY_CUTOVER_EPOCH = new Date('2026-04-25T00:00:00Z').getTime();
+
 function normalizeText(value: unknown): string {
   if (typeof value !== 'string') return '';
   return value.trim();
@@ -150,6 +157,7 @@ function isMlbFullGameLegacyDisplayPlay(
     | {
         cardType?: string;
         market_type?: string;
+        created_at?: string;
         decision_v2?: {
           official_status?: 'PLAY' | 'LEAN' | 'PASS';
           canonical_envelope_v2?: {
@@ -165,6 +173,20 @@ function isMlbFullGameLegacyDisplayPlay(
     | undefined,
 ): boolean {
   if (!play || play.decision_v2) return false;
+
+  // Enforce fail-closed for cards created after v2 stabilization cutover.
+  // Legacy fallback is only allowed for pre-cutover cards.
+  if (typeof play.created_at === 'string') {
+    try {
+      const cardCreatedEpoch = new Date(play.created_at).getTime();
+      if (Number.isFinite(cardCreatedEpoch) && cardCreatedEpoch >= MLB_LEGACY_DISPLAY_CUTOVER_EPOCH) {
+        return false; // Fail closed for post-cutover cards
+      }
+    } catch {
+      // If date parsing fails, be conservative and fail closed
+      return false;
+    }
+  }
 
   const cardType = normalizeText(play.cardType).toLowerCase();
   if (!MLB_FULL_GAME_CARD_TYPES.has(cardType)) return false;
