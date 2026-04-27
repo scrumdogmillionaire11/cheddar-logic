@@ -308,6 +308,31 @@ describe('WI-0826 DB jobs', () => {
     expect(result.written).toBe(0);
   });
 
+  test('runClvSnapshot excludes rows with UNKNOWN decision_basis', () => {
+    const db = getDatabase();
+
+    db.prepare(`
+      INSERT INTO clv_ledger (
+        id, card_id, game_id, sport, market_type, selection,
+        odds_at_pick, closing_odds, recorded_at, closed_at, decision_basis
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      'l-004', 'c-004', 'g-004', 'NHL', 'total', 'OVER',
+      -110, -120,
+      new Date().toISOString(),
+      new Date().toISOString(),
+      'UNKNOWN',
+    );
+
+    const result = runClvSnapshot({ db });
+    expect(result.written).toBe(0);
+
+    const entry = db.prepare(
+      "SELECT * FROM clv_entries WHERE game_id='g-004' AND market='NHL_TOTAL'",
+    ).get();
+    expect(entry).toBeNull();
+  });
+
   // ── runDailyPerformanceReport ──────────────────────────────────────────
 
   test('produces a daily_performance_reports row per market', () => {

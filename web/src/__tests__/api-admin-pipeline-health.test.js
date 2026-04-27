@@ -95,7 +95,15 @@ async function run() {
     assert.equal(payload.data[0].check_name, 'freshness');
     assert.equal(payload.data[0].check_id, 'cards:freshness:tminus_2h');
     assert.equal(payload.data[0].dedupe_key, 'warning:cards are stale');
+    assert.equal(payload.data[0].freshness_tier, 'Expired', 'active stale row should expose normalized freshness tier');
+    assert.equal(
+      typeof payload.data[0].time_degraded_minutes,
+      'number',
+      'active degraded row should expose numeric degraded duration',
+    );
     assert.equal(payload.data[1].status, 'ok', 'resolved historical row should still be present');
+    assert.equal(payload.data[1].freshness_tier, 'Fresh', 'resolved healthy row should map to Fresh tier');
+    assert.equal(payload.data[1].time_degraded_minutes, null, 'resolved row should not expose degraded duration');
     assert.equal(
       payload.data[1].resolved_at,
       '2026-04-21T12:01:00.000Z',

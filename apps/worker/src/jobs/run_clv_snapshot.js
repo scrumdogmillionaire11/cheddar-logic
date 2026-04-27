@@ -120,6 +120,7 @@ function findUnsnapshotted(db) {
     FROM clv_ledger cl
     WHERE cl.closing_odds IS NOT NULL
       AND cl.closed_at   IS NOT NULL
+      AND cl.decision_basis = 'ODDS_BACKED'
       AND NOT EXISTS (
         SELECT 1
         FROM clv_entries ce

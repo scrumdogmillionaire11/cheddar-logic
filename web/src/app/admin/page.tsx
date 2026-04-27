@@ -15,6 +15,8 @@ interface PipelineHealthRow {
   first_seen_at?: string | null;
   last_seen_at?: string | null;
   resolved_at?: string | null;
+  time_degraded_minutes?: number | null;
+  freshness_tier?: 'Fresh' | 'Aging' | 'Stale' | 'Expired';
 }
 
 interface ModelOutputRow {
@@ -150,6 +152,25 @@ function formatAge(ts: string) {
   } catch {
     return '?';
   }
+}
+
+function formatDegradedDuration(minutes: number | null | undefined): string {
+  if (minutes == null || !Number.isFinite(minutes) || minutes < 0) return 'n/a';
+  if (minutes < 60) return `${Math.floor(minutes)} minutes`;
+  const hours = Math.floor(minutes / 60);
+  const remMins = Math.floor(minutes % 60);
+  if (hours < 24) return `${hours}h ${remMins}m`;
+  const days = Math.floor(hours / 24);
+  return `${days}d ${hours % 24}h`;
+}
+
+function normalizeFreshnessTier(row: PipelineHealthRow): 'Fresh' | 'Aging' | 'Stale' | 'Expired' {
+  if (row.freshness_tier) return row.freshness_tier;
+  if (row.resolved_at || ['ok', 'healthy'].includes(row.status.toLowerCase())) return 'Fresh';
+  const degraded = row.time_degraded_minutes;
+  if (degraded == null || degraded < 30) return 'Aging';
+  if (degraded < 120) return 'Stale';
+  return 'Expired';
 }
 
 const STALE_THRESHOLD_MS = 35 * 60 * 1000;
@@ -609,6 +630,8 @@ export default function AdminPage() {
                     const streak = computeStreak(health, healthIdentity(row));
                     const stale = isStale(row.created_at);
                     const lifecycle = lifecycleLabel(row);
+                    const freshnessTier = normalizeFreshnessTier(row);
+                    const showDegraded = lifecycle === 'active' && !['ok', 'healthy'].includes(row.status.toLowerCase());
                     return (
                       <div
                         key={healthIdentity(row)}
@@ -635,6 +658,12 @@ export default function AdminPage() {
                         <span className="text-xs text-cloud/35">
                           {lifecycle === 'active' ? 'active condition' : 'resolved condition'}
                         </span>
+                        <span className="text-xs text-cloud/35">Freshness: {freshnessTier}</span>
+                        {showDegraded && (
+                          <span className="text-xs text-cloud/35">
+                            Degraded for: {formatDegradedDuration(row.time_degraded_minutes)}
+                          </span>
+                        )}
                         <StreakBadge status={row.status} streak={streak} />
                       </div>
                     );
@@ -662,6 +691,8 @@ export default function AdminPage() {
                         <th className="px-4 py-3">Check</th>
                         <th className="px-4 py-3">State</th>
                         <th className="px-4 py-3">Status</th>
+                        <th className="px-4 py-3">Freshness</th>
+                        <th className="px-4 py-3">Time Degraded</th>
                         <th className="px-4 py-3">Reason</th>
                         <th className="px-4 py-3">Seen</th>
                       </tr>
@@ -685,6 +716,14 @@ export default function AdminPage() {
                           </td>
                           <td className="px-4 py-3">
                             <StatusBadge status={row.status} />
+                          </td>
+                          <td className="px-4 py-3 text-xs text-cloud/60">
+                            {normalizeFreshnessTier(row)}
+                          </td>
+                          <td className="px-4 py-3 text-xs text-cloud/60">
+                            {lifecycleLabel(row) === 'active' && !['ok', 'healthy'].includes(row.status.toLowerCase())
+                              ? formatDegradedDuration(row.time_degraded_minutes)
+                              : '—'}
                           </td>
                           <td className="max-w-xs truncate px-4 py-3 text-cloud/60">
                             {row.reason ?? '—'}
