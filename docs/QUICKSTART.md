@@ -570,3 +570,26 @@ npm --prefix /opt/cheddar-logic/apps/worker run job:run-mlb-model && \
 npm --prefix /opt/cheddar-logic/apps/worker run job:run-potd-engine && \
 sudo systemctl start cheddar-worker
 ```
+
+Pi restart commands are systemd-only now:
+
+```bash
+# Normal restart order: writer first, then readers
+sudo systemctl restart cheddar-worker
+sudo systemctl restart cheddar-web
+sudo systemctl restart cheddar-fpl-sage
+
+# Verify
+sudo systemctl status cheddar-worker cheddar-web cheddar-fpl-sage --no-pager
+```
+
+If the worker crashes and leaves a stale production DB lock behind:
+
+```bash
+sudo systemctl stop cheddar-worker.service
+ps -fp <old-pid> || true
+sudo rm -f /opt/data/cheddar-prod.db.lock
+sudo systemctl reset-failed cheddar-worker.service
+sudo systemctl start cheddar-worker.service
+sudo systemctl status cheddar-worker.service --no-pager
+```

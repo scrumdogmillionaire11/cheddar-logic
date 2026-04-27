@@ -174,20 +174,6 @@ function isMlbFullGameLegacyDisplayPlay(
 ): boolean {
   if (!play || play.decision_v2) return false;
 
-  // Enforce fail-closed for cards created after v2 stabilization cutover.
-  // Legacy fallback is only allowed for pre-cutover cards.
-  if (typeof play.created_at === 'string') {
-    try {
-      const cardCreatedEpoch = new Date(play.created_at).getTime();
-      if (Number.isFinite(cardCreatedEpoch) && cardCreatedEpoch >= MLB_LEGACY_DISPLAY_CUTOVER_EPOCH) {
-        return false; // Fail closed for post-cutover cards
-      }
-    } catch {
-      // If date parsing fails, be conservative and fail closed
-      return false;
-    }
-  }
-
   const cardType = normalizeText(play.cardType).toLowerCase();
   if (!MLB_FULL_GAME_CARD_TYPES.has(cardType)) return false;
 
@@ -200,7 +186,23 @@ function isMlbFullGameLegacyDisplayPlay(
     return false;
   }
 
-  return resolveLegacyDisplayAction(play) !== null;
+  const legacyAction = resolveLegacyDisplayAction(play);
+  if (!legacyAction) return false;
+
+  // Enforce fail-closed ONLY for PLAY (FIRE) interpretations after v2 stabilization cutover.
+  // SLIGHT EDGE (HOLD) and PASS are conservative enough to pass through.
+  if (legacyAction === 'FIRE' && typeof play.created_at === 'string') {
+    try {
+      const cardCreatedEpoch = new Date(play.created_at).getTime();
+      if (Number.isFinite(cardCreatedEpoch) && cardCreatedEpoch >= MLB_LEGACY_DISPLAY_CUTOVER_EPOCH) {
+        return false; // Reject PLAY for post-cutover cards without canonical decision_v2
+      }
+    } catch {
+      return false;
+    }
+  }
+
+  return true;
 }
 
 export function resolvePlayDisplayDecision(

@@ -75,6 +75,15 @@ docs/
 # One-time setup on Pi
 /opt/cheddar-logic/deploy.sh
 
+# Service control on Pi (systemd only)
+sudo systemctl restart cheddar-worker
+sudo systemctl restart cheddar-web
+sudo systemctl restart cheddar-fpl-sage
+
+# Check health
+sudo systemctl status cheddar-worker cheddar-web cheddar-fpl-sage --no-pager
+sudo journalctl -u cheddar-worker -n 50 --no-pager
+
 # Future updates
 git push origin main  # Push to GitHub
 ssh pi@your-ip "/opt/cheddar-logic/deploy.sh"  # Deploy to Pi
