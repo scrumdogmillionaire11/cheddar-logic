@@ -57,6 +57,13 @@ const ODDS_BLOCKED_PASS_CODES = new Set([
   'PASS_MISSING_PRICE',
 ]);
 
+const PROJECTION_ONLY_PASS_CODES = new Set([
+  'PROJECTION_ONLY_EXCLUSION',
+  'MISSING_DATA_PROJECTION_INPUTS',
+  'MISSING_DATA_DRIVERS',
+  'PASS_MISSING_DRIVER_INPUTS',
+]);
+
 function getReasonCodes(card: GameCard): string[] {
   return card.play?.reason_codes ?? [];
 }
@@ -113,6 +120,10 @@ export function classifyPassHeaderBucket(card: GameCard): PassHeaderBucket | nul
 
   if (reasonCodes.some((code) => ODDS_BLOCKED_PASS_CODES.has(code))) {
     return 'odds-blocked';
+  }
+
+  if (reasonCodes.some((code) => PROJECTION_ONLY_PASS_CODES.has(code))) {
+    return 'projection-only';
   }
 
   if (

@@ -13,7 +13,7 @@
  *   7. MISSING does NOT crash and does NOT apply projection penalty
  *   8. home_away_context derivation: HOME / AWAY / MIXED / UNKNOWN
  *   9. WI-0763 deprecated fields (bb_pct_from_logs, bb_pct_adjustment, home_away_adj)
- *      are still present but no longer drive projection
+ *      are no longer emitted
  *  10. Adversarial: high BB% + high-K profile does not over-penalize beyond cap
  *  11. Adversarial: conflicting signals produce bounded, explainable adjustments
  *
