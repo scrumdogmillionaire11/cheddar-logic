@@ -13,8 +13,7 @@
 
 'use strict';
 
-require('dotenv').config();
-const { v4: uuidV4 } = require('uuid');
+const { randomUUID } = require('node:crypto');
 
 const {
   getDatabase,
@@ -22,7 +21,7 @@ const {
   markJobRunSuccess,
   markJobRunFailure,
   withDb,
-} = require('@cheddar-logic/data');
+} = require('../../packages/data');
 
 // Inline normalizeSettlementPeriod logic to avoid tight coupling to
 // settle_pending_cards.js internals. Mirrors the canonical implementation.
@@ -112,7 +111,7 @@ async function backfillPeriodToken({
   dryRun = false,
   since = null,
 } = {}) {
-  const jobRunId = `job-backfill-period-token-${new Date().toISOString().split('.')[0]}-${uuidV4().slice(0, 8)}`;
+  const jobRunId = `job-backfill-period-token-${new Date().toISOString().split('.')[0]}-${randomUUID().slice(0, 8)}`;
 
   console.log(`[BackfillPeriodToken] Starting job run: ${jobRunId}`);
   if (dryRun) {
@@ -196,6 +195,7 @@ async function backfillPeriodToken({
 }
 
 if (require.main === module) {
+  require('dotenv').config();
   const args = parseArgs(process.argv.slice(2));
   backfillPeriodToken({ dryRun: args.dryRun, since: args.since })
     .then((result) => {

@@ -317,31 +317,34 @@ describe('calculateProjectionK — home_away_context derivation', () => {
 
 // ── WI-0763 deprecated field backward compat ─────────────────────────────────
 
-describe('calculateProjectionK — deprecated WI-0763 fields retained but inert', () => {
-  test('bb_pct_from_logs is populated from recentBbPct for traceability', () => {
+describe('calculateProjectionK — removed WI-0763 deprecated fields', () => {
+  test('bb_pct_from_logs is no longer emitted', () => {
     const history = Array.from({ length: 5 }, () => makeStart({ walks: 2, batters_faced: 24 }));
     const result = calculateProjectionK(makePitcher({ strikeout_history: history }), makeMatchup(), LEASH_TIER, WEATHER);
-    expect(result.bb_pct_from_logs).toBeCloseTo(2 / 24, 3);
+    expect(result).not.toHaveProperty('bb_pct_from_logs');
   });
 
-  test('bb_pct_from_logs is null when no batters_faced data', () => {
-    const result = calculateProjectionK(makePitcher({ strikeout_history: [] }), makeMatchup(), LEASH_TIER, WEATHER);
-    expect(result.bb_pct_from_logs).toBeNull();
-  });
-
-  test('bb_pct_adjustment is always null (deprecated: multiplicative penalty removed)', () => {
+  test('bb_pct_adjustment is no longer emitted', () => {
     const history = Array.from({ length: 5 }, () => makeStart({ walks: 5, batters_faced: 24 }));
     const result = calculateProjectionK(makePitcher({ strikeout_history: history }), makeMatchup(), LEASH_TIER, WEATHER);
-    expect(result.bb_pct_adjustment).toBeNull();
+    expect(result).not.toHaveProperty('bb_pct_adjustment');
   });
 
-  test('home_away_adj is always null (deprecated: projection impact removed)', () => {
+  test('home_away_adj is no longer emitted', () => {
     const history = [
       ...Array.from({ length: 4 }, () => makeStart({ strikeouts: 8, home_away: 'H' })),
       ...Array.from({ length: 4 }, () => makeStart({ strikeouts: 4, home_away: 'A' })),
     ];
     const result = calculateProjectionK(makePitcher({ strikeout_history: history, game_role: 'home' }), makeMatchup(), LEASH_TIER, WEATHER);
-    expect(result.home_away_adj).toBeNull();
+    expect(result).not.toHaveProperty('home_away_adj');
+  });
+
+  test('active WI-1173 command-context fields still remain in the output', () => {
+    const result = calculateProjectionK(makePitcher({ strikeout_history: [] }), makeMatchup(), LEASH_TIER, WEATHER);
+    expect(result).toHaveProperty('recent_bb_pct');
+    expect(result).toHaveProperty('recent_bb_pct_status');
+    expect(result).toHaveProperty('command_risk_flag');
+    expect(result).toHaveProperty('home_away_context');
   });
 });
 

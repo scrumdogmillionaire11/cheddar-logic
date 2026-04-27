@@ -14,7 +14,7 @@ const {
 } = require('../jobs/settle_projections.js');
 const {
   backfillPeriodToken,
-} = require('../jobs/backfill_period_token.js');
+} = require('../../../../.archive/one-shot-scripts/backfill_period_token.js');
 
 const TEST_DB_PATH = '/tmp/cheddar-test-settlement-pipeline.db';
 const LOCK_PATH = `${TEST_DB_PATH}.lock`;

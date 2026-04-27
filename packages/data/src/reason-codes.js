@@ -13,6 +13,15 @@ const MODEL_REASON_CODES = Object.freeze(new Set([
   'NO_EDGE_AT_PRICE',              // model threshold outcome, NOT a market condition
   'PASS_DRIVER_SUPPORT_WEAK',
   'PASS_CONFLICT_HIGH',
+  'PASS_DIRECTION_MISMATCH',
+  'BASE_PLAY_DELTA_GTE_1_0',
+  'BASE_SLIGHT_EDGE_DELTA_GTE_0_5',
+  'BASE_PASS_DELTA_LT_0_5',
+  'FRAGILITY_UNDER_5_5',
+  'FRAGILITY_OVER_6_5_ACCELERANT_BELOW_0_20',
+  'OVER_6_5_ACCELERANT_OK',
+  'FLOOR_GUARD_FORCE_PASS_DELTA_LT_0_5',
+  'ANTI_FLATTENING_RESTORE_PLAY',
   'SUPPORT_BELOW_LEAN_THRESHOLD',
   'SUPPORT_BELOW_PLAY_THRESHOLD',
   'NO_PRIMARY_SUPPORT',
@@ -30,6 +39,10 @@ const MODEL_REASON_CODES = Object.freeze(new Set([
   // First-period projection signals
   'FIRST_PERIOD_PROJECTION_LEAN',
   'FIRST_PERIOD_PROJECTION_PLAY',
+  // MLB model signals
+  'PASS_NO_DISTRIBUTION',
+  'PASS_UNKNOWN',
+  'SOFT_WEAK_DRIVER_SUPPORT',
 ]));
 
 // DATA: inputs are missing, stale at the snapshot level, or unparseable.
@@ -43,6 +56,8 @@ const DATA_REASON_CODES = Object.freeze(new Set([
   'PASS_MISSING_LINE',
   'PASS_MISSING_PRICE',
   'PASS_NO_MARKET_PRICE',
+  'PASS_MISSING_REQUIRED_INPUTS',
+  'PASS_INTEGRITY_BLOCK',
   'PASS_DATA_ERROR',
   'WATCHDOG_CONSISTENCY_MISSING',
   'WATCHDOG_PARSE_FAILURE',
@@ -67,7 +82,17 @@ const DATA_REASON_CODES = Object.freeze(new Set([
   'PRICE_VALIDATION_FAILED',
   'STALE_RECOVERY_REFRESH_FAILED',
   'STALE_RECOVERY_RELOAD_FAILED',
-]));
+  // MLB model data-quality signals
+  'MARKET_SANITY_FAIL',
+  'MODEL_DEGRADED_INPUTS',
+  'PASS_DEGRADED_TOTAL_MODEL',
+  'PASS_INPUTS_INCOMPLETE',
+  'PASS_MODEL_DEGRADED',
+  'PASS_PROJECTION_ONLY_NO_MARKET',
+  'PASS_SYNTHETIC_FALLBACK',
+  'SOFT_DEGRADED_TOTAL_MODEL',
+  'SOFT_MARKET_SANITY_FAIL',  // Feature timestamp guard (all sports)
+  'PASS_FEATURE_TIMESTAMP_LEAK',]));
 
 // Subset of DATA codes that are hard blockers warranting WATCH state when edge exists.
 // Not every DATA code triggers WATCH — only critical input failures do.
@@ -98,6 +123,15 @@ const MARKET_REASON_CODES = Object.freeze(new Set([
   'GOALIE_UNCONFIRMED',
   'GOALIE_CONFLICTING',
   'INJURY_UNCERTAIN',
+  'CAP_GOALIES_UNCONFIRMED',
+  'CAP_MAJOR_INJURY_UNCERTAINTY',
+  'DOWNGRADE_PLAY_TO_SLIGHT_EDGE_GOALIE_UNCERTAINTY',
+  'DOWNGRADE_PLAY_TO_SLIGHT_EDGE_INJURY_UNCERTAINTY',
+  'DOWNGRADE_SLIGHT_EDGE_TO_PASS_INJURY_UNCERTAINTY_THIN_EDGE',
+  'DOWNGRADE_PLAY_TO_SLIGHT_EDGE_UNDER_5_5',
+  'DOWNGRADE_SLIGHT_EDGE_TO_PASS_UNDER_5_5',
+  'DOWNGRADE_PLAY_TO_SLIGHT_EDGE_OVER_6_5',
+  'DOWNGRADE_SLIGHT_EDGE_TO_PASS_OVER_6_5',
   'STARTER_UNCONFIRMED',
   'STARTER_MISMATCH',
   'BEST_LINE_UNCONFIRMED',
@@ -125,6 +159,9 @@ const GATE_REASON_CODES = Object.freeze(new Set([
   'PASS_EXECUTION_GATE_NO_EDGE',
   'PASS_EXECUTION_GATE_STALE_SNAPSHOT',
   'PASS_EXECUTION_GATE_MIXED_BOOK_SOURCE_MISMATCH',
+  // Execution-gate drop-reason codes
+  'PASS_CONFIDENCE_GATE',
+  'PROJECTION_ONLY_EXCLUSION',
 ]));
 
 // Master list for validation, tests, documentation, and fingerprinting.
@@ -136,7 +173,7 @@ const ALL_REASON_CODES = Object.freeze([
   ...GATE_REASON_CODES,
 ]);
 
-const REASON_CODE_SCHEMA_VERSION = 2;
+const REASON_CODE_SCHEMA_VERSION = 4;
 
 // ─── Human-readable labels ───────────────────────────────────────────────────
 // Every code in ALL_REASON_CODES must appear here.
@@ -145,6 +182,15 @@ const REASON_CODE_LABELS = Object.freeze({
   // MODEL
   PASS_NO_EDGE: 'No edge',
   PASS_MISSING_EDGE: 'Edge unavailable',
+  PASS_DIRECTION_MISMATCH: 'Direction mismatches market side',
+  BASE_PLAY_DELTA_GTE_1_0: 'Base play threshold met',
+  BASE_SLIGHT_EDGE_DELTA_GTE_0_5: 'Base slight-edge threshold met',
+  BASE_PASS_DELTA_LT_0_5: 'Base delta below slight-edge threshold',
+  FRAGILITY_UNDER_5_5: 'Under 5.5 fragility cap applied',
+  FRAGILITY_OVER_6_5_ACCELERANT_BELOW_0_20: 'Over 6.5 lacks scoring accelerant',
+  OVER_6_5_ACCELERANT_OK: 'Over 6.5 scoring accelerant confirmed',
+  FLOOR_GUARD_FORCE_PASS_DELTA_LT_0_5: 'Floor guard forced pass below threshold',
+  ANTI_FLATTENING_RESTORE_PLAY: 'Play restored after anti-flattening check',
   NO_EDGE_AT_PRICE: 'Price too sharp',
   PASS_DRIVER_SUPPORT_WEAK: 'Driver support weak',
   PASS_CONFLICT_HIGH: 'Conflicting signals',
@@ -173,6 +219,8 @@ const REASON_CODE_LABELS = Object.freeze({
   PASS_MISSING_LINE: 'Line unavailable',
   PASS_MISSING_PRICE: 'Price unavailable',
   PASS_NO_MARKET_PRICE: 'Market price unavailable',
+  PASS_MISSING_REQUIRED_INPUTS: 'Missing required inputs',
+  PASS_INTEGRITY_BLOCK: 'Integrity block',
   PASS_DATA_ERROR: 'Data error — no play',
   WATCHDOG_CONSISTENCY_MISSING: 'Projection inputs missing',
   WATCHDOG_PARSE_FAILURE: 'Model data unavailable',
@@ -225,6 +273,15 @@ const REASON_CODE_LABELS = Object.freeze({
   GOALIE_UNCONFIRMED: 'Waiting on goalie confirmation',
   GOALIE_CONFLICTING: 'Conflicting goalie reports',
   INJURY_UNCERTAIN: 'Injury status uncertain',
+  CAP_GOALIES_UNCONFIRMED: 'Goalies unconfirmed — cap applied',
+  CAP_MAJOR_INJURY_UNCERTAINTY: 'Major injury uncertainty — cap applied',
+  DOWNGRADE_PLAY_TO_SLIGHT_EDGE_GOALIE_UNCERTAINTY: 'Goalie uncertainty downgraded play to slight edge',
+  DOWNGRADE_PLAY_TO_SLIGHT_EDGE_INJURY_UNCERTAINTY: 'Injury uncertainty downgraded play to slight edge',
+  DOWNGRADE_SLIGHT_EDGE_TO_PASS_INJURY_UNCERTAINTY_THIN_EDGE: 'Thin edge downgraded to pass by injury uncertainty',
+  DOWNGRADE_PLAY_TO_SLIGHT_EDGE_UNDER_5_5: 'Under 5.5 fragility downgraded play to slight edge',
+  DOWNGRADE_SLIGHT_EDGE_TO_PASS_UNDER_5_5: 'Under 5.5 fragility downgraded slight edge to pass',
+  DOWNGRADE_PLAY_TO_SLIGHT_EDGE_OVER_6_5: 'Over 6.5 fragility downgraded play to slight edge',
+  DOWNGRADE_SLIGHT_EDGE_TO_PASS_OVER_6_5: 'Over 6.5 fragility downgraded slight edge to pass',
   PASS_EXECUTION_GATE_CONFIDENCE_BELOW_THRESHOLD: 'Model edge present, blocked by confidence gate',
   PASS_EXECUTION_GATE_NET_EDGE_INSUFFICIENT: 'No edge at current price',
   PASS_EXECUTION_GATE_NO_EDGE_COMPUTED: 'Model incomplete',
@@ -233,6 +290,25 @@ const REASON_CODE_LABELS = Object.freeze({
   PASS_EXECUTION_GATE_NO_EDGE: 'No edge at execution',
   PASS_EXECUTION_GATE_STALE_SNAPSHOT: 'Stale snapshot at execution',
   PASS_EXECUTION_GATE_MIXED_BOOK_SOURCE_MISMATCH: 'Book source mismatch',
+  // Execution-gate drop-reason codes
+  PASS_CONFIDENCE_GATE: 'Edge present — blocked by confidence gate',
+  PROJECTION_ONLY_EXCLUSION: 'Excluded — projection-only path',
+  // MLB model signals (MODEL bucket)
+  PASS_NO_DISTRIBUTION: 'No probability distribution computed',
+  PASS_UNKNOWN: 'Pass — reason unknown',
+  SOFT_WEAK_DRIVER_SUPPORT: 'Soft advisory — weak driver support',
+  // MLB model data-quality signals (DATA bucket)
+  MARKET_SANITY_FAIL: 'Market sanity check failed',
+  MODEL_DEGRADED_INPUTS: 'Model received degraded inputs',
+  PASS_DEGRADED_TOTAL_MODEL: 'Pass — total model degraded',
+  PASS_INPUTS_INCOMPLETE: 'Pass — required inputs incomplete',
+  PASS_MODEL_DEGRADED: 'Pass — model degraded',
+  PASS_PROJECTION_ONLY_NO_MARKET: 'Pass — projection only, no market line',
+  PASS_SYNTHETIC_FALLBACK: 'Pass — synthetic fallback data used',
+  SOFT_DEGRADED_TOTAL_MODEL: 'Soft advisory — total model degraded',
+  SOFT_MARKET_SANITY_FAIL: 'Soft advisory — market sanity check failed',
+  // Feature timestamp guard (all sports)
+  PASS_FEATURE_TIMESTAMP_LEAK: 'Pass — feature data leaked future timestamp',
   // Legacy aliases also need labels so inlined clients don't fall through
   EDGE_CLEAR: 'Edge clear',
   EDGE_FOUND_SIDE: 'Edge found',

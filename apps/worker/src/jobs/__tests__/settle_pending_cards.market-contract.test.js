@@ -3,7 +3,7 @@ const { __private } = require('../settle_pending_cards');
 const {
   isExecutableMlbFullGameLean,
   resolveStrictStatus,
-} = require('../repair_mlb_full_game_display_log');
+} = require('../helpers/mlb-full-game-lean-contract');
 
 describe('settle_pending_cards market contract', () => {
   test('same game spread and moneyline lock different market keys and prices, then settle independently', () => {

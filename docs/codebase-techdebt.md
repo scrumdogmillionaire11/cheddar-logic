@@ -42,6 +42,14 @@ Risk: split-brain verdicts return after future market additions.
 Score: principal large; interest high; blast radius cross-cutting; compounding.  
 Recommendation: migrate remaining historical rows or quarantine legacy adapters behind explicit `historical=true` read path. Priority: Now.
 
+WI-1174 audit status (2026-04-27):
+
+- Still required now: the v1 payload probe helpers in [v1-legacy-repair.ts](/Users/ajcolubiale/projects/cheddar-logic/web/src/lib/game-card/transform/adapters/v1-legacy-repair.ts) are still live through the MLB fallback eligibility path in [route-handler.ts](/Users/ajcolubiale/projects/cheddar-logic/web/src/lib/games/route-handler.ts).
+- Still required now: the sport card type helpers in [legacy-repair.ts](/Users/ajcolubiale/projects/cheddar-logic/web/src/lib/game-card/transform/legacy-repair.ts) are still live through [index.ts](/Users/ajcolubiale/projects/cheddar-logic/web/src/lib/game-card/transform/index.ts) for play/evidence classification, welcome-home filtering, and source action/model-prob fallback.
+- Boundary tightened: transform-side consumers should import these helpers through [v1-legacy-repair.ts](/Users/ajcolubiale/projects/cheddar-logic/web/src/lib/game-card/transform/adapters/v1-legacy-repair.ts), not directly from [legacy-repair.ts](/Users/ajcolubiale/projects/cheddar-logic/web/src/lib/game-card/transform/legacy-repair.ts), so raw historical topology stays behind one adapter surface.
+- Safe to remove now: none proven in this audit slice. No branch was deleted without payload evidence.
+- Follow-on removal gate: re-audit after MLB historical fallback is either deleted or moved behind an explicit historical-only read path.
+
 [Worker Runner Monoliths]  
 Debt Type: Historical / Testing  
 Location: [run_mlb_model.js](/Users/ajcolubiale/projects/cheddar-logic/apps/worker/src/jobs/run_mlb_model.js), [run_nhl_model.js](/Users/ajcolubiale/projects/cheddar-logic/apps/worker/src/jobs/run_nhl_model.js), [run_nhl_player_shots_model.js](/Users/ajcolubiale/projects/cheddar-logic/apps/worker/src/jobs/run_nhl_player_shots_model.js)  

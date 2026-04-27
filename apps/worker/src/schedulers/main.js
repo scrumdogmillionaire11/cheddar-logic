@@ -422,7 +422,7 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
   }
 
   // ========== WATCHDOGS / FPL / PLAYER-PROPS (5-8) ==========
-  if (process.env.ENABLE_PIPELINE_HEALTH_WATCHDOG === 'true') {
+  if (process.env.ENABLE_PIPELINE_HEALTH_WATCHDOG !== 'false') {
     jobs.push(...getPipelineHealthJobs(nowUtc));
     jobs.push(...getDrClairePersistJobs(nowUtc));
   }
