@@ -245,6 +245,32 @@ describe('decision publisher v2 pipeline', () => {
     ).toThrow('[INVARIANT_BREACH]');
   });
 
+    test('finalizeDecisionFields fails closed for legacy-only actionable payloads', () => {
+      const payload = {
+        kind: 'PLAY',
+        sport: 'MLB',
+        market_type: 'TOTAL',
+        selection: { side: 'OVER' },
+        prediction: 'OVER',
+        action: 'FIRE',
+        classification: 'BASE',
+        status: 'FIRE',
+        reason_codes: ['EDGE_CLEAR'],
+      };
+
+      finalizeDecisionFields(payload);
+
+      expect(payload.decision_v2).toMatchObject({
+        official_status: 'PASS',
+        source: 'decision_authority',
+      });
+      expect(typeof payload.decision_v2.primary_reason_code).toBe('string');
+      expect(payload.action).toBe('PASS');
+      expect(payload.status).toBe('PASS');
+      expect(payload.classification).toBe('PASS');
+      expect(payload.final_play_state).toBe('NO_PLAY');
+    });
+
   test('attaches decision_v2 for wave1 payload and preserves the actionable decision envelope', () => {
     // Use NHL:TOTAL to avoid NBA total quarantine demoting PLAY->LEAN
     const payload = buildWave1Payload({ sport: 'NHL', market_type: 'TOTAL' });
