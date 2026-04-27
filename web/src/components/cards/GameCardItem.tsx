@@ -748,7 +748,9 @@ export default function GameCardItem({
   const hasMissingInputDetails =
     (!decisionV2 &&
       (isBroken || isDegraded) &&
-      (displayPlay.transform_meta?.missing_inputs?.length ?? 0) > 0) ||
+      (displayPlay.transform_meta?.missing_inputs ?? []).filter(
+        (t) => !t.startsWith('feature_freshness') && t !== 'block_rates_stale',
+      ).length > 0) ||
     Boolean(decisionV2 && decisionV2.missing_data.missing_fields.length > 0);
   const showPassDetail =
     visibleDecision === 'PASS' && Boolean(surfacedReason || primaryReasonCode);
@@ -1389,7 +1391,11 @@ export default function GameCardItem({
                   Missing inputs:{' '}
                   {decisionV2
                     ? formatMissingInputs(decisionV2.missing_data.missing_fields)
-                    : formatMissingInputs(displayPlay.transform_meta?.missing_inputs ?? [])}
+                    : formatMissingInputs(
+                        (displayPlay.transform_meta?.missing_inputs ?? []).filter(
+                          (t) => !t.startsWith('feature_freshness') && t !== 'block_rates_stale',
+                        ),
+                      )}
                 </p>
               )}
 

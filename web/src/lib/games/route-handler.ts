@@ -3130,20 +3130,29 @@ function mergePropFallbackRows(params: {
         const dedupedReasonCodes = combinedReasonCodes;
         const dedupedTags = Array.from(new Set(combinedTags));
 
-        const runtimeDecision = readRuntimeCanonicalDecision(
-          {
-            decision_v2: (normalizedDecisionV2 ?? null) as Record<string, unknown> | null,
-            action: normalizedAction,
-            classification: normalizedClassification,
-            status: normalizedStatus,
-            pass_reason_code: normalizedPassReasonCode,
-          },
-          { stage: 'read_api' },
+        // MLB full-game card types carry native status/edge directly in the
+        // payload and do not go through the decision_authority pipeline (no
+        // decision_v2).  Skip readRuntimeCanonicalDecision for them so the
+        // native LEAN/WATCH status is preserved rather than forced to PASS.
+        const isMlbFullGameCardType = (MLB_GAME_LINE_FALLBACK_CARD_TYPES as readonly string[]).includes(
+          cardRow.card_type,
         );
-        const resolvedAction: Play['action'] = runtimeDecision.action;
+        const runtimeDecision = isMlbFullGameCardType
+          ? null
+          : readRuntimeCanonicalDecision(
+              {
+                decision_v2: (normalizedDecisionV2 ?? null) as Record<string, unknown> | null,
+                action: normalizedAction,
+                classification: normalizedClassification,
+                status: normalizedStatus,
+                pass_reason_code: normalizedPassReasonCode,
+              },
+              { stage: 'read_api' },
+            );
+        const resolvedAction: Play['action'] = runtimeDecision?.action ?? normalizedAction;
         const resolvedClassification: Play['classification'] =
-          runtimeDecision.classification;
-        const resolvedStatus: Play['status'] = runtimeDecision.status;
+          runtimeDecision?.classification ?? normalizedClassification;
+        const resolvedStatus: Play['status'] = runtimeDecision?.status ?? normalizedStatus;
         const onePModelCall =
           cardRow.card_type === 'nhl-pace-1p'
             ? deriveNhl1PModelCall(dedupedReasonCodes, normalizedPrediction)
@@ -3782,9 +3791,10 @@ function mergePropFallbackRows(params: {
         // PROP plays (nhl-player-shots etc.) carry action/status directly in the
         // payload — they don't use the wave-1 decision_v2 pipeline.  Skip the
         // wave-1 path for them so they aren't silently dropped.
+        // isMlbFullGameCardType is computed above (before readRuntimeCanonicalDecision).
         const isPropPlay = play.market_type === 'PROP';
 
-        if (wave1Eligible && !isPropPlay) {
+        if (wave1Eligible && !isPropPlay && !isMlbFullGameCardType) {
           // Wave-1 rows MUST have worker-published canonical decision_v2.
           if (!play.decision_v2) {
             incrementStageCounter(
@@ -3805,7 +3815,7 @@ function mergePropFallbackRows(params: {
         }
 
         if (
-          (!wave1Eligible || isPropPlay) &&
+          (!wave1Eligible || isPropPlay || isMlbFullGameCardType) &&
           !play.consistency?.total_bias
         ) {
           const nativeTotalStatus =

@@ -173,8 +173,9 @@ const HARD_INVALIDATION_PRICE_REASONS = new Set([
   PRICE_REASONS.EXACT_WAGER_MISMATCH,
   PRICE_REASONS.MARKET_EDGE_UNAVAILABLE,
   PRICE_REASONS.PROXY_EDGE_BLOCKED,
-  PRICE_REASONS.LINE_NOT_CONFIRMED,
-  PRICE_REASONS.EDGE_RECHECK_PENDING,
+  // WI-1186: LINE_NOT_CONFIRMED and EDGE_RECHECK_PENDING removed from hard-invalidation set.
+  // These are now gate warnings (emitted in reason_codes) rather than status blockers.
+  // PRICE_SYNC_PENDING remains hard-invalid (external system state unconfirmed).
   PRICE_REASONS.PRICE_SYNC_PENDING,
 ]);
 const PLAY_CAPPED_PRICE_REASONS = new Set([
@@ -668,12 +669,14 @@ function classifyPrice({
   }
 
   if (marketType !== 'TOTAL' && edgePct > EDGE_SANITY_NON_TOTAL_THRESHOLD) {
+    // WI-1186: High edge on non-TOTAL markets warrants sanity check gate, not PASS override.
+    // If odds are successfully fetched, line IS confirmed. Emit gate for watchdog/UI review
+    // but let market classify normally based on edge vs thresholds (PLAY/LEAN/PASS).
     return {
-      sharp_price_status: 'PENDING_VERIFICATION',
+      sharp_price_status: 'CHEDDAR',
       price_reason_codes: [
-        PRICE_REASONS.LINE_NOT_CONFIRMED,
-        PRICE_REASONS.EDGE_RECHECK_PENDING,
         PRICE_REASONS.EDGE_SANITY_NON_TOTAL,
+        PRICE_REASONS.EDGE_CLEAR,
       ],
       proxy_capped: false,
     };
@@ -981,6 +984,8 @@ function computeOfficialStatus({
     );
     return hasNonHoldBlockingReason ? 'PASS' : 'LEAN';
   }
+  // WI-1186: PENDING_VERIFICATION status is no longer emitted (edge sanity is now a gate).
+  // This branch preserved for backward compat with pre-WI-1186 payloads only.
   if (sharpPriceStatus === 'PENDING_VERIFICATION') return 'PASS';
   if (sharpPriceStatus === 'UNPRICED' || sharpPriceStatus === 'COTTAGE') {
     return 'PASS';
@@ -1106,6 +1111,8 @@ function resolvePrimaryReason({
     return watchdogReasonCodes[0];
   }
 
+  // WI-1186: PENDING_VERIFICATION no longer used. Edge sanity is a gate, not a blocker.
+  // This branch is preserved for backward compat but should not be reached.
   if (sharpPriceStatus === 'PENDING_VERIFICATION') {
     return priceReasonCodes[0] || PRICE_REASONS.LINE_NOT_CONFIRMED;
   }

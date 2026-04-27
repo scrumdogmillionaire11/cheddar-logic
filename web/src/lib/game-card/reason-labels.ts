@@ -25,7 +25,6 @@ export const REASON_CODE_LABELS: Record<string, string> = Object.freeze({
   FIRST_PERIOD_PROJECTION_LEAN: 'Lean \u2014 1P projection',
   FIRST_PERIOD_PROJECTION_PLAY: 'Play \u2014 1P projection',
   MISSING_DATA_PROJECTION_INPUTS: 'Missing projection inputs',
-  MISSING_DATA_FEATURE_FRESHNESS: 'Feature freshness stale',
   MISSING_DATA_DRIVERS: 'Driver output unavailable',
   MISSING_DATA_TEAM_MAPPING: 'Team mapping unresolved',
   MISSING_DATA_NO_ODDS: 'Odds unavailable',

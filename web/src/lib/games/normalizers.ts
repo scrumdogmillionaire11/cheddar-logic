@@ -129,7 +129,7 @@ export function normalizeStatus(value: unknown): Status | undefined {
   if (upper === 'FIRE' || upper === 'WATCH' || upper === 'PASS') {
     return upper as Status;
   }
-  if (upper === 'HOLD') return 'WATCH';
+  if (upper === 'HOLD' || upper === 'LEAN') return 'WATCH';
   return undefined;
 }
 
