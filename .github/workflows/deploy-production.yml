@@ -164,18 +164,19 @@ jobs:
             sudo systemctl enable cheddar-worker cheddar-web cheddar-worker-watchdog.timer
             sudo systemctl enable cheddar-fpl-sage || echo "WARNING: Unable to enable cheddar-fpl-sage — continuing"
             echo "[deploy-step] stopping worker before npm installs"
-            # Stop worker BEFORE deleting node_modules. A running worker crashes when its
-            # node_modules are wiped, then systemd's Restart=on-failure fires using the
-            # OLD cgroup settings (pre-daemon-reload KillMode) and kills the SSH session.
-            # Stopping explicitly now avoids that race entirely.
+            # systemctl stop on User=babycheeses11 services kills the SSH deploy session
+            # on this Pi via cgroup/session management, regardless of KillMode.
+            # Use mask (a symlink write — no signals sent) to block auto-restart, then
+            # pkill to terminate the actual processes directly.
+            # The watchdog TIMER itself runs as root so stopping it is safe.
             sudo systemctl stop cheddar-worker-watchdog.timer || true
-            sudo systemctl stop cheddar-worker-watchdog.service || true
-            sudo systemctl stop cheddar-worker || true
-            for _pre_wait in $(seq 1 10); do
-              if ! sudo systemctl is-active --quiet cheddar-worker 2>/dev/null; then break; fi
-              sleep 1
-            done
-            pkill -f "node /opt/cheddar-logic/apps/worker/src/schedulers/main.js" || true
+            sudo systemctl mask --runtime cheddar-worker-watchdog.service || true
+            sudo systemctl mask --runtime cheddar-worker || true
+            sudo pkill -SIGTERM -f "node.*schedulers/main.js" || true
+            sudo pkill -SIGTERM -f "npm.*--prefix.*apps/worker" || true
+            sleep 5
+            sudo pkill -SIGKILL -f "node.*schedulers/main.js" || true
+            sudo pkill -SIGKILL -f "npm.*--prefix.*apps/worker" || true
             sleep 1
             sudo rm -f /opt/data/cheddar-prod.db.lock || true
             # ── Disk hygiene before installs ───────────────────────────────────
@@ -303,27 +304,14 @@ jobs:
                 echo "WARNING: Unable to chmod DB file $CANONICAL_DB_PATH — continuing"
               fi
             fi
-            echo "[deploy-step] stopping worker services"
-            # Stop worker before migrations to prevent concurrent writes to DB file.
-            # Stop the watchdog timer FIRST so it cannot restart the worker during the
-            # long build phase and re-acquire the DB lock before our final restart.
-            sudo systemctl stop cheddar-worker-watchdog.timer || true
-            sudo systemctl stop cheddar-worker-watchdog.service || true
-            sudo systemctl stop cheddar-worker || true
-            # Wait for the worker process to fully exit before touching the lock file.
-            for _wait_i in $(seq 1 15); do
-              if ! sudo systemctl is-active --quiet cheddar-worker 2>/dev/null; then
-                break
-              fi
-              sleep 1
-            done
-            # Safety net: terminate any stray scheduler process not managed by systemd.
-            # This prevents hidden second writers from surviving into migration/restart.
-            pkill -f "node /opt/cheddar-logic/apps/worker/src/schedulers/main.js" || true
+            echo "[deploy-step] stopping worker services (belt-and-suspenders)"
+            # Worker was already stopped early (mask+pkill). Belt-and-suspenders: kill
+            # any process that may have re-acquired the lock since then (e.g. orphan).
+            # Avoid systemctl stop here too — same cgroup/SSH-kill issue applies.
+            sudo pkill -SIGTERM -f "node.*schedulers/main.js" || true
+            sleep 2
+            sudo pkill -SIGKILL -f "node.*schedulers/main.js" || true
             sleep 1
-            # Remove stale lock file in case worker didn't exit cleanly.
-            # Must use sudo: the lock file is owned by root (worker runs as root via systemd)
-            # and the deploy SSH user cannot rm it without elevated permissions.
             sudo rm -f "${CANONICAL_DB_PATH}.lock"
             # Run database migrations (will create DB if it doesn't exist)
             echo "[deploy-step] starting migrations"
@@ -523,6 +511,9 @@ jobs:
               fi
               rm -f "${CANONICAL_DB_PATH}.lock" || true
             fi
+            # Unmask before restart — services were masked earlier to block auto-restart.
+            sudo systemctl unmask --runtime cheddar-worker || true
+            sudo systemctl unmask --runtime cheddar-worker-watchdog.service || true
             sudo systemctl restart cheddar-worker
             restart_web_with_diagnostics
             sudo systemctl restart cheddar-fpl-sage || { echo "WARNING: cheddar-fpl-sage failed to restart — continuing deploy (web/worker unaffected)"; true; }
