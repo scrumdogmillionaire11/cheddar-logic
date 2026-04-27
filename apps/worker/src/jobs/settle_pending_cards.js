@@ -57,42 +57,6 @@ function toUpperToken(value) {
   return String(value).trim().toUpperCase();
 }
 
-const LEGACY_DECISION_FALLBACK_WARNING_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
-
-function parseTimestampMs(value) {
-  if (!value) return null;
-  const ms = Date.parse(value);
-  return Number.isFinite(ms) ? ms : null;
-}
-
-function shouldWarnForLegacyDecisionFallback(row, settledAt) {
-  const cardCreatedMs = parseTimestampMs(
-    row?.card_created_at ?? row?.created_at ?? row?.payload_created_at,
-  );
-  if (cardCreatedMs === null) return false;
-
-  const settledMs = parseTimestampMs(settledAt) ?? Date.now();
-  const ageMs = settledMs - cardCreatedMs;
-  return ageMs >= 0 && ageMs <= LEGACY_DECISION_FALLBACK_WARNING_WINDOW_MS;
-}
-
-function warnForLegacyDecisionFallback(row, reason, settledAt) {
-  if (!reason?.details?.legacyFallback) return;
-  if (!shouldWarnForLegacyDecisionFallback(row, settledAt)) return;
-
-  console.warn(
-    [
-      '[SettleCards] Legacy decision fallback used for non-historical card',
-      `cardId=${row?.card_id ?? 'unknown'}`,
-      `gameId=${row?.game_id ?? 'unknown'}`,
-      `sport=${row?.sport ?? 'unknown'}`,
-      `cardType=${row?.card_type ?? 'unknown'}`,
-      `legacyStatus=${reason.details.legacyStatus ?? 'unknown'}`,
-      `cardCreatedAt=${row?.card_created_at ?? row?.created_at ?? 'unknown'}`,
-    ].join(' '),
-  );
-}
-
 function resolveDecisionBasisForSettlement(payloadData) {
   const explicit = toUpperToken(
     payloadData?.decision_basis_meta?.decision_basis ??
@@ -1074,7 +1038,6 @@ function autoCloseNonActionableFinalPendingRows(db, settledAt) {
     const payloadData = parseJsonObject(row.payload_data) || {};
     const reason = resolveNonActionableFinalReason(payloadData, row);
     if (!reason) continue;
-    warnForLegacyDecisionFallback(row, reason, settledAt);
     if (reason.code === 'MISSING_MARKET_KEY') {
       console.log(
         `[SettleCards] Auto-closing MISSING_MARKET_KEY: resultId=${resultId} cardId=${row.card_id} gameId=${row.game_id}`,

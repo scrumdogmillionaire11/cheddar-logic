@@ -39,13 +39,6 @@ function isHardExecutionBlock(reason) {
   );
 }
 
-// DEPRECATED (ADR-0017): these constants are no longer deducted from netEdge.
-// Edge is computed against the vig-removed fair market probability in edge-calculator.js,
-// making edge = modelProb − fairProb = the bettor's true net EV. Subtracting vigCost
-// again was a double-deduction. Kept as no-ops for one release cycle.
-const VIG_COST_STANDARD = 0.045;
-const SLIPPAGE_ESTIMATE = 0.005;
-
 const MLB_FULL_GAME_ML_POLICY = Object.freeze({
   edgeThreshold: 0.06,
   largeEdge: Object.freeze({
@@ -391,6 +384,4 @@ module.exports = {
   evaluateMlbExecution,
   evaluateFreshnessTier,
   mapBlockedByToDropReasonCode,
-  VIG_COST_STANDARD,
-  SLIPPAGE_ESTIMATE,
 };
