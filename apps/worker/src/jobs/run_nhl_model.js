@@ -4459,6 +4459,15 @@ async function runNHLModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
 
       markJobRunSuccess(jobRunId, summary);
       try {
+        const { writePipelineHealth } = require('./check_pipeline_health');
+        writePipelineHealth(
+          'nhl',
+          'model_run',
+          cardsGenerated > 0 || cardsFailed === 0 ? 'ok' : 'warning',
+          `run_nhl_model completed: ${cardsGenerated} cards generated, ${cardsFailed} failed`,
+        );
+      } catch (_phErr) { /* non-fatal */ }
+      try {
         setCurrentRunId(jobRunId, 'nhl');
       } catch (runStateError) {
         console.error(
@@ -4515,6 +4524,10 @@ async function runNHLModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
           dbError.message,
         );
       }
+      try {
+        const { writePipelineHealth } = require('./check_pipeline_health');
+        writePipelineHealth('nhl', 'model_run', 'failed', `run_nhl_model failed: ${error.message}`);
+      } catch (_phErr) { /* non-fatal */ }
 
       return { success: false, jobRunId, error: error.message };
     }

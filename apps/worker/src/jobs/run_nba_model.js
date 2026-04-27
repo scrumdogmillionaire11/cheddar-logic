@@ -3282,6 +3282,15 @@ async function runNBAModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
 
       markJobRunSuccess(jobRunId, summary);
       try {
+        const { writePipelineHealth } = require('./check_pipeline_health');
+        writePipelineHealth(
+          'nba',
+          'model_run',
+          cardsGenerated > 0 || cardsFailed === 0 ? 'ok' : 'warning',
+          `run_nba_model completed: ${cardsGenerated} cards generated, ${cardsFailed} failed`,
+        );
+      } catch (_phErr) { /* non-fatal */ }
+      try {
         setCurrentRunId(jobRunId, 'nba');
       } catch (runStateError) {
         console.error(
@@ -3316,6 +3325,10 @@ async function runNBAModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
       try {
         markJobRunFailure(jobRunId, error.message);
       } catch (_) {}
+      try {
+        const { writePipelineHealth } = require('./check_pipeline_health');
+        writePipelineHealth('nba', 'model_run', 'failed', `run_nba_model failed: ${error.message}`);
+      } catch (_phErr) { /* non-fatal */ }
       return { success: false, jobRunId, error: error.message };
     }
   });

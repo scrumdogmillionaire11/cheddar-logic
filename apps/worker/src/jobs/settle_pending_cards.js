@@ -2903,6 +2903,15 @@ async function settlePendingCards({
       const cardsArchived = 0;
 
       markJobRunSuccess(jobRunId);
+      try {
+        const { writePipelineHealth } = require('./check_pipeline_health');
+        writePipelineHealth(
+          'settlement',
+          'model_run',
+          cardsErrored === 0 ? 'ok' : 'warning',
+          `settle_pending_cards completed: ${cardsSettled} settled, ${cardsErrored} errored`,
+        );
+      } catch (_phErr) { /* non-fatal */ }
       const coverageAfter = getSettlementCoverageDiagnostics(db);
       console.log(
         `[SettleCards] Coverage after — pending: ${coverageAfter.totalPending}, settledFinalDisplayed: ${coverageAfter.settledDisplayedFinal}, missingResults: ${coverageAfter.finalDisplayedMissingResults}, unsettledFinalDisplayed: ${coverageAfter.finalDisplayedUnsettled}, blockedNoDisplay: ${coverageAfter.pendingWithFinalNoDisplay}, blockedMissingMarketKey: ${coverageAfter.pendingWithFinalMissingMarketKey}, blockedNoFinal: ${coverageAfter.pendingDisplayedWithoutFinal}`,
@@ -2970,6 +2979,10 @@ async function settlePendingCards({
           dbError.message,
         );
       }
+      try {
+        const { writePipelineHealth } = require('./check_pipeline_health');
+        writePipelineHealth('settlement', 'model_run', 'failed', `settle_pending_cards failed: ${error.message}`);
+      } catch (_phErr) { /* non-fatal */ }
 
       return { success: false, jobRunId, jobKey, error: error.message };
     }
