@@ -175,21 +175,30 @@ jobs:
             sudo systemctl mask --runtime cheddar-worker-watchdog.service || true
             sudo systemctl mask --runtime cheddar-worker || true
             WORKER_MAIN_PID="$(sudo systemctl show -p MainPID --value cheddar-worker 2>/dev/null || true)"
+            WORKER_CGROUP_PROCS="/sys/fs/cgroup/system.slice/cheddar-worker.service/cgroup.procs"
             if printf '%s' "$WORKER_MAIN_PID" | grep -Eq '^[0-9]+$' && [ "$WORKER_MAIN_PID" -gt 0 ]; then
               echo "Terminating cheddar-worker MainPID=$WORKER_MAIN_PID"
               sudo kill -TERM "$WORKER_MAIN_PID" || true
             fi
-            for _sched_pid in $(pgrep -f '^node /opt/cheddar-logic/apps/worker/src/schedulers/main.js$' 2>/dev/null || true); do
-              sudo kill -TERM "$_sched_pid" || true
-            done
+            if [ -r "$WORKER_CGROUP_PROCS" ]; then
+              while IFS= read -r _svc_pid; do
+                if printf '%s' "$_svc_pid" | grep -Eq '^[0-9]+$'; then
+                  sudo kill -TERM "$_svc_pid" 2>/dev/null || true
+                fi
+              done < "$WORKER_CGROUP_PROCS"
+            fi
             sleep 5
             if printf '%s' "$WORKER_MAIN_PID" | grep -Eq '^[0-9]+$' && [ "$WORKER_MAIN_PID" -gt 0 ] && sudo kill -0 "$WORKER_MAIN_PID" 2>/dev/null; then
               echo "Escalating SIGKILL to MainPID=$WORKER_MAIN_PID"
               sudo kill -KILL "$WORKER_MAIN_PID" || true
             fi
-            for _sched_pid in $(pgrep -f '^node /opt/cheddar-logic/apps/worker/src/schedulers/main.js$' 2>/dev/null || true); do
-              sudo kill -KILL "$_sched_pid" || true
-            done
+            if [ -r "$WORKER_CGROUP_PROCS" ]; then
+              while IFS= read -r _svc_pid; do
+                if printf '%s' "$_svc_pid" | grep -Eq '^[0-9]+$'; then
+                  sudo kill -KILL "$_svc_pid" 2>/dev/null || true
+                fi
+              done < "$WORKER_CGROUP_PROCS"
+            fi
             sleep 1
             sudo rm -f /opt/data/cheddar-prod.db.lock || true
             # ── Disk hygiene before installs ───────────────────────────────────
@@ -321,13 +330,22 @@ jobs:
             # Worker was already stopped early (mask+pkill). Belt-and-suspenders: kill
             # any process that may have re-acquired the lock since then (e.g. orphan).
             # Avoid systemctl stop here too — same cgroup/SSH-kill issue applies.
-            for _sched_pid in $(pgrep -f '^node /opt/cheddar-logic/apps/worker/src/schedulers/main.js$' 2>/dev/null || true); do
-              sudo kill -TERM "$_sched_pid" || true
-            done
+            WORKER_CGROUP_PROCS="/sys/fs/cgroup/system.slice/cheddar-worker.service/cgroup.procs"
+            if [ -r "$WORKER_CGROUP_PROCS" ]; then
+              while IFS= read -r _svc_pid; do
+                if printf '%s' "$_svc_pid" | grep -Eq '^[0-9]+$'; then
+                  sudo kill -TERM "$_svc_pid" 2>/dev/null || true
+                fi
+              done < "$WORKER_CGROUP_PROCS"
+            fi
             sleep 2
-            for _sched_pid in $(pgrep -f '^node /opt/cheddar-logic/apps/worker/src/schedulers/main.js$' 2>/dev/null || true); do
-              sudo kill -KILL "$_sched_pid" || true
-            done
+            if [ -r "$WORKER_CGROUP_PROCS" ]; then
+              while IFS= read -r _svc_pid; do
+                if printf '%s' "$_svc_pid" | grep -Eq '^[0-9]+$'; then
+                  sudo kill -KILL "$_svc_pid" 2>/dev/null || true
+                fi
+              done < "$WORKER_CGROUP_PROCS"
+            fi
             sleep 1
             sudo rm -f "${CANONICAL_DB_PATH}.lock"
             # Run database migrations (will create DB if it doesn't exist)

@@ -7,6 +7,7 @@ const fs = require('fs');
 const {
   closeReadOnlyInstance,
   getDatabaseReadOnly,
+  normalizeMarketType,
 } = require('@cheddar-logic/data');
 const {
   collectProjectionAlerts,
@@ -151,14 +152,6 @@ function firstFiniteNumber(...values) {
     if (Number.isFinite(parsed)) return parsed;
   }
   return null;
-}
-
-function normalizeMarketType(value) {
-  const token = toUpperToken(value);
-  if (!token) return null;
-  if (token === 'ML') return 'MONEYLINE';
-  if (token === 'PUCK_LINE') return 'PUCKLINE';
-  return token;
 }
 
 function normalizePeriodToken(value) {
