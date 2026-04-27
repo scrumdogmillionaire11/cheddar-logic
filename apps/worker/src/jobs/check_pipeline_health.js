@@ -1806,6 +1806,26 @@ function buildHealthAlertMessage(failedChecks) {
   return lines.join('\n');
 }
 
+function writeOverallDegradedState(results) {
+  const failingChecks = Object.entries(results)
+    .filter(([, result]) => result && result.ok === false)
+    .map(([checkName]) => checkName);
+
+  if (failingChecks.length === 0) {
+    writePipelineHealth('watchdog', 'degraded_state', 'ok', 'Pipeline healthy: all checks passed');
+    return;
+  }
+
+  const summary = failingChecks.slice(0, 6).join(', ');
+  const suffix = failingChecks.length > 6 ? ` (+${failingChecks.length - 6} more)` : '';
+  writePipelineHealth(
+    'watchdog',
+    'degraded_state',
+    'failed',
+    `Pipeline degraded: ${failingChecks.length} failing check(s): ${summary}${suffix}`,
+  );
+}
+
 /**
  * Self-check: alert when check_pipeline_health hasn't run successfully in > 2h.
  * Writes a pipeline_health row with phase='watchdog', check_name='heartbeat'.
@@ -1913,6 +1933,10 @@ async function checkPipelineHealth({ jobKey, dryRun }) {
         allOk = false;
       }
     }
+
+    // Persist a run-level degraded/healthy state so the latest system posture is
+    // visible even after worker restarts.
+    writeOverallDegradedState(results);
 
     // --- Discord watchdog alert ---
     if (process.env.ENABLE_PIPELINE_HEALTH_WATCHDOG !== 'false' && !allOk) {
@@ -2094,6 +2118,7 @@ function checkNhlMoneyPuckBlkRatesFreshness() {
 
 module.exports = {
   writePipelineHealth,
+  writeOverallDegradedState,
   checkPipelineHealth,
   checkNhlSogSyncFreshness,
   checkNhlSogPullFreshness,

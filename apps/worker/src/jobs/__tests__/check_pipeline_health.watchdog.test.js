@@ -440,3 +440,112 @@ describe('WI-1182: Discord emission with remediation summary when odds remain st
     expect(message).toContain('remediation');
   });
 });
+
+describe('WI-1193: degraded-state persistence', () => {
+  let checkPipelineHealth;
+  let pipelineWrites;
+
+  beforeEach(() => {
+    jest.resetModules();
+    pipelineWrites = [];
+
+    const dbInstance = makeFullDb({ scheduleCount: 5 });
+    const basePrepare = dbInstance.prepare;
+    dbInstance.prepare = jest.fn((sql) => {
+      if (sql.includes('INSERT INTO pipeline_health')) {
+        return {
+          run: (...args) => {
+            pipelineWrites.push(args);
+          },
+        };
+      }
+      return basePrepare(sql);
+    });
+
+    jest.doMock('@cheddar-logic/data', () => ({
+      getDatabase: jest.fn(() => dbInstance),
+      insertJobRun: jest.fn(),
+      markJobRunSuccess: jest.fn(),
+      markJobRunFailure: jest.fn(),
+      createJob: jest.fn(),
+      wasJobRecentlySuccessful: jest.fn(() => true),
+    }));
+    jest.doMock('../post_discord_cards', () => ({ sendDiscordMessages: jest.fn().mockResolvedValue(undefined) }));
+    jest.doMock('../run_mlb_model', () => ({
+      buildMlbMarketAvailability: jest.fn(() => ({ f5_line_ok: true, full_game_total_ok: true, expect_f5_ml: false, f5_ml_ok: true })),
+    }));
+    jest.doMock('../../schedulers/quota', () => ({ getCurrentQuotaTier: jest.fn(() => 'FULL') }));
+    jest.doMock('../refresh_stale_odds', () => ({
+      refreshStaleOdds: jest.fn().mockResolvedValue({ success: true, staleDiagnostics: { detected: 0, refreshed: 0, blocked: 0 } }),
+    }));
+    jest.doMock('@cheddar-logic/data/src/feature-flags', () => ({
+      isFeatureEnabled: jest.fn(() => false),
+    }));
+
+    ({ checkPipelineHealth } = require('../check_pipeline_health'));
+  });
+
+  afterEach(() => {
+    delete process.env.ENABLE_PIPELINE_HEALTH_WATCHDOG;
+    delete process.env.DISCORD_ALERT_WEBHOOK_URL;
+  });
+
+  test('writes watchdog/degraded_state=ok when all checks pass', async () => {
+    await checkPipelineHealth({ jobKey: 'wi-1193-healthy', dryRun: false });
+
+    const degradedRows = pipelineWrites.filter(
+      ([phase, checkName]) => phase === 'watchdog' && checkName === 'degraded_state',
+    );
+    expect(degradedRows).toHaveLength(1);
+    expect(degradedRows[0][2]).toBe('ok');
+    expect(degradedRows[0][3]).toContain('all checks passed');
+  });
+
+  test('writes watchdog/degraded_state=failed with failing check names when any check fails', async () => {
+    const failingDb = makeFullDb({ scheduleCount: 0 });
+    const basePrepare = failingDb.prepare;
+    failingDb.prepare = jest.fn((sql) => {
+      if (sql.includes('INSERT INTO pipeline_health')) {
+        return {
+          run: (...args) => {
+            pipelineWrites.push(args);
+          },
+        };
+      }
+      return basePrepare(sql);
+    });
+
+    jest.resetModules();
+    jest.doMock('@cheddar-logic/data', () => ({
+      getDatabase: jest.fn(() => failingDb),
+      insertJobRun: jest.fn(),
+      markJobRunSuccess: jest.fn(),
+      markJobRunFailure: jest.fn(),
+      createJob: jest.fn(),
+      wasJobRecentlySuccessful: jest.fn(() => true),
+    }));
+    jest.doMock('../post_discord_cards', () => ({ sendDiscordMessages: jest.fn().mockResolvedValue(undefined) }));
+    jest.doMock('../run_mlb_model', () => ({
+      buildMlbMarketAvailability: jest.fn(() => ({ f5_line_ok: true, full_game_total_ok: true, expect_f5_ml: false, f5_ml_ok: true })),
+    }));
+    jest.doMock('../../schedulers/quota', () => ({ getCurrentQuotaTier: jest.fn(() => 'FULL') }));
+    jest.doMock('../refresh_stale_odds', () => ({
+      refreshStaleOdds: jest.fn().mockResolvedValue({ success: true, staleDiagnostics: { detected: 0, refreshed: 0, blocked: 0 } }),
+    }));
+    jest.doMock('@cheddar-logic/data/src/feature-flags', () => ({
+      isFeatureEnabled: jest.fn(() => false),
+    }));
+
+    ({ checkPipelineHealth } = require('../check_pipeline_health'));
+
+    await checkPipelineHealth({ jobKey: 'wi-1193-degraded', dryRun: false });
+
+    const degradedRows = pipelineWrites.filter(
+      ([phase, checkName]) => phase === 'watchdog' && checkName === 'degraded_state',
+    );
+    expect(degradedRows).toHaveLength(1);
+    expect(degradedRows[0][2]).toBe('failed');
+    expect(degradedRows[0][3]).toContain('Pipeline degraded');
+    expect(degradedRows[0][3]).toContain('schedule_freshness');
+  });
+});
