@@ -258,48 +258,30 @@ jobs:
               retry_npm_install "web full install" npm --prefix web install --include=dev --build-from-source=better-sqlite3
               echo "$WEB_LOCK_HASH" > "$WEB_LOCK_STAMP"
             fi
-            # Resolve canonical DB path from prod env (supports CHEDDAR_DB_PATH or CHEDDAR_DATA_DIR)
+            # Resolve canonical DB path from prod env.
+            # Production must set CHEDDAR_DB_PATH explicitly.
             set -a; . /opt/cheddar-logic/.env.production; set +a
-            if [ -z "${CHEDDAR_DB_PATH:-}" ] && [ -z "${CHEDDAR_DATA_DIR:-}" ]; then
-              echo "ERROR: Neither CHEDDAR_DB_PATH nor CHEDDAR_DATA_DIR set in /opt/cheddar-logic/.env.production"
+            if [ -z "${CHEDDAR_DB_PATH:-}" ]; then
+              echo "ERROR: CHEDDAR_DB_PATH is not set in /opt/cheddar-logic/.env.production"
               exit 1
             fi
-            # Resolve the actual database path (with timeout to prevent hanging)
-            echo "Resolving database path..."
-            TIMEOUT=5
-            CANONICAL_DB_PATH=$(timeout $TIMEOUT node -e "const { resolveDatabasePath } = require('/opt/cheddar-logic/packages/data/src/db-path'); const result = resolveDatabasePath(); console.log(result.dbPath);" 2>&1 || echo "")
-            if [ -z "$CANONICAL_DB_PATH" ] || [ "$CANONICAL_DB_PATH" = "timeout" ]; then
-              # Fallback: if path resolution times out or fails, use explicit fallback.
-              # IMPORTANT: CHEDDAR_DB_PATH must always be set in .env.production.
-              # The CHEDDAR_DATA_DIR branch is intentionally removed: it previously
-              # constructed "${CHEDDAR_DATA_DIR}/cheddar.db" which is WRONG when the
-              # production DB is named cheddar-prod.db. Never guess the filename.
-              if [ -n "${CHEDDAR_DB_PATH:-}" ]; then
-                CANONICAL_DB_PATH="$CHEDDAR_DB_PATH"
-                echo "Path resolution timed out, using CHEDDAR_DB_PATH: $CANONICAL_DB_PATH"
-              else
-                echo "ERROR: Could not resolve database path. CHEDDAR_DB_PATH must be set in .env.production."
-                exit 1
-              fi
-            else
-              echo "Resolved database path: $CANONICAL_DB_PATH"
-            fi
+            CANONICAL_DB_PATH="$CHEDDAR_DB_PATH"
+            echo "Resolved database path: $CANONICAL_DB_PATH"
             sudo mkdir -p "$(dirname "$CANONICAL_DB_PATH")"
-            sudo chown $(id -u):$(id -g) "$(dirname "$CANONICAL_DB_PATH")"
+            if ! sudo chown "$(id -u):$(id -g)" "$(dirname "$CANONICAL_DB_PATH")"; then
+              echo "WARNING: Unable to chown DB directory $(dirname "$CANONICAL_DB_PATH") — continuing"
+            fi
             # Ensure proper permissions if DB exists
             if [ -f "$CANONICAL_DB_PATH" ]; then
-              chmod 664 "$CANONICAL_DB_PATH"
+              if ! chmod 664 "$CANONICAL_DB_PATH"; then
+                echo "WARNING: Unable to chmod DB file $CANONICAL_DB_PATH — continuing"
+              fi
             fi
             # Stop worker before migrations to prevent concurrent writes to DB file.
             # Stop the watchdog timer FIRST so it cannot restart the worker during the
             # long build phase and re-acquire the DB lock before our final restart.
             sudo systemctl stop cheddar-worker-watchdog.timer || true
             sudo systemctl stop cheddar-worker-watchdog.service || true
-            # Stop PM2-managed processes first (Pi may still be using PM2 before systemd takeover)
-            PM2_BIN=$(find /home -name pm2 -path "*/bin/pm2" 2>/dev/null | head -1 || true)
-            if [ -n "$PM2_BIN" ]; then
-              "$PM2_BIN" stop all || true
-            fi
             sudo systemctl stop cheddar-worker || true
             # Wait for the worker process to fully exit before touching the lock file.
             for _wait_i in $(seq 1 15); do
@@ -308,6 +290,10 @@ jobs:
               fi
               sleep 1
             done
+            # Safety net: terminate any stray scheduler process not managed by systemd.
+            # This prevents hidden second writers from surviving into migration/restart.
+            pkill -f "node /opt/cheddar-logic/apps/worker/src/schedulers/main.js" || true
+            sleep 1
             # Remove stale lock file in case worker didn't exit cleanly
             rm -f "${CANONICAL_DB_PATH}.lock"
             # Run database migrations (will create DB if it doesn't exist)
@@ -501,12 +487,6 @@ jobs:
             sudo systemctl restart cheddar-worker
             restart_web_with_diagnostics
             sudo systemctl restart cheddar-fpl-sage || { echo "WARNING: cheddar-fpl-sage failed to restart — continuing deploy (web/worker unaffected)"; true; }
-            # Restart PM2-managed processes if PM2 is active (keeps pm2 list in sync after deploy)
-            if [ -n "$PM2_BIN" ]; then
-              "$PM2_BIN" restart cheddar-worker || true
-              "$PM2_BIN" restart cheddar-web || true
-              echo "PM2 processes restarted"
-            fi
             sleep 5
             if ! sudo systemctl is-active --quiet cheddar-worker; then
               fail_worker_smoke "worker-smoke-1" "cheddar-worker is not active after restart"
