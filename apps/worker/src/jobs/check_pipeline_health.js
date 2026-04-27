@@ -12,7 +12,7 @@
  * Writes all results to pipeline_health for UI visibility.
  *
  * Env:
- * - ENABLE_PIPELINE_HEALTH_WATCHDOG (default: false)
+ * - ENABLE_PIPELINE_HEALTH_WATCHDOG (default: true — set to 'false' to disable)
  * - PIPELINE_HEALTH_INTERVAL_MINUTES (default: 5)
  * - ODDS_FRESHNESS_MAX_AGE_MINUTES (default: slot + 15 minutes, minimum 15)
  * - CARDS_FRESHNESS_MAX_AGE_MINUTES (default: 30; informational stale-card age only)
@@ -1835,7 +1835,7 @@ async function checkWatchdogHeartbeat() {
       : `Heartbeat OK (${gapH}h since last run)`,
   );
 
-  if (isGap && process.env.ENABLE_PIPELINE_HEALTH_WATCHDOG === 'true') {
+  if (isGap && process.env.ENABLE_PIPELINE_HEALTH_WATCHDOG !== 'false') {
     const webhookUrl = process.env.DISCORD_ALERT_WEBHOOK_URL;
     if (!webhookUrl) {
       console.warn('[check_pipeline_health] DISCORD_ALERT_WEBHOOK_URL not set — skipping watchdog heartbeat alert');
@@ -1915,7 +1915,7 @@ async function checkPipelineHealth({ jobKey, dryRun }) {
     }
 
     // --- Discord watchdog alert ---
-    if (process.env.ENABLE_PIPELINE_HEALTH_WATCHDOG === 'true' && !allOk) {
+    if (process.env.ENABLE_PIPELINE_HEALTH_WATCHDOG !== 'false' && !allOk) {
       const checkPhaseLookup = {
         schedule_freshness: ['schedule', 'freshness'],
         odds_freshness: ['odds', 'freshness'],
