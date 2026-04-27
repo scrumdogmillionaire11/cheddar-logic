@@ -67,12 +67,15 @@ async function pullNstBlkRates({ jobKey = null, dryRun = false } = {}) {
           `[${JOB_NAME}] WARN: NHL_BLK_NST_SEASON/L10/L5_CSV_URL not set — ` +
             `player_blk_rates not updated. Set env vars to enable automated block-rate refresh.`,
         );
-      } else {
-        console.log(
-          `[${JOB_NAME}] NST BLK rates ingested: inserted=${result.inserted}, skipped=${result.skipped}`,
-        );
+        // Do NOT mark success — leave job_run as 'running' so shouldRunJobKey
+        // allows retries when env vars are later configured.
+        markJobRunFailure(jobRunId, 'missing_urls: NHL_BLK_NST CSV env vars not set');
+        return { success: false, jobRunId, ...result };
       }
 
+      console.log(
+        `[${JOB_NAME}] NST BLK rates ingested: inserted=${result.inserted}, skipped=${result.skipped}`,
+      );
       markJobRunSuccess(jobRunId);
       return { success: true, jobRunId, ...result };
     } catch (err) {

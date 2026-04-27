@@ -423,6 +423,12 @@ async function ingestMoneyPuckBlkRates({ startYear = null, now = new Date() } = 
       'MoneyPuck returned a Cloudflare challenge page — CSV temporarily unavailable',
     );
   }
+  if (bodyPreview.includes('data_license') || bodyPreview.includes('license')) {
+    throw new Error(
+      `MoneyPuck CSV access denied (data license page returned) — ${csvUrl}. ` +
+        'MoneyPuck has restricted automated CSV access. Use NST as primary BLK source (set NHL_BLK_NST_*_CSV_URL env vars).',
+    );
+  }
 
   const schemaIntegrity = assertMoneyPuckSchemaIntegrity(csvText);
 
