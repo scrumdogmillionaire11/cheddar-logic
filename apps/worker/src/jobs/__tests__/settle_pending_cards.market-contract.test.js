@@ -245,7 +245,7 @@ describe('settle_pending_cards market contract', () => {
     expect(entry.oddsAtPick).toBe(-110);
   });
 
-  test('strict legacy fallback treats PASS/WATCH/HOLD as non-actionable', () => {
+  test('display-log backfill requires canonical official_status and fails closed for legacy-only statuses', () => {
     expect(
       __private.resolveBackfillOfficialStatus({
         decision_v2: { official_status: 'LEAN' },
@@ -258,15 +258,9 @@ describe('settle_pending_cards market contract', () => {
         status: 'FIRE',
       }),
     ).toBe('');
-    expect(__private.resolveBackfillOfficialStatus({ status: 'FIRE' })).toBe(
-      'PLAY',
-    );
-    expect(__private.resolveBackfillOfficialStatus({ status: 'PLAY' })).toBe(
-      'PLAY',
-    );
-    expect(__private.resolveBackfillOfficialStatus({ status: 'LEAN' })).toBe(
-      'LEAN',
-    );
+    expect(__private.resolveBackfillOfficialStatus({ status: 'FIRE' })).toBe('');
+    expect(__private.resolveBackfillOfficialStatus({ status: 'PLAY' })).toBe('');
+    expect(__private.resolveBackfillOfficialStatus({ status: 'LEAN' })).toBe('');
     expect(__private.resolveBackfillOfficialStatus({ status: 'PASS' })).toBe('');
     expect(__private.resolveBackfillOfficialStatus({ status: 'WATCH' })).toBe(
       '',

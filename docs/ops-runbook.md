@@ -80,15 +80,47 @@ sudo systemctl show cheddar-worker -p Environment | grep CHEDDAR_DB_PATH
 sudo systemctl status cheddar-web cheddar-worker cheddar-fpl-sage
 ```
 
-### Start / Stop / Restart
+### Restart services (Pi, systemd-only)
 
 ```bash
-sudo systemctl restart cheddar-web
+# Preferred restart order after deploy or maintenance: worker first, then web.
 sudo systemctl restart cheddar-worker
+sudo systemctl restart cheddar-web
 sudo systemctl restart cheddar-fpl-sage
 
-sudo systemctl stop cheddar-web
+# Verify service state
+sudo systemctl show cheddar-worker.service -p ActiveState -p SubState -p ExecMainPID -p ExecMainStartTimestamp
+sudo systemctl show cheddar-web.service -p ActiveState -p SubState -p ExecMainPID -p ExecMainStartTimestamp
+sudo systemctl show cheddar-fpl-sage.service -p ActiveState -p SubState -p ExecMainPID -p ExecMainStartTimestamp
+```
+
+### Start / Stop
+
+```bash
+sudo systemctl start cheddar-worker
 sudo systemctl start cheddar-web
+sudo systemctl start cheddar-fpl-sage
+
+sudo systemctl stop cheddar-web
+sudo systemctl stop cheddar-worker
+sudo systemctl stop cheddar-fpl-sage
+```
+
+### Worker stale-lock recovery
+
+Only remove `/opt/data/cheddar-prod.db.lock` after you have confirmed the old owner PID is gone and `cheddar-worker` is stopped.
+
+```bash
+sudo systemctl stop cheddar-worker.service
+ps -fp <old-pid> || true
+sudo rm -f /opt/data/cheddar-prod.db.lock
+sudo systemctl reset-failed cheddar-worker.service
+sudo systemctl start cheddar-worker.service
+
+# Confirm recovery
+sudo systemctl status cheddar-worker.service --no-pager
+journalctl -u cheddar-worker.service --since "2 minutes ago" --no-pager
+sudo systemctl show cheddar-worker.service -p ActiveState -p SubState -p ExecMainPID -p ExecMainStartTimestamp
 ```
 
 ### View live logs

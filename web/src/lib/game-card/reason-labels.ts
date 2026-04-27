@@ -6,6 +6,7 @@
 
 export const REASON_CODE_LABELS: Record<string, string> = Object.freeze({
   PASS_NO_EDGE: 'No edge',
+  PASS_MISSING_EDGE: 'Edge unavailable',
   NO_EDGE_AT_PRICE: 'Price too sharp',
   PASS_DRIVER_SUPPORT_WEAK: 'Driver support weak',
   PASS_CONFLICT_HIGH: 'Conflicting signals',
@@ -28,7 +29,12 @@ export const REASON_CODE_LABELS: Record<string, string> = Object.freeze({
   MISSING_DATA_DRIVERS: 'Driver output unavailable',
   MISSING_DATA_TEAM_MAPPING: 'Team mapping unresolved',
   MISSING_DATA_NO_ODDS: 'Odds unavailable',
+  MISSING_DATA_FEATURE_FRESHNESS: 'Feature freshness stale',
   PASS_MISSING_DRIVER_INPUTS: 'Missing driver inputs',
+  PASS_MISSING_SELECTION: 'Selection unavailable',
+  PASS_MISSING_LINE: 'Line unavailable',
+  PASS_MISSING_PRICE: 'Price unavailable',
+  PASS_NO_MARKET_PRICE: 'Market price unavailable',
   PASS_DATA_ERROR: 'Data error \u2014 no play',
   WATCHDOG_CONSISTENCY_MISSING: 'Projection inputs missing',
   WATCHDOG_PARSE_FAILURE: 'Model data unavailable',

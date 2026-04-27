@@ -1,6 +1,9 @@
 import type { DecisionV2, FinalMarketDecision } from '../../types';
 import { getReasonCodeLabel } from '../reason-labels';
 
+const ENABLE_STALE_UI_SUPPRESSION =
+  process.env.NEXT_PUBLIC_SUPPRESS_STALE_UI !== 'false';
+
 // Canonical source: packages/data/src/reason-codes.js — MARKET_UNVERIFIED_CODES
 // Inlined here to avoid pulling the server-only @cheddar-logic/data package
 // (which depends on better-sqlite3) into the client bundle.
@@ -44,6 +47,10 @@ const PROJECTION_STALE_CODES = new Set([
 ]);
 
 // MARKET_UNVERIFIED_CODES imported from @cheddar-logic/data (canonical source)
+
+const STALE_SUPPRESSED_REASON_CODES = new Set([
+  'PASS_EXECUTION_GATE_STALE_SNAPSHOT',
+]);
 
 const PRIMARY_REASON_PRECEDENCE = [
   // Projection/input truth must win when missing core dependencies.
@@ -135,9 +142,16 @@ function mapModelStrength(playTier?: string | null): FinalMarketDecision['model_
   return null;
 }
 
-function mapSurfacedReason(primaryReasonCode?: string | null, passReasonCode?: string | null): string {
+function mapSurfacedReason(
+  primaryReasonCode?: string | null,
+  passReasonCode?: string | null,
+  surfacedStatus?: FinalMarketDecision['surfaced_status'],
+): string {
   const code = toToken(primaryReasonCode || passReasonCode);
   if (!code) return 'No edge at current price';
+  if (ENABLE_STALE_UI_SUPPRESSION && STALE_SUPPRESSED_REASON_CODES.has(code)) {
+    return surfacedStatus === 'PASS' ? 'No edge at current price' : 'Edge clear';
+  }
   const label = getReasonCodeLabel(code);
   if (label) return label;
   return 'No edge at current price';
@@ -238,7 +252,11 @@ export function buildFinalMarketDecision(input: BuildFinalMarketDecisionInput): 
 
   return {
     surfaced_status: surfacedStatus,
-    surfaced_reason: mapSurfacedReason(surfacedReasonCode, input.passReasonCode),
+    surfaced_reason: mapSurfacedReason(
+      surfacedReasonCode,
+      input.passReasonCode,
+      surfacedStatus,
+    ),
     model_strength: mapModelStrength(decisionV2?.play_tier),
     model_edge_pct: modelEdgePct,
     fair_price: fairPrice,

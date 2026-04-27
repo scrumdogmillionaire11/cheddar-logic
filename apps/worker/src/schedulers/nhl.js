@@ -32,6 +32,7 @@ const { syncNhlPlayerAvailability } = require('../jobs/sync_nhl_player_availabil
 const { pullNhlGoalieStarters } = require('../jobs/pull_nhl_goalie_starters');
 const { syncNhlSogPlayerIds } = require('../jobs/sync_nhl_sog_player_ids');
 const { pullNhlTeamStats } = require('../jobs/pull_nhl_team_stats');
+const { pullNhl1pOdds } = require('../jobs/pull_nhl_1p_odds');
 const { isFeatureEnabled } = require('@cheddar-logic/data/src/feature-flags');
 
 /**
@@ -123,6 +124,24 @@ function computeNhlDueJobs(nowEt, {
   for (const t of fixedTimes) {
     if (!isFixedDue(nowEt, t)) continue;
     maybeQueueTeamMetricsRefresh(`fixed ${t} ET`, 'nhl');
+
+    // Optional 1P pre-fetch: only when operator explicitly enables NHL_1P_ODDS_ENABLED.
+    if (
+      process.env.NHL_1P_ODDS_ENABLED === 'true' &&
+      !ENABLE_WITHOUT_ODDS_MODE &&
+      process.env.ENABLE_ODDS_PULL !== 'false' &&
+      quotaTier === 'FULL'
+    ) {
+      const onePJobKey = `pull_nhl_1p_odds|fixed|${t}|${nowEt.toISODate()}`;
+      jobs.push({
+        jobName: 'pull_nhl_1p_odds',
+        jobKey: onePJobKey,
+        execute: pullNhl1pOdds,
+        args: { dryRun },
+        reason: `pre-model NHL 1P odds refresh (fixed ${t} ET)`,
+      });
+    }
+
     const jobKey = keyFixed('nhl', nowEt, t);
     jobs.push({
       jobName: 'run_nhl_model',
@@ -146,6 +165,25 @@ function computeNhlDueJobs(nowEt, {
       maybeQueueTeamMetricsRefresh(`T-${mins} for ${g.game_id}`, 'nhl');
 
       const jobKey = keyTminus('nhl', g.game_id, mins);
+      if (
+        process.env.NHL_1P_ODDS_ENABLED === 'true' &&
+        !ENABLE_WITHOUT_ODDS_MODE &&
+        process.env.ENABLE_ODDS_PULL !== 'false' &&
+        quotaTier === 'FULL'
+      ) {
+        const onePOddsWindowKey = `nhl-1p|T-${mins}|${hourSlot}`;
+        if (claimTminusPullSlot('nhl', onePOddsWindowKey)) {
+          const onePJobKey = `pull_nhl_1p_odds|pre-model|nhl|T-${mins}`;
+          jobs.push({
+            jobName: 'pull_nhl_1p_odds',
+            jobKey: onePJobKey,
+            execute: pullNhl1pOdds,
+            args: { dryRun },
+            reason: `pre-model NHL 1P odds refresh (T-${mins}, nhl)`,
+          });
+        }
+      }
+
       // NHL is a projection-model sport: force fresh odds pull before T-minus model.
       // Deduped per sport per T-minus window via claimTminusPullSlot.
       if (

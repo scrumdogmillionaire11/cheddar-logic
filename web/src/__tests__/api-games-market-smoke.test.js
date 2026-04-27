@@ -74,10 +74,8 @@ async function runSourceContractAssertions(assert) {
     'Prop secondary dedupe must use a prop-family key, not generic PROP, so MLB pitcher K rows are not collapsed',
   );
   assert(
-    routeSource.includes('mergeMlbGameLineFallbackRows({') &&
-      routeSource.includes('API_GAMES_MLB_FALLBACK_MAX_AGE_MINUTES') &&
-      routeSource.includes('API_GAMES_MLB_FALLBACK_ODDS_TOLERANCE_MINUTES'),
-    'MLB full-game fallback merge must enforce bounded freshness for /api/games market-family coverage',
+    !routeSource.includes('cardRows = mergeMlbGameLineFallbackRows({'),
+    'MLB full-game fallback injection MUST be disabled (DEAD_CODE_CLEANUP) to prevent stale card injection from previous model runs',
   );
 }
 

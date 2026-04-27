@@ -89,6 +89,9 @@ import { buildFinalMarketDecision } from './decision-surface';
 const ENABLE_WELCOME_HOME =
   process.env.NEXT_PUBLIC_ENABLE_WELCOME_HOME === 'true';
 
+const ENABLE_STALE_UI_SUPPRESSION =
+  process.env.NEXT_PUBLIC_SUPPRESS_STALE_UI !== 'false';
+
 const TIER_SCORE: Record<DriverTier, number> = {
   BEST: 1,
   SUPER: 0.72,
@@ -121,6 +124,10 @@ const WAVE1_MARKETS = new Set<CanonicalMarketType>([
 const PROJECTION_ONLY_LINE_SOURCES = new Set<string>([
   'PROJECTION_FLOOR',
   'SYNTHETIC_FALLBACK',
+]);
+const MLB_PROJECTION_SURFACE_CARD_TYPES = new Set<string>([
+  'mlb-f5',
+  'mlb-f5-ml',
 ]);
 
 type ApiPropDisplayState = 'PLAY' | 'WATCH' | 'PROJECTION_ONLY';
@@ -950,8 +957,13 @@ function shouldSuppressNoActionableNonTotalPass(play: ApiPlay): boolean {
   return hasWeakSupportPass && hasEdgeSanityNonTotal;
 }
 
+function isMlbProjectionSurfacePlay(play: ApiPlay): boolean {
+  return MLB_PROJECTION_SURFACE_CARD_TYPES.has(normalizeCardType(play.cardType));
+}
+
 function isRenderableGameSurfacePlay(game: GameData, play: ApiPlay): boolean {
   return (
+    !isMlbProjectionSurfacePlay(play) &&
     !isProjectionOnlyCardPlay(play) &&
     !shouldSuppressNoActionableNonTotalPass(play) &&
     isPlayItem(play, game.sport) &&
@@ -964,6 +976,7 @@ function isProjectionOnlyGameSurfacePlay(
   play: ApiPlay,
 ): boolean {
   return (
+    !isMlbProjectionSurfacePlay(play) &&
     isProjectionOnlyCardPlay(play) &&
     isPlayItem(play, game.sport) &&
     play.market_type !== 'PROP'
@@ -975,6 +988,13 @@ function shouldExcludeProjectionOnlyGameSurface(game: GameData): boolean {
     isRenderableGameSurfacePlay(game, play),
   );
   if (hasRenderablePlay) return false;
+
+  const hasMlbProjectionSurfaceOnly = game.plays.some((play) =>
+    isMlbProjectionSurfacePlay(play) &&
+    isPlayItem(play, game.sport) &&
+    play.market_type !== 'PROP',
+  );
+  if (hasMlbProjectionSurfaceOnly) return true;
 
   const hasSuppressedNonTotalPass = game.plays.some((play) =>
     shouldSuppressNoActionableNonTotalPass(play) &&
@@ -1856,12 +1876,15 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
       projectionCoreMissingInputs.length > 0;
     const hasFeatureFreshnessFailure = featureFreshnessMissingInputs.length > 0;
     const missingMarketTypes = detectMissingMarketTypes(game);
+    const hasStaleMarketFailure =
+      !ENABLE_STALE_UI_SUPPRESSION &&
+      (marketStatus.freshnessTier === 'stale' ||
+        marketStatus.freshnessTier === 'expired');
     const hasMarketFailure =
       marketStatus.hasOdds === false ||
       marketMissingInputs.length > 0 ||
       missingMarketTypes.length > 0 ||
-      marketStatus.freshnessTier === 'stale' ||
-      marketStatus.freshnessTier === 'expired';
+      hasStaleMarketFailure;
     const noActionablePlayInputs = hasEvidenceOnly
       ? collectNoActionablePlayInputs(game)
       : [];

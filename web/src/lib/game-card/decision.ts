@@ -88,8 +88,6 @@ const DIRECTION_OPPOSITE: Partial<Record<Direction, Direction>> = {
   OVER: 'UNDER',
   UNDER: 'OVER',
 };
-const MLB_FULL_GAME_CARD_TYPES = new Set(['mlb-full-game', 'mlb-full-game-ml']);
-
 function normalizeText(value: unknown): string {
   if (typeof value !== 'string') return '';
   return value.trim();
@@ -119,68 +117,6 @@ function expressionStatusFromAction(
   return action;
 }
 
-function resolveLegacyDisplayAction(
-  play:
-    | {
-        action?: Play['action'];
-        classification?: Play['classification'];
-        status?: Play['status'];
-        final_market_decision?: Play['final_market_decision'];
-      }
-    | null
-    | undefined,
-): PlayDisplayAction | null {
-  const surfacedStatus = play?.final_market_decision?.surfaced_status;
-  if (surfacedStatus === 'PLAY') return 'FIRE';
-  if (surfacedStatus === 'SLIGHT EDGE') return 'HOLD';
-  if (surfacedStatus === 'PASS') return 'PASS';
-
-  if (play?.action === 'FIRE' || play?.classification === 'BASE') return 'FIRE';
-  if (play?.action === 'HOLD' || play?.classification === 'LEAN') return 'HOLD';
-  if (play?.action === 'PASS' || play?.classification === 'PASS') return 'PASS';
-  if (play?.status === 'FIRE') return 'FIRE';
-  if (play?.status === 'WATCH') return 'HOLD';
-  if (play?.status === 'PASS') return 'PASS';
-
-  return null;
-}
-
-function isMlbFullGameLegacyDisplayPlay(
-  play:
-    | {
-        cardType?: string;
-        market_type?: string;
-        decision_v2?: {
-          official_status?: 'PLAY' | 'LEAN' | 'PASS';
-          canonical_envelope_v2?: {
-            official_status?: 'PLAY' | 'LEAN' | 'PASS';
-          } | null;
-        } | null;
-        action?: Play['action'];
-        classification?: Play['classification'];
-        status?: Play['status'];
-        final_market_decision?: Play['final_market_decision'];
-      }
-    | null
-    | undefined,
-): boolean {
-  if (!play || play.decision_v2) return false;
-
-  const cardType = normalizeText(play.cardType).toLowerCase();
-  if (!MLB_FULL_GAME_CARD_TYPES.has(cardType)) return false;
-
-  const marketType = normalizeText(play.market_type).toUpperCase();
-  if (
-    marketType.length > 0 &&
-    marketType !== 'TOTAL' &&
-    marketType !== 'MONEYLINE'
-  ) {
-    return false;
-  }
-
-  return resolveLegacyDisplayAction(play) !== null;
-}
-
 export function resolvePlayDisplayDecision(
   play?:
     | {
@@ -201,16 +137,8 @@ export function resolvePlayDisplayDecision(
 ): ResolvedPlayDisplayDecision {
   // Only MLB full-game legacy rows bypass canonical read.
   // All other rows remain fail-closed on missing canonical decision_v2.
-  const legacyAction = isMlbFullGameLegacyDisplayPlay(play)
-    ? resolveLegacyDisplayAction(play)
-    : null;
-  if (legacyAction) {
-    return {
-      action: legacyAction,
-      status: expressionStatusFromAction(legacyAction),
-      classification: classificationFromAction(legacyAction),
-    };
-  }
+  // All cards must use canonical decision_v2.
+  // Cards without decision_v2 fail closed to PASS via readRuntimeCanonicalDecision.
 
   const authorityDecision = readRuntimeCanonicalDecision(
     {

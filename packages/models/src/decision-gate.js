@@ -1,4 +1,7 @@
 const nodeCrypto = require('crypto');
+const {
+  normalizeMarketType: normalizeCanonicalMarketType,
+} = require('../../data/src/market-contract');
 
 /**
  * Canonical edge contract for all gate and pipeline consumers.
@@ -37,15 +40,22 @@ function hasFiniteEdge(value) {
 }
 
 function normalizeMarketType(marketType, recommendedBetType) {
-  const raw = String(marketType || recommendedBetType || '').toLowerCase();
+  const source = marketType || recommendedBetType;
+  const raw = String(source || '').trim().toLowerCase();
+  if (!raw) return 'unknown';
+
   if (raw.includes('first_period') || raw.includes('1p')) return 'first_period';
-  if (raw.includes('total')) return 'total';
-  if (raw.includes('team_total') || raw.includes('team total'))
-    return 'team_total';
-  if (raw.includes('spread')) return 'spread';
-  if (raw.includes('puck_line') || raw.includes('puckline')) return 'puckline';
-  if (raw.includes('moneyline') || raw === 'ml') return 'moneyline';
+  if (raw.includes('team_total') || raw.includes('team total')) return 'team_total';
   if (raw.includes('prop')) return 'prop';
+  if (raw.includes('total')) return 'total';
+
+  if (raw.includes('puck_line') || raw.includes('puckline')) return 'puckline';
+
+  const canonical = normalizeCanonicalMarketType(source);
+  if (canonical === 'MONEYLINE') return 'moneyline';
+  if (canonical === 'SPREAD') return 'spread';
+  if (canonical === 'TOTAL') return 'total';
+
   return 'unknown';
 }
 

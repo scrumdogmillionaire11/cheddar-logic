@@ -380,4 +380,29 @@ console.log('🧪 final_market_decision contract tests');
   assert.equal(decision?.show_model_context, true);
 }
 
+
+
+{
+  const game = buildGame({
+    action: 'HOLD',
+    classification: 'LEAN',
+    status: 'WATCH',
+    decision_v2: {
+      official_status: 'LEAN',
+      sharp_price_status: 'CHEDDAR',
+      primary_reason_code: 'PASS_EXECUTION_GATE_STALE_SNAPSHOT',
+      play_tier: 'GOOD',
+      edge_delta_pct: 0.03,
+    },
+  });
+  const card = transformToGameCard(game);
+  const decision = card.play?.final_market_decision;
+  assert.equal(decision?.surfaced_status, 'SLIGHT EDGE');
+  assert.equal(
+    decision?.surfaced_reason,
+    'Edge clear',
+    'stale gate reason should be suppressed from surfaced_reason when card is still market-valid',
+  );
+}
+
 console.log('✅ final_market_decision contract tests passed');

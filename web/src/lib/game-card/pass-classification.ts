@@ -1,5 +1,8 @@
 import type { GameCard } from '@/lib/types';
 
+const ENABLE_STALE_UI_SUPPRESSION =
+  process.env.NEXT_PUBLIC_SUPPRESS_STALE_UI !== 'false';
+
 export type PassHeaderBucket =
   | 'odds-blocked'
   | 'data-error'
@@ -50,6 +53,26 @@ function getMissingInputs(card: GameCard): string[] {
   return card.play?.transform_meta?.missing_inputs ?? [];
 }
 
+function isSuppressedStaleOddsBlock(card: GameCard): boolean {
+  if (!ENABLE_STALE_UI_SUPPRESSION) return false;
+  const play = card.play;
+  if (!play) return false;
+  if (play.market_status?.has_odds !== true) return false;
+
+  const reasonCodes = getReasonCodes(card);
+  const passReasonCode = String(play.pass_reason_code || '').toUpperCase();
+  const gateCodes = reasonCodes
+    .map((code) => String(code || '').toUpperCase())
+    .filter((code) => code.startsWith('PASS_EXECUTION_GATE_'));
+
+  const staleCode = 'PASS_EXECUTION_GATE_STALE_SNAPSHOT';
+  const hasStalePassReason = passReasonCode === staleCode;
+  const hasStaleGateCode = gateCodes.includes(staleCode);
+  const allGateCodesAreStale = gateCodes.length > 0 && gateCodes.every((code) => code === staleCode);
+
+  return (hasStalePassReason || hasStaleGateCode) && (gateCodes.length === 0 || allGateCodesAreStale);
+}
+
 export function classifyPassHeaderBucket(card: GameCard): PassHeaderBucket | null {
   const play = card.play;
   if (!play) return null;
@@ -72,6 +95,7 @@ export function classifyPassHeaderBucket(card: GameCard): PassHeaderBucket | nul
     priceReasonCodes.includes('PROXY_EDGE_CAPPED') ||
     reasonCodes.some((code) => code.startsWith('PASS_EXECUTION_GATE_'))
   ) {
+    if (isSuppressedStaleOddsBlock(card)) return null;
     return 'odds-blocked';
   }
 

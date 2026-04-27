@@ -9,6 +9,7 @@ const MODEL_REASON_CODES = Object.freeze(new Set([
   'EDGE_FOUND',
   'EDGE_FOUND_SIDE',
   'PASS_NO_EDGE',
+  'PASS_MISSING_EDGE',
   'NO_EDGE_AT_PRICE',              // model threshold outcome, NOT a market condition
   'PASS_DRIVER_SUPPORT_WEAK',
   'PASS_CONFLICT_HIGH',
@@ -38,6 +39,10 @@ const DATA_REASON_CODES = Object.freeze(new Set([
   'MISSING_DATA_TEAM_MAPPING',
   'MISSING_DATA_NO_ODDS',
   'PASS_MISSING_DRIVER_INPUTS',
+  'PASS_MISSING_SELECTION',
+  'PASS_MISSING_LINE',
+  'PASS_MISSING_PRICE',
+  'PASS_NO_MARKET_PRICE',
   'PASS_DATA_ERROR',
   'WATCHDOG_CONSISTENCY_MISSING',
   'WATCHDOG_PARSE_FAILURE',
@@ -139,6 +144,7 @@ const REASON_CODE_SCHEMA_VERSION = 2;
 const REASON_CODE_LABELS = Object.freeze({
   // MODEL
   PASS_NO_EDGE: 'No edge',
+  PASS_MISSING_EDGE: 'Edge unavailable',
   NO_EDGE_AT_PRICE: 'Price too sharp',
   PASS_DRIVER_SUPPORT_WEAK: 'Driver support weak',
   PASS_CONFLICT_HIGH: 'Conflicting signals',
@@ -163,6 +169,10 @@ const REASON_CODE_LABELS = Object.freeze({
   MISSING_DATA_TEAM_MAPPING: 'Team mapping unresolved',
   MISSING_DATA_NO_ODDS: 'Odds unavailable',
   PASS_MISSING_DRIVER_INPUTS: 'Missing driver inputs',
+  PASS_MISSING_SELECTION: 'Selection unavailable',
+  PASS_MISSING_LINE: 'Line unavailable',
+  PASS_MISSING_PRICE: 'Price unavailable',
+  PASS_NO_MARKET_PRICE: 'Market price unavailable',
   PASS_DATA_ERROR: 'Data error — no play',
   WATCHDOG_CONSISTENCY_MISSING: 'Projection inputs missing',
   WATCHDOG_PARSE_FAILURE: 'Model data unavailable',

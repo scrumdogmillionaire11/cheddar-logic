@@ -10,7 +10,11 @@
 
 require('dotenv').config();
 
-const { getDatabase, withDb } = require('@cheddar-logic/data');
+const {
+  getDatabase,
+  normalizeMarketType,
+  withDb,
+} = require('@cheddar-logic/data');
 const { resolveNormalizedDecisionStatus } = require('@cheddar-logic/data/src');
 
 function toUpperToken(value) {
@@ -28,17 +32,6 @@ function parseJsonObject(value) {
   } catch {
     return {};
   }
-}
-
-function normalizeMarketType(value) {
-  const token = toUpperToken(value).replace(/[\s-]+/g, '_');
-  if (token === 'MONEYLINE' || token === 'ML' || token === 'H2H') {
-    return 'MONEYLINE';
-  }
-  if (token === 'TOTAL' || token === 'TOTALS' || token === 'OVER_UNDER' || token === 'OU') {
-    return 'TOTAL';
-  }
-  return token;
 }
 
 function resolveStrictStatus(payloadData) {

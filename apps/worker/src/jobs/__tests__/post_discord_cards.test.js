@@ -1927,6 +1927,36 @@ describe('WI-1039-A: market filter hygiene', () => {
     expect(normalizeMarketTag(potdCard)).toBe('POTD');
   });
 
+  test('normalizeMarketTag maps canonical moneyline aliases to ML', () => {
+    const h2hCard = {
+      id: 'market-h2h',
+      sport: 'NHL',
+      cardType: 'nhl-model-output',
+      payloadData: { market_type: 'h2h' },
+    };
+    expect(normalizeMarketTag(h2hCard)).toBe('ML');
+  });
+
+  test('normalizeMarketTag maps canonical total aliases to TOTAL', () => {
+    const ouCard = {
+      id: 'market-ou',
+      sport: 'NHL',
+      cardType: 'nhl-model-output',
+      payloadData: { market_type: 'ou' },
+    };
+    expect(normalizeMarketTag(ouCard)).toBe('TOTAL');
+  });
+
+  test('normalizeMarketTag does not misclassify MLB token text as ML', () => {
+    const mlbTotalCard = {
+      id: 'market-mlb-total',
+      sport: 'MLB',
+      cardType: 'mlb-full-game',
+      payloadData: { market_type: 'total' },
+    };
+    expect(normalizeMarketTag(mlbTotalCard)).toBe('TOTAL');
+  });
+
   test('POTD market tag bypasses allow-list filter', () => {
     const filtersOnlyTotal = { allowedSports: null, allowedMarkets: new Set(['TOTAL']), allowedBuckets: null, denyMarkets: null };
     const potdCard = {

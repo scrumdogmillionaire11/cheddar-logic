@@ -1,6 +1,6 @@
 # Deploy cheddarlogic.com on Raspberry Pi
 
-Self-host the entire stack on your Pi using PM2, nginx, and systemd.
+Self-host the entire stack on your Pi using systemd and nginx.
 
 ---
 
@@ -16,11 +16,12 @@ Self-host the entire stack on your Pi using PM2, nginx, and systemd.
 ## Architecture
 
 All services run on the Pi:
-- **Web (Next.js)**: Port 3000, managed by PM2
-- **FPL Backend (FastAPI)**: Port 8000, managed by PM2
+
+- **Web (Next.js)**: Port 3000, managed by systemd (`deploy/systemd/cheddar-web.service`)
+- **FPL Backend (FastAPI)**: Port 8000, managed by systemd (`deploy/systemd/cheddar-fpl-sage.service`)
 - **Worker**: Managed by systemd (`deploy/systemd/cheddar-worker.service`)
 - **Nginx**: Reverse proxy + SSL (ports 80/443)
-- **SQLite**: Local database at `/opt/cheddar-logic/packages/data/cheddar.db`
+- **SQLite**: Production database at `/opt/data/cheddar-prod.db`
 
 ---
 
@@ -42,12 +43,6 @@ sudo apt install -y python3 python3-pip python3-venv
 # Install nginx
 sudo apt install -y nginx
 
-# Install PM2 globally
-sudo npm install -g pm2
-
-# Setup PM2 to start on boot
-pm2 startup
-# Follow the command it outputs
 ```
 
 ### Create Deployment Directory
@@ -100,7 +95,7 @@ PUBLIC_DOMAIN=https://cheddarlogic.com
 
 # Database (SQLite on Pi)
 # Single source of truth for database path:
-CHEDDAR_DB_PATH=/opt/cheddar-logic/packages/data/cheddar.db
+CHEDDAR_DB_PATH=/opt/data/cheddar-prod.db
 
 # API routing
 FPL_API_BASE_URL=http://localhost:8000/api/v1
@@ -151,102 +146,70 @@ pip install -r config/requirements.txt
 ```bash
 cd /opt/cheddar-logic
 npm --prefix packages/data install --production
-CHEDDAR_DB_PATH=/opt/cheddar-logic/packages/data/cheddar.db npm --prefix packages/data run migrate
+CHEDDAR_DB_PATH=/opt/data/cheddar-prod.db npm --prefix packages/data run migrate
 
 # Verify schema
-sqlite3 /opt/cheddar-logic/packages/data/cheddar.db ".tables"
+sqlite3 /opt/data/cheddar-prod.db ".tables"
 
 # Seed cards if the UI is empty
-CHEDDAR_DB_PATH=/opt/cheddar-logic/packages/data/cheddar.db npm --prefix packages/data run seed:cards
+CHEDDAR_DB_PATH=/opt/data/cheddar-prod.db npm --prefix packages/data run seed:cards
 ```
 
 ---
 
-## 5) Configure PM2
-
-Create PM2 ecosystem file:
+## 5) Setup systemd services
 
 ```bash
-nano /opt/cheddar-logic/ecosystem.config.js
-```
-
-```javascript
-module.exports = {
-  apps: [
-    {
-      name: 'cheddar-web',
-      cwd: '/opt/cheddar-logic/web',
-      script: 'npm',
-      args: 'start',
-      env: {
-        NODE_ENV: 'production',
-        PORT: 3000,
-      },
-      env_file: '/opt/cheddar-logic/.env.production',
-      instances: 1,
-      exec_mode: 'fork',
-      autorestart: true,
-      watch: false,
-      max_memory_restart: '1G',
-    },
-    {
-      name: 'cheddar-fpl-api',
-      cwd: '/opt/cheddar-logic/cheddar-fpl-sage',
-      script: '/opt/cheddar-logic/cheddar-fpl-sage/venv/bin/uvicorn',
-      args: 'backend.main:app --host 0.0.0.0 --port 8000',
-      env: {
-        PYTHONPATH: '/opt/cheddar-logic/cheddar-fpl-sage:/opt/cheddar-logic/cheddar-fpl-sage/src',
-      },
-      env_file: '/opt/cheddar-logic/.env.production',
-      instances: 1,
-      exec_mode: 'fork',
-      autorestart: true,
-      watch: false,
-      max_memory_restart: '512M',
-    },
-  ],
-};
-```
-
-Start services:
-
-```bash
-cd /opt/cheddar-logic
-pm2 start ecosystem.config.js
-pm2 save
-```
-
-Verify:
-
-```bash
-pm2 status
-pm2 logs cheddar-web --lines 50
-pm2 logs cheddar-fpl-api --lines 50
-```
-
----
-
-## 6) Setup Worker (systemd)
-
-```bash
-# Copy service file
+# Copy service files
+sudo cp /opt/cheddar-logic/deploy/systemd/cheddar-web.service /etc/systemd/system/
 sudo cp /opt/cheddar-logic/deploy/systemd/cheddar-worker.service /etc/systemd/system/
+sudo cp /opt/cheddar-logic/deploy/systemd/cheddar-fpl-sage.service /etc/systemd/system/
 
-# Edit paths if needed
-sudo nano /etc/systemd/system/cheddar-worker.service
-
-# Ensure the worker uses the same DB path as the web app
-grep CHEDDAR_DB_PATH /etc/systemd/system/cheddar-worker.service || \
-  echo 'Environment="CHEDDAR_DB_PATH=/opt/cheddar-logic/packages/data/cheddar.db"'
+# Environment is loaded from /opt/cheddar-logic/.env.production
+# Confirm the canonical production DB path is set there.
+grep '^CHEDDAR_DB_PATH=' /opt/cheddar-logic/.env.production
 
 # Enable and start
 sudo systemctl daemon-reload
+sudo systemctl enable cheddar-web
 sudo systemctl enable cheddar-worker
+sudo systemctl enable cheddar-fpl-sage
+
 sudo systemctl start cheddar-worker
+sudo systemctl start cheddar-web
+sudo systemctl start cheddar-fpl-sage
 
 # Check status
-sudo systemctl status cheddar-worker
-sudo journalctl -u cheddar-worker -f
+sudo systemctl status cheddar-worker cheddar-web cheddar-fpl-sage --no-pager
+sudo journalctl -u cheddar-worker -n 50 --no-pager
+sudo journalctl -u cheddar-web -n 50 --no-pager
+sudo journalctl -u cheddar-fpl-sage -n 50 --no-pager
+```
+
+### Restart commands (current production)
+
+```bash
+# Preferred order after deploy or maintenance: writer first, then readers.
+sudo systemctl restart cheddar-worker
+sudo systemctl restart cheddar-web
+sudo systemctl restart cheddar-fpl-sage
+
+# Confirm all three are healthy
+sudo systemctl status cheddar-worker cheddar-web cheddar-fpl-sage --no-pager
+```
+
+### Worker stale-lock recovery
+
+Use this only when `cheddar-worker` is down and `/opt/data/cheddar-prod.db.lock` is stale.
+
+```bash
+sudo systemctl stop cheddar-worker.service
+ps -fp <old-pid> || true
+sudo rm -f /opt/data/cheddar-prod.db.lock
+sudo systemctl reset-failed cheddar-worker.service
+sudo systemctl start cheddar-worker
+sudo systemctl status cheddar-worker.service --no-pager
+journalctl -u cheddar-worker.service --since "2 minutes ago" --no-pager
 ```
 
 ---
@@ -336,12 +299,12 @@ sudo systemctl restart nginx
 
 Point your domain to the Pi's public IP:
 
-| Record | Type | Value |
-|--------|------|-------|
-| `@` | A | `your-pi-public-ip` |
-| `www` | CNAME | `@` |
+| Record | Type  | Value                |
+| :----- | :---- | :------------------- |
+| `@`    | A     | `your-pi-public-ip`  |
+| `www`  | CNAME | `@`                  |
 
-**Alternative: Cloudflare Tunnel (if behind NAT)**
+### Alternative: Cloudflare Tunnel (if behind NAT)
 
 If you can't open ports 80/443, use a **single production tunnel** in token mode and manage hostnames from **Published application routes** on that tunnel. Do **not** mix manual DNS edits, multiple production tunnels, or the Zero Trust **Networks → Routes** private-hostname/Gateway feature.
 
@@ -394,16 +357,17 @@ npm install --production
 npm run build
 
 # Restart services
-pm2 restart cheddar-web
+sudo systemctl restart cheddar-worker
+sudo systemctl restart cheddar-web
 
 # Restart backend if Python changed
 cd ../cheddar-fpl-sage
 source venv/bin/activate
 pip install -r config/requirements.txt
-pm2 restart cheddar-fpl-api
+sudo systemctl restart cheddar-fpl-sage
 
-# Restart worker if changed
-sudo systemctl restart cheddar-worker
+# Verify
+sudo systemctl status cheddar-worker cheddar-web cheddar-fpl-sage --no-pager
 ```
 
 Or create a deploy script:
@@ -430,11 +394,12 @@ source venv/bin/activate
 pip install -r config/requirements.txt
 
 echo "Restarting services..."
-pm2 restart all
 sudo systemctl restart cheddar-worker
+sudo systemctl restart cheddar-web
+sudo systemctl restart cheddar-fpl-sage
 
 echo "✓ Deploy complete"
-pm2 status
+sudo systemctl status cheddar-worker cheddar-web cheddar-fpl-sage --no-pager
 ```
 
 ```bash
@@ -448,13 +413,12 @@ chmod +x /opt/cheddar-logic/deploy.sh
 ### Check Services
 
 ```bash
-# PM2 apps
-pm2 status
-pm2 logs cheddar-web --lines 100
-pm2 logs cheddar-fpl-api --lines 100
+# App services
+sudo systemctl status cheddar-web cheddar-worker cheddar-fpl-sage --no-pager
+sudo journalctl -u cheddar-web -n 100 --no-pager
+sudo journalctl -u cheddar-fpl-sage -n 100 --no-pager
 
 # Worker
-sudo systemctl status cheddar-worker
 sudo journalctl -u cheddar-worker -f
 
 # Nginx
@@ -467,11 +431,12 @@ htop
 df -h
 ```
 
-### PM2 Monitoring
+### Service Monitoring
 
 ```bash
-pm2 monit  # Real-time monitoring
-pm2 logs   # Tail all logs
+sudo journalctl -u cheddar-web -f
+sudo journalctl -u cheddar-worker -f
+sudo journalctl -u cheddar-fpl-sage -f
 ```
 
 ---
@@ -479,38 +444,44 @@ pm2 logs   # Tail all logs
 ## Troubleshooting
 
 ### Web won't start
+
 ```bash
 cd /opt/cheddar-logic/web
 npm run build  # Check for build errors
 PORT=3000 npm start  # Test manually
-pm2 logs cheddar-web --lines 200
+sudo journalctl -u cheddar-web -n 200 --no-pager
+sudo systemctl restart cheddar-web
 ```
 
 ### Backend API errors
+
 ```bash
 cd /opt/cheddar-logic/cheddar-fpl-sage
 source venv/bin/activate
 PYTHONPATH=.:$PWD/src uvicorn backend.main:app --host 0.0.0.0 --port 8000
-# Check errors, then restart PM2
-pm2 restart cheddar-fpl-api
+# Check errors, then restart the service
+sudo systemctl restart cheddar-fpl-sage
 ```
 
 ### Worker not pulling data
+
 ```bash
 sudo journalctl -u cheddar-worker -n 200
 # Check ODDS_API_KEY in .env.production
 ```
 
 ### SSL certificate renewal
+
 ```bash
 sudo certbot renew --dry-run  # Test renewal
 sudo systemctl status certbot.timer  # Auto-renewal timer
 ```
 
 ### Out of disk space
+
 ```bash
-# Clean old PM2 logs
-pm2 flush
+# Trim old systemd journals
+sudo journalctl --vacuum-time=7d
 
 # Clean apt cache
 sudo apt clean
@@ -531,12 +502,16 @@ sudo du -h /opt/cheddar-logic | sort -h | tail -20
 NEXT_TELEMETRY_DISABLED=1
 ```
 
-### Reduce PM2 Memory
+### Service memory limits
 
-Edit `ecosystem.config.js`:
-```javascript
-max_memory_restart: '512M',  // Lower for Pi 4GB
+Tune the systemd service units instead of PM2:
+
+```bash
+sudo systemctl edit cheddar-web
+sudo systemctl edit cheddar-worker
 ```
+
+Then set overrides such as `MemoryLimit=` and restart the affected service.
 
 ### Add Swap (if Pi has <4GB RAM)
 
@@ -565,7 +540,7 @@ DATE=$(date +%Y%m%d_%H%M%S)
 mkdir -p "$BACKUP_DIR"
 
 # Backup database
-cp /opt/cheddar-logic/packages/data/cheddar.db "$BACKUP_DIR/cheddar_$DATE.db"
+cp /opt/data/cheddar-prod.db "$BACKUP_DIR/cheddar_$DATE.db"
 
 # Backup env
 cp /opt/cheddar-logic/.env.production "$BACKUP_DIR/env_$DATE.txt"
@@ -588,16 +563,17 @@ crontab -e
 
 ## Quick Reference
 
-| Service | Command | Port |
-|---------|---------|------|
-| Web | `pm2 restart cheddar-web` | 3000 |
-| FPL API | `pm2 restart cheddar-fpl-api` | 8000 |
-| Worker | `sudo systemctl restart cheddar-worker` | - |
-| Nginx | `sudo systemctl restart nginx` | 80/443 |
-| Deploy | `/opt/cheddar-logic/deploy.sh` | - |
-| Logs | `pm2 logs` | - |
+| Service | Command                                    | Port   |
+| :------ | :----------------------------------------- | :----- |
+| Web     | `sudo systemctl restart cheddar-web`       | 3000   |
+| FPL API | `sudo systemctl restart cheddar-fpl-sage`  | 8000   |
+| Worker  | `sudo systemctl restart cheddar-worker`    | -      |
+| Nginx   | `sudo systemctl restart nginx`             | 80/443 |
+| Deploy  | `/opt/cheddar-logic/deploy.sh`             | -      |
+| Logs    | `sudo journalctl -u <service> -f`          | -      |
 
 **Test URLs:**
-- http://localhost:3000 (web direct)
-- http://localhost:8000/api/v1/health (API direct)
-- https://cheddarlogic.com (public)
+
+- <http://localhost:3000> (web direct)
+- <http://localhost:8000/api/v1/health> (API direct)
+- <https://cheddarlogic.com> (public)
