@@ -258,32 +258,15 @@ jobs:
               retry_npm_install "web full install" npm --prefix web install --include=dev --build-from-source=better-sqlite3
               echo "$WEB_LOCK_HASH" > "$WEB_LOCK_STAMP"
             fi
-            # Resolve canonical DB path from prod env (supports CHEDDAR_DB_PATH or CHEDDAR_DATA_DIR)
+            # Resolve canonical DB path from prod env.
+            # Production must set CHEDDAR_DB_PATH explicitly.
             set -a; . /opt/cheddar-logic/.env.production; set +a
-            if [ -z "${CHEDDAR_DB_PATH:-}" ] && [ -z "${CHEDDAR_DATA_DIR:-}" ]; then
-              echo "ERROR: Neither CHEDDAR_DB_PATH nor CHEDDAR_DATA_DIR set in /opt/cheddar-logic/.env.production"
+            if [ -z "${CHEDDAR_DB_PATH:-}" ]; then
+              echo "ERROR: CHEDDAR_DB_PATH is not set in /opt/cheddar-logic/.env.production"
               exit 1
             fi
-            # Resolve the actual database path (with timeout to prevent hanging)
-            echo "Resolving database path..."
-            TIMEOUT=5
-            CANONICAL_DB_PATH=$(timeout $TIMEOUT node -e "const { resolveDatabasePath } = require('/opt/cheddar-logic/packages/data/src/db-path'); const result = resolveDatabasePath(); console.log(result.dbPath);" 2>&1 || echo "")
-            if [ -z "$CANONICAL_DB_PATH" ] || [ "$CANONICAL_DB_PATH" = "timeout" ]; then
-              # Fallback: if path resolution times out or fails, use explicit fallback.
-              # IMPORTANT: CHEDDAR_DB_PATH must always be set in .env.production.
-              # The CHEDDAR_DATA_DIR branch is intentionally removed: it previously
-              # constructed "${CHEDDAR_DATA_DIR}/cheddar.db" which is WRONG when the
-              # production DB is named cheddar-prod.db. Never guess the filename.
-              if [ -n "${CHEDDAR_DB_PATH:-}" ]; then
-                CANONICAL_DB_PATH="$CHEDDAR_DB_PATH"
-                echo "Path resolution timed out, using CHEDDAR_DB_PATH: $CANONICAL_DB_PATH"
-              else
-                echo "ERROR: Could not resolve database path. CHEDDAR_DB_PATH must be set in .env.production."
-                exit 1
-              fi
-            else
-              echo "Resolved database path: $CANONICAL_DB_PATH"
-            fi
+            CANONICAL_DB_PATH="$CHEDDAR_DB_PATH"
+            echo "Resolved database path: $CANONICAL_DB_PATH"
             sudo mkdir -p "$(dirname "$CANONICAL_DB_PATH")"
             if ! sudo chown "$(id -u):$(id -g)" "$(dirname "$CANONICAL_DB_PATH")"; then
               echo "WARNING: Unable to chown DB directory $(dirname "$CANONICAL_DB_PATH") — continuing"
