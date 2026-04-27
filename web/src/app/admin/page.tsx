@@ -154,14 +154,17 @@ function formatAge(ts: string) {
 
 const STALE_THRESHOLD_MS = 35 * 60 * 1000;
 
+function healthIdentity(row: Pick<PipelineHealthRow, 'phase' | 'check_name' | 'check_id'>): string {
+  return row.check_id && row.check_id.length > 0
+    ? row.check_id
+    : `${row.phase}:${row.check_name}`;
+}
+
 function computeStreak(
   rows: PipelineHealthRow[],
-  phase: string,
-  checkName: string,
+  identity: string,
 ): number {
-  const filtered = rows.filter(
-    (r) => r.phase === phase && r.check_name === checkName,
-  );
+  const filtered = rows.filter((r) => healthIdentity(r) === identity);
   if (filtered.length === 0) return 0;
   const currentStatus = filtered[0].status.toLowerCase();
   let streak = 1;
@@ -204,14 +207,14 @@ function StreakBadge({ status, streak }: { status: string; streak: number }) {
 }
 
 /**
- * Derive the single latest row per (phase, check_name) combination.
+ * Derive the single latest row per logical health identity.
  * Since rows are already ordered newest-first from the API, first-seen wins.
  */
 function buildSnapshot(rows: PipelineHealthRow[]): PipelineHealthRow[] {
   const seen = new Set<string>();
   const snapshot: PipelineHealthRow[] = [];
   for (const row of rows) {
-    const key = `${row.phase}:${row.check_name}`;
+    const key = healthIdentity(row);
     if (!seen.has(key)) {
       seen.add(key);
       snapshot.push(row);
@@ -603,12 +606,12 @@ export default function AdminPage() {
               >
                 <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
                   {snapshot.map((row) => {
-                    const streak = computeStreak(health, row.phase, row.check_name);
+                    const streak = computeStreak(health, healthIdentity(row));
                     const stale = isStale(row.created_at);
                     const lifecycle = lifecycleLabel(row);
                     return (
                       <div
-                        key={`${row.phase}:${row.check_name}`}
+                        key={healthIdentity(row)}
                         className={`flex flex-col gap-1 rounded-lg border border-white/8 bg-surface/60 px-3 py-2 ${stale ? 'opacity-50' : ''}`}
                         title={row.reason ?? ''}
                       >
