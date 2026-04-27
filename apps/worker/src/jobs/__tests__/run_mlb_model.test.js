@@ -3175,11 +3175,6 @@ describe('multi-market insertion (IME-01-03)', () => {
     }
 
     jest.doMock('@cheddar-logic/data', () => dataMocks);
-    jest.doMock('@cheddar-logic/adapters', () => ({
-      f5LineFetcher: {
-        fetchF5LineFromVsin: jest.fn(async () => null),
-      },
-    }));
     jest.doMock('@cheddar-logic/odds/src/config', () => ({
       SPORTS_CONFIG: { MLB: { active: true } },
     }));
@@ -3640,9 +3635,6 @@ describe('runMLBModel without-odds mode selection', () => {
     }));
     jest.doMock('@cheddar-logic/odds/src/config', () => ({
       SPORTS_CONFIG: { MLB: { active: true } },
-    }));
-    jest.doMock('@cheddar-logic/adapters', () => ({
-      f5LineFetcher: { fetchF5LineFromVsin: jest.fn(async () => null) },
     }));
     jest.doMock('../../models', () => ({
       getModel: jest.fn(() => ({ name: 'mock-mlb-model' })),

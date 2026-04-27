@@ -288,12 +288,6 @@ function loadRunMlbModel({
     setLeagueConstants: jest.fn(),
   }));
 
-  jest.doMock('@cheddar-logic/adapters', () => ({
-    f5LineFetcher: {
-      fetchF5LineFromVsin: jest.fn(async () => null),
-    },
-  }));
-
   // Mock the odds config so MLB active:false in the real config doesn't force
   // withoutOddsMode=true on tests that expect odds-mode behavior.
   jest.doMock('@cheddar-logic/odds/src/config', () => ({
