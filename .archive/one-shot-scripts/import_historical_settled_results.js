@@ -22,7 +22,7 @@ require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
 const nodeCrypto = require('crypto');
-const dbBackup = require('../utils/db-backup.js');
+const dbBackup = require('../../apps/worker/src/utils/db-backup.js');
 const {
   deriveLockedMarketContext,
   resolveDatabasePath,
