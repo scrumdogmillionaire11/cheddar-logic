@@ -12,6 +12,7 @@ const {
   withDb,
   getDatabase,
   createJob,
+  normalizeMarketType: normalizeCanonicalMarketType,
 } = require('@cheddar-logic/data');
 const {
   isWebhookLeanEligible,
@@ -814,20 +815,29 @@ function normalizeMarketTag(card) {
   const payload = card?.payloadData || {};
   const cardType = String(card?.cardType || '').toLowerCase();
   const marketType = String(payload?.market_type || '').toLowerCase();
+  const recommendedBetType = String(payload?.recommended_bet_type || '').toLowerCase();
   const marketKey = String(payload?.market_key || '').toLowerCase();
-  const token = `${marketType} ${marketKey} ${cardType}`;
+  const token = `${marketType} ${recommendedBetType} ${marketKey} ${cardType}`;
 
   // POTD must be checked before partial-match rules (e.g. total) to avoid false matches
   if (cardType === 'potd-call' || cardType === 'potd') return 'POTD';
 
-  if (token.includes('asian_handicap') || token.includes('spread') || token.includes('handicap')) return 'Spread';
-  if (token.includes('moneyline') || token.includes(':h2h') || token.includes('ml')) return 'ML';
   if (token.includes('team_total')) return 'TEAM TOTAL';
   if (token.includes('tsoa')) return 'TSOA';
   if (token.includes('anytime')) return 'ANYTIME';
   if (token.includes('sot')) return 'SOT';
   if (token.includes('shots')) return 'SHOTS';
   if (token.includes('1p') || token.includes('first_period')) return '1P';
+
+  const canonicalMarketType = normalizeCanonicalMarketType(
+    payload?.market_type || payload?.recommended_bet_type,
+  );
+  if (canonicalMarketType === 'SPREAD') return 'Spread';
+  if (canonicalMarketType === 'MONEYLINE') return 'ML';
+  if (canonicalMarketType === 'TOTAL') return 'TOTAL';
+
+  if (token.includes('asian_handicap') || token.includes('spread') || token.includes('handicap')) return 'Spread';
+  if (token.includes('moneyline') || token.includes(':h2h') || /(^|[^a-z0-9])ml([^a-z0-9]|$)/.test(token)) return 'ML';
   if (token.includes('total') || token.includes('over_under') || token.includes(':totals')) return 'TOTAL';
 
   return normalizeToken(payload?.market_type || card?.cardType || 'MARKET');

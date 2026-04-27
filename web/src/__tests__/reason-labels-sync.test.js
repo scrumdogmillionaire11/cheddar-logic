@@ -18,6 +18,7 @@ async function run() {
     REASON_CODE_LABELS: inlinedLabels,
     getReasonCodeLabel,
   } = await import('../lib/game-card/reason-labels.ts');
+  const { PASS_REASON_ALIAS_MAP } = await import('../lib/game-card/transform/reason-codes.ts');
 
   let passed = 0;
   let failed = 0;
@@ -48,6 +49,19 @@ async function run() {
     'every bucketed reason code has a canonical label',
     unlabeled.length === 0,
     unlabeled.length > 0 ? `unlabeled: ${unlabeled.join(', ')}` : '',
+  );
+
+  const canonicalSet = new Set(ALL_REASON_CODES);
+  const aliasTargets = Object.values(PASS_REASON_ALIAS_MAP);
+  const unregisteredAliasTargets = aliasTargets.filter(
+    (code) => !canonicalSet.has(code),
+  );
+  check(
+    'PASS_REASON_ALIAS_MAP targets are registered canonical reason codes',
+    unregisteredAliasTargets.length === 0,
+    unregisteredAliasTargets.length > 0
+      ? `unregistered targets: ${unregisteredAliasTargets.join(', ')}`
+      : '',
   );
 
   check(
