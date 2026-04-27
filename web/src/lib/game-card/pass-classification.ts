@@ -43,6 +43,22 @@ const DATA_ERROR_PASS_CODES = new Set([
   'PASS_TOTAL_INSUFFICIENT_DATA',
   'PASS_MISSING_DRIVER_INPUTS',
   'PASS_NO_ACTIONABLE_PLAY',
+  'MISSING_DATA_PROJECTION_INPUTS',
+  'MISSING_DATA_DRIVERS',
+  'MISSING_DATA_TEAM_MAPPING',
+  'MISSING_DATA_MARKET_TYPES',
+]);
+
+const ODDS_BLOCKED_PASS_CODES = new Set([
+  'MISSING_DATA_NO_ODDS',
+  'WATCHDOG_MARKET_UNAVAILABLE',
+  'MARKET_PRICE_MISSING',
+  'PASS_NO_MARKET_PRICE',
+  'PASS_MISSING_PRICE',
+]);
+
+const PROJECTION_ONLY_PASS_CODES = new Set([
+  'PROJECTION_ONLY_EXCLUSION',
 ]);
 
 function getReasonCodes(card: GameCard): string[] {
@@ -99,6 +115,21 @@ export function classifyPassHeaderBucket(card: GameCard): PassHeaderBucket | nul
     return 'odds-blocked';
   }
 
+  if (reasonCodes.some((code) => ODDS_BLOCKED_PASS_CODES.has(code))) {
+    return 'odds-blocked';
+  }
+
+  if (reasonCodes.some((code) => PROJECTION_ONLY_PASS_CODES.has(code))) {
+    return 'projection-only';
+  }
+
+  if (
+    reasonCodes.length > 0 &&
+    reasonCodes.every((code) => code === 'PASS_NO_ACTIONABLE_PLAY')
+  ) {
+    return null;
+  }
+
   if (
     play.transform_meta?.quality === 'BROKEN' ||
     reasonCodes.some((code) => DATA_ERROR_PASS_CODES.has(code))
@@ -106,7 +137,7 @@ export function classifyPassHeaderBucket(card: GameCard): PassHeaderBucket | nul
     return 'data-error';
   }
 
-  if (reasonCodes.length > 0) return 'odds-blocked';
+  if (reasonCodes.length > 0) return 'data-error';
 
   return null;
 }

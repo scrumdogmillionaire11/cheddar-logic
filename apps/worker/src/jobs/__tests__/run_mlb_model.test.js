@@ -3175,11 +3175,6 @@ describe('multi-market insertion (IME-01-03)', () => {
     }
 
     jest.doMock('@cheddar-logic/data', () => dataMocks);
-    jest.doMock('@cheddar-logic/adapters', () => ({
-      f5LineFetcher: {
-        fetchF5LineFromVsin: jest.fn(async () => null),
-      },
-    }));
     jest.doMock('@cheddar-logic/odds/src/config', () => ({
       SPORTS_CONFIG: { MLB: { active: true } },
     }));
@@ -3414,6 +3409,67 @@ describe('multi-market insertion (IME-01-03)', () => {
     ).toBe(true);
   });
 
+  test('full-game MLB payloads surface splits divergence market intel when available', async () => {
+    const gameDriverCards = [
+      {
+        market: 'full_game_total',
+        prediction: 'OVER',
+        confidence: 0.76,
+        ev_threshold_passed: true,
+        status: 'FIRE',
+        action: 'FIRE',
+        classification: 'BASE',
+        reasoning: 'Totals edge with public-heavy home splits',
+        reason_codes: [],
+        missing_inputs: [],
+        projection_source: 'FULL_MODEL',
+        projection: { projected_total: 9.1 },
+        drivers: [{ projected: 9.1, edge: 0.7 }],
+      },
+      {
+        market: 'full_game_ml',
+        prediction: 'HOME',
+        confidence: 0.64,
+        ev_threshold_passed: true,
+        status: 'WATCH',
+        action: 'WATCH',
+        classification: 'LEAN',
+        reasoning: 'Moneyline lean with public-heavy home splits',
+        reason_codes: [],
+        missing_inputs: [],
+        projection_source: 'FULL_MODEL',
+        drivers: [{ edge: 0.09, win_prob_home: 0.58 }],
+      },
+    ];
+
+    const snapshotWithSplits = {
+      ...BASE_SNAPSHOT,
+      public_bets_pct_home: 72,
+      public_bets_pct_away: 28,
+      circa_handle_pct_home: 40,
+      dk_bets_pct_home: 70,
+    };
+
+    const { result, dataMocks } = await runImeScenario({
+      gameDriverCards,
+      snapshot: snapshotWithSplits,
+    });
+
+    expect(result.success).toBe(true);
+    const byType = new Map(
+      dataMocks.insertCardPayload.mock.calls.map(([card]) => [card.cardType, card.payloadData]),
+    );
+    const totalPayload = byType.get('mlb-full-game');
+    const mlPayload = byType.get('mlb-full-game-ml');
+    expect(totalPayload).toBeDefined();
+    expect(mlPayload).toBeDefined();
+
+    expect(totalPayload.splits_divergence).toBe('PUBLIC_HEAVY_HOME');
+    expect(totalPayload.sharp_divergence).toBe('SHARP_VS_PUBLIC');
+    expect(mlPayload.splits_divergence).toBe('PUBLIC_HEAVY_HOME');
+    expect(mlPayload.sharp_divergence).toBe('SHARP_VS_PUBLIC');
+  });
+
   test('active MLB odds config does not mark full-game cards as without-odds', async () => {
     const gameDriverCards = [
       {
@@ -3640,9 +3696,6 @@ describe('runMLBModel without-odds mode selection', () => {
     }));
     jest.doMock('@cheddar-logic/odds/src/config', () => ({
       SPORTS_CONFIG: { MLB: { active: true } },
-    }));
-    jest.doMock('@cheddar-logic/adapters', () => ({
-      f5LineFetcher: { fetchF5LineFromVsin: jest.fn(async () => null) },
     }));
     jest.doMock('../../models', () => ({
       getModel: jest.fn(() => ({ name: 'mock-mlb-model' })),

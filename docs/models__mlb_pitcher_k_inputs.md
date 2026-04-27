@@ -114,9 +114,8 @@ migration can be filed as a separate serialized DB WI if desired.
 
 ---
 
-## Deprecated fields (WI-0763 traceability — retained for audit compat)
+## Deprecated fields (WI-0763 traceability)
 
-These fields are still present in the `calculateProjectionK` return object but
 The deprecated WI-0763 traceability fields (`bb_pct_from_logs`, `bb_pct_adjustment`,
 `home_away_adj`) were removed in WI-1173 after confirming they had no remaining
 in-repo runtime consumers.

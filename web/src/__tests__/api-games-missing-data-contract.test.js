@@ -138,8 +138,9 @@ assert(
   gamesRouteHandlerSource.includes('if (activeRunIds.length > 0)') &&
     gamesRouteHandlerSource.includes('const missingGameIds = allQueryableIds.filter(') &&
     gamesRouteHandlerSource.includes('mergePropFallbackRows({') &&
-    gamesRouteHandlerSource.includes('// DISABLED (DEAD_CODE_CLEANUP): MLB game-line fallback injection removed'),
-  '/api/games should use prop fallbacks but NOT MLB game-line fallback injection (DEAD_CODE_CLEANUP)',
+    gamesRouteHandlerSource.includes('mergeMlbGameLineFallbackRows({') &&
+    gamesRouteHandlerSource.includes('isEligibleMlbGameLineFallbackRow'),
+  '/api/games should merge prop fallbacks and guarded MLB game-line fallbacks when active runs are partial',
 );
 
 assert(

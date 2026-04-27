@@ -14,7 +14,11 @@
  * Env:
  * - ENABLE_PIPELINE_HEALTH_WATCHDOG (default: true — set to 'false' to disable)
  * - PIPELINE_HEALTH_INTERVAL_MINUTES (default: 5)
- * - ODDS_FRESHNESS_MAX_AGE_MINUTES (default: slot + 15 minutes, minimum 15)
+ * - LIVE_ODDS_HEALTH_MAX_AGE_MINUTES (default: slot + 15 minutes, minimum 15)
+ *     Intentionally independent from execution-gate hardMaxMinutes (120 min).
+ *     The watchdog monitors live odds pipeline health right now; execution gate
+ *     decides whether a model write was acceptable at card-generation time.
+ *     Keeping this tighter (default ~75 min) preserves early-warning fidelity.
  * - CARDS_FRESHNESS_MAX_AGE_MINUTES (default: 30; informational stale-card age only)
  */
 
@@ -43,8 +47,15 @@ const { refreshStaleOdds } = require('./refresh_stale_odds');
 // is 180 (April 2026 budget mode) a hardcoded 15-min threshold fires on every
 // check. Default: slot + 15 min buffer, minimum 15 min.
 const ODDS_FETCH_SLOT_MINUTES = Number(process.env.ODDS_FETCH_SLOT_MINUTES || 60);
-const ODDS_FRESHNESS_MAX_AGE_MINUTES = Number(
-  process.env.ODDS_FRESHNESS_MAX_AGE_MINUTES || Math.max(15, ODDS_FETCH_SLOT_MINUTES + 15),
+// Intentionally NOT derived from execution-gate hardMaxMinutes (120 min).
+// This is a live watchdog threshold for current odds pipeline health, not a
+// per-card execution gate. Default: slot + 15 min buffer (≈75 min at 60-min cadence).
+// card_payload.freshness_tier records what was true at card-generation time and
+// must not be read here — it is historical metadata, not a live health signal.
+const LIVE_ODDS_HEALTH_MAX_AGE_MINUTES = Number(
+  process.env.LIVE_ODDS_HEALTH_MAX_AGE_MINUTES ||
+  process.env.ODDS_FRESHNESS_MAX_AGE_MINUTES ||
+  Math.max(15, ODDS_FETCH_SLOT_MINUTES + 15),
 );
 const ODDS_FRESHNESS_ALERT_WINDOW_HOURS = Number(
   process.env.ODDS_FRESHNESS_ALERT_WINDOW_HOURS || Math.max(2, Math.ceil(ODDS_FETCH_SLOT_MINUTES / 60)),
@@ -240,7 +251,7 @@ async function checkOddsFreshness() {
     const ageMinutes = capturedAt
       ? nowUtc.diff(capturedAt, 'minutes').minutes
       : null;
-    const isStale = !capturedAt || ageMinutes > ODDS_FRESHNESS_MAX_AGE_MINUTES;
+    const isStale = !capturedAt || ageMinutes > LIVE_ODDS_HEALTH_MAX_AGE_MINUTES;
 
     gamesWithFreshness.push({
       ...game,
@@ -287,7 +298,7 @@ async function checkOddsFreshness() {
       : '';
 
   if (quotaConstrained) {
-    const reason = `${staleGames.length}/${dedupedGames.length} games within T-6h have stale odds (>${ODDS_FRESHNESS_MAX_AGE_MINUTES}m old; alert window T-${ODDS_FRESHNESS_ALERT_WINDOW_HOURS}h) — odds fetch paused (quota tier: ${quotaTier})${duplicateSuffix}`;
+    const reason = `${staleGames.length}/${dedupedGames.length} games within T-6h have stale odds (>${LIVE_ODDS_HEALTH_MAX_AGE_MINUTES}m old; alert window T-${ODDS_FRESHNESS_ALERT_WINDOW_HOURS}h) — odds fetch paused (quota tier: ${quotaTier})${duplicateSuffix}`;
     writePipelineHealth('odds', 'freshness', 'warning', reason);
     return {
       ok: false,
@@ -301,7 +312,7 @@ async function checkOddsFreshness() {
   }
 
   if (staleNearTerm.length === 0) {
-    const reason = `${staleGames.length}/${dedupedGames.length} games within T-6h have stale odds (>${ODDS_FRESHNESS_MAX_AGE_MINUTES}m old) but none within alert window T-${ODDS_FRESHNESS_ALERT_WINDOW_HOURS}h${duplicateSuffix}`;
+    const reason = `${staleGames.length}/${dedupedGames.length} games within T-6h have stale odds (>${LIVE_ODDS_HEALTH_MAX_AGE_MINUTES}m old) but none within alert window T-${ODDS_FRESHNESS_ALERT_WINDOW_HOURS}h${duplicateSuffix}`;
     writePipelineHealth('odds', 'freshness', 'warning', reason);
     return {
       ok: false,
@@ -334,7 +345,7 @@ async function checkOddsFreshness() {
       .get(game.game_id);
     const capturedAt = latest?.captured_at ? DateTime.fromISO(latest.captured_at, { zone: 'utc' }) : null;
     const ageMinutes = capturedAt ? nowUtcAfter.diff(capturedAt, 'minutes').minutes : null;
-    return !capturedAt || ageMinutes > ODDS_FRESHNESS_MAX_AGE_MINUTES;
+    return !capturedAt || ageMinutes > LIVE_ODDS_HEALTH_MAX_AGE_MINUTES;
   });
 
   const remSuffix = `remediation: detected=${remediationDiag.detected} refreshed=${remediationDiag.refreshed} blocked=${remediationDiag.blocked}`;
@@ -1806,6 +1817,26 @@ function buildHealthAlertMessage(failedChecks) {
   return lines.join('\n');
 }
 
+function writeOverallDegradedState(results) {
+  const failingChecks = Object.entries(results)
+    .filter(([, result]) => result && result.ok === false)
+    .map(([checkName]) => checkName);
+
+  if (failingChecks.length === 0) {
+    writePipelineHealth('watchdog', 'degraded_state', 'ok', 'Pipeline healthy: all checks passed');
+    return;
+  }
+
+  const summary = failingChecks.slice(0, 6).join(', ');
+  const suffix = failingChecks.length > 6 ? ` (+${failingChecks.length - 6} more)` : '';
+  writePipelineHealth(
+    'watchdog',
+    'degraded_state',
+    'failed',
+    `Pipeline degraded: ${failingChecks.length} failing check(s): ${summary}${suffix}`,
+  );
+}
+
 /**
  * Self-check: alert when check_pipeline_health hasn't run successfully in > 2h.
  * Writes a pipeline_health row with phase='watchdog', check_name='heartbeat'.
@@ -1913,6 +1944,10 @@ async function checkPipelineHealth({ jobKey, dryRun }) {
         allOk = false;
       }
     }
+
+    // Persist a run-level degraded/healthy state so the latest system posture is
+    // visible even after worker restarts.
+    writeOverallDegradedState(results);
 
     // --- Discord watchdog alert ---
     if (process.env.ENABLE_PIPELINE_HEALTH_WATCHDOG !== 'false' && !allOk) {
@@ -2094,6 +2129,7 @@ function checkNhlMoneyPuckBlkRatesFreshness() {
 
 module.exports = {
   writePipelineHealth,
+  writeOverallDegradedState,
   checkPipelineHealth,
   checkNhlSogSyncFreshness,
   checkNhlSogPullFreshness,

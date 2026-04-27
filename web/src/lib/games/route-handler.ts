@@ -1073,6 +1073,42 @@ export function mergeMlbGameLineFallbackRows(params: {
   return [...currentRows, ...selectedFallbackRows.values()];
 }
 
+function mergePropFallbackRows(params: {
+  currentRows: CardPayloadRow[];
+  fallbackRows: CardPayloadRow[];
+  externalToCanonicalMap: Map<string, string>;
+}): CardPayloadRow[] {
+  const { currentRows, fallbackRows, externalToCanonicalMap } = params;
+
+  const semanticKeys = new Set<string>();
+  const mergedRows = [...currentRows];
+
+  for (const row of currentRows) {
+    const cardType = String(row.card_type || '').trim().toLowerCase();
+    if (!PROP_FALLBACK_CARD_TYPES.has(cardType)) continue;
+    const canonicalGameId = externalToCanonicalMap.get(row.game_id) ?? row.game_id;
+    semanticKeys.add(`${canonicalGameId}|${cardType}|${row.card_title}`);
+  }
+
+  for (const row of fallbackRows) {
+    const cardType = String(row.card_type || '').trim().toLowerCase();
+    if (!PROP_FALLBACK_CARD_TYPES.has(cardType)) continue;
+
+    const canonicalGameId = externalToCanonicalMap.get(row.game_id) ?? row.game_id;
+    const semanticKey = `${canonicalGameId}|${cardType}|${row.card_title}`;
+    if (semanticKeys.has(semanticKey)) continue;
+
+    semanticKeys.add(semanticKey);
+    mergedRows.push(row);
+  }
+
+  const dedupedById = new Map<string, CardPayloadRow>();
+  for (const row of mergedRows) {
+    dedupedById.set(row.id, row);
+  }
+  return Array.from(dedupedById.values());
+}
+
 interface IngestFailureRow {
   game_id: string;
   reason_code: string;
@@ -2140,6 +2176,90 @@ export async function GET(request: NextRequest) {
         latestOddsRows.map((row) => [row.game_id, row]),
       );
 
+      const eventAliasToleranceMinutesRaw = Number(
+        process.env.API_GAMES_EVENT_ALIAS_TOLERANCE_MINUTES || 30,
+      );
+      const eventAliasToleranceMs =
+        Number.isFinite(eventAliasToleranceMinutesRaw) &&
+        eventAliasToleranceMinutesRaw > 0
+          ? eventAliasToleranceMinutesRaw * 60_000
+          : 30 * 60_000;
+
+      const normalizeEventAliasTime = (value: string | null): number | null => {
+        if (typeof value !== 'string' || value.trim().length === 0) return null;
+        const epochMs = Date.parse(value);
+        return Number.isFinite(epochMs) ? epochMs : null;
+      };
+
+      const buildEventAliasKey = (game: {
+        sport: string;
+        away_team: string;
+        home_team: string;
+        game_time_utc: string | null;
+      }): string => {
+        const dayToken =
+          typeof game.game_time_utc === 'string' && game.game_time_utc.length >= 10
+            ? game.game_time_utc.slice(0, 10)
+            : 'unknown-day';
+        return [
+          String(game.sport || '').toUpperCase(),
+          String(game.away_team || '').toUpperCase(),
+          String(game.home_team || '').toUpperCase(),
+          dayToken,
+        ].join('|');
+      };
+
+      const baseGameIdsByAliasKey = new Map<string, string[]>();
+      for (const game of baseGames) {
+        const aliasKey = buildEventAliasKey(game);
+        const existing = baseGameIdsByAliasKey.get(aliasKey) ?? [];
+        existing.push(game.game_id);
+        baseGameIdsByAliasKey.set(aliasKey, existing);
+      }
+
+      const resolveLatestOddsForGame = (
+        game: (typeof baseGames)[number],
+      ): (typeof latestOddsRows)[number] | null => {
+        const direct = latestOddsByGameId.get(game.game_id);
+        if (direct) return direct;
+
+        const gameTimeMs = normalizeEventAliasTime(game.game_time_utc);
+        const aliasIds = baseGameIdsByAliasKey.get(buildEventAliasKey(game)) ?? [];
+        if (aliasIds.length === 0) return null;
+
+        let bestCandidate: (typeof latestOddsRows)[number] | null = null;
+        let bestCapturedAtMs = -1;
+
+        for (const aliasId of aliasIds) {
+          if (aliasId === game.game_id) continue;
+          const candidateGame = baseGames.find((row) => row.game_id === aliasId);
+          if (!candidateGame) continue;
+
+          const candidateTimeMs = normalizeEventAliasTime(candidateGame.game_time_utc);
+          if (
+            gameTimeMs !== null &&
+            candidateTimeMs !== null &&
+            Math.abs(candidateTimeMs - gameTimeMs) > eventAliasToleranceMs
+          ) {
+            continue;
+          }
+
+          const candidateOdds = latestOddsByGameId.get(aliasId);
+          if (!candidateOdds) continue;
+
+          const candidateCapturedAtMs = normalizeEventAliasTime(
+            candidateOdds.odds_captured_at,
+          );
+          const rankingValue = candidateCapturedAtMs ?? 0;
+          if (!bestCandidate || rankingValue > bestCapturedAtMs) {
+            bestCandidate = candidateOdds;
+            bestCapturedAtMs = rankingValue;
+          }
+        }
+
+        return bestCandidate;
+      };
+
       const ingestFailureSql = `
         SELECT game_id, reason_code, reason_detail, last_seen
         FROM odds_ingest_failures
@@ -2159,7 +2279,7 @@ export async function GET(request: NextRequest) {
       }
 
       return baseGames.map((game) => {
-        const odds = latestOddsByGameId.get(game.game_id);
+        const odds = resolveLatestOddsForGame(game);
         const ingestFailure = latestIngestFailureByGameId.get(game.game_id);
         const projectionHealth = assessProjectionInputsFromRawData(
           game.sport,
@@ -2422,41 +2542,6 @@ export async function GET(request: NextRequest) {
 
           // MLB full-game fallback merge by canonical (game_id, card_type) so
           // current-run mlb-f5 rows do not mask publishable full-game rows.
-function mergePropFallbackRows(params: {
-  currentRows: CardPayloadRow[];
-  fallbackRows: CardPayloadRow[];
-  externalToCanonicalMap: Map<string, string>;
-}): CardPayloadRow[] {
-  const { currentRows, fallbackRows, externalToCanonicalMap } = params;
-
-  const semanticKeys = new Set<string>();
-  const mergedRows = [...currentRows];
-
-  for (const row of currentRows) {
-    const cardType = String(row.card_type || '').trim().toLowerCase();
-    if (!PROP_FALLBACK_CARD_TYPES.has(cardType)) continue;
-    const canonicalGameId = externalToCanonicalMap.get(row.game_id) ?? row.game_id;
-    semanticKeys.add(`${canonicalGameId}|${cardType}|${row.card_title}`);
-  }
-
-  for (const row of fallbackRows) {
-    const cardType = String(row.card_type || '').trim().toLowerCase();
-    if (!PROP_FALLBACK_CARD_TYPES.has(cardType)) continue;
-
-    const canonicalGameId = externalToCanonicalMap.get(row.game_id) ?? row.game_id;
-    const semanticKey = `${canonicalGameId}|${cardType}|${row.card_title}`;
-    if (semanticKeys.has(semanticKey)) continue;
-
-    semanticKeys.add(semanticKey);
-    mergedRows.push(row);
-  }
-
-  const dedupedById = new Map<string, CardPayloadRow>();
-  for (const row of mergedRows) {
-    dedupedById.set(row.id, row);
-  }
-  return Array.from(dedupedById.values());
-}
           if (allQueryableIds.length > 0) {
             const fallbackStmt = db.prepare(buildCardsSql(allQueryableIds, ''));
             const fallbackRows = fallbackStmt.all(
@@ -2469,17 +2554,17 @@ function mergePropFallbackRows(params: {
                 externalToCanonicalMap,
               });
 
-              // DISABLED (DEAD_CODE_CLEANUP): MLB game-line fallback injection removed.
-              // Current-run MLB full-game/ML cards are now required to be present.
-              // If missing, the API serves empty/PASS for the missing game to avoid
-              // stale card injection from previous model runs.
-              // See: DEAD_CODE_AND_PIPELINE_CLEANUP.md, Phase 1, highest-risk ghost path
-              // Former implementation:
-              //   const latestOddsCapturedAtByCanonicalId = new Map(
-              //     rows.map(row => [row.game_id, row.odds_captured_at])
-              //   );
-              //   cardRows = mergeMLBGameLineFallback(cardRows, fallbackRows, externalToCanonicalMap, latestOddsCapturedAtByCanonicalId);
-              // Now removed: no fallback merge occurs
+              // Re-enable MLB full-game fallback merge with strict eligibility guards
+              // so active-run filtering does not drop valid publishable game-line rows.
+              const latestOddsCapturedAtByCanonicalId = new Map(
+                rows.map((row) => [row.game_id, row.odds_captured_at]),
+              );
+              cardRows = mergeMlbGameLineFallbackRows({
+                currentRows: cardRows,
+                fallbackRows,
+                externalToCanonicalMap,
+                latestOddsCapturedAtByCanonicalId,
+              });
             }
           }
         }
@@ -3170,7 +3255,12 @@ function mergePropFallbackRows(params: {
             typeof payloadPlay?.classification === 'string');
         const isMlbFullGameLegacyDecisionPlay =
           isMlbFullGameCardType && hasLegacyNativeDecisionFields;
+        const isProjectionSurfaceLegacyDecisionPlay =
+          isProjectionSurfaceCardType(cardRow.card_type) &&
+          hasLegacyNativeDecisionFields &&
+          normalizedDecisionV2 == null;
         const runtimeDecision = isMlbFullGameLegacyDecisionPlay
+          || isProjectionSurfaceLegacyDecisionPlay
           ? null
           : readRuntimeCanonicalDecision(
               {
@@ -3873,7 +3963,7 @@ function mergePropFallbackRows(params: {
         const isPropPlay = play.market_type === 'PROP';
 
         if (wave1Eligible && !isPropPlay) {
-          if (!isMlbFullGameLegacyDecisionPlay) {
+          if (!isMlbFullGameLegacyDecisionPlay && !isProjectionSurfaceLegacyDecisionPlay) {
             // Wave-1 rows MUST have worker-published canonical decision_v2.
             if (!play.decision_v2) {
               incrementStageCounter(
@@ -3895,7 +3985,10 @@ function mergePropFallbackRows(params: {
         }
 
         if (
-          (!wave1Eligible || isPropPlay || isMlbFullGameLegacyDecisionPlay) &&
+          (!wave1Eligible ||
+            isPropPlay ||
+            isMlbFullGameLegacyDecisionPlay ||
+            isProjectionSurfaceLegacyDecisionPlay) &&
           !play.consistency?.total_bias
         ) {
           const nativeTotalBiasOk = isNativeTotalBiasActionable(play);

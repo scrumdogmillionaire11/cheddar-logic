@@ -5,6 +5,8 @@
  */
 
 import assert from 'node:assert';
+import fs from 'node:fs';
+import path from 'node:path';
 import {
   resolveMlbFallbackOfficialStatus,
   hasMlbFallbackDropReason,
@@ -216,6 +218,24 @@ test('resolveSourceModelProb re-export — returns undefined for non-numeric', (
 test('resolveSourceModelProb re-export — clamps valid probability', () => {
   const result = resolveSourceModelProb({ model_prob: 0.72 });
   assert.strictEqual(result, 0.72);
+});
+
+test('route-handler imports legacy probe helpers via v1 adapter boundary', () => {
+  const routeHandlerPath = path.resolve(process.cwd(), 'src/lib/games/route-handler.ts');
+  const source = fs.readFileSync(routeHandlerPath, 'utf8');
+  assert.ok(
+    source.includes("@/lib/game-card/transform/adapters/v1-legacy-repair"),
+    'expected route-handler.ts to import from v1-legacy-repair adapter',
+  );
+});
+
+test('transform index imports legacy helpers via v1 adapter boundary', () => {
+  const transformIndexPath = path.resolve(process.cwd(), 'src/lib/game-card/transform/index.ts');
+  const source = fs.readFileSync(transformIndexPath, 'utf8');
+  assert.ok(
+    source.includes("'./adapters/v1-legacy-repair'"),
+    'expected transform/index.ts to import from v1-legacy-repair adapter',
+  );
 });
 
 // ---------------------------------------------------------------------------

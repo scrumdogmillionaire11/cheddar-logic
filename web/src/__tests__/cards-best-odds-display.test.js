@@ -229,6 +229,16 @@ function buildCard(playOverrides = {}) {
   assert.equal(classifyPassReasonBucket(card), 'projection-only', 'reason_codes PROJECTION_ONLY_EXCLUSION');
 }
 
+{
+  const card = buildCard({ play: { execution_status: null, reason_codes: ['MISSING_DATA_PROJECTION_INPUTS'], decision_v2: null, transform_meta: null } });
+  assert.equal(classifyPassReasonBucket(card), 'data-error', 'reason_codes MISSING_DATA_PROJECTION_INPUTS');
+}
+
+{
+  const card = buildCard({ play: { execution_status: null, reason_codes: ['MISSING_DATA_DRIVERS'], decision_v2: null, transform_meta: null } });
+  assert.equal(classifyPassReasonBucket(card), 'data-error', 'reason_codes MISSING_DATA_DRIVERS');
+}
+
 // odds-blocked via execution_status
 {
   const card = buildCard({ play: { execution_status: 'BLOCKED', reason_codes: [], decision_v2: null, transform_meta: null } });
@@ -259,15 +269,20 @@ function buildCard(playOverrides = {}) {
   assert.equal(classifyPassReasonBucket(card), 'data-error', 'PASS_DATA_ERROR');
 }
 
-// default fallback → odds-blocked
+// default fallback → data-error
 {
   const card = buildCard({ play: { execution_status: null, reason_codes: ['PASS_DRIVER_SUPPORT_WEAK'], decision_v2: null, transform_meta: null } });
-  assert.equal(classifyPassReasonBucket(card), 'odds-blocked', 'PASS_DRIVER_SUPPORT_WEAK default fallback');
+  assert.equal(classifyPassReasonBucket(card), 'data-error', 'PASS_DRIVER_SUPPORT_WEAK default fallback');
 }
 
 {
   const card = buildCard({ play: { execution_status: null, reason_codes: ['PASS_NO_EDGE'], decision_v2: null, transform_meta: null } });
-  assert.equal(classifyPassReasonBucket(card), 'odds-blocked', 'PASS_NO_EDGE default fallback');
+  assert.equal(classifyPassReasonBucket(card), 'data-error', 'PASS_NO_EDGE default fallback');
+}
+
+{
+  const card = buildCard({ play: { execution_status: null, reason_codes: ['PASS_NO_ACTIONABLE_PLAY'], decision_v2: null, transform_meta: null } });
+  assert.equal(classifyPassReasonBucket(card), null, 'PASS_NO_ACTIONABLE_PLAY should be neutral');
 }
 
 // no reason codes → null

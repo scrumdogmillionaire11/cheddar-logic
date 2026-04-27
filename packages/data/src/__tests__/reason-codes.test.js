@@ -113,7 +113,7 @@ describe('reason-codes canonical registry', () => {
     }
   });
 
-  test('REASON_CODE_SCHEMA_VERSION is current (4)', () => {
-    expect(REASON_CODE_SCHEMA_VERSION).toBe(4);
+  test('REASON_CODE_SCHEMA_VERSION is current (5)', () => {
+    expect(REASON_CODE_SCHEMA_VERSION).toBe(5);
   });
 });

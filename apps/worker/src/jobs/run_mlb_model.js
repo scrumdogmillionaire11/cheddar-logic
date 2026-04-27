@@ -604,6 +604,35 @@ function extractSameBookOddsContext(oddsSnapshot) {
   };
 }
 
+function deriveMlbSplitsIntel(oddsSnapshot) {
+  const publicHome = toFiniteNumber(oddsSnapshot?.public_bets_pct_home);
+  const publicAway = toFiniteNumber(oddsSnapshot?.public_bets_pct_away);
+  const splitsDivergence =
+    publicHome === null || publicAway === null
+      ? null
+      : publicHome - publicAway > 15
+        ? 'PUBLIC_HEAVY_HOME'
+        : publicAway - publicHome > 15
+          ? 'PUBLIC_HEAVY_AWAY'
+          : 'BALANCED';
+
+  const circaHome = toFiniteNumber(oddsSnapshot?.circa_handle_pct_home);
+  const dkHome = toFiniteNumber(oddsSnapshot?.dk_bets_pct_home);
+  const sharpDivergence =
+    circaHome === null || dkHome === null
+      ? null
+      : Math.abs(circaHome - dkHome) >= 20
+        ? 'SHARP_VS_PUBLIC'
+        : Math.abs(circaHome - dkHome) < 10
+          ? 'SHARP_ALIGNED'
+          : null;
+
+  return {
+    splits_divergence: splitsDivergence,
+    sharp_divergence: sharpDivergence,
+  };
+}
+
 function pickFirstFinite(...values) {
   for (const value of values) {
     const parsed = toFiniteNumber(value);
@@ -4929,6 +4958,7 @@ async function runMLBModel({
                     driver.card_verdict === 'WATCH'
                   : driver.ev_threshold_passed === true,
               reasoning: driver.reasoning,
+              ...deriveMlbSplitsIntel(gameOddsSnapshot),
               reason_codes: uniqueReasonCodes([
                 ...(Array.isArray(driver.reason_codes) ? driver.reason_codes : []),
                 ...(Array.isArray(executionInputData.execution_input_reason_codes)

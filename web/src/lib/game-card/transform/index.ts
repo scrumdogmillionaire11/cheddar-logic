@@ -603,8 +603,18 @@ function deriveMarketStatus(game: GameData): {
   executionBlocked: boolean;
   freshnessTier: string | null;
 } {
-  const statuses = [game.market_status, ...game.plays.map((play) => play.market_status)]
+  const actionableStatuses = game.plays
+    .filter((play) => isPlayItem(play, game.sport))
+    .map((play) => play.market_status)
     .filter((status): status is ApiMarketStatus => Boolean(status));
+
+  const statuses = (
+    actionableStatuses.length > 0
+      ? actionableStatuses
+      : [game.market_status].filter((status): status is ApiMarketStatus =>
+          Boolean(status),
+        )
+  );
 
   const hasOddsSignals = statuses
     .map((status) => status.has_odds)
@@ -1880,11 +1890,13 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
       !ENABLE_STALE_UI_SUPPRESSION &&
       (marketStatus.freshnessTier === 'stale' ||
         marketStatus.freshnessTier === 'expired');
-    const hasMarketFailure =
+    const hasMissingMarketTypesFailure = missingMarketTypes.length > 0;
+    const hasCoreMarketFailure =
       marketStatus.hasOdds === false ||
       marketMissingInputs.length > 0 ||
-      missingMarketTypes.length > 0 ||
       hasStaleMarketFailure;
+    const hasMarketFailure =
+      hasCoreMarketFailure || hasMissingMarketTypesFailure;
     const noActionablePlayInputs = hasEvidenceOnly
       ? collectNoActionablePlayInputs(game)
       : [];
@@ -1895,34 +1907,38 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
         ? 'MISSING_DATA_NO_ODDS'
         : hasMappingFailure
           ? 'MISSING_DATA_TEAM_MAPPING'
+          : hasMissingMarketTypesFailure
+            ? 'MISSING_DATA_MARKET_TYPES'
           : hasMarketFailure
             ? 'MISSING_DATA_NO_ODDS'
           : hasFeatureFreshnessFailure
             ? 'MISSING_DATA_FEATURE_FRESHNESS'
           : hasProjectionInputsFailure
             ? 'MISSING_DATA_PROJECTION_INPUTS'
+            : hasEvidenceOnly
+              ? 'PASS_NO_ACTIONABLE_PLAY'
             : hasNoPlays
               ? 'MISSING_DATA_DRIVERS'
-          : hasEvidenceOnly
-            ? 'PASS_NO_ACTIONABLE_PLAY'
             : 'PASS_MISSING_DRIVER_INPUTS';
     const missingDataText: string =
       hasNoOdds && hasNoPlays
         ? 'No odds available'
         : hasMappingFailure
           ? `Team mapping unresolved${game.ingest_failure_reason_detail ? `: ${game.ingest_failure_reason_detail}` : sourceMappingFailures.length ? `: ${sourceMappingFailures.join(', ')}` : ''}`
+          : hasMissingMarketTypesFailure
+            ? `Market missing required types: ${missingMarketTypes.join(', ')}`
           : hasMarketFailure
             ? `Market unavailable${marketStatus.freshnessTier ? ` (${marketStatus.freshnessTier})` : ''}`
           : hasFeatureFreshnessFailure
             ? `Feature freshness stale${featureFreshnessMissingInputs.length ? `: ${featureFreshnessMissingInputs.join(', ')}` : ''}`
           : hasProjectionInputsFailure
             ? `Missing projection inputs${projectionCoreMissingInputs.length ? `: ${projectionCoreMissingInputs.join(', ')}` : ''}`
-            : hasNoPlays
-              ? 'Driver output unavailable'
             : hasEvidenceOnly
               ? hasFetchFailureInputs
                 ? `No actionable play${noActionablePlayInputs.length ? `: ${noActionablePlayInputs.join(', ')}` : ''}`
                 : 'No edge'
+            : hasNoPlays
+              ? 'Driver output unavailable'
             : 'Missing driver inputs';
     const missingInputs = hasMappingFailure
       ? sourceMappingFailures.length > 0

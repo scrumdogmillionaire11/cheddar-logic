@@ -2521,7 +2521,14 @@ function buildNhl1PDecision({ payload, selection, line, sidePrice, oddsSnapshot,
       payload?.projection?.projected_total ??
       payload?.driver?.inputs?.predicted_1p_total,
   );
-  const marketAvailable = toFiniteNumber(oddsSnapshot?.total_1p) !== null;
+  const hasFirstPeriodLine = toFiniteNumber(oddsSnapshot?.total_1p) !== null;
+  // Treat core market lines as baseline market availability and 1P line as an enhancement lane.
+  // This avoids mislabeling cards as MARKET_UNAVAILABLE when full-game odds are present.
+  const marketAvailable =
+    hasFirstPeriodLine ||
+    hasMoneylineOdds(oddsSnapshot) ||
+    hasSpreadOdds(oddsSnapshot) ||
+    hasTotalOdds(oddsSnapshot);
   const priceAvailable = sidePrice !== null;
   const directionExists = selection === 'OVER' || selection === 'UNDER';
   const projectionExists =
@@ -4452,6 +4459,15 @@ async function runNHLModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
 
       markJobRunSuccess(jobRunId, summary);
       try {
+        const { writePipelineHealth } = require('./check_pipeline_health');
+        writePipelineHealth(
+          'nhl',
+          'model_run',
+          cardsGenerated > 0 || cardsFailed === 0 ? 'ok' : 'warning',
+          `run_nhl_model completed: ${cardsGenerated} cards generated, ${cardsFailed} failed`,
+        );
+      } catch (_phErr) { /* non-fatal */ }
+      try {
         setCurrentRunId(jobRunId, 'nhl');
       } catch (runStateError) {
         console.error(
@@ -4508,6 +4524,10 @@ async function runNHLModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
           dbError.message,
         );
       }
+      try {
+        const { writePipelineHealth } = require('./check_pipeline_health');
+        writePipelineHealth('nhl', 'model_run', 'failed', `run_nhl_model failed: ${error.message}`);
+      } catch (_phErr) { /* non-fatal */ }
 
       return { success: false, jobRunId, error: error.message };
     }

@@ -274,6 +274,49 @@ console.log('🧪 final_market_decision contract tests');
     action: 'PASS',
     classification: 'PASS',
     status: 'PASS',
+    reason_codes: ['PASS_NO_EDGE'],
+    market_status: {
+      has_odds: true,
+      freshness_tier: 'fresh',
+      execution_blocked: false,
+    },
+    decision_v2: {
+      official_status: 'PASS',
+      sharp_price_status: 'CHEDDAR',
+      primary_reason_code: 'PASS_NO_EDGE',
+      play_tier: null,
+      edge_delta_pct: null,
+    },
+  });
+
+  // Evidence/info row should not downgrade market status for the game.
+  game.plays.push({
+    source_card_id: 'evidence-1',
+    cardType: 'nhl-model-output',
+    cardTitle: 'NHL Model Output',
+    kind: 'EVIDENCE',
+    status: 'PASS',
+    classification: 'PASS',
+    action: 'PASS',
+    market_status: {
+      has_odds: false,
+      freshness_tier: 'unknown',
+      execution_blocked: false,
+    },
+    created_at: '2026-04-13T12:00:00.000Z',
+  });
+
+  const card = transformToGameCard(game);
+  const decision = card.play?.final_market_decision;
+  assert.equal(decision?.surfaced_status, 'PASS');
+  assert.doesNotMatch(decision?.surfaced_reason || '', /Odds unavailable|Market unavailable/i);
+}
+
+{
+  const game = buildGame({
+    action: 'PASS',
+    classification: 'PASS',
+    status: 'PASS',
     decision_v2: {
       official_status: 'PASS',
       sharp_price_status: 'CHEDDAR',

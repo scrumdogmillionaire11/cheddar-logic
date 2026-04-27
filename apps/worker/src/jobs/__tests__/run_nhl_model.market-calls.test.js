@@ -945,7 +945,7 @@ describe('run_nhl_model market call generation', () => {
         side: null,
       },
       execution: {
-        market_available: false,
+        market_available: true,
         price_available: false,
         is_executable: false,
       },
