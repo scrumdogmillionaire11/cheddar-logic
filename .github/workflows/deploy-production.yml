@@ -267,7 +267,9 @@ jobs:
             fi
             CANONICAL_DB_PATH="$CHEDDAR_DB_PATH"
             echo "Resolved database path: $CANONICAL_DB_PATH"
-            sudo mkdir -p "$(dirname "$CANONICAL_DB_PATH")"
+            if ! sudo mkdir -p "$(dirname "$CANONICAL_DB_PATH")"; then
+              echo "WARNING: Unable to create DB directory $(dirname "$CANONICAL_DB_PATH") — continuing"
+            fi
             if ! sudo chown "$(id -u):$(id -g)" "$(dirname "$CANONICAL_DB_PATH")"; then
               echo "WARNING: Unable to chown DB directory $(dirname "$CANONICAL_DB_PATH") — continuing"
             fi
