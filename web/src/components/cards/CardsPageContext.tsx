@@ -77,6 +77,7 @@ let globalGamesFetchInFlight = false;
 let globalGamesLastFetchAt = 0;
 let globalGamesBlockedUntil = 0;
 let globalGamesRequestLifecycle: LifecycleMode | null = null;
+let globalGamesLastEffectiveLifecycle: LifecycleMode | null = null;
 
 /**
  * Returns true for HTTP status codes that represent transient failures where
@@ -86,46 +87,6 @@ let globalGamesRequestLifecycle: LifecycleMode | null = null;
  */
 function isRecoverableHttpError(status: number): boolean {
   return status >= 500 || status === 429;
-}
-
-function toUpperToken(value: unknown): string | null {
-  if (value === null || value === undefined) return null;
-  const normalized = String(value).trim().toUpperCase();
-  return normalized.length > 0 ? normalized : null;
-}
-
-function hasActionableProjectionCall(play: GameData['plays'][number]): boolean {
-  const canonicalEnvelopeStatus = toUpperToken(
-    (play as Record<string, unknown>)?.decision_v2 &&
-      typeof (play as Record<string, unknown>).decision_v2 === 'object'
-      ? ((play as Record<string, unknown>).decision_v2 as Record<string, unknown>)
-          ?.canonical_envelope_v2 &&
-        typeof (
-          ((play as Record<string, unknown>).decision_v2 as Record<string, unknown>)
-            .canonical_envelope_v2
-        ) === 'object'
-        ? (
-            (((play as Record<string, unknown>).decision_v2 as Record<string, unknown>)
-              .canonical_envelope_v2 as Record<string, unknown>
-            ).official_status
-          )
-        : null
-      : null,
-  );
-  if (canonicalEnvelopeStatus === 'PASS') return false;
-  if (canonicalEnvelopeStatus === 'PLAY' || canonicalEnvelopeStatus === 'LEAN') {
-    return true;
-  }
-
-  const decisionStatus = toUpperToken(
-    (play as Record<string, unknown>)?.decision_v2 &&
-      typeof (play as Record<string, unknown>).decision_v2 === 'object'
-      ? (((play as Record<string, unknown>).decision_v2 as Record<string, unknown>)
-          .official_status as unknown)
-      : null,
-  );
-  if (decisionStatus === 'PASS') return false;
-  return decisionStatus === 'PLAY' || decisionStatus === 'LEAN';
 }
 
 function cardsUiReducer(state: CardsUiState, action: CardsUiAction): CardsUiState {
@@ -171,6 +132,9 @@ export function CardsPageProvider({
 }) {
   const [uiState, dispatch] = useReducer(cardsUiReducer, undefined, getInitialUiState);
   const [games, setGames] = useState<GameData[]>([]);
+  const [projectionRescueItems, setProjectionRescueItems] = useState<
+    Array<{ game: GameData; play: GameData['plays'][number] }>
+  >([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const isInitialLoad = useRef(true);
@@ -181,6 +145,7 @@ export function CardsPageProvider({
   const initialLoadRetryTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const initialLoadRetryAttemptsRef = useRef(0);
   const hasHydratedUrlStateRef = useRef(false);
+  const projectionRescueAttemptedRef = useRef(false);
   const diagnosticsEnabled =
     process.env.NODE_ENV !== 'production' &&
     process.env.NEXT_PUBLIC_ENABLE_CARDS_DIAGNOSTICS === 'true';
@@ -272,8 +237,6 @@ export function CardsPageProvider({
 
   const projectionItems = useMemo(() => {
     if (uiState.viewMode !== 'projections') return [];
-    const f = effectiveFilters;
-    if ('propStatGroups' in f) return [];
 
     const seenProjectionKeys = new Set<string>();
     const dedupedItems: Array<{ game: GameData; play: GameData['plays'][number] }> = [];
@@ -283,26 +246,18 @@ export function CardsPageProvider({
     // 2) fetchGamesData stores those rows into `games` in this provider.
     // 3) This `projectionItems` builder selects nhl-pace-1p / mlb-f5 / mlb-f5-ml
     //    and feeds CardsList -> ProjectionCard.
-    // Gap found: without an actionable-status gate here, PASS rows reach UI cards.
+    // Intentionally include PASS/FIRE/WATCH so projection cards always surface.
     for (const game of games) {
       const projectionPlays = game.plays.filter(
         (p) =>
           p.cardType === 'nhl-pace-1p' ||
+          p.cardType === 'nhl-1p-call' ||
           p.cardType === 'mlb-f5' ||
           p.cardType === 'mlb-f5-ml',
       );
       if (projectionPlays.length === 0) continue;
 
-      const actionableProjectionPlays = projectionPlays.filter(
-        hasActionableProjectionCall,
-      );
-      if (actionableProjectionPlays.length === 0) continue;
-
-      const anchorPlay = actionableProjectionPlays[0];
-      const filterCard = createProjectionFilterCard(game, anchorPlay);
-      if (!evaluateCardFilter(filterCard, f, 'projections').passes) continue;
-
-      for (const play of actionableProjectionPlays) {
+      for (const play of projectionPlays) {
         const projectionKey = [
           String(game.sport || '').toUpperCase(),
           String(game.awayTeam || '').trim().toUpperCase(),
@@ -322,12 +277,20 @@ export function CardsPageProvider({
     return dedupedItems;
   }, [effectiveFilters, games, uiState.viewMode]);
 
+  const projectionItemsForDisplay =
+    projectionItems.length > 0 ? projectionItems : projectionRescueItems;
+
   const displayedCardsInView =
     uiState.viewMode === 'props'
       ? propCards.length
       : uiState.viewMode === 'projections'
-        ? projectionItems.length
+        ? projectionItemsForDisplay.length
         : filteredCards.length;
+
+  const totalCardsInCurrentView =
+    uiState.viewMode === 'projections'
+      ? projectionItemsForDisplay.length
+      : totalCardsInView;
 
   const activeFilterCount = getActiveFilterCount(effectiveFilters, uiState.viewMode);
   const todayEtKey = useMemo(() => getEtDayKey(new Date()), []);
@@ -650,6 +613,8 @@ export function CardsPageProvider({
     };
   }, []);
 
+  const gamesFetchKey = `${uiState.lifecycleMode}:${uiState.viewMode}`;
+
   useEffect(() => {
     let cancelled = false;
     initialLoadRetryAttemptsRef.current = 0;
@@ -657,16 +622,21 @@ export function CardsPageProvider({
     const fetchGames = async () => {
       const now = Date.now();
       const requestedLifecycleMode = latestLifecycleModeRef.current;
+      const effectiveLifecycleMode =
+        requestedLifecycleMode === 'active' && uiState.viewMode === 'projections'
+          ? 'pregame'
+          : requestedLifecycleMode;
       const wasInitialLoad = isInitialLoad.current;
       let failedRecoverably = false;
 
       if (globalGamesFetchInFlight) {
         console.debug('[cards] Skipping fetch - global request already in flight', {
           requestedLifecycleMode,
+          effectiveLifecycleMode,
           inflightLifecycleMode: globalGamesRequestLifecycle,
         });
         const shouldRetryForLifecycleChange =
-          globalGamesRequestLifecycle !== requestedLifecycleMode;
+          globalGamesRequestLifecycle !== effectiveLifecycleMode;
         if (
           shouldRetryForLifecycleChange &&
           lifecycleRetryTimeoutRef.current === null
@@ -711,7 +681,8 @@ export function CardsPageProvider({
       if (
         !wasInitialLoad &&
         globalGamesLastFetchAt &&
-        now - globalGamesLastFetchAt < CLIENT_MIN_FETCH_INTERVAL_MS
+        now - globalGamesLastFetchAt < CLIENT_MIN_FETCH_INTERVAL_MS &&
+        globalGamesLastEffectiveLifecycle === effectiveLifecycleMode
       ) {
         console.debug('[cards] Skipping fetch - throttled');
         if (!cancelled) {
@@ -722,7 +693,8 @@ export function CardsPageProvider({
 
       try {
         globalGamesFetchInFlight = true;
-        globalGamesRequestLifecycle = requestedLifecycleMode;
+        globalGamesRequestLifecycle = effectiveLifecycleMode;
+        globalGamesLastEffectiveLifecycle = effectiveLifecycleMode;
         globalGamesLastFetchAt = now;
 
         if (isInitialLoad.current) {
@@ -731,7 +703,7 @@ export function CardsPageProvider({
 
         const timeoutHandle = createTimeoutSignal(CLIENT_FETCH_TIMEOUT_MS);
         const lifecycleQuery =
-          requestedLifecycleMode === 'active' ? '?lifecycle=active' : '';
+          effectiveLifecycleMode === 'active' ? '?lifecycle=active' : '';
         const response = await fetch(`/api/games${lifecycleQuery}`, {
           ...(timeoutHandle.signal ? { signal: timeoutHandle.signal } : {}),
           cache: 'no-store',
@@ -788,6 +760,7 @@ export function CardsPageProvider({
             error: nonJsonDetail,
             is_initial_load: wasInitialLoad,
             lifecycle: requestedLifecycleMode,
+            effective_lifecycle: effectiveLifecycleMode,
           });
           if (wasInitialLoad && isRecoverableHttpError(response.status)) {
             failedRecoverably = true;
@@ -831,6 +804,7 @@ export function CardsPageProvider({
             response_mode: gamesMode,
             data_count: gamesCount,
             lifecycle: requestedLifecycleMode,
+            effective_lifecycle: effectiveLifecycleMode,
           });
         }
         if (!cancelled) {
@@ -851,6 +825,7 @@ export function CardsPageProvider({
           error_name: err instanceof Error ? err.name : 'UnknownError',
           is_initial_load: wasInitialLoad,
           lifecycle: requestedLifecycleMode,
+          effective_lifecycle: effectiveLifecycleMode,
           timeout_ms: CLIENT_FETCH_TIMEOUT_MS,
           is_abort: isAbort,
         };
@@ -925,7 +900,94 @@ export function CardsPageProvider({
       clearInterval(interval);
       document.removeEventListener('visibilitychange', onVisibilityChange);
     };
-  }, [uiState.lifecycleMode]);
+  }, [gamesFetchKey]);
+
+  useEffect(() => {
+    if (uiState.viewMode !== 'projections') {
+      projectionRescueAttemptedRef.current = false;
+      setProjectionRescueItems([]);
+      return;
+    }
+
+    const hasProjectionRows = games.some((game) =>
+      Array.isArray(game.plays) &&
+      game.plays.some((play) => {
+        const cardType = String(play.cardType || '').toLowerCase();
+        return (
+          cardType === 'nhl-pace-1p' ||
+          cardType === 'nhl-1p-call' ||
+          cardType === 'mlb-f5' ||
+          cardType === 'mlb-f5-ml'
+        );
+      }),
+    );
+
+    if (hasProjectionRows) {
+      projectionRescueAttemptedRef.current = false;
+      setProjectionRescueItems([]);
+      return;
+    }
+
+    if (projectionRescueAttemptedRef.current) return;
+    projectionRescueAttemptedRef.current = true;
+
+    let cancelled = false;
+    const rescueProjectionFetch = async () => {
+      try {
+        const timeoutHandle = createTimeoutSignal(CLIENT_FETCH_TIMEOUT_MS);
+        const response = await fetch('/api/games', {
+          ...(timeoutHandle.signal ? { signal: timeoutHandle.signal } : {}),
+          cache: 'no-store',
+        }).finally(() => {
+          timeoutHandle.cleanup();
+        });
+
+        if (!response.ok) return;
+        const data = (await response.json()) as ApiResponse;
+        if (!data.success || !Array.isArray(data.data)) return;
+
+        const seenProjectionKeys = new Set<string>();
+        const dedupedItems: Array<{ game: GameData; play: GameData['plays'][number] }> = [];
+        for (const game of data.data as GameData[]) {
+          for (const play of game.plays || []) {
+            if (
+              play.cardType !== 'nhl-pace-1p' &&
+              play.cardType !== 'nhl-1p-call' &&
+              play.cardType !== 'mlb-f5' &&
+              play.cardType !== 'mlb-f5-ml'
+            ) {
+              continue;
+            }
+            const projectionKey = [
+              String(game.sport || '').toUpperCase(),
+              String(game.awayTeam || '').trim().toUpperCase(),
+              String(game.homeTeam || '').trim().toUpperCase(),
+              String(game.gameTimeUtc || ''),
+              String(play.cardType || '').trim().toLowerCase(),
+            ].join('|');
+            if (seenProjectionKeys.has(projectionKey)) continue;
+            seenProjectionKeys.add(projectionKey);
+            dedupedItems.push({ game, play });
+          }
+        }
+
+        if (!cancelled) {
+          setGames(data.data);
+          setProjectionRescueItems(dedupedItems);
+          setError(null);
+        }
+      } catch (err) {
+        console.warn('[cards] projections rescue fetch failed', {
+          message: stringifyUnknownError(err),
+        });
+      }
+    };
+
+    void rescueProjectionFetch();
+    return () => {
+      cancelled = true;
+    };
+  }, [games, uiState.viewMode]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -959,12 +1021,7 @@ export function CardsPageProvider({
       dispatch({
         type: 'set_view_mode',
         viewMode: 'projections',
-        filters: {
-          ...defaults,
-          sports: activeSports,
-          timeWindow: activeTimeWindow,
-          customTimeRange: activeCustomTimeRange,
-        },
+        filters: defaults,
       });
     }
   }, [
@@ -1110,15 +1167,19 @@ export function CardsPageProvider({
           if (nextMode === uiState.viewMode) return;
         if (nextMode === 'props' && !propsEnabled) return;
         const defaults = getDefaultFilters(nextMode);
+        const nextFilters =
+          nextMode === 'projections'
+            ? defaults
+            : {
+                ...defaults,
+                sports: uiState.filters.sports,
+                timeWindow: uiState.filters.timeWindow,
+                customTimeRange: uiState.filters.customTimeRange,
+              };
         dispatch({
           type: 'set_view_mode',
           viewMode: nextMode,
-          filters: {
-            ...defaults,
-            sports: uiState.filters.sports,
-            timeWindow: uiState.filters.timeWindow,
-            customTimeRange: uiState.filters.customTimeRange,
-          },
+          filters: nextFilters,
         });
       },
       onLifecycleModeChange: (nextMode) => {
@@ -1158,10 +1219,10 @@ export function CardsPageProvider({
       enrichedCards,
       filteredCards,
       propCards,
-      totalCardsInView,
+      totalCardsInView: totalCardsInCurrentView,
       groupedByDate,
       propGroupedByDate,
-      projectionItems,
+      projectionItems: projectionItemsForDisplay,
       displayedCardsInView,
       activeFilterCount,
       todayEtKey,
@@ -1190,13 +1251,13 @@ export function CardsPageProvider({
       hiddenDataErrorCards,
       hiddenDataErrors,
       loading,
-      projectionItems,
+      projectionItemsForDisplay,
       propCards,
       propGroupedByDate,
       propsEnabled,
       sportDiagnostics,
       todayEtKey,
-      totalCardsInView,
+      totalCardsInCurrentView,
       traceStats,
       uiState,
     ],

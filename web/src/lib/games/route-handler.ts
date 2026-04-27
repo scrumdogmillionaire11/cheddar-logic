@@ -3255,7 +3255,12 @@ export async function GET(request: NextRequest) {
             typeof payloadPlay?.classification === 'string');
         const isMlbFullGameLegacyDecisionPlay =
           isMlbFullGameCardType && hasLegacyNativeDecisionFields;
+        const isProjectionSurfaceLegacyDecisionPlay =
+          isProjectionSurfaceCardType(cardRow.card_type) &&
+          hasLegacyNativeDecisionFields &&
+          normalizedDecisionV2 == null;
         const runtimeDecision = isMlbFullGameLegacyDecisionPlay
+          || isProjectionSurfaceLegacyDecisionPlay
           ? null
           : readRuntimeCanonicalDecision(
               {
@@ -3958,7 +3963,7 @@ export async function GET(request: NextRequest) {
         const isPropPlay = play.market_type === 'PROP';
 
         if (wave1Eligible && !isPropPlay) {
-          if (!isMlbFullGameLegacyDecisionPlay) {
+          if (!isMlbFullGameLegacyDecisionPlay && !isProjectionSurfaceLegacyDecisionPlay) {
             // Wave-1 rows MUST have worker-published canonical decision_v2.
             if (!play.decision_v2) {
               incrementStageCounter(
@@ -3980,7 +3985,10 @@ export async function GET(request: NextRequest) {
         }
 
         if (
-          (!wave1Eligible || isPropPlay || isMlbFullGameLegacyDecisionPlay) &&
+          (!wave1Eligible ||
+            isPropPlay ||
+            isMlbFullGameLegacyDecisionPlay ||
+            isProjectionSurfaceLegacyDecisionPlay) &&
           !play.consistency?.total_bias
         ) {
           const nativeTotalBiasOk = isNativeTotalBiasActionable(play);

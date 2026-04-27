@@ -96,10 +96,6 @@ export default function ProjectionCard({
   play,
   sport = 'NHL',
 }: ProjectionCardProps) {
-  if (!hasActionableProjectionCall(play)) {
-    return null;
-  }
-
   const isMlb = sport === 'MLB';
   const isMlbF5Ml = isMlb && play.cardType === 'mlb-f5-ml';
   // mlb-f5 PROJECTION_ONLY: no market line, MAE-tracked surface only — no direction badge

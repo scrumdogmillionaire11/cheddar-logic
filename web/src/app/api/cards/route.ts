@@ -188,6 +188,23 @@ function toUpperToken(value: unknown): string | null {
   return normalized.length > 0 ? normalized : null;
 }
 
+function normalizeLegacyProjectionStatus(value: string | null): string | null {
+  switch (value) {
+    case 'FIRE':
+      return 'PLAY';
+    case 'WATCH':
+    case 'HOLD':
+    case 'SLIGHT EDGE':
+      return 'LEAN';
+    case 'PASS':
+    case 'PLAY':
+    case 'LEAN':
+      return value;
+    default:
+      return null;
+  }
+}
+
 function readProjectionOfficialStatus(payload: Record<string, unknown> | null): string | null {
   if (!payload) return null;
   const play =
@@ -218,7 +235,9 @@ function readProjectionOfficialStatus(payload: Record<string, unknown> | null): 
     toUpperToken(playCanonicalEnvelope?.official_status) ||
     toUpperToken(topCanonicalEnvelope?.official_status) ||
     toUpperToken(playDecisionV2?.official_status) ||
-    toUpperToken(topDecisionV2?.official_status)
+    toUpperToken(topDecisionV2?.official_status) ||
+    normalizeLegacyProjectionStatus(toUpperToken(play?.status)) ||
+    normalizeLegacyProjectionStatus(toUpperToken(payload.status))
   );
 }
 
