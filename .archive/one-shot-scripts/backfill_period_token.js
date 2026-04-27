@@ -21,7 +21,7 @@ const {
   markJobRunSuccess,
   markJobRunFailure,
   withDb,
-} = require('@cheddar-logic/data');
+} = require('../../packages/data');
 
 // Inline normalizeSettlementPeriod logic to avoid tight coupling to
 // settle_pending_cards.js internals. Mirrors the canonical implementation.
