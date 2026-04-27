@@ -13,7 +13,7 @@
 
 'use strict';
 
-const { v4: uuidV4 } = require('uuid');
+const { randomUUID } = require('node:crypto');
 
 const {
   getDatabase,
@@ -111,7 +111,7 @@ async function backfillPeriodToken({
   dryRun = false,
   since = null,
 } = {}) {
-  const jobRunId = `job-backfill-period-token-${new Date().toISOString().split('.')[0]}-${uuidV4().slice(0, 8)}`;
+  const jobRunId = `job-backfill-period-token-${new Date().toISOString().split('.')[0]}-${randomUUID().slice(0, 8)}`;
 
   console.log(`[BackfillPeriodToken] Starting job run: ${jobRunId}`);
   if (dryRun) {
