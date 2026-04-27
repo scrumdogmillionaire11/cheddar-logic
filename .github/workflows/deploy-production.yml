@@ -118,7 +118,8 @@ jobs:
           command_timeout: 20m
           envs: CF_API_TOKEN,CF_ZONE_ID
           script: |
-            set -e
+            set -Ee
+            trap 'status=$?; echo "ERROR: command failed at line ${LINENO}: ${BASH_COMMAND} (exit=${status})"; exit ${status}' ERR
             cd /opt/cheddar-logic
             # Recover from stale git lock files left by interrupted prior deploys.
             # If an active git process exists in this repo, abort instead of forcing.
@@ -145,16 +146,52 @@ jobs:
               exit 1
             fi
             # Ensure deploy scripts are executable (git preserves the bit, but belt-and-suspenders).
-            chmod +x /opt/cheddar-logic/deploy/restart-cloudflared-when-ready.sh
-            chmod +x /opt/cheddar-logic/scripts/check-scheduler-running.sh
+            if ! chmod +x /opt/cheddar-logic/deploy/restart-cloudflared-when-ready.sh; then
+              echo "WARNING: Unable to chmod deploy/restart-cloudflared-when-ready.sh — continuing"
+            fi
+            if ! chmod +x /opt/cheddar-logic/scripts/check-scheduler-running.sh; then
+              echo "WARNING: Unable to chmod scripts/check-scheduler-running.sh — continuing"
+            fi
+            echo "[deploy-step] installing systemd unit files"
             sudo cp /opt/cheddar-logic/deploy/systemd/cheddar-worker.service /etc/systemd/system/cheddar-worker.service
             sudo cp /opt/cheddar-logic/deploy/systemd/cheddar-web.service /etc/systemd/system/cheddar-web.service
             sudo cp /opt/cheddar-logic/deploy/systemd/cheddar-fpl-sage.service /etc/systemd/system/cheddar-fpl-sage.service
             sudo cp /opt/cheddar-logic/deploy/systemd/cheddar-worker-watchdog.service /etc/systemd/system/cheddar-worker-watchdog.service
             sudo cp /opt/cheddar-logic/deploy/systemd/cheddar-worker-watchdog.timer /etc/systemd/system/cheddar-worker-watchdog.timer
+            echo "[deploy-step] daemon-reload"
             sudo systemctl daemon-reload
-            sudo systemctl enable cheddar-worker cheddar-web cheddar-fpl-sage cheddar-worker-watchdog.timer
-            sudo systemctl restart cheddar-worker-watchdog.timer || sudo systemctl start cheddar-worker-watchdog.timer
+            echo "[deploy-step] enabling units"
+            sudo systemctl enable cheddar-worker cheddar-web cheddar-worker-watchdog.timer
+            sudo systemctl enable cheddar-fpl-sage || echo "WARNING: Unable to enable cheddar-fpl-sage — continuing"
+            echo "[deploy-step] stopping worker before npm installs"
+            # systemctl stop on User=babycheeses11 services kills the SSH deploy session
+            # on this Pi via cgroup/session management, regardless of KillMode.
+            # Use mask (a symlink write — no signals sent) to block auto-restart, then
+            # terminate only the worker MainPID (plus exact scheduler fallback).
+            # Avoid broad pkill -f patterns: they can match this deploy shell command
+            # line and self-terminate the SSH action.
+            # The watchdog TIMER itself runs as root so stopping it is safe.
+            sudo systemctl stop cheddar-worker-watchdog.timer || true
+            sudo systemctl mask --runtime cheddar-worker-watchdog.service || true
+            sudo systemctl mask --runtime cheddar-worker || true
+            WORKER_MAIN_PID="$(sudo systemctl show -p MainPID --value cheddar-worker 2>/dev/null || true)"
+            if printf '%s' "$WORKER_MAIN_PID" | grep -Eq '^[0-9]+$' && [ "$WORKER_MAIN_PID" -gt 0 ]; then
+              echo "Terminating cheddar-worker MainPID=$WORKER_MAIN_PID"
+              sudo kill -TERM "$WORKER_MAIN_PID" || true
+            fi
+            for _sched_pid in $(pgrep -f '^node /opt/cheddar-logic/apps/worker/src/schedulers/main.js$' 2>/dev/null || true); do
+              sudo kill -TERM "$_sched_pid" || true
+            done
+            sleep 5
+            if printf '%s' "$WORKER_MAIN_PID" | grep -Eq '^[0-9]+$' && [ "$WORKER_MAIN_PID" -gt 0 ] && sudo kill -0 "$WORKER_MAIN_PID" 2>/dev/null; then
+              echo "Escalating SIGKILL to MainPID=$WORKER_MAIN_PID"
+              sudo kill -KILL "$WORKER_MAIN_PID" || true
+            fi
+            for _sched_pid in $(pgrep -f '^node /opt/cheddar-logic/apps/worker/src/schedulers/main.js$' 2>/dev/null || true); do
+              sudo kill -KILL "$_sched_pid" || true
+            done
+            sleep 1
+            sudo rm -f /opt/data/cheddar-prod.db.lock || true
             # ── Disk hygiene before installs ───────────────────────────────────
             # Abort early with a clear message if available disk is critically low.
             AVAIL_KB=$(df /opt --output=avail | tail -1)
@@ -267,6 +304,7 @@ jobs:
             fi
             CANONICAL_DB_PATH="$CHEDDAR_DB_PATH"
             echo "Resolved database path: $CANONICAL_DB_PATH"
+            echo "[deploy-step] preparing DB directory"
             if ! sudo mkdir -p "$(dirname "$CANONICAL_DB_PATH")"; then
               echo "WARNING: Unable to create DB directory $(dirname "$CANONICAL_DB_PATH") — continuing"
             fi
@@ -279,63 +317,67 @@ jobs:
                 echo "WARNING: Unable to chmod DB file $CANONICAL_DB_PATH — continuing"
               fi
             fi
-            # Stop worker before migrations to prevent concurrent writes to DB file.
-            # Stop the watchdog timer FIRST so it cannot restart the worker during the
-            # long build phase and re-acquire the DB lock before our final restart.
-            sudo systemctl stop cheddar-worker-watchdog.timer || true
-            sudo systemctl stop cheddar-worker-watchdog.service || true
-            sudo systemctl stop cheddar-worker || true
-            # Wait for the worker process to fully exit before touching the lock file.
-            for _wait_i in $(seq 1 15); do
-              if ! sudo systemctl is-active --quiet cheddar-worker 2>/dev/null; then
-                break
-              fi
-              sleep 1
+            echo "[deploy-step] stopping worker services (belt-and-suspenders)"
+            # Worker was already stopped early (mask+pkill). Belt-and-suspenders: kill
+            # any process that may have re-acquired the lock since then (e.g. orphan).
+            # Avoid systemctl stop here too — same cgroup/SSH-kill issue applies.
+            for _sched_pid in $(pgrep -f '^node /opt/cheddar-logic/apps/worker/src/schedulers/main.js$' 2>/dev/null || true); do
+              sudo kill -TERM "$_sched_pid" || true
             done
-            # Safety net: terminate any stray scheduler process not managed by systemd.
-            # This prevents hidden second writers from surviving into migration/restart.
-            pkill -f "node /opt/cheddar-logic/apps/worker/src/schedulers/main.js" || true
+            sleep 2
+            for _sched_pid in $(pgrep -f '^node /opt/cheddar-logic/apps/worker/src/schedulers/main.js$' 2>/dev/null || true); do
+              sudo kill -KILL "$_sched_pid" || true
+            done
             sleep 1
-            # Remove stale lock file in case worker didn't exit cleanly
-            rm -f "${CANONICAL_DB_PATH}.lock"
+            sudo rm -f "${CANONICAL_DB_PATH}.lock"
             # Run database migrations (will create DB if it doesn't exist)
+            echo "[deploy-step] starting migrations"
             echo "Running migrations against: $CANONICAL_DB_PATH"
             CHEDDAR_DB_PATH="$CANONICAL_DB_PATH" NODE_ENV=production timeout 10m node scripts/run-migrations.js || { echo "ERROR: Migrations failed or timed out"; exit 1; }
             # Ensure feature flags are present in .env.production (idempotent)
             ENV_PROD=/opt/cheddar-logic/.env.production
             grep -q '^ENABLE_CLV_LEDGER=' "$ENV_PROD" 2>/dev/null || echo 'ENABLE_CLV_LEDGER=true' >> "$ENV_PROD"
+            SQLITE3_AVAILABLE=true
             if ! command -v sqlite3 >/dev/null 2>&1; then
-              sudo apt-get update -y
-              sudo apt-get install -y sqlite3
+              SQLITE3_AVAILABLE=false
+              if ! sudo apt-get update -y || ! sudo apt-get install -y sqlite3; then
+                echo "WARNING: Unable to install sqlite3 for post-migration verification — continuing"
+              elif command -v sqlite3 >/dev/null 2>&1; then
+                SQLITE3_AVAILABLE=true
+              fi
             fi
             # Fail deploy if expected schema is missing from production DB
             test -s "$CANONICAL_DB_PATH" || { echo "ERROR: missing or empty canonical DB after migrations: $CANONICAL_DB_PATH"; exit 1; }
-            TABLE_CHECK_OK=0
-            TABLE_CHECK_OUTPUT=""
-            for attempt in $(seq 1 10); do
-              TABLE_CHECK_OUTPUT=$(sqlite3 "$CANONICAL_DB_PATH" "PRAGMA busy_timeout=5000; SELECT name FROM sqlite_master WHERE type='table' AND name='card_payloads';" 2>&1 || true)
-              if printf '%s\n' "$TABLE_CHECK_OUTPUT" | grep -qx "card_payloads"; then
-                TABLE_CHECK_OK=1
+            if [ "$SQLITE3_AVAILABLE" = true ] && command -v sqlite3 >/dev/null 2>&1; then
+              TABLE_CHECK_OK=0
+              TABLE_CHECK_OUTPUT=""
+              for attempt in $(seq 1 10); do
+                TABLE_CHECK_OUTPUT=$(sqlite3 "$CANONICAL_DB_PATH" "PRAGMA busy_timeout=5000; SELECT name FROM sqlite_master WHERE type='table' AND name='card_payloads';" 2>&1 || true)
+                if printf '%s\n' "$TABLE_CHECK_OUTPUT" | grep -qx "card_payloads"; then
+                  TABLE_CHECK_OK=1
+                  break
+                fi
+                if printf '%s' "$TABLE_CHECK_OUTPUT" | grep -qi "database is locked"; then
+                  echo "Schema check waiting for DB lock to clear (attempt $attempt/10)..."
+                  sleep 2
+                  continue
+                fi
+                if [ -n "$TABLE_CHECK_OUTPUT" ]; then
+                  echo "ERROR: sqlite schema check failed: $TABLE_CHECK_OUTPUT"
+                  exit 1
+                fi
                 break
-              fi
-              if printf '%s' "$TABLE_CHECK_OUTPUT" | grep -qi "database is locked"; then
-                echo "Schema check waiting for DB lock to clear (attempt $attempt/10)..."
-                sleep 2
-                continue
-              fi
-              if [ -n "$TABLE_CHECK_OUTPUT" ]; then
-                echo "ERROR: sqlite schema check failed: $TABLE_CHECK_OUTPUT"
+              done
+              if [ "$TABLE_CHECK_OK" -ne 1 ]; then
+                if printf '%s' "$TABLE_CHECK_OUTPUT" | grep -qi "database is locked"; then
+                  echo "ERROR: database remained locked while verifying schema after migrations"
+                else
+                  echo "ERROR: required table card_payloads missing after migrations"
+                fi
                 exit 1
               fi
-              break
-            done
-            if [ "$TABLE_CHECK_OK" -ne 1 ]; then
-              if printf '%s' "$TABLE_CHECK_OUTPUT" | grep -qi "database is locked"; then
-                echo "ERROR: database remained locked while verifying schema after migrations"
-              else
-                echo "ERROR: required table card_payloads missing after migrations"
-              fi
-              exit 1
+            else
+              echo "WARNING: Skipping sqlite3 schema verification because sqlite3 is unavailable"
             fi
             PREV_NEXT_ROLLBACK="/tmp/cheddar-prev-next-full"
             NEXT_STATIC_ARCHIVE_ROOT="/opt/cheddar-logic/.next-static-archive"
@@ -486,6 +528,9 @@ jobs:
               fi
               rm -f "${CANONICAL_DB_PATH}.lock" || true
             fi
+            # Unmask before restart — services were masked earlier to block auto-restart.
+            sudo systemctl unmask --runtime cheddar-worker || true
+            sudo systemctl unmask --runtime cheddar-worker-watchdog.service || true
             sudo systemctl restart cheddar-worker
             restart_web_with_diagnostics
             sudo systemctl restart cheddar-fpl-sage || { echo "WARNING: cheddar-fpl-sage failed to restart — continuing deploy (web/worker unaffected)"; true; }
