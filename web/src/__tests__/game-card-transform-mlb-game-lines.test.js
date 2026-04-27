@@ -537,4 +537,74 @@ function makeBaseGame(overrides = {}) {
   );
 }
 
+
+{
+  const mixedFullGameAndF5 = makeBaseGame({
+    id: 'game-mlb-full-game-vs-f5-routing',
+    gameId: 'game-mlb-full-game-vs-f5-routing',
+    plays: [
+      {
+        source_card_id: 'card-mlb-full-game-total-live',
+        cardType: 'mlb-full-game',
+        cardTitle: 'Full Game Total OVER: TAMPA BAY RAYS @ CLEVELAND GUARDIANS',
+        prediction: 'OVER',
+        confidence: 0.63,
+        tier: 'WATCH',
+        reasoning: 'Odds-backed full-game total should remain game-lines eligible',
+        evPassed: true,
+        driverKey: 'mlb-full-game',
+        projectedTotal: 8.1,
+        edge: 0.043,
+        kind: 'PLAY',
+        market_type: 'TOTAL',
+        selection: { side: 'OVER' },
+        line: 7.5,
+        price: -115,
+        status: 'WATCH',
+        classification: 'LEAN',
+        action: 'HOLD',
+        reason_codes: ['PLAY'],
+        execution_status: 'EXECUTABLE',
+      },
+      {
+        source_card_id: 'card-mlb-f5-projection-only',
+        cardType: 'mlb-f5',
+        cardTitle: 'F5 OVER: TAMPA BAY RAYS @ CLEVELAND GUARDIANS',
+        prediction: 'OVER',
+        confidence: 0.5,
+        tier: null,
+        reasoning: 'Projection-only F5 should be projection-surface only',
+        evPassed: false,
+        driverKey: 'mlb-f5',
+        projectedTotal: 4.1,
+        edge: null,
+        kind: 'PLAY',
+        market_type: 'TOTAL',
+        selection: { side: 'OVER' },
+        line: 4.5,
+        status: 'PASS',
+        classification: 'PASS',
+        action: 'PASS',
+        pass_reason_code: 'PASS_SYNTHETIC_FALLBACK',
+        reason_codes: ['PASS_SYNTHETIC_FALLBACK', 'PASS_NO_EDGE'],
+        execution_status: 'PROJECTION_ONLY',
+        basis: 'PROJECTION_ONLY',
+        projection_source: 'SYNTHETIC_FALLBACK',
+      },
+    ],
+  });
+
+  const transformed = transformGames([mixedFullGameAndF5]);
+  assert.strictEqual(
+    transformed.length,
+    1,
+    'MLB game-lines should keep only full-game plays when mixed with F5 projection-surface rows',
+  );
+  assert.strictEqual(
+    transformed[0].play.cardType,
+    'mlb-full-game',
+    'MLB F5 rows must not be selected as canonical game-lines plays',
+  );
+}
+
 console.log('✅ MLB game-line transform regressions passed');

@@ -557,9 +557,10 @@ npm --prefix web run test:ui:results
 npm --prefix web run test:decision:canonical
 ```
 
-
 ---
-# Prod Quickstart
+
+## Prod Quickstart
+
 ```bash
 sudo systemctl stop cheddar-worker && \
 set -a && . /opt/cheddar-logic/.env.production && set +a && \

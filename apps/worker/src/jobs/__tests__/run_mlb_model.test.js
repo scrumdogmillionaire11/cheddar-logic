@@ -3320,6 +3320,17 @@ describe('multi-market insertion (IME-01-03)', () => {
       'mlb-full-game-ml',
       expect.objectContaining({ runId: expect.any(String) }),
     );
+    for (const [card] of dataMocks.insertCardPayload.mock.calls) {
+      expect(card.payloadData.decision_v2).toEqual(
+        expect.objectContaining({
+          official_status: expect.stringMatching(/^(PLAY|LEAN|PASS)$/),
+          canonical_envelope_v2: expect.objectContaining({
+            official_status: expect.stringMatching(/^(PLAY|LEAN|PASS)$/),
+            source: 'decision_authority',
+          }),
+        }),
+      );
+    }
 
     logSpy.mockRestore();
     warnSpy.mockRestore();

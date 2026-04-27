@@ -16,6 +16,7 @@ Self-host the entire stack on your Pi using systemd and nginx.
 ## Architecture
 
 All services run on the Pi:
+
 - **Web (Next.js)**: Port 3000, managed by systemd (`deploy/systemd/cheddar-web.service`)
 - **FPL Backend (FastAPI)**: Port 8000, managed by systemd (`deploy/systemd/cheddar-fpl-sage.service`)
 - **Worker**: Managed by systemd (`deploy/systemd/cheddar-worker.service`)
@@ -145,7 +146,7 @@ pip install -r config/requirements.txt
 ```bash
 cd /opt/cheddar-logic
 npm --prefix packages/data install --production
-CHEDDAR_DB_PATH=/opt/cheddar-logic/packages/data/cheddar.db npm --prefix packages/data run migrate
+CHEDDAR_DB_PATH=/opt/data/cheddar-prod.db npm --prefix packages/data run migrate
 
 # Verify schema
 sqlite3 /opt/data/cheddar-prod.db ".tables"
@@ -298,12 +299,12 @@ sudo systemctl restart nginx
 
 Point your domain to the Pi's public IP:
 
-| Record | Type | Value |
-|--------|------|-------|
-| `@` | A | `your-pi-public-ip` |
-| `www` | CNAME | `@` |
+| Record | Type  | Value                |
+| :----- | :---- | :------------------- |
+| `@`    | A     | `your-pi-public-ip`  |
+| `www`  | CNAME | `@`                  |
 
-**Alternative: Cloudflare Tunnel (if behind NAT)**
+### Alternative: Cloudflare Tunnel (if behind NAT)
 
 If you can't open ports 80/443, use a **single production tunnel** in token mode and manage hostnames from **Published application routes** on that tunnel. Do **not** mix manual DNS edits, multiple production tunnels, or the Zero Trust **Networks → Routes** private-hostname/Gateway feature.
 
@@ -443,6 +444,7 @@ sudo journalctl -u cheddar-fpl-sage -f
 ## Troubleshooting
 
 ### Web won't start
+
 ```bash
 cd /opt/cheddar-logic/web
 npm run build  # Check for build errors
@@ -452,6 +454,7 @@ sudo systemctl restart cheddar-web
 ```
 
 ### Backend API errors
+
 ```bash
 cd /opt/cheddar-logic/cheddar-fpl-sage
 source venv/bin/activate
@@ -461,20 +464,22 @@ sudo systemctl restart cheddar-fpl-sage
 ```
 
 ### Worker not pulling data
+
 ```bash
 sudo journalctl -u cheddar-worker -n 200
 # Check ODDS_API_KEY in .env.production
 ```
 
 ### SSL certificate renewal
+
 ```bash
 sudo certbot renew --dry-run  # Test renewal
 sudo systemctl status certbot.timer  # Auto-renewal timer
 ```
 
 ### Out of disk space
+
 ```bash
-# Clean old PM2 logs
 # Trim old systemd journals
 sudo journalctl --vacuum-time=7d
 
@@ -535,7 +540,7 @@ DATE=$(date +%Y%m%d_%H%M%S)
 mkdir -p "$BACKUP_DIR"
 
 # Backup database
-cp /opt/cheddar-logic/packages/data/cheddar.db "$BACKUP_DIR/cheddar_$DATE.db"
+cp /opt/data/cheddar-prod.db "$BACKUP_DIR/cheddar_$DATE.db"
 
 # Backup env
 cp /opt/cheddar-logic/.env.production "$BACKUP_DIR/env_$DATE.txt"
@@ -558,16 +563,17 @@ crontab -e
 
 ## Quick Reference
 
-| Service | Command | Port |
-|---------|---------|------|
-| Web | `sudo systemctl restart cheddar-web` | 3000 |
-| FPL API | `sudo systemctl restart cheddar-fpl-sage` | 8000 |
-| Worker | `sudo systemctl restart cheddar-worker` | - |
-| Nginx | `sudo systemctl restart nginx` | 80/443 |
-| Deploy | `/opt/cheddar-logic/deploy.sh` | - |
-| Logs | `sudo journalctl -u <service> -f` | - |
+| Service | Command                                    | Port   |
+| :------ | :----------------------------------------- | :----- |
+| Web     | `sudo systemctl restart cheddar-web`       | 3000   |
+| FPL API | `sudo systemctl restart cheddar-fpl-sage`  | 8000   |
+| Worker  | `sudo systemctl restart cheddar-worker`    | -      |
+| Nginx   | `sudo systemctl restart nginx`             | 80/443 |
+| Deploy  | `/opt/cheddar-logic/deploy.sh`             | -      |
+| Logs    | `sudo journalctl -u <service> -f`          | -      |
 
 **Test URLs:**
-- http://localhost:3000 (web direct)
-- http://localhost:8000/api/v1/health (API direct)
-- https://cheddarlogic.com (public)
+
+- <http://localhost:3000> (web direct)
+- <http://localhost:8000/api/v1/health> (API direct)
+- <https://cheddarlogic.com> (public)
