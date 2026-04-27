@@ -109,4 +109,8 @@ None - no external service configuration required.
 - PASS projection visibility is now fail-closed for cards projection surfaces.
 - Ready to monitor runtime logs for projection drift warnings independently of PASS filtering behavior.
 
-## Self-Check: PENDING
+## Self-Check: PASSED
+
+- Found summary file: `.planning/phases/04-projection-display-integrity/04-01-SUMMARY.md`
+- Found task commit: `808cf628`
+- Found task commit: `befe9c6f`
