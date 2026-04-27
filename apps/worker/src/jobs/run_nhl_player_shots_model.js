@@ -29,8 +29,7 @@ const {
   calcFairLine,
   calcFairLine1p,
   projectSogV2,
-  projectBlkV1,
-  weightedRateBlendBLK,
+  projectBlkSimple,
 } = require('../models/nhl-player-shots');
 const { fetchMoneyPuckSnapshot } = require('../moneypuck');
 const { applyNhlDecisionBasisMeta } = require('../utils/nhl-shots-patch');
@@ -48,60 +47,6 @@ const JOB_NAME = 'run-nhl-player-shots-model';
 // Value ~3.0 is ~25th-percentile among PP-eligible players (conservative, not inflated).
 const PP_RATE_LEAGUE_AVG_PER60 = 3.0;
 const EVENT_PRICING_DISABLED = true;
-const NHL_BLK_FRESHNESS_POLICY_DEFAULTS = Object.freeze({
-  freshHours: 96,
-  staleHours: 192,
-  recentSuccessLookbackHours: 72,
-  recentSuccessGraceHours: 48,
-});
-
-function parsePositiveHours(rawValue, fallbackValue) {
-  const parsed = Number(rawValue);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallbackValue;
-}
-
-function resolveBlkFreshnessPolicy(env = process.env) {
-  const envOverrides = {
-    NHL_BLK_RATES_FRESH_HOURS: env.NHL_BLK_RATES_FRESH_HOURS,
-    NHL_BLK_RATES_STALE_HOURS: env.NHL_BLK_RATES_STALE_HOURS,
-    NHL_BLK_RATES_RECENT_SUCCESS_LOOKBACK_HOURS:
-      env.NHL_BLK_RATES_RECENT_SUCCESS_LOOKBACK_HOURS,
-    NHL_BLK_RATES_RECENT_SUCCESS_GRACE_HOURS:
-      env.NHL_BLK_RATES_RECENT_SUCCESS_GRACE_HOURS,
-  };
-
-  const policy = {
-    freshHours: parsePositiveHours(
-      envOverrides.NHL_BLK_RATES_FRESH_HOURS,
-      NHL_BLK_FRESHNESS_POLICY_DEFAULTS.freshHours,
-    ),
-    staleHours: parsePositiveHours(
-      envOverrides.NHL_BLK_RATES_STALE_HOURS,
-      NHL_BLK_FRESHNESS_POLICY_DEFAULTS.staleHours,
-    ),
-    recentSuccessLookbackHours: parsePositiveHours(
-      envOverrides.NHL_BLK_RATES_RECENT_SUCCESS_LOOKBACK_HOURS,
-      NHL_BLK_FRESHNESS_POLICY_DEFAULTS.recentSuccessLookbackHours,
-    ),
-    recentSuccessGraceHours: parsePositiveHours(
-      envOverrides.NHL_BLK_RATES_RECENT_SUCCESS_GRACE_HOURS,
-      NHL_BLK_FRESHNESS_POLICY_DEFAULTS.recentSuccessGraceHours,
-    ),
-  };
-
-  const driftKeys = Object.entries(envOverrides)
-    .filter(([, value]) => value !== undefined && value !== null && String(value).trim() !== '')
-    .map(([key]) => key);
-
-  return {
-    ...policy,
-    env_overrides: envOverrides,
-    override_keys: driftKeys,
-    has_override_drift: driftKeys.length > 0,
-  };
-}
-
-const NHL_BLK_FRESHNESS_POLICY = resolveBlkFreshnessPolicy();
 
 /**
  * WI-0529: Compute three-state display decision for prop cards.
