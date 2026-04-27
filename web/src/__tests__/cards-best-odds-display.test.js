@@ -280,6 +280,11 @@ function buildCard(playOverrides = {}) {
   assert.equal(classifyPassReasonBucket(card), 'data-error', 'PASS_NO_EDGE default fallback');
 }
 
+{
+  const card = buildCard({ play: { execution_status: null, reason_codes: ['PASS_NO_ACTIONABLE_PLAY'], decision_v2: null, transform_meta: null } });
+  assert.equal(classifyPassReasonBucket(card), null, 'PASS_NO_ACTIONABLE_PLAY should be neutral');
+}
+
 // no reason codes → null
 {
   const card = buildCard({ play: { execution_status: null, reason_codes: [], decision_v2: null, transform_meta: null } });

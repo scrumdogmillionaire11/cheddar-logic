@@ -1905,10 +1905,10 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
             ? 'MISSING_DATA_FEATURE_FRESHNESS'
           : hasProjectionInputsFailure
             ? 'MISSING_DATA_PROJECTION_INPUTS'
+            : hasEvidenceOnly
+              ? 'PASS_NO_ACTIONABLE_PLAY'
             : hasNoPlays
               ? 'MISSING_DATA_DRIVERS'
-          : hasEvidenceOnly
-            ? 'PASS_NO_ACTIONABLE_PLAY'
             : 'PASS_MISSING_DRIVER_INPUTS';
     const missingDataText: string =
       hasNoOdds && hasNoPlays
@@ -1923,12 +1923,12 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
             ? `Feature freshness stale${featureFreshnessMissingInputs.length ? `: ${featureFreshnessMissingInputs.join(', ')}` : ''}`
           : hasProjectionInputsFailure
             ? `Missing projection inputs${projectionCoreMissingInputs.length ? `: ${projectionCoreMissingInputs.join(', ')}` : ''}`
-            : hasNoPlays
-              ? 'Driver output unavailable'
             : hasEvidenceOnly
               ? hasFetchFailureInputs
                 ? `No actionable play${noActionablePlayInputs.length ? `: ${noActionablePlayInputs.join(', ')}` : ''}`
                 : 'No edge'
+            : hasNoPlays
+              ? 'Driver output unavailable'
             : 'Missing driver inputs';
     const missingInputs = hasMappingFailure
       ? sourceMappingFailures.length > 0

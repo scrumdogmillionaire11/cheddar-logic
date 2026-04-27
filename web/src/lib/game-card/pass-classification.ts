@@ -124,6 +124,13 @@ export function classifyPassHeaderBucket(card: GameCard): PassHeaderBucket | nul
   }
 
   if (
+    reasonCodes.length > 0 &&
+    reasonCodes.every((code) => code === 'PASS_NO_ACTIONABLE_PLAY')
+  ) {
+    return null;
+  }
+
+  if (
     play.transform_meta?.quality === 'BROKEN' ||
     reasonCodes.some((code) => DATA_ERROR_PASS_CODES.has(code))
   ) {
