@@ -7,6 +7,9 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SERVICE_NAME="${CHEDDAR_WORKER_SERVICE:-cheddar-worker}"
 ENV_FILE="${CHEDDAR_ENV_FILE:-$ROOT_DIR/.env.production}"
+HEARTBEAT_FILE="${CHEDDAR_SCHEDULER_HEARTBEAT_FILE:-/opt/data/cheddar-worker-heartbeat.json}"
+HEARTBEAT_MAX_AGE_SECONDS="${CHEDDAR_SCHEDULER_HEARTBEAT_MAX_AGE_SECONDS:-420}"
+WATCHDOG_AUTO_RESTART="${CHEDDAR_WORKER_WATCHDOG_AUTO_RESTART:-true}"
 if [ ! -f "$ENV_FILE" ] && [ -f "$ROOT_DIR/.env" ]; then
   ENV_FILE="$ROOT_DIR/.env"
 fi
@@ -46,6 +49,27 @@ load_env_file() {
 
 load_env_file "$ENV_FILE"
 
+read_heartbeat_age_seconds() {
+  local file="$1"
+  [ -f "$file" ] || return 2
+  if ! command -v node >/dev/null 2>&1; then
+    return 3
+  fi
+  node -e '
+    const fs = require("fs");
+    const file = process.argv[1];
+    const raw = fs.readFileSync(file, "utf8");
+    const hb = JSON.parse(raw);
+    const stamp =
+      hb.updated_at || hb.last_tick_completed_at || hb.last_tick_started_at || null;
+    if (!stamp) process.exit(2);
+    const thenMs = Date.parse(stamp);
+    if (!Number.isFinite(thenMs)) process.exit(3);
+    const ageSec = Math.max(0, Math.floor((Date.now() - thenMs) / 1000));
+    process.stdout.write(String(ageSec));
+  ' "$file"
+}
+
 service_active=false
 status="unknown"
 recent_logs=""
@@ -63,6 +87,29 @@ elif pgrep -f "node.*schedulers/main.js" >/dev/null 2>&1; then
   status="active-via-pgrep"
 else
   status="inactive-no-systemctl"
+fi
+
+if [ "$service_active" = true ]; then
+  heartbeat_age=""
+  if heartbeat_age=$(read_heartbeat_age_seconds "$HEARTBEAT_FILE" 2>/dev/null); then
+    if [ "$heartbeat_age" -gt "$HEARTBEAT_MAX_AGE_SECONDS" ]; then
+      service_active=false
+      status="heartbeat-stale-${heartbeat_age}s"
+    else
+      status="${status}-heartbeat-ok-${heartbeat_age}s"
+    fi
+  else
+    service_active=false
+    status="heartbeat-missing-or-invalid"
+  fi
+fi
+
+if [ "$service_active" = false ] && [ "$WATCHDOG_AUTO_RESTART" = "true" ] && command -v systemctl >/dev/null 2>&1; then
+  echo "[watchdog] attempting restart for $SERVICE_NAME (status=$status)"
+  if systemctl restart "$SERVICE_NAME" >/dev/null 2>&1 && systemctl is-active --quiet "$SERVICE_NAME"; then
+    echo "[watchdog] restart successful for $SERVICE_NAME"
+    exit 0
+  fi
 fi
 
 if [ "$service_active" = true ]; then
