@@ -212,7 +212,7 @@ function syncCanonicalDecisionEnvelope(payload, overrides = {}) {
     {
       stage: 'publisher',
       fallbackToLegacy: false,
-      strictSource: false,
+      strictSource: true,
       missingReasonCode: primaryReasonCode,
     },
   );
