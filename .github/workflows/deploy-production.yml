@@ -285,10 +285,14 @@ jobs:
               echo "Resolved database path: $CANONICAL_DB_PATH"
             fi
             sudo mkdir -p "$(dirname "$CANONICAL_DB_PATH")"
-            sudo chown $(id -u):$(id -g) "$(dirname "$CANONICAL_DB_PATH")"
+            if ! sudo chown "$(id -u):$(id -g)" "$(dirname "$CANONICAL_DB_PATH")"; then
+              echo "WARNING: Unable to chown DB directory $(dirname "$CANONICAL_DB_PATH") — continuing"
+            fi
             # Ensure proper permissions if DB exists
             if [ -f "$CANONICAL_DB_PATH" ]; then
-              chmod 664 "$CANONICAL_DB_PATH"
+              if ! chmod 664 "$CANONICAL_DB_PATH"; then
+                echo "WARNING: Unable to chmod DB file $CANONICAL_DB_PATH — continuing"
+              fi
             fi
             # Stop worker before migrations to prevent concurrent writes to DB file.
             # Stop the watchdog timer FIRST so it cannot restart the worker during the
