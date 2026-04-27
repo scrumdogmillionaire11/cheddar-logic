@@ -108,7 +108,7 @@ const OPPOSITE_DIRECTION: Partial<Record<Direction, Direction>> = {
 const PROXY_SIGNAL_TAGS = new Set<string>([
   'PROXY_MODEL_PROB_INFERRED',
 ]);
-const WAVE1_SPORTS = new Set(['NBA', 'NHL']);
+const WAVE1_SPORTS = new Set(['NBA', 'NHL', 'MLB']);
 const WAVE1_MARKETS = new Set<CanonicalMarketType>([
   'MONEYLINE',
   'SPREAD',
@@ -116,6 +116,7 @@ const WAVE1_MARKETS = new Set<CanonicalMarketType>([
   'PUCKLINE',
   'TEAM_TOTAL',
   'FIRST_PERIOD',
+  'FIRST_5_INNINGS',
 ]);
 const PROJECTION_ONLY_LINE_SOURCES = new Set<string>([
   'PROJECTION_FLOOR',
@@ -540,6 +541,56 @@ function splitProjectionMissingInputs(inputs: string[]): {
   };
 }
 
+function resolveCoreInputsComplete(entity: {
+  core_inputs_complete?: boolean | null;
+  projection_inputs_complete?: boolean | null;
+} | null | undefined): boolean | null {
+  if (!entity) return null;
+  if (typeof entity.core_inputs_complete === 'boolean') {
+    return entity.core_inputs_complete;
+  }
+  if (typeof entity.projection_inputs_complete === 'boolean') {
+    return entity.projection_inputs_complete;
+  }
+  return null;
+}
+
+function resolveCoreMissingInputs(entity: {
+  core_missing_inputs?: unknown;
+  missing_inputs?: unknown;
+} | null | undefined): string[] {
+  if (!entity) return [];
+  if (Array.isArray(entity.core_missing_inputs)) {
+    return normalizeMissingInputs(entity.core_missing_inputs);
+  }
+  const { projectionCoreMissingInputs } = splitProjectionMissingInputs(
+    normalizeMissingInputs(entity.missing_inputs),
+  );
+  return projectionCoreMissingInputs;
+}
+
+function resolveFeatureFreshnessInputs(entity: {
+  feature_flags?: unknown;
+  missing_inputs?: unknown;
+} | null | undefined): string[] {
+  if (!entity) return [];
+
+  const fromFeatureFlags = Array.isArray(entity.feature_flags)
+    ? entity.feature_flags
+        .map((value) => String(value).trim().toUpperCase())
+        .filter((value) => value.startsWith('FEATURE_BLOCK_RATES_'))
+        .map(() => 'feature_freshness:block_rates_stale')
+    : [];
+  const { featureFreshnessMissingInputs } = splitProjectionMissingInputs(
+    normalizeMissingInputs(entity.missing_inputs),
+  );
+
+  return Array.from(new Set([
+    ...fromFeatureFlags,
+    ...featureFreshnessMissingInputs,
+  ]));
+}
+
 function deriveMarketStatus(game: GameData): {
   hasOdds: boolean | null;
   executionBlocked: boolean;
@@ -723,7 +774,7 @@ function collectNoActionablePlayInputs(game: GameData): string[] {
   if (game.source_mapping_ok === false) {
     push('fetch_failure:source_mapping_failed');
   }
-  if (game.projection_inputs_complete === false) {
+  if (resolveCoreInputsComplete(game) === false) {
     push('fetch_failure:projection_inputs_incomplete');
   }
 
@@ -754,7 +805,7 @@ function collectNoActionablePlayInputs(game: GameData): string[] {
         unknownSignalCodes.push(code);
       }
     }
-    for (const missingInput of normalizeMissingInputs(play.missing_inputs)) {
+    for (const missingInput of resolveCoreMissingInputs(play)) {
       push(toDiagnosticToken('fetch_missing', missingInput));
     }
     for (const mappingFailure of play.source_mapping_failures ?? []) {
@@ -1714,39 +1765,37 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
     );
     const projectionMissingInputs = Array.from(
       new Set([
-        ...normalizeMissingInputs(game.projection_missing_inputs),
+        ...resolveCoreMissingInputs(game),
         ...game.plays.flatMap((play) =>
-          normalizeMissingInputs(play.missing_inputs),
+          resolveCoreMissingInputs(play),
         ),
       ]),
     );
-    const { projectionCoreMissingInputs, featureFreshnessMissingInputs, marketMissingInputs } =
+    const { projectionCoreMissingInputs, marketMissingInputs } =
       splitProjectionMissingInputs(projectionMissingInputs);
+    const featureFreshnessMissingInputs = Array.from(
+      new Set([
+        ...resolveFeatureFreshnessInputs(game),
+        ...game.plays.flatMap((play) => resolveFeatureFreshnessInputs(play)),
+      ]),
+    );
     const marketStatus = deriveMarketStatus(game);
     const hasMappingFailure =
       game.ingest_failure_reason_code === 'TEAM_MAPPING_UNMAPPED' ||
       game.source_mapping_ok === false || sourceMappingFailures.length > 0;
     const coreInputsCompleteSignals = [
-      game.core_inputs_complete,
-      ...game.plays.map((play) => play.core_inputs_complete),
+      resolveCoreInputsComplete(game),
+      ...game.plays.map((play) => resolveCoreInputsComplete(play)),
     ].filter((value): value is boolean => typeof value === 'boolean');
     const coreMissingInputs = Array.from(
       new Set([
-        ...(Array.isArray(game.core_missing_inputs)
-          ? normalizeMissingInputs(game.core_missing_inputs)
-          : []),
-        ...game.plays.flatMap((play) =>
-          Array.isArray(play.core_missing_inputs)
-            ? normalizeMissingInputs(play.core_missing_inputs)
-            : [],
-        ),
+        ...resolveCoreMissingInputs(game),
+        ...game.plays.flatMap((play) => resolveCoreMissingInputs(play)),
       ]),
     );
     const hasProjectionInputsFailure =
       coreInputsCompleteSignals.includes(false) ||
       coreMissingInputs.length > 0 ||
-      game.projection_inputs_complete === false ||
-      game.plays.some((play) => play.projection_inputs_complete === false) ||
       projectionCoreMissingInputs.length > 0;
     const hasFeatureFreshnessFailure = featureFreshnessMissingInputs.length > 0;
     const hasMarketFailure =
@@ -3738,7 +3787,7 @@ export function transformPropGames(games: GameData[]): PropGameCard[] {
         rawPropDecision?.projection_source ?? play.projection_source ?? null;
       const statusCap = rawPropDecision?.status_cap ?? play.status_cap ?? null;
       const missingInputs = normalizeMissingInputs(
-        rawPropDecision?.missing_inputs ?? play.missing_inputs,
+        rawPropDecision?.missing_inputs ?? play.core_missing_inputs ?? play.missing_inputs,
       );
       const passReasonCode =
         rawPropDecision?.pass_reason_code ?? play.pass_reason_code ?? null;

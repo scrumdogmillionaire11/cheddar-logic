@@ -1772,6 +1772,7 @@ async function checkPipelineHealth({ jobKey, dryRun }) {
         checkSportModelFreshness('nhl', 'run-nhl-player-shots-model', 'shots_model_freshness', getModelFreshnessMaxAgeMinutes()),
       nhl_blk_rates_nst_freshness: checkNhlBlkRatesFreshness,
       nhl_blk_rates_moneypuck_freshness: checkNhlMoneyPuckBlkRatesFreshness,
+      nhl_blk_source_integrity: checkNhlBlkSourceIntegrity,
       nba_model_freshness: () =>
         checkSportModelFreshness('nba', 'run_nba_model', 'model_freshness', getModelFreshnessMaxAgeMinutes()),
       nba_market_call_diagnostics: checkNbaMarketCallDiagnostics,
@@ -1813,6 +1814,7 @@ async function checkPipelineHealth({ jobKey, dryRun }) {
         nhl_shots_model_freshness: ['nhl', 'shots_model_freshness'],
         nhl_blk_rates_nst_freshness: ['nhl', 'blk_rates_nst_freshness'],
         nhl_blk_rates_moneypuck_freshness: ['nhl', 'blk_rates_moneypuck_freshness'],
+        nhl_blk_source_integrity: ['nhl', 'blk_source_integrity'],
         nba_model_freshness: ['nba', 'model_freshness'],
         nba_market_call_diagnostics: ['nba', 'market_call_blockers'],
         mlb_model_freshness: ['mlb', 'model_freshness'],
@@ -1890,6 +1892,51 @@ function checkNhlSogPullFreshness() {
   return checkSportModelFreshness('nhl', 'pull_nhl_player_shots', 'sog_pull_freshness', 1440);
 }
 
+function getLatestBlkSchemaDriftFailure(jobName, lookbackHours = 72) {
+  const db = getDatabase();
+  return db
+    .prepare(
+      `SELECT started_at, error_message
+       FROM job_runs
+       WHERE job_name = ?
+         AND status = 'failed'
+         AND started_at >= datetime('now', ?)
+       ORDER BY started_at DESC
+       LIMIT 1`,
+    )
+    .get(jobName, `-${lookbackHours} hours`);
+}
+
+function checkNhlBlkSourceIntegrity() {
+  if (!isFeatureEnabled('nhl', 'blk-ingest')) {
+    const reason = 'NHL BLK ingest feature disabled';
+    writePipelineHealth('nhl', 'blk_source_integrity', 'ok', reason);
+    return { ok: true, reason };
+  }
+
+  const failures = [];
+  const nstFailure = getLatestBlkSchemaDriftFailure('pull_nst_blk_rates');
+  const moneypuckFailure = getLatestBlkSchemaDriftFailure('pull_moneypuck_blk_rates');
+  const isSchemaDriftMessage = (value) => /schema[_\s-]?drift|missing required headers/i.test(String(value || ''));
+
+  if (nstFailure && isSchemaDriftMessage(nstFailure.error_message)) {
+    failures.push(`NST schema drift at ${nstFailure.started_at}`);
+  }
+  if (moneypuckFailure && isSchemaDriftMessage(moneypuckFailure.error_message)) {
+    failures.push(`MoneyPuck schema drift at ${moneypuckFailure.started_at}`);
+  }
+
+  if (failures.length > 0) {
+    const reason = `BLK source integrity failure: ${failures.join('; ')}`;
+    writePipelineHealth('nhl', 'blk_source_integrity', 'failed', reason);
+    return { ok: false, reason };
+  }
+
+  const reason = 'BLK source integrity checks passed (no recent schema-drift failures)';
+  writePipelineHealth('nhl', 'blk_source_integrity', 'ok', reason);
+  return { ok: true, reason };
+}
+
 function checkNhlBlkRatesFreshness() {
   if (!isFeatureEnabled('nhl', 'blk-ingest')) {
     const reason = 'NHL BLK ingest feature disabled';
@@ -1931,6 +1978,7 @@ module.exports = {
   checkPipelineHealth,
   checkNhlSogSyncFreshness,
   checkNhlSogPullFreshness,
+  checkNhlBlkSourceIntegrity,
   checkNhlBlkRatesFreshness,
   checkNhlMoneyPuckBlkRatesFreshness,
   checkCardsFreshness,

@@ -110,6 +110,7 @@ function buildBlkGames(blocksByGame = [], rawDataOverrides = {}) {
 }
 
 function buildBlkRateRow(overrides = {}) {
+  const maxUpdatedAt = new Date().toISOString();
   return {
     ev_blocks_season_per60: 4.2,
     ev_blocks_l10_per60: 4.4,
@@ -118,7 +119,8 @@ function buildBlkRateRow(overrides = {}) {
     pk_blocks_l10_per60: 1.2,
     pk_blocks_l5_per60: 1.3,
     pk_toi_per_game: 1.8,
-    max_updated_at: new Date().toISOString(),
+    updated_at: maxUpdatedAt,
+    max_updated_at: maxUpdatedAt,
     ...overrides,
   };
 }
@@ -131,6 +133,7 @@ function buildMockDb({
   playerLogs = [],
   playerBlkLogs = [],
   playerBlkRateRow = null,
+  blkRatesJobRunMaxStartedAt = null,
   playerPropLines = [],
   availabilityRow = null,
   teamMetricsRow = null,
@@ -157,6 +160,15 @@ function buildMockDb({
       }
       if (s.includes('from player_blk_rates')) {
         return { get: jest.fn(() => playerBlkRateRow) };
+      }
+      if (s.includes('from job_runs') && s.includes("pull_nst_blk_rates")) {
+        return {
+          get: jest.fn(() =>
+            blkRatesJobRunMaxStartedAt
+              ? { max_started_at: blkRatesJobRunMaxStartedAt }
+              : { max_started_at: null },
+          ),
+        };
       }
       if (s.includes('from player_prop_lines')) {
         return {
@@ -3363,7 +3375,10 @@ describe('run_nhl_player_shots_model', () => {
       players: [buildPlayer({ player_id: 9152, player_name: 'Stale BLK Defender' })],
       playerLogs: [],
       playerBlkLogs: buildBlkGames([3, 2, 2, 3, 2]),
-      playerBlkRateRow: buildBlkRateRow({ max_updated_at: staleUpdatedAt }),
+      playerBlkRateRow: buildBlkRateRow({
+        updated_at: staleUpdatedAt,
+        max_updated_at: staleUpdatedAt,
+      }),
       availabilityRow: { status: 'ACTIVE', checked_at: new Date().toISOString() },
       teamMetricsRow: {
         opponent_shots_against_pg: 31.2,
@@ -3381,6 +3396,110 @@ describe('run_nhl_player_shots_model', () => {
     expect(blkCard.payloadData.missing_inputs || []).not.toContain('block_rates_stale');
     expect(blkCard.payloadData.feature_flags || []).toContain('FEATURE_BLOCK_RATES_STALE');
     expect(blkCard.payloadData.core_inputs_complete).toBe(true);
+  });
+
+  test('BLK stale grace window uses aging flag when recent ingest succeeded', async () => {
+    process.env.NHL_BLK_CARDS_ENABLED = 'true';
+    const { mod, data, shots } = loadFreshModule();
+
+    shots.projectBlkV1.mockImplementation((inputs = {}) => ({
+      blk_mu: 2.1,
+      blk_sigma: 1.05,
+      block_rate_ev_per60: Number(inputs.ev_blocks_l5_per60 || 0),
+      block_rate_pk_per60: Number(inputs.pk_blocks_l5_per60 || 0),
+      role_stability: 'HIGH',
+      fair_over_prob_by_line: { [String(inputs.market_line)]: 0.53 },
+      fair_under_prob_by_line: { [String(inputs.market_line)]: 0.47 },
+      edge_over_pp: null,
+      edge_under_pp: null,
+      ev_over: null,
+      ev_under: null,
+      opportunity_score: null,
+      flags: [],
+    }));
+
+    const staleUpdatedAt = new Date(Date.now() - 9 * 24 * 60 * 60 * 1000).toISOString();
+    const recentIngestSuccessAt = new Date(Date.now() - 12 * 60 * 60 * 1000).toISOString();
+    data.getDatabase.mockReturnValue(buildMockDb({
+      games: [buildFutureGame({ game_id: 'blk-stale-grace-flag-01' })],
+      players: [buildPlayer({ player_id: 9153, player_name: 'Grace BLK Defender' })],
+      playerLogs: [],
+      playerBlkLogs: buildBlkGames([3, 2, 2, 3, 2]),
+      playerBlkRateRow: buildBlkRateRow({
+        updated_at: staleUpdatedAt,
+        max_updated_at: staleUpdatedAt,
+      }),
+      blkRatesJobRunMaxStartedAt: recentIngestSuccessAt,
+      availabilityRow: { status: 'ACTIVE', checked_at: new Date().toISOString() },
+      teamMetricsRow: {
+        opponent_shots_against_pg: 31.2,
+        league_avg_shots_against_pg: 30,
+      },
+      oddsSnapshotRow: {
+        h2h_home: -110,
+        h2h_away: 100,
+      },
+    }));
+
+    await mod.runNHLPlayerShotsModel();
+
+    const blkCard = getSingleBlkCard(data);
+    expect(blkCard.payloadData.feature_flags || []).toContain('FEATURE_BLOCK_RATES_AGING');
+    expect(blkCard.payloadData.feature_flags || []).not.toContain('FEATURE_BLOCK_RATES_STALE_HARD');
+    expect(blkCard.payloadData.raw_data?.blk_rates_freshness?.tier).toBe('warn');
+  });
+
+  test('BLK freshness uses entity-level updated_at over run-level max timestamp', async () => {
+    process.env.NHL_BLK_CARDS_ENABLED = 'true';
+    const { mod, data, shots } = loadFreshModule();
+
+    shots.projectBlkV1.mockImplementation(() => ({
+      blk_mu: 2.0,
+      blk_sigma: 1.0,
+      block_rate_ev_per60: 4.0,
+      block_rate_pk_per60: 1.0,
+      role_stability: 'HIGH',
+      fair_over_prob_by_line: { '1.5': 0.52 },
+      fair_under_prob_by_line: { '1.5': 0.48 },
+      edge_over_pp: null,
+      edge_under_pp: null,
+      ev_over: null,
+      ev_under: null,
+      opportunity_score: null,
+      flags: [],
+    }));
+
+    const staleEntityUpdatedAt = new Date(Date.now() - 11 * 24 * 60 * 60 * 1000).toISOString();
+    const freshRunMaxUpdatedAt = new Date(Date.now() - 12 * 60 * 60 * 1000).toISOString();
+
+    data.getDatabase.mockReturnValue(buildMockDb({
+      games: [buildFutureGame({ game_id: 'blk-entity-freshness-01' })],
+      players: [buildPlayer({ player_id: 9011, player_name: 'Entity Freshness Defender' })],
+      playerLogs: [],
+      playerBlkLogs: buildBlkGames([2, 2, 3, 1, 2]),
+      playerBlkRateRow: buildBlkRateRow({
+        updated_at: staleEntityUpdatedAt,
+        max_updated_at: freshRunMaxUpdatedAt,
+      }),
+      blkRatesJobRunMaxStartedAt: new Date(Date.now() - 4 * 60 * 60 * 1000).toISOString(),
+      availabilityRow: { status: 'ACTIVE', checked_at: new Date().toISOString() },
+      teamMetricsRow: {
+        opponent_shots_against_pg: 31.2,
+        league_avg_shots_against_pg: 30,
+      },
+      oddsSnapshotRow: {
+        h2h_home: -110,
+        h2h_away: 100,
+      },
+    }));
+
+    await mod.runNHLPlayerShotsModel();
+
+    const blkCard = getSingleBlkCard(data);
+    const freshness = blkCard.payloadData.raw_data?.blk_rates_freshness;
+    expect(freshness?.tier).toBe('stale_fail');
+    expect(freshness?.run_level_tier).toBe('fresh');
+    expect(blkCard.payloadData.feature_flags || []).toContain('FEATURE_BLOCK_RATES_STALE_HARD');
   });
 
   test('WI-0915: BLK missing context defaults factors and emits flags', async () => {

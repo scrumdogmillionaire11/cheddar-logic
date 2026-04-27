@@ -424,6 +424,16 @@ export interface Play {
     };
   };
   reason_codes?: string[];
+    projection_inputs_complete?: boolean | null;
+    missing_inputs?: string[];
+    core_inputs_complete?: boolean | null;
+    core_missing_inputs?: string[];
+    feature_flags?: string[];
+    market_status?: {
+      has_odds?: boolean | null;
+      freshness_tier?: string | null;
+      execution_blocked?: boolean | null;
+    } | null;
   tags?: string[];
   consistency?: {
     total_bias?:
@@ -433,8 +443,6 @@ export interface Play {
       | 'VOLATILE_ENV'
       | 'UNKNOWN';
   };
-  projection_inputs_complete?: boolean | null;
-  missing_inputs?: string[];
   source_mapping_ok?: boolean | null;
   source_mapping_failures?: string[];
   ingest_failure_reason_code?: string | null;
@@ -584,6 +592,24 @@ export interface Play {
   true_play_authority_source?: 'CARD_PAYLOADS_DECISION_V2';
   true_play_authority_version?: 'ADR-0003';
   true_play_authority_rationale?: string;
+}
+
+function normalizeApiMarketStatus(value: unknown): {
+  has_odds?: boolean | null;
+  freshness_tier?: string | null;
+  execution_blocked?: boolean | null;
+} | null {
+  if (!value || typeof value !== 'object') return null;
+  const raw = value as Record<string, unknown>;
+  return {
+    has_odds: typeof raw.has_odds === 'boolean' ? raw.has_odds : null,
+    freshness_tier:
+      typeof raw.freshness_tier === 'string' ? raw.freshness_tier : null,
+    execution_blocked:
+      typeof raw.execution_blocked === 'boolean'
+        ? raw.execution_blocked
+        : null,
+  };
 }
 const TRUE_PLAY_AUTHORITY_SOURCE = 'CARD_PAYLOADS_DECISION_V2' as const;
 const TRUE_PLAY_AUTHORITY_VERSION = 'ADR-0003' as const;
@@ -3415,21 +3441,57 @@ function mergePropFallbackRows(params: {
             : undefined,
           reason_codes: dedupedReasonCodes,
           projection_inputs_complete:
-            typeof payload.projection_inputs_complete === 'boolean'
-              ? payload.projection_inputs_complete
-              : typeof payloadPlay?.projection_inputs_complete === 'boolean'
-                ? payloadPlay.projection_inputs_complete
+            typeof payload.core_inputs_complete === 'boolean'
+              ? payload.core_inputs_complete
+              : typeof payloadPlay?.core_inputs_complete === 'boolean'
+                ? payloadPlay.core_inputs_complete
+                : typeof payload.projection_inputs_complete === 'boolean'
+                  ? payload.projection_inputs_complete
+                  : typeof payloadPlay?.projection_inputs_complete === 'boolean'
+                    ? payloadPlay.projection_inputs_complete
+                    : null,
+          core_inputs_complete:
+            typeof payload.core_inputs_complete === 'boolean'
+              ? payload.core_inputs_complete
+              : typeof payloadPlay?.core_inputs_complete === 'boolean'
+                ? payloadPlay.core_inputs_complete
                 : null,
           missing_inputs: Array.from(
             new Set([
-              ...(Array.isArray(payload.missing_inputs)
-                ? payload.missing_inputs
+              ...(Array.isArray(payload.core_missing_inputs)
+                ? payload.core_missing_inputs
+                : Array.isArray(payload.missing_inputs)
+                  ? payload.missing_inputs
+                  : []),
+              ...(Array.isArray(payloadPlay?.core_missing_inputs)
+                ? payloadPlay.core_missing_inputs
                 : []),
               ...(Array.isArray(payloadPlay?.missing_inputs)
                 ? payloadPlay.missing_inputs
                 : []),
             ].map((value) => String(value))),
           ),
+          core_missing_inputs: Array.from(
+            new Set([
+              ...(Array.isArray(payload.core_missing_inputs)
+                ? payload.core_missing_inputs
+                : []),
+              ...(Array.isArray(payloadPlay?.core_missing_inputs)
+                ? payloadPlay.core_missing_inputs
+                : []),
+            ].map((value) => String(value))),
+          ),
+          feature_flags: Array.from(
+            new Set([
+              ...(Array.isArray(payload.feature_flags) ? payload.feature_flags : []),
+              ...(Array.isArray(payloadPlay?.feature_flags)
+                ? payloadPlay.feature_flags
+                : []),
+            ].map((value) => String(value))),
+          ),
+          market_status:
+            normalizeApiMarketStatus(payload.market_status) ??
+            normalizeApiMarketStatus(payloadPlay?.market_status),
           source_mapping_ok:
             typeof payload.source_mapping_ok === 'boolean'
               ? payload.source_mapping_ok

@@ -625,7 +625,7 @@ function uniqueReasonCodes(codes = []) {
 function applyDecisionNamespaceMetadata(payload) {
   if (!payload || typeof payload !== 'object') return;
 
-  const missingInputs = Array.isArray(payload.missing_inputs)
+  const legacyMissingInputs = Array.isArray(payload.missing_inputs)
     ? payload.missing_inputs.map((value) => String(value))
     : [];
 
@@ -640,24 +640,40 @@ function applyDecisionNamespaceMetadata(payload) {
     'odds_snapshot_missing',
   ]);
 
+  const derivedFeatureFlagsFromLegacy = legacyMissingInputs
+    .filter((token) => featureTokenSet.has(String(token).toLowerCase()))
+    .map((token) => `FEATURE_${String(token).trim().toUpperCase()}`);
   const featureFlags = Array.from(
     new Set([
       ...(Array.isArray(payload.feature_flags) ? payload.feature_flags : []),
-      ...missingInputs
-        .filter((token) => featureTokenSet.has(String(token).toLowerCase()))
-        .map((token) => `FEATURE_${String(token).trim().toUpperCase()}`),
+      ...derivedFeatureFlagsFromLegacy,
     ]),
   );
 
-  const coreMissingInputs = missingInputs.filter((token) => {
-    const normalized = String(token).toLowerCase();
-    return !featureTokenSet.has(normalized) && !marketTokenSet.has(normalized);
-  });
+  const coreMissingInputs = Array.isArray(payload.core_missing_inputs)
+    ? payload.core_missing_inputs.map((value) => String(value))
+    : legacyMissingInputs.filter((token) => {
+      const normalized = String(token).toLowerCase();
+      return !featureTokenSet.has(normalized) && !marketTokenSet.has(normalized);
+    });
+
+  const coreInputsComplete =
+    typeof payload.core_inputs_complete === 'boolean'
+      ? payload.core_inputs_complete && coreMissingInputs.length === 0
+      : payload.projection_inputs_complete !== false && coreMissingInputs.length === 0;
 
   payload.feature_flags = featureFlags;
-  payload.core_missing_inputs = coreMissingInputs;
-  payload.core_inputs_complete =
-    payload.projection_inputs_complete !== false && coreMissingInputs.length === 0;
+  payload.core_missing_inputs = Array.from(new Set(coreMissingInputs));
+  payload.core_inputs_complete = coreInputsComplete;
+
+  // Compatibility mirror: legacy fields are derived from namespaced authority.
+  payload.projection_inputs_complete = coreInputsComplete;
+  payload.missing_inputs = Array.from(new Set([
+    ...payload.core_missing_inputs,
+    ...(featureFlags.some((flag) => String(flag).startsWith('FEATURE_BLOCK_RATES_'))
+      ? ['feature_freshness:block_rates_stale']
+      : []),
+  ]));
 
   const executionStatus = String(payload.execution_status || '').toUpperCase();
   const basis = String(payload.basis || '').toUpperCase();

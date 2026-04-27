@@ -48,6 +48,60 @@ const JOB_NAME = 'run-nhl-player-shots-model';
 // Value ~3.0 is ~25th-percentile among PP-eligible players (conservative, not inflated).
 const PP_RATE_LEAGUE_AVG_PER60 = 3.0;
 const EVENT_PRICING_DISABLED = true;
+const NHL_BLK_FRESHNESS_POLICY_DEFAULTS = Object.freeze({
+  freshHours: 96,
+  staleHours: 192,
+  recentSuccessLookbackHours: 72,
+  recentSuccessGraceHours: 48,
+});
+
+function parsePositiveHours(rawValue, fallbackValue) {
+  const parsed = Number(rawValue);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallbackValue;
+}
+
+function resolveBlkFreshnessPolicy(env = process.env) {
+  const envOverrides = {
+    NHL_BLK_RATES_FRESH_HOURS: env.NHL_BLK_RATES_FRESH_HOURS,
+    NHL_BLK_RATES_STALE_HOURS: env.NHL_BLK_RATES_STALE_HOURS,
+    NHL_BLK_RATES_RECENT_SUCCESS_LOOKBACK_HOURS:
+      env.NHL_BLK_RATES_RECENT_SUCCESS_LOOKBACK_HOURS,
+    NHL_BLK_RATES_RECENT_SUCCESS_GRACE_HOURS:
+      env.NHL_BLK_RATES_RECENT_SUCCESS_GRACE_HOURS,
+  };
+
+  const policy = {
+    freshHours: parsePositiveHours(
+      envOverrides.NHL_BLK_RATES_FRESH_HOURS,
+      NHL_BLK_FRESHNESS_POLICY_DEFAULTS.freshHours,
+    ),
+    staleHours: parsePositiveHours(
+      envOverrides.NHL_BLK_RATES_STALE_HOURS,
+      NHL_BLK_FRESHNESS_POLICY_DEFAULTS.staleHours,
+    ),
+    recentSuccessLookbackHours: parsePositiveHours(
+      envOverrides.NHL_BLK_RATES_RECENT_SUCCESS_LOOKBACK_HOURS,
+      NHL_BLK_FRESHNESS_POLICY_DEFAULTS.recentSuccessLookbackHours,
+    ),
+    recentSuccessGraceHours: parsePositiveHours(
+      envOverrides.NHL_BLK_RATES_RECENT_SUCCESS_GRACE_HOURS,
+      NHL_BLK_FRESHNESS_POLICY_DEFAULTS.recentSuccessGraceHours,
+    ),
+  };
+
+  const driftKeys = Object.entries(envOverrides)
+    .filter(([, value]) => value !== undefined && value !== null && String(value).trim() !== '')
+    .map(([key]) => key);
+
+  return {
+    ...policy,
+    env_overrides: envOverrides,
+    override_keys: driftKeys,
+    has_override_drift: driftKeys.length > 0,
+  };
+}
+
+const NHL_BLK_FRESHNESS_POLICY = resolveBlkFreshnessPolicy();
 
 /**
  * WI-0529: Compute three-state display decision for prop cards.
@@ -241,6 +295,79 @@ function computeBlkUnderdogScriptContext({
     source: 'computed',
     missing: false,
     winProbability: playerTeamWinProbability,
+  };
+}
+
+function classifyBlkRatesFreshness({
+  maxUpdatedAt,
+  recentIngestSuccessAt,
+  nowMs = Date.now(),
+  policy = NHL_BLK_FRESHNESS_POLICY,
+}) {
+  if (!maxUpdatedAt) {
+    return {
+      tier: 'stale_fail',
+      featureFlags: ['FEATURE_BLOCK_RATES_STALE', 'FEATURE_BLOCK_RATES_STALE_HARD'],
+      ageHours: null,
+      staleThresholdHours: policy.staleHours,
+      recentIngestSuccess: false,
+      policy,
+    };
+  }
+
+  const updatedAtMs = new Date(maxUpdatedAt).getTime();
+  if (!Number.isFinite(updatedAtMs)) {
+    return {
+      tier: 'stale_fail',
+      featureFlags: ['FEATURE_BLOCK_RATES_STALE', 'FEATURE_BLOCK_RATES_STALE_HARD'],
+      ageHours: null,
+      staleThresholdHours: policy.staleHours,
+      recentIngestSuccess: false,
+      policy,
+    };
+  }
+
+  const ageHours = Math.max(0, (nowMs - updatedAtMs) / (1000 * 60 * 60));
+  const recentSuccessMs = recentIngestSuccessAt
+    ? new Date(recentIngestSuccessAt).getTime()
+    : NaN;
+  const recentIngestSuccess =
+    Number.isFinite(recentSuccessMs) &&
+    nowMs - recentSuccessMs <=
+      policy.recentSuccessLookbackHours * 60 * 60 * 1000;
+  const staleThresholdHours =
+    policy.staleHours +
+    (recentIngestSuccess ? policy.recentSuccessGraceHours : 0);
+
+  if (ageHours <= policy.freshHours) {
+    return {
+      tier: 'fresh',
+      featureFlags: [],
+      ageHours,
+      staleThresholdHours,
+      recentIngestSuccess,
+      policy,
+    };
+  }
+
+  if (ageHours <= staleThresholdHours) {
+    return {
+      tier: 'warn',
+      featureFlags: ['FEATURE_BLOCK_RATES_AGING'],
+      ageHours,
+      staleThresholdHours,
+      recentIngestSuccess,
+      policy,
+    };
+  }
+
+  return {
+    tier: 'stale_fail',
+    featureFlags: ['FEATURE_BLOCK_RATES_STALE', 'FEATURE_BLOCK_RATES_STALE_HARD'],
+    ageHours,
+    staleThresholdHours,
+    recentIngestSuccess,
+    policy,
   };
 }
 
@@ -2158,11 +2285,23 @@ async function runNHLPlayerShotsModel() {
       const blkRatesMaxAge = db.prepare(
         `SELECT MAX(updated_at) AS max_updated_at FROM player_blk_rates WHERE season = ?`
       ).get(nhlSeasonKey);
-      const blkRatesStale = (() => {
-        if (!blkRatesMaxAge?.max_updated_at) return true;
-        const ageMs = Date.now() - new Date(blkRatesMaxAge.max_updated_at).getTime();
-        return ageMs > 8 * 24 * 60 * 60 * 1000;
-      })();
+      const blkRatesRecentIngest = db
+        .prepare(
+          `SELECT MAX(started_at) AS max_started_at
+           FROM job_runs
+           WHERE status = 'success'
+             AND job_name IN ('pull_nst_blk_rates', 'pull_moneypuck_blk_rates', 'ingest_nst_blk_rates')`,
+        )
+        .get();
+      const blkRatesFreshness = classifyBlkRatesFreshness({
+        maxUpdatedAt: blkRatesMaxAge?.max_updated_at ?? null,
+        recentIngestSuccessAt: blkRatesRecentIngest?.max_started_at ?? null,
+      });
+      if (NHL_BLK_FRESHNESS_POLICY.has_override_drift) {
+        console.warn(
+          `[${JOB_NAME}] [BLK_FRESHNESS_POLICY_OVERRIDE] using env overrides: ${NHL_BLK_FRESHNESS_POLICY.override_keys.join(', ')}`,
+        );
+      }
 
       if (excludedPlayerIds.size > 0) {
         console.log(
@@ -3586,6 +3725,10 @@ async function runNHLPlayerShotsModel() {
               if (!blkRateRow) {
                 console.warn(`[run-nhl-player-shots-model] WARN: no player_blk_rates row for player ${player.player_id} season ${nhlSeasonKey} — BLK mu will be 0`);
               }
+              const playerBlkRatesFreshness = classifyBlkRatesFreshness({
+                maxUpdatedAt: blkRateRow?.updated_at ?? blkRatesMaxAge?.max_updated_at ?? null,
+                recentIngestSuccessAt: blkRatesRecentIngest?.max_started_at ?? null,
+              });
 
               const blkLineCandidates = EVENT_PRICING_DISABLED
                 ? []
@@ -3739,7 +3882,7 @@ async function runNHLPlayerShotsModel() {
                 if (blkLineCandidates.length > 1) {
                   console.debug(`[${JOB_NAME}] [blk-multi-line] ${playerName}: pricing ${blkLineCandidates.length} lines: ${blkLineCandidates.map((c) => c.line).join(', ')}`);
                 }
-                const blkConfidence = Math.max(
+                let blkConfidence = Math.max(
                   0.55,
                   Math.min(
                     0.8,
@@ -3793,6 +3936,23 @@ async function runNHLPlayerShotsModel() {
                       new Set([...(blkPropDecision.flags || []), 'SYNTHETIC_LINE']),
                     ),
                   };
+                }
+
+                if (playerBlkRatesFreshness.tier === 'stale_fail') {
+                  blkConfidence = Math.min(blkConfidence, 0.62);
+                  if (blkPropDecision.verdict === 'PLAY') {
+                    blkPropDecision = {
+                      ...blkPropDecision,
+                      verdict: 'WATCH',
+                      why: `${blkPropDecision.why} (BLK rates stale)`,
+                      flags: Array.from(
+                        new Set([
+                          ...(blkPropDecision.flags || []),
+                          'FEATURE_BLOCK_RATES_STALE',
+                        ]),
+                      ),
+                    };
+                  }
                 }
 
                 const blkOfficialStatus = resolveOfficialStatusFromPropVerdict(
@@ -3907,16 +4067,45 @@ async function runNHLPlayerShotsModel() {
                   },
                 };
 
-                if (blkRatesStale) {
+                if (playerBlkRatesFreshness.featureFlags.length > 0) {
                   payloadDataBlk.feature_flags = Array.from(
                     new Set([
                       ...(Array.isArray(payloadDataBlk.feature_flags)
                         ? payloadDataBlk.feature_flags
                         : []),
-                      'FEATURE_BLOCK_RATES_STALE',
+                      ...playerBlkRatesFreshness.featureFlags,
                     ]),
                   );
                 }
+
+                payloadDataBlk.raw_data = {
+                  ...(payloadDataBlk.raw_data && typeof payloadDataBlk.raw_data === 'object'
+                    ? payloadDataBlk.raw_data
+                    : {}),
+                  blk_rates_freshness: {
+                    tier: playerBlkRatesFreshness.tier,
+                    age_hours:
+                      Number.isFinite(playerBlkRatesFreshness.ageHours)
+                        ? roundMetric(playerBlkRatesFreshness.ageHours, 2)
+                        : null,
+                    max_updated_at: blkRateRow?.updated_at ?? blkRatesMaxAge?.max_updated_at ?? null,
+                    recent_ingest_success_at:
+                      blkRatesRecentIngest?.max_started_at ?? null,
+                    stale_threshold_hours: playerBlkRatesFreshness.staleThresholdHours,
+                    recent_ingest_success: playerBlkRatesFreshness.recentIngestSuccess,
+                    run_level_tier: blkRatesFreshness.tier,
+                    policy: {
+                      fresh_hours: playerBlkRatesFreshness.policy?.freshHours,
+                      stale_hours: playerBlkRatesFreshness.policy?.staleHours,
+                      recent_success_lookback_hours:
+                        playerBlkRatesFreshness.policy?.recentSuccessLookbackHours,
+                      recent_success_grace_hours:
+                        playerBlkRatesFreshness.policy?.recentSuccessGraceHours,
+                      override_keys: NHL_BLK_FRESHNESS_POLICY.override_keys,
+                      override_drift: NHL_BLK_FRESHNESS_POLICY.has_override_drift,
+                    },
+                  },
+                };
 
                 payloadDataBlk.core_inputs_complete =
                   payloadDataBlk.projection_inputs_complete !== false;

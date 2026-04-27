@@ -76,6 +76,9 @@ async function pullNstBlkRates({ jobKey = null, dryRun = false } = {}) {
       markJobRunSuccess(jobRunId);
       return { success: true, jobRunId, ...result };
     } catch (err) {
+      if (/SCHEMA_DRIFT/i.test(String(err?.message || ''))) {
+        console.error(`[${JOB_NAME}] SOURCE_INTEGRITY_FAIL: ${err.message}`);
+      }
       console.error(`[${JOB_NAME}] Failed: ${err.message}`);
       try {
         markJobRunFailure(jobRunId, err.message);

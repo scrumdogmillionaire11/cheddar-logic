@@ -52,6 +52,7 @@ const {
   checkMlbSeedFreshness,
   checkPipelineHealth,
   checkNhlSogSyncFreshness,
+  checkNhlBlkSourceIntegrity,
   checkNhlBlkRatesFreshness,
   checkNhlMoneyPuckBlkRatesFreshness,
 } = require('../check_pipeline_health');
@@ -70,6 +71,7 @@ function makeDb({
   latestCardsByGame = {},
   latestOddsByGame = {},
   jobRunsByKey = {},
+  failedJobRunsByName = {},
 } = {}) {
   return {
     prepare: jest.fn((sql) => {
@@ -98,6 +100,12 @@ function makeDb({
       if (s.includes('FROM job_runs') && s.includes('job_key = ?') && s.includes("status = 'success'")) {
         return {
           get: jest.fn((jobName, jobKey) => jobRunsByKey[`${jobName}|${jobKey}`] ?? null),
+        };
+      }
+
+      if (s.includes('FROM job_runs') && s.includes("status = 'failed'") && s.includes('job_name = ?')) {
+        return {
+          get: jest.fn((jobName) => failedJobRunsByName[jobName] ?? null),
         };
       }
 
@@ -278,6 +286,41 @@ describe('checkCardsFreshness', () => {
     expect(result.ok).toBe(false);
     expect(result.reason).toContain('missing expected model runs');
     expect(writes[0][2]).toBe('warning');
+  });
+});
+
+describe('checkNhlBlkSourceIntegrity', () => {
+  test('returns failed when recent NST schema drift is detected', () => {
+    const db = makeDb({
+      failedJobRunsByName: {
+        pull_nst_blk_rates: {
+          started_at: DateTime.utc().minus({ hours: 1 }).toISO(),
+          error_message: '[SCHEMA_DRIFT] NST season CSV missing required headers: ev blocks',
+        },
+      },
+    });
+    getDatabase.mockReturnValue(db);
+    isFeatureEnabled.mockImplementation((sport, flag) =>
+      sport === 'nhl' && flag === 'blk-ingest',
+    );
+
+    const result = checkNhlBlkSourceIntegrity();
+
+    expect(result.ok).toBe(false);
+    expect(result.reason).toContain('schema drift');
+  });
+
+  test('returns ok when no recent schema drift failures exist', () => {
+    const db = makeDb();
+    getDatabase.mockReturnValue(db);
+    isFeatureEnabled.mockImplementation((sport, flag) =>
+      sport === 'nhl' && flag === 'blk-ingest',
+    );
+
+    const result = checkNhlBlkSourceIntegrity();
+
+    expect(result.ok).toBe(true);
+    expect(result.reason).toContain('passed');
   });
 });
 

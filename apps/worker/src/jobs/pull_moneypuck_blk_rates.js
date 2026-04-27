@@ -166,6 +166,72 @@ function parseCsv(csvText) {
   return rows;
 }
 
+function normalizeHeaderToken(value) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '');
+}
+
+function parseCsvHeaderRow(csvText) {
+  const firstLine = String(csvText || '').split(/\r?\n/)[0] || '';
+  const values = [];
+  let current = '';
+  let inQuotes = false;
+  for (const ch of firstLine) {
+    if (ch === '"') {
+      inQuotes = !inQuotes;
+    } else if (ch === ',' && !inQuotes) {
+      values.push(current.trim().replace(/^"|"$/g, ''));
+      current = '';
+    } else {
+      current += ch;
+    }
+  }
+  values.push(current.trim().replace(/^"|"$/g, ''));
+  return values;
+}
+
+function buildHeaderFingerprint(headers = []) {
+  return headers
+    .map((header) => normalizeHeaderToken(header))
+    .filter((header) => header.length > 0)
+    .sort()
+    .join('|');
+}
+
+function assertMoneyPuckSchemaIntegrity(csvText) {
+  const headers = parseCsvHeaderRow(csvText);
+  const normalizedHeaderSet = new Set(
+    headers.map((header) => normalizeHeaderToken(header)).filter(Boolean),
+  );
+
+  const requiredHeaderGroups = [
+    { label: 'player id', aliases: ['playerid', 'player_id', 'id'] },
+    { label: 'situation', aliases: ['situation'] },
+    { label: 'icetime', aliases: ['icetime'] },
+  ];
+
+  const missingGroups = requiredHeaderGroups
+    .filter((group) =>
+      !group.aliases.some((alias) =>
+        normalizedHeaderSet.has(normalizeHeaderToken(alias)),
+      ),
+    )
+    .map((group) => group.label);
+
+  if (missingGroups.length > 0) {
+    throw new Error(
+      `[SCHEMA_DRIFT] MoneyPuck CSV missing required headers: ${missingGroups.join(', ')}`,
+    );
+  }
+
+  return {
+    headers,
+    headerFingerprint: buildHeaderFingerprint(headers),
+  };
+}
+
 /**
  * Return the first non-empty value from a row using a list of lowercase aliases.
  *
@@ -358,6 +424,8 @@ async function ingestMoneyPuckBlkRates({ startYear = null, now = new Date() } = 
     );
   }
 
+  const schemaIntegrity = assertMoneyPuckSchemaIntegrity(csvText);
+
   const { playerMap, blkColumnFound } = parseSkatersBySituation(csvText);
 
   if (!blkColumnFound) {
@@ -374,7 +442,13 @@ async function ingestMoneyPuckBlkRates({ startYear = null, now = new Date() } = 
       `(season=${resolvedStartYear}, blkColumnFound=${blkColumnFound})`,
   );
 
-  return { playerMap, blkColumnFound, resolvedSeason, csvUrl };
+  return {
+    playerMap,
+    blkColumnFound,
+    resolvedSeason,
+    csvUrl,
+    headerFingerprint: schemaIntegrity.headerFingerprint,
+  };
 }
 
 // ─── Main job ─────────────────────────────────────────────────────────────────
@@ -404,7 +478,12 @@ async function pullMoneyPuckBlkRates({ jobKey = null, dryRun = false } = {}) {
     try {
       insertJobRun(JOB_NAME, jobRunId, jobKey);
 
-      const { playerMap, blkColumnFound, resolvedSeason } = await ingestMoneyPuckBlkRates();
+      const {
+        playerMap,
+        blkColumnFound,
+        resolvedSeason,
+        headerFingerprint,
+      } = await ingestMoneyPuckBlkRates();
 
       let inserted = 0;
 
@@ -473,12 +552,15 @@ async function pullMoneyPuckBlkRates({ jobKey = null, dryRun = false } = {}) {
 
       console.log(
         `[${JOB_NAME}] Upserted ${inserted} players ` +
-          `(season=${resolvedSeason}, blkColumnFound=${blkColumnFound})`,
+          `(season=${resolvedSeason}, blkColumnFound=${blkColumnFound}, schema=${headerFingerprint})`,
       );
 
       markJobRunSuccess(jobRunId);
       return { success: true, jobRunId, inserted, blkColumnFound };
     } catch (err) {
+      if (/SCHEMA_DRIFT/i.test(String(err?.message || ''))) {
+        console.error(`[${JOB_NAME}] SOURCE_INTEGRITY_FAIL: ${err.message}`);
+      }
       console.error(`[${JOB_NAME}] Failed: ${err.message}`);
       try {
         markJobRunFailure(jobRunId, err.message);
@@ -510,6 +592,8 @@ module.exports = {
   pullMoneyPuckBlkRates,
   ingestMoneyPuckBlkRates,
   parseSkatersBySituation,
+  assertMoneyPuckSchemaIntegrity,
+  buildHeaderFingerprint,
   computeLogRate,
   computeSeasonLogRate,
   deriveSeasonStartYear,

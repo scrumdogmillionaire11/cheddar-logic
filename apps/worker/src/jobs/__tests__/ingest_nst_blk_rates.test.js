@@ -6,7 +6,12 @@ jest.mock('@cheddar-logic/data', () => ({
   upsertPlayerBlkRates: mockUpsertPlayerBlkRates,
 }));
 
-const { parseCsv, ingestNstBlkRates } = require('../ingest_nst_blk_rates');
+const {
+  parseCsv,
+  ingestNstBlkRates,
+  normalizeSplitRows,
+  assertNstSchemaIntegrity,
+} = require('../ingest_nst_blk_rates');
 
 describe('ingest_nst_blk_rates', () => {
   beforeEach(() => {
@@ -57,5 +62,22 @@ describe('ingest_nst_blk_rates', () => {
         pkToiPerGame: 100,
       }),
     );
+  });
+
+  test('normalizeSplitRows accepts aliased/mixed-case headers', () => {
+    const rows = parseCsv(
+      '"Player Name",player_id,TEAM,EV_BLOCKS,EV_TOI,PK_BLOCKS,PK_TOI\nJaccob Slavin,8474565,CAR,40,400,20,100\n',
+    );
+    const normalized = normalizeSplitRows(rows);
+    const player = normalized.get('8474565');
+
+    expect(player).toBeTruthy();
+    expect(player.evRate).toBeCloseTo(6, 5);
+    expect(player.pkRate).toBeCloseTo(12, 5);
+  });
+
+  test('assertNstSchemaIntegrity throws on malformed CSV schema', () => {
+    const malformed = 'Player,Team,EV TOI,PK TOI\nJaccob Slavin,CAR,400,100\n';
+    expect(() => assertNstSchemaIntegrity(malformed, 'season')).toThrow(/SCHEMA_DRIFT/);
   });
 });
