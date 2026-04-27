@@ -259,15 +259,15 @@ function buildCard(playOverrides = {}) {
   assert.equal(classifyPassReasonBucket(card), 'data-error', 'PASS_DATA_ERROR');
 }
 
-// default fallback → odds-blocked
+// default fallback → data-error
 {
   const card = buildCard({ play: { execution_status: null, reason_codes: ['PASS_DRIVER_SUPPORT_WEAK'], decision_v2: null, transform_meta: null } });
-  assert.equal(classifyPassReasonBucket(card), 'odds-blocked', 'PASS_DRIVER_SUPPORT_WEAK default fallback');
+  assert.equal(classifyPassReasonBucket(card), 'data-error', 'PASS_DRIVER_SUPPORT_WEAK default fallback');
 }
 
 {
   const card = buildCard({ play: { execution_status: null, reason_codes: ['PASS_NO_EDGE'], decision_v2: null, transform_meta: null } });
-  assert.equal(classifyPassReasonBucket(card), 'odds-blocked', 'PASS_NO_EDGE default fallback');
+  assert.equal(classifyPassReasonBucket(card), 'data-error', 'PASS_NO_EDGE default fallback');
 }
 
 // no reason codes → null

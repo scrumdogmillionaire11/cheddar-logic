@@ -1880,11 +1880,13 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
       !ENABLE_STALE_UI_SUPPRESSION &&
       (marketStatus.freshnessTier === 'stale' ||
         marketStatus.freshnessTier === 'expired');
-    const hasMarketFailure =
+    const hasMissingMarketTypesFailure = missingMarketTypes.length > 0;
+    const hasCoreMarketFailure =
       marketStatus.hasOdds === false ||
       marketMissingInputs.length > 0 ||
-      missingMarketTypes.length > 0 ||
       hasStaleMarketFailure;
+    const hasMarketFailure =
+      hasCoreMarketFailure || hasMissingMarketTypesFailure;
     const noActionablePlayInputs = hasEvidenceOnly
       ? collectNoActionablePlayInputs(game)
       : [];
@@ -1895,6 +1897,8 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
         ? 'MISSING_DATA_NO_ODDS'
         : hasMappingFailure
           ? 'MISSING_DATA_TEAM_MAPPING'
+          : hasMissingMarketTypesFailure
+            ? 'MISSING_DATA_MARKET_TYPES'
           : hasMarketFailure
             ? 'MISSING_DATA_NO_ODDS'
           : hasFeatureFreshnessFailure
@@ -1911,6 +1915,8 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
         ? 'No odds available'
         : hasMappingFailure
           ? `Team mapping unresolved${game.ingest_failure_reason_detail ? `: ${game.ingest_failure_reason_detail}` : sourceMappingFailures.length ? `: ${sourceMappingFailures.join(', ')}` : ''}`
+          : hasMissingMarketTypesFailure
+            ? `Market missing required types: ${missingMarketTypes.join(', ')}`
           : hasMarketFailure
             ? `Market unavailable${marketStatus.freshnessTier ? ` (${marketStatus.freshnessTier})` : ''}`
           : hasFeatureFreshnessFailure

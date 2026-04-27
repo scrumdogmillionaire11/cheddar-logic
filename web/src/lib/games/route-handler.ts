@@ -2140,6 +2140,90 @@ export async function GET(request: NextRequest) {
         latestOddsRows.map((row) => [row.game_id, row]),
       );
 
+      const eventAliasToleranceMinutesRaw = Number(
+        process.env.API_GAMES_EVENT_ALIAS_TOLERANCE_MINUTES || 30,
+      );
+      const eventAliasToleranceMs =
+        Number.isFinite(eventAliasToleranceMinutesRaw) &&
+        eventAliasToleranceMinutesRaw > 0
+          ? eventAliasToleranceMinutesRaw * 60_000
+          : 30 * 60_000;
+
+      const normalizeEventAliasTime = (value: string | null): number | null => {
+        if (typeof value !== 'string' || value.trim().length === 0) return null;
+        const epochMs = Date.parse(value);
+        return Number.isFinite(epochMs) ? epochMs : null;
+      };
+
+      const buildEventAliasKey = (game: {
+        sport: string;
+        away_team: string;
+        home_team: string;
+        game_time_utc: string | null;
+      }): string => {
+        const dayToken =
+          typeof game.game_time_utc === 'string' && game.game_time_utc.length >= 10
+            ? game.game_time_utc.slice(0, 10)
+            : 'unknown-day';
+        return [
+          String(game.sport || '').toUpperCase(),
+          String(game.away_team || '').toUpperCase(),
+          String(game.home_team || '').toUpperCase(),
+          dayToken,
+        ].join('|');
+      };
+
+      const baseGameIdsByAliasKey = new Map<string, string[]>();
+      for (const game of baseGames) {
+        const aliasKey = buildEventAliasKey(game);
+        const existing = baseGameIdsByAliasKey.get(aliasKey) ?? [];
+        existing.push(game.game_id);
+        baseGameIdsByAliasKey.set(aliasKey, existing);
+      }
+
+      const resolveLatestOddsForGame = (
+        game: (typeof baseGames)[number],
+      ): (typeof latestOddsRows)[number] | null => {
+        const direct = latestOddsByGameId.get(game.game_id);
+        if (direct) return direct;
+
+        const gameTimeMs = normalizeEventAliasTime(game.game_time_utc);
+        const aliasIds = baseGameIdsByAliasKey.get(buildEventAliasKey(game)) ?? [];
+        if (aliasIds.length === 0) return null;
+
+        let bestCandidate: (typeof latestOddsRows)[number] | null = null;
+        let bestCapturedAtMs = -1;
+
+        for (const aliasId of aliasIds) {
+          if (aliasId === game.game_id) continue;
+          const candidateGame = baseGames.find((row) => row.game_id === aliasId);
+          if (!candidateGame) continue;
+
+          const candidateTimeMs = normalizeEventAliasTime(candidateGame.game_time_utc);
+          if (
+            gameTimeMs !== null &&
+            candidateTimeMs !== null &&
+            Math.abs(candidateTimeMs - gameTimeMs) > eventAliasToleranceMs
+          ) {
+            continue;
+          }
+
+          const candidateOdds = latestOddsByGameId.get(aliasId);
+          if (!candidateOdds) continue;
+
+          const candidateCapturedAtMs = normalizeEventAliasTime(
+            candidateOdds.odds_captured_at,
+          );
+          const rankingValue = candidateCapturedAtMs ?? 0;
+          if (!bestCandidate || rankingValue > bestCapturedAtMs) {
+            bestCandidate = candidateOdds;
+            bestCapturedAtMs = rankingValue;
+          }
+        }
+
+        return bestCandidate;
+      };
+
       const ingestFailureSql = `
         SELECT game_id, reason_code, reason_detail, last_seen
         FROM odds_ingest_failures
@@ -2159,7 +2243,7 @@ export async function GET(request: NextRequest) {
       }
 
       return baseGames.map((game) => {
-        const odds = latestOddsByGameId.get(game.game_id);
+        const odds = resolveLatestOddsForGame(game);
         const ingestFailure = latestIngestFailureByGameId.get(game.game_id);
         const projectionHealth = assessProjectionInputsFromRawData(
           game.sport,

@@ -38,6 +38,8 @@ export const REASON_CODE_LABELS: Record<string, string> = Object.freeze({
   MISSING_DATA_DRIVERS: 'Driver output unavailable',
   MISSING_DATA_TEAM_MAPPING: 'Team mapping unresolved',
   MISSING_DATA_NO_ODDS: 'Odds unavailable',
+  MISSING_DATA_FEATURE_FRESHNESS: 'Feature freshness stale',
+  MISSING_DATA_MARKET_TYPES: 'Market missing required types',
   PASS_MISSING_DRIVER_INPUTS: 'Missing driver inputs',
   PASS_MISSING_SELECTION: 'Selection unavailable',
   PASS_MISSING_LINE: 'Line unavailable',

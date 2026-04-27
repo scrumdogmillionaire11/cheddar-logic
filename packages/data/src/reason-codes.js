@@ -51,6 +51,8 @@ const DATA_REASON_CODES = Object.freeze(new Set([
   'MISSING_DATA_DRIVERS',
   'MISSING_DATA_TEAM_MAPPING',
   'MISSING_DATA_NO_ODDS',
+  'MISSING_DATA_FEATURE_FRESHNESS',
+  'MISSING_DATA_MARKET_TYPES',
   'PASS_MISSING_DRIVER_INPUTS',
   'PASS_MISSING_SELECTION',
   'PASS_MISSING_LINE',
@@ -173,7 +175,7 @@ const ALL_REASON_CODES = Object.freeze([
   ...GATE_REASON_CODES,
 ]);
 
-const REASON_CODE_SCHEMA_VERSION = 4;
+const REASON_CODE_SCHEMA_VERSION = 5;
 
 // ─── Human-readable labels ───────────────────────────────────────────────────
 // Every code in ALL_REASON_CODES must appear here.
@@ -214,6 +216,8 @@ const REASON_CODE_LABELS = Object.freeze({
   MISSING_DATA_DRIVERS: 'Driver output unavailable',
   MISSING_DATA_TEAM_MAPPING: 'Team mapping unresolved',
   MISSING_DATA_NO_ODDS: 'Odds unavailable',
+  MISSING_DATA_FEATURE_FRESHNESS: 'Feature freshness stale',
+  MISSING_DATA_MARKET_TYPES: 'Market missing required types',
   PASS_MISSING_DRIVER_INPUTS: 'Missing driver inputs',
   PASS_MISSING_SELECTION: 'Selection unavailable',
   PASS_MISSING_LINE: 'Line unavailable',
@@ -345,6 +349,7 @@ const MARKET_UNVERIFIED_CODES = Object.freeze(new Set([
   'BLOCKED_BET_VERIFICATION_REQUIRED',
   'GATE_LINE_MOVEMENT',
   'MISSING_DATA_NO_ODDS',
+  'MISSING_DATA_MARKET_TYPES',
   'MARKET_PRICE_MISSING',
   'GOALIE_UNCONFIRMED',
   'GOALIE_CONFLICTING',
