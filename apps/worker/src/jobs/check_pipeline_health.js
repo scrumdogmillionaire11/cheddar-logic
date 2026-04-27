@@ -93,6 +93,97 @@ const PIPELINE_HEALTH_ALERT_CONSECUTIVE = Number(
 const PIPELINE_HEALTH_COOLDOWN_MINUTES = Number(
   process.env.PIPELINE_HEALTH_COOLDOWN_MINUTES || 30,
 );
+const CARD_OUTPUT_INTEGRITY_LOOKBACK_HOURS = Number(
+  process.env.CARD_OUTPUT_INTEGRITY_LOOKBACK_HOURS || 6,
+);
+const CARD_OUTPUT_INTEGRITY_MIN_SAMPLE = Number(
+  process.env.CARD_OUTPUT_INTEGRITY_MIN_SAMPLE || 20,
+);
+const CARD_OUTPUT_PASS_RATE_MAX = Number(
+  process.env.CARD_OUTPUT_PASS_RATE_MAX || 0.92,
+);
+const CARD_OUTPUT_MISSING_ODDS_RATE_MAX = Number(
+  process.env.CARD_OUTPUT_MISSING_ODDS_RATE_MAX || 0.35,
+);
+const CARD_OUTPUT_DEGRADED_RATE_MAX = Number(
+  process.env.CARD_OUTPUT_DEGRADED_RATE_MAX || 0.45,
+);
+const DEFAULT_MODEL_JOB_EXPECTED_INTERVAL_MINUTES = Number(
+  process.env.MODEL_JOB_EXPECTED_INTERVAL_MINUTES || 120,
+);
+
+function buildCheckId(domain, name, scope) {
+  return `${domain}:${name}:${scope}`;
+}
+
+const CHECK_REGISTRY = Object.freeze({
+  schedule_freshness: {
+    phase: 'schedule', checkName: 'freshness', checkId: buildCheckId('schedule', 'freshness', 'global'),
+  },
+  odds_freshness: {
+    phase: 'odds', checkName: 'freshness', checkId: buildCheckId('odds', 'freshness', 'active_sports'),
+  },
+  cards_freshness: {
+    phase: 'cards', checkName: 'freshness', checkId: buildCheckId('cards', 'freshness', 'tminus_2h'),
+  },
+  card_output_integrity: {
+    phase: 'cards', checkName: 'output_integrity', checkId: buildCheckId('cards', 'output_integrity', 'all_sports'),
+  },
+  mlb_f5_market_availability: {
+    phase: 'mlb', checkName: 'f5_market_availability', checkId: buildCheckId('mlb', 'market_availability', 'f5'),
+  },
+  mlb_game_line_coverage: {
+    phase: 'mlb', checkName: 'game_line_coverage', checkId: buildCheckId('mlb', 'coverage', 'game_line'),
+  },
+  mlb_seed_freshness: {
+    phase: 'mlb', checkName: 'seed_freshness', checkId: buildCheckId('mlb', 'freshness', 'seed'),
+  },
+  settlement_backlog: {
+    phase: 'settlement', checkName: 'backlog', checkId: buildCheckId('settlement', 'backlog', 'global'),
+  },
+  nhl_model_freshness: {
+    phase: 'nhl', checkName: 'model_freshness', checkId: buildCheckId('model', 'freshness', 'nhl'),
+  },
+  nhl_market_call_diagnostics: {
+    phase: 'nhl', checkName: 'market_call_blockers', checkId: buildCheckId('nhl', 'diagnostics', 'market_call'),
+  },
+  nhl_moneyline_coverage: {
+    phase: 'nhl', checkName: 'moneyline_coverage', checkId: buildCheckId('nhl', 'coverage', 'moneyline'),
+  },
+  nhl_sog_sync_freshness: {
+    phase: 'nhl', checkName: 'sog_sync_freshness', checkId: buildCheckId('job', 'freshness', 'sync_nhl_sog_player_ids'),
+  },
+  nhl_sog_pull_freshness: {
+    phase: 'nhl', checkName: 'sog_pull_freshness', checkId: buildCheckId('job', 'freshness', 'pull_nhl_player_shots'),
+  },
+  nhl_shots_model_freshness: {
+    phase: 'nhl', checkName: 'shots_model_freshness', checkId: buildCheckId('model', 'freshness', 'nhl_shots'),
+  },
+  nhl_blk_rates_nst_freshness: {
+    phase: 'nhl', checkName: 'blk_rates_nst_freshness', checkId: buildCheckId('job', 'freshness', 'pull_nst_blk_rates'),
+  },
+  nhl_blk_rates_moneypuck_freshness: {
+    phase: 'nhl', checkName: 'blk_rates_moneypuck_freshness', checkId: buildCheckId('job', 'freshness', 'pull_moneypuck_blk_rates'),
+  },
+  nhl_blk_source_integrity: {
+    phase: 'nhl', checkName: 'blk_source_integrity', checkId: buildCheckId('nhl', 'integrity', 'blk_sources'),
+  },
+  nba_model_freshness: {
+    phase: 'nba', checkName: 'model_freshness', checkId: buildCheckId('model', 'freshness', 'nba'),
+  },
+  nba_market_call_diagnostics: {
+    phase: 'nba', checkName: 'market_call_blockers', checkId: buildCheckId('nba', 'diagnostics', 'market_call'),
+  },
+  nba_moneyline_coverage: {
+    phase: 'nba', checkName: 'moneyline_coverage', checkId: buildCheckId('nba', 'coverage', 'moneyline'),
+  },
+  mlb_model_freshness: {
+    phase: 'mlb', checkName: 'model_freshness', checkId: buildCheckId('model', 'freshness', 'mlb'),
+  },
+  calibration_kill_switches: {
+    phase: 'calibration', checkName: 'kill_switch', checkId: buildCheckId('calibration', 'kill_switch', 'all_markets'),
+  },
+});
 const CARD_HEALTH_MODEL_JOB_BY_SPORT = Object.freeze({
   nba: { jobName: 'run_nba_model', env: 'ENABLE_NBA_MODEL' },
   nhl: { jobName: 'run_nhl_model', env: 'ENABLE_NHL_MODEL' },
@@ -111,6 +202,55 @@ function writePipelineHealth(phase, check, status, reason) {
   `);
 
   stmt.run(phase, check, status, reason, DateTime.utc().toISO());
+}
+
+function summarizeErrorMessage(message, maxLength = 180) {
+  const normalized = String(message || '').replace(/\s+/g, ' ').trim();
+  if (!normalized) return 'no error message recorded';
+  if (normalized.length <= maxLength) return normalized;
+  return `${normalized.slice(0, maxLength - 3)}...`;
+}
+
+function getLatestFailedJobRun(jobName, lookbackMinutes) {
+  const db = getDatabase();
+  return db
+    .prepare(
+      `SELECT started_at, error_message
+       FROM job_runs
+       WHERE job_name = ?
+         AND status = 'failed'
+         AND started_at >= datetime('now', ?)
+       ORDER BY started_at DESC
+       LIMIT 1`,
+    )
+    .get(jobName, `-${Math.max(lookbackMinutes, 1)} minutes`);
+}
+
+async function deliverPipelineHealthAlert(alertChecks, sourceCheckName) {
+  const webhookUrl = process.env.DISCORD_ALERT_WEBHOOK_URL;
+  if (!webhookUrl) {
+    const reason = 'DISCORD_ALERT_WEBHOOK_URL not set — skipping Discord alert';
+    console.warn(`[check_pipeline_health] ${reason}`);
+    writePipelineHealth('watchdog', 'alert_delivery', 'warning', reason);
+    return { delivered: false, skipped: true, reason };
+  }
+
+  try {
+    const message = buildHealthAlertMessage(alertChecks);
+    await sendDiscordMessages({ webhookUrl, messages: [message] });
+    writePipelineHealth(
+      'watchdog',
+      'alert_delivery',
+      'ok',
+      `Alert delivered for ${sourceCheckName}: ${alertChecks.length} failing check(s)`,
+    );
+    return { delivered: true, skipped: false };
+  } catch (error) {
+    const reason = `Alert delivery failed for ${sourceCheckName}: ${summarizeErrorMessage(error?.message)}`;
+    writePipelineHealth('watchdog', 'alert_delivery', 'failed', reason);
+    console.error(`[check_pipeline_health] ${reason}`);
+    return { delivered: false, skipped: false, reason };
+  }
 }
 
 /**
@@ -489,6 +629,65 @@ function checkCardsFreshness() {
   const reason = reasonParts.join('; ');
   writePipelineHealth('cards', 'freshness', 'warning', reason);
   return { ok: false, reason };
+}
+
+function checkCardOutputIntegrity() {
+  const db = getDatabase();
+  const row = db
+    .prepare(
+      `SELECT
+         COUNT(*) AS total_cards,
+         SUM(CASE
+               WHEN UPPER(COALESCE(json_extract(payload_data, '$.decision_v2.official_status'), json_extract(payload_data, '$.status'))) = 'PASS'
+                 THEN 1 ELSE 0 END) AS pass_cards,
+         SUM(CASE
+               WHEN UPPER(COALESCE(json_extract(payload_data, '$.decision_v2.primary_reason_code'), json_extract(payload_data, '$.pass_reason_code'), '')) LIKE '%NO_MARKET%'
+                 OR UPPER(COALESCE(json_extract(payload_data, '$.decision_v2.primary_reason_code'), json_extract(payload_data, '$.pass_reason_code'), '')) LIKE '%MISSING_ODDS%'
+                 OR UPPER(COALESCE(json_extract(payload_data, '$.decision_v2.primary_reason_code'), json_extract(payload_data, '$.pass_reason_code'), '')) LIKE '%ODDS_MISSING%'
+                 THEN 1 ELSE 0 END) AS missing_odds_cards,
+         SUM(CASE
+               WHEN UPPER(COALESCE(json_extract(payload_data, '$.decision_v2.primary_reason_code'), json_extract(payload_data, '$.pass_reason_code'), '')) LIKE '%STALE%'
+                 OR UPPER(COALESCE(json_extract(payload_data, '$.decision_v2.primary_reason_code'), json_extract(payload_data, '$.pass_reason_code'), '')) LIKE '%PROJECTION_ONLY%'
+                 OR UPPER(COALESCE(json_extract(payload_data, '$.decision_v2.primary_reason_code'), json_extract(payload_data, '$.pass_reason_code'), '')) LIKE '%MISSING_INPUT%'
+                 OR UPPER(COALESCE(json_extract(payload_data, '$.decision_v2.primary_reason_code'), json_extract(payload_data, '$.pass_reason_code'), '')) LIKE '%CONTRACT%'
+                 THEN 1 ELSE 0 END) AS degraded_cards
+       FROM card_payloads
+       WHERE created_at > datetime('now', ?)`,
+    )
+    .get(`-${CARD_OUTPUT_INTEGRITY_LOOKBACK_HOURS} hours`);
+
+  const totalCards = Number(row?.total_cards || 0);
+  if (totalCards < CARD_OUTPUT_INTEGRITY_MIN_SAMPLE) {
+    const reason = `Insufficient sample for card output integrity (${totalCards}/${CARD_OUTPUT_INTEGRITY_MIN_SAMPLE} cards in last ${CARD_OUTPUT_INTEGRITY_LOOKBACK_HOURS}h)`;
+    writePipelineHealth('cards', 'output_integrity', 'ok', reason);
+    return { ok: true, reason, diagnostics: { totalCards } };
+  }
+
+  const passRate = Number(row?.pass_cards || 0) / totalCards;
+  const missingOddsRate = Number(row?.missing_odds_cards || 0) / totalCards;
+  const degradedRate = Number(row?.degraded_cards || 0) / totalCards;
+
+  const failingSignals = [];
+  if (passRate > CARD_OUTPUT_PASS_RATE_MAX) {
+    failingSignals.push(`PASS spike ${passRate.toFixed(3)}>${CARD_OUTPUT_PASS_RATE_MAX.toFixed(3)}`);
+  }
+  if (missingOddsRate > CARD_OUTPUT_MISSING_ODDS_RATE_MAX) {
+    failingSignals.push(`missing_odds spike ${missingOddsRate.toFixed(3)}>${CARD_OUTPUT_MISSING_ODDS_RATE_MAX.toFixed(3)}`);
+  }
+  if (degradedRate > CARD_OUTPUT_DEGRADED_RATE_MAX) {
+    failingSignals.push(`degraded spike ${degradedRate.toFixed(3)}>${CARD_OUTPUT_DEGRADED_RATE_MAX.toFixed(3)}`);
+  }
+
+  const metrics = `sample=${totalCards} pass_rate=${passRate.toFixed(3)} missing_odds_rate=${missingOddsRate.toFixed(3)} degraded_rate=${degradedRate.toFixed(3)}`;
+  if (failingSignals.length === 0) {
+    const reason = `Card output integrity healthy (${metrics})`;
+    writePipelineHealth('cards', 'output_integrity', 'ok', reason);
+    return { ok: true, reason, diagnostics: { totalCards, passRate, missingOddsRate, degradedRate } };
+  }
+
+  const reason = `CARD_OUTPUT_INTEGRITY_DEGRADED — ${failingSignals.join('; ')} (${metrics})`;
+  writePipelineHealth('cards', 'output_integrity', 'failed', reason);
+  return { ok: false, reason, diagnostics: { totalCards, passRate, missingOddsRate, degradedRate } };
 }
 
 function getLatestOddsSnapshot(db, gameId) {
@@ -1675,7 +1874,7 @@ function checkMlbSeedFreshness(maxAgeMinutes = SEED_FRESHNESS_MAX_AGE_MINUTES) {
  * reports when there are upcoming games for that sport (avoids false negatives
  * on off-days and off-season).
  */
-function checkSportModelFreshness(sport, jobName, checkName, maxAgeMinutes) {
+function checkSportModelFreshness(sport, jobName, checkName, maxAgeMinutes, threshold = {}) {
   const db = getDatabase();
   const nowUtc = DateTime.utc();
   const horizonUtc = nowUtc.plus({ hours: MODEL_FRESHNESS_ALERT_WINDOW_HOURS });
@@ -1701,15 +1900,27 @@ function checkSportModelFreshness(sport, jobName, checkName, maxAgeMinutes) {
       ? `${Math.round(maxAgeMinutes / 60)}h`
       : `${maxAgeMinutes}m`;
 
+  const expectedIntervalMinutes = Number(
+    threshold.expectedIntervalMinutes || DEFAULT_MODEL_JOB_EXPECTED_INTERVAL_MINUTES,
+  );
+  const graceWindowMinutes = Number(
+    threshold.graceWindowMinutes || Math.max(maxAgeMinutes - expectedIntervalMinutes, 0),
+  );
+  const thresholdContext = `threshold=expected:${expectedIntervalMinutes}m grace:${graceWindowMinutes}m window:${maxAgeMinutes}m`;
+
   const recentlyRan = wasJobRecentlySuccessful(jobName, maxAgeMinutes);
 
   if (recentlyRan) {
-    const reason = `${jobName} ran successfully within last ${thresholdDesc} (${upcomingCount} upcoming games)`;
+    const reason = `${jobName} ran successfully within last ${thresholdDesc} (${upcomingCount} upcoming games; ${thresholdContext})`;
     writePipelineHealth(sport.toLowerCase(), checkName, 'ok', reason);
     return { ok: true, reason };
   }
 
-  const reason = `${jobName} has NOT run successfully in last ${thresholdDesc} — ${upcomingCount} upcoming ${sport.toUpperCase()} games at risk`;
+  const latestFailure = getLatestFailedJobRun(jobName, maxAgeMinutes);
+  const failureSuffix = latestFailure
+    ? `; latest failed run at ${latestFailure.started_at}: ${summarizeErrorMessage(latestFailure.error_message)}`
+    : '';
+  const reason = `${jobName} has NOT run successfully in last ${thresholdDesc} — ${upcomingCount} upcoming ${sport.toUpperCase()} games at risk (${thresholdContext})${failureSuffix}`;
   writePipelineHealth(sport.toLowerCase(), checkName, 'failed', reason);
   return { ok: false, reason };
 }
@@ -1779,10 +1990,9 @@ function checkCalibrationKillSwitches() {
 }
 
 /**
- * Returns true when the given (phase, check_name) has reached consecutiveRequired
- * consecutive 'failed' rows AND the oldest row in that streak was written within
- * cooldownMinutes ago (i.e. the streak just crossed the threshold on this tick).
- * Once the streak is older than the cooldown window we suppress further alerts.
+ * Returns true only when the current row causes the check to cross the failed
+ * streak threshold. Continued failed runs remain persisted in pipeline_health
+ * but do not re-alert until the streak resets and crosses the threshold again.
  */
 function shouldSendAlert(phase, checkName, consecutiveRequired, cooldownMinutes) {
   const db = getDatabase();
@@ -1794,13 +2004,17 @@ function shouldSendAlert(phase, checkName, consecutiveRequired, cooldownMinutes)
        ORDER BY created_at DESC
        LIMIT ?`,
     )
-    .all(phase, checkName, consecutiveRequired);
+    .all(phase, checkName, consecutiveRequired + 1);
 
   if (rows.length < consecutiveRequired) return false;
-  if (rows.some((r) => r.status !== 'failed')) return false;
+  const currentStreak = rows.slice(0, consecutiveRequired);
+  if (currentStreak.some((r) => r.status !== 'failed')) return false;
+
+  const priorRow = rows[consecutiveRequired];
+  if (priorRow?.status === 'failed') return false;
 
   // oldest row in the streak is the last element (DESC order)
-  const oldestRow = rows[consecutiveRequired - 1];
+  const oldestRow = currentStreak[consecutiveRequired - 1];
   const oldestAt = DateTime.fromISO(oldestRow.created_at, { zone: 'utc' });
   const ageMinutes = DateTime.utc().diff(oldestAt, 'minutes').minutes;
   return ageMinutes <= cooldownMinutes;
@@ -1820,7 +2034,7 @@ function buildHealthAlertMessage(failedChecks) {
 function writeOverallDegradedState(results) {
   const failingChecks = Object.entries(results)
     .filter(([, result]) => result && result.ok === false)
-    .map(([checkName]) => checkName);
+    .map(([checkName]) => CHECK_REGISTRY[checkName]?.checkId || checkName);
 
   if (failingChecks.length === 0) {
     writePipelineHealth('watchdog', 'degraded_state', 'ok', 'Pipeline healthy: all checks passed');
@@ -1867,16 +2081,15 @@ async function checkWatchdogHeartbeat() {
   );
 
   if (isGap && process.env.ENABLE_PIPELINE_HEALTH_WATCHDOG !== 'false') {
-    const webhookUrl = process.env.DISCORD_ALERT_WEBHOOK_URL;
-    if (!webhookUrl) {
-      console.warn('[check_pipeline_health] DISCORD_ALERT_WEBHOOK_URL not set — skipping watchdog heartbeat alert');
-    } else {
-      const message = buildHealthAlertMessage([{
+    const delivery = await deliverPipelineHealthAlert(
+      [{
         phase: 'watchdog',
         checkName: 'heartbeat',
         reason: `check_pipeline_health gap: ${gapH}h (threshold: 2h)`,
-      }]);
-      await sendDiscordMessages({ webhookUrl, messages: [message] });
+      }],
+      'heartbeat',
+    );
+    if (delivery.delivered) {
       console.warn(`[check_pipeline_health] Watchdog heartbeat alert sent — ${gapH}h gap`);
     }
   }
@@ -1904,6 +2117,7 @@ async function checkPipelineHealth({ jobKey, dryRun }) {
       schedule_freshness: checkScheduleFreshness,
       odds_freshness: checkOddsFreshness,
       cards_freshness: checkCardsFreshness,
+      card_output_integrity: checkCardOutputIntegrity,
       mlb_f5_market_availability: checkMlbF5MarketAvailability,
       mlb_game_line_coverage: checkMlbGameLineCoverage,
       mlb_seed_freshness: () => checkMlbSeedFreshness(),
@@ -1911,22 +2125,34 @@ async function checkPipelineHealth({ jobKey, dryRun }) {
       // Per-sport model freshness (only fires when upcoming games exist for that sport)
       // Uses 4x moneyline hardMax from contract per operational policy (stricter health check)
       nhl_model_freshness: () =>
-        checkSportModelFreshness('nhl', 'run_nhl_model', 'model_freshness', getModelFreshnessMaxAgeMinutes()),
+        checkSportModelFreshness('nhl', 'run_nhl_model', 'model_freshness', getModelFreshnessMaxAgeMinutes(), {
+          expectedIntervalMinutes: 120,
+          graceWindowMinutes: Math.max(getModelFreshnessMaxAgeMinutes() - 120, 0),
+        }),
       nhl_market_call_diagnostics: checkNhlMarketCallDiagnostics,
       nhl_moneyline_coverage: checkNhlMoneylineCoverage,
       nhl_sog_sync_freshness: checkNhlSogSyncFreshness,
       nhl_sog_pull_freshness: checkNhlSogPullFreshness,
       nhl_shots_model_freshness: () =>
-        checkSportModelFreshness('nhl', 'run-nhl-player-shots-model', 'shots_model_freshness', getModelFreshnessMaxAgeMinutes()),
+        checkSportModelFreshness('nhl', 'run-nhl-player-shots-model', 'shots_model_freshness', getModelFreshnessMaxAgeMinutes(), {
+          expectedIntervalMinutes: 120,
+          graceWindowMinutes: Math.max(getModelFreshnessMaxAgeMinutes() - 120, 0),
+        }),
       nhl_blk_rates_nst_freshness: checkNhlBlkRatesFreshness,
       nhl_blk_rates_moneypuck_freshness: checkNhlMoneyPuckBlkRatesFreshness,
       nhl_blk_source_integrity: checkNhlBlkSourceIntegrity,
       nba_model_freshness: () =>
-        checkSportModelFreshness('nba', 'run_nba_model', 'model_freshness', getModelFreshnessMaxAgeMinutes()),
+        checkSportModelFreshness('nba', 'run_nba_model', 'model_freshness', getModelFreshnessMaxAgeMinutes(), {
+          expectedIntervalMinutes: 120,
+          graceWindowMinutes: Math.max(getModelFreshnessMaxAgeMinutes() - 120, 0),
+        }),
       nba_market_call_diagnostics: checkNbaMarketCallDiagnostics,
       nba_moneyline_coverage: checkNbaMoneylineCoverage,
       mlb_model_freshness: () =>
-        checkSportModelFreshness('mlb', 'run_mlb_model', 'model_freshness', getModelFreshnessMaxAgeMinutes()),
+        checkSportModelFreshness('mlb', 'run_mlb_model', 'model_freshness', getModelFreshnessMaxAgeMinutes(), {
+          expectedIntervalMinutes: 120,
+          graceWindowMinutes: Math.max(getModelFreshnessMaxAgeMinutes() - 120, 0),
+        }),
       calibration_kill_switches: checkCalibrationKillSwitches,
     };
 
@@ -1951,48 +2177,23 @@ async function checkPipelineHealth({ jobKey, dryRun }) {
 
     // --- Discord watchdog alert ---
     if (process.env.ENABLE_PIPELINE_HEALTH_WATCHDOG !== 'false' && !allOk) {
-      const checkPhaseLookup = {
-        schedule_freshness: ['schedule', 'freshness'],
-        odds_freshness: ['odds', 'freshness'],
-        cards_freshness: ['cards', 'freshness'],
-        mlb_f5_market_availability: ['mlb', 'f5_market_availability'],
-        mlb_game_line_coverage: ['mlb', 'game_line_coverage'],
-        mlb_seed_freshness: ['mlb', 'seed_freshness'],
-        settlement_backlog: ['settlement', 'backlog'],
-        nhl_model_freshness: ['nhl', 'model_freshness'],
-        nhl_market_call_diagnostics: ['nhl', 'market_call_blockers'],
-        nhl_moneyline_coverage: ['nhl', 'moneyline_coverage'],
-        nhl_sog_sync_freshness: ['nhl', 'sog_sync_freshness'],
-        nhl_sog_pull_freshness: ['nhl', 'sog_pull_freshness'],
-        nhl_shots_model_freshness: ['nhl', 'shots_model_freshness'],
-        nhl_blk_rates_nst_freshness: ['nhl', 'blk_rates_nst_freshness'],
-        nhl_blk_rates_moneypuck_freshness: ['nhl', 'blk_rates_moneypuck_freshness'],
-        nhl_blk_source_integrity: ['nhl', 'blk_source_integrity'],
-        nba_model_freshness: ['nba', 'model_freshness'],
-        nba_market_call_diagnostics: ['nba', 'market_call_blockers'],
-        nba_moneyline_coverage: ['nba', 'moneyline_coverage'],
-        mlb_model_freshness: ['mlb', 'model_freshness'],
-        calibration_kill_switches: ['calibration', 'kill_switch'],
-      };
-
       const alertCandidates = [];
       for (const [key, result] of Object.entries(results)) {
         if (result.ok) continue;
-        const mapping = checkPhaseLookup[key];
+        const mapping = CHECK_REGISTRY[key];
         if (!mapping) continue;
-        const [phase, dbCheckName] = mapping;
-        if (shouldSendAlert(phase, dbCheckName, PIPELINE_HEALTH_ALERT_CONSECUTIVE, PIPELINE_HEALTH_COOLDOWN_MINUTES)) {
-          alertCandidates.push({ phase, checkName: dbCheckName, reason: result.reason });
+        if (shouldSendAlert(mapping.phase, mapping.checkName, PIPELINE_HEALTH_ALERT_CONSECUTIVE, PIPELINE_HEALTH_COOLDOWN_MINUTES)) {
+          alertCandidates.push({
+            phase: mapping.phase,
+            checkName: mapping.checkName,
+            reason: `[${mapping.checkId}] ${result.reason}`,
+          });
         }
       }
 
       if (alertCandidates.length > 0) {
-        const webhookUrl = process.env.DISCORD_ALERT_WEBHOOK_URL;
-        if (!webhookUrl) {
-          console.warn('[check_pipeline_health] DISCORD_ALERT_WEBHOOK_URL not set — skipping Discord alert');
-        } else {
-          const message = buildHealthAlertMessage(alertCandidates);
-          await sendDiscordMessages({ webhookUrl, messages: [message] });
+        const delivery = await deliverPipelineHealthAlert(alertCandidates, 'failed_checks');
+        if (delivery.delivered) {
           console.log(`[check_pipeline_health] Sent Discord alert for ${alertCandidates.length} failed check(s)`);
         }
       }
@@ -2039,11 +2240,17 @@ function checkNhlSogSyncFreshness() {
     writePipelineHealth('nhl', 'sog_sync_freshness', 'ok', reason);
     return { ok: true, reason };
   }
-  return checkSportModelFreshness('nhl', 'sync_nhl_sog_player_ids', 'sog_sync_freshness', 1440);
+  return checkSportModelFreshness('nhl', 'sync_nhl_sog_player_ids', 'sog_sync_freshness', 1440, {
+    expectedIntervalMinutes: 1440,
+    graceWindowMinutes: 0,
+  });
 }
 
 function checkNhlSogPullFreshness() {
-  return checkSportModelFreshness('nhl', 'pull_nhl_player_shots', 'sog_pull_freshness', 1440);
+  return checkSportModelFreshness('nhl', 'pull_nhl_player_shots', 'sog_pull_freshness', 1440, {
+    expectedIntervalMinutes: 1440,
+    graceWindowMinutes: 0,
+  });
 }
 
 function getLatestBlkSchemaDriftFailure(jobName, lookbackHours = 72) {
@@ -2103,6 +2310,10 @@ function checkNhlBlkRatesFreshness() {
     'pull_nst_blk_rates',
     'blk_rates_nst_freshness',
     NHL_BLK_RATES_MAX_AGE_HOURS * 60,
+    {
+      expectedIntervalMinutes: 1440,
+      graceWindowMinutes: Math.max((NHL_BLK_RATES_MAX_AGE_HOURS * 60) - 1440, 0),
+    },
   );
 }
 
@@ -2124,6 +2335,10 @@ function checkNhlMoneyPuckBlkRatesFreshness() {
     'pull_moneypuck_blk_rates',
     'blk_rates_moneypuck_freshness',
     NHL_BLK_RATES_MAX_AGE_HOURS * 60,
+    {
+      expectedIntervalMinutes: 1440,
+      graceWindowMinutes: Math.max((NHL_BLK_RATES_MAX_AGE_HOURS * 60) - 1440, 0),
+    },
   );
 }
 
@@ -2137,6 +2352,7 @@ module.exports = {
   checkNhlBlkRatesFreshness,
   checkNhlMoneyPuckBlkRatesFreshness,
   checkCardsFreshness,
+  checkCardOutputIntegrity,
   checkMlbF5MarketAvailability,
   checkMlbGameLineCoverage,
   summarizeMlbRejectReasonFamilies,

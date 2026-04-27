@@ -47,6 +47,7 @@ const {
   shouldSendAlert,
   buildHealthAlertMessage,
   checkCardsFreshness,
+  checkCardOutputIntegrity,
   checkOddsFreshness,
   checkMlbF5MarketAvailability,
   checkMlbSeedFreshness,
@@ -74,6 +75,7 @@ function makeDb({
   nbaMoneylineCardsCount = 0,
   jobRunsByKey = {},
   failedJobRunsByName = {},
+  cardOutputIntegrityRow = null,
 } = {}) {
   return {
     prepare: jest.fn((sql) => {
@@ -120,6 +122,17 @@ function makeDb({
       if (s.includes('FROM card_payloads') && s.includes("card_type = 'nba-moneyline-call'")) {
         return {
           get: jest.fn(() => ({ cnt: nbaMoneylineCardsCount })),
+        };
+      }
+
+      if (s.includes('FROM card_payloads') && s.includes('COUNT(*) AS total_cards')) {
+        return {
+          get: jest.fn(() => cardOutputIntegrityRow ?? {
+            total_cards: 0,
+            pass_cards: 0,
+            missing_odds_cards: 0,
+            degraded_cards: 0,
+          }),
         };
       }
 
@@ -193,6 +206,17 @@ describe('shouldSendAlert (unit)', () => {
   test('returns false when N rows are all failed but oldest is older than cooldown window', () => {
     getDatabase.mockReturnValue(makeDb({ pipelineRows: staleFailedRows(3, 30) }));
     // oldest row is 35+ minutes old, cooldown is 30 → suppress
+    expect(shouldSendAlert('schedule', 'freshness', 3, 30)).toBe(false);
+  });
+
+  test('returns false when the failed streak was already active before this run', () => {
+    const rows = [
+      { status: 'failed', created_at: DateTime.utc().minus({ minutes: 1 }).toISO() },
+      { status: 'failed', created_at: DateTime.utc().minus({ minutes: 2 }).toISO() },
+      { status: 'failed', created_at: DateTime.utc().minus({ minutes: 3 }).toISO() },
+      { status: 'failed', created_at: DateTime.utc().minus({ minutes: 4 }).toISO() },
+    ];
+    getDatabase.mockReturnValue(makeDb({ pipelineRows: rows }));
     expect(shouldSendAlert('schedule', 'freshness', 3, 30)).toBe(false);
   });
 });
@@ -294,6 +318,65 @@ describe('checkCardsFreshness', () => {
     expect(result.ok).toBe(false);
     expect(result.reason).toContain('missing expected model runs');
     expect(writes[0][2]).toBe('warning');
+  });
+});
+
+describe('checkCardOutputIntegrity', () => {
+  test('returns ok when sample is below minimum threshold', () => {
+    getDatabase.mockReturnValue(
+      makeDb({
+        cardOutputIntegrityRow: {
+          total_cards: 5,
+          pass_cards: 4,
+          missing_odds_cards: 1,
+          degraded_cards: 2,
+        },
+      }),
+    );
+
+    const result = checkCardOutputIntegrity();
+
+    expect(result.ok).toBe(true);
+    expect(result.reason).toContain('Insufficient sample');
+  });
+
+  test('returns failed when pass, missing odds, and degraded rates spike', () => {
+    getDatabase.mockReturnValue(
+      makeDb({
+        cardOutputIntegrityRow: {
+          total_cards: 100,
+          pass_cards: 98,
+          missing_odds_cards: 80,
+          degraded_cards: 70,
+        },
+      }),
+    );
+
+    const result = checkCardOutputIntegrity();
+
+    expect(result.ok).toBe(false);
+    expect(result.reason).toContain('CARD_OUTPUT_INTEGRITY_DEGRADED');
+    expect(result.reason).toContain('PASS spike');
+    expect(result.reason).toContain('missing_odds spike');
+    expect(result.reason).toContain('degraded spike');
+  });
+
+  test('returns ok when rates are within thresholds', () => {
+    getDatabase.mockReturnValue(
+      makeDb({
+        cardOutputIntegrityRow: {
+          total_cards: 100,
+          pass_cards: 60,
+          missing_odds_cards: 10,
+          degraded_cards: 20,
+        },
+      }),
+    );
+
+    const result = checkCardOutputIntegrity();
+
+    expect(result.ok).toBe(true);
+    expect(result.reason).toContain('Card output integrity healthy');
   });
 });
 
@@ -568,6 +651,29 @@ describe('checkNhlSogSyncFreshness', () => {
 
     expect(result.ok).toBe(false);
     expect(result.reason).toMatch(/has NOT run successfully/);
+    expect(result.reason).toContain('threshold=expected:1440m grace:0m window:1440m');
+  });
+
+  test('feature enabled + stale sync includes latest failed run details in reason', () => {
+    isFeatureEnabled.mockReturnValueOnce(true);
+    wasJobRecentlySuccessful.mockReturnValueOnce(false);
+    getDatabase.mockReturnValue(
+      makeDb({
+        scheduleCount: 1,
+        failedJobRunsByName: {
+          sync_nhl_sog_player_ids: {
+            started_at: '2026-04-27T10:00:00.000Z',
+            error_message: 'API timeout while syncing NHL SOG player ids',
+          },
+        },
+      }),
+    );
+
+    const result = checkNhlSogSyncFreshness();
+
+    expect(result.ok).toBe(false);
+    expect(result.reason).toContain('latest failed run at 2026-04-27T10:00:00.000Z');
+    expect(result.reason).toContain('API timeout while syncing NHL SOG player ids');
   });
 
   test('feature enabled + recent successful run → returns ok', () => {
@@ -731,6 +837,7 @@ describe('checkPipelineHealth Discord alert integration', () => {
     expect(callArgs.webhookUrl).toBe('https://discord.example/webhook');
     expect(callArgs.messages).toHaveLength(1);
     expect(callArgs.messages[0]).toContain('No upcoming games in next 48h');
+    expect(callArgs.messages[0]).toContain('[schedule:freshness:global]');
   });
 
   test('does NOT call sendDiscordMessages when watchdog=true but all checks pass', async () => {
@@ -805,6 +912,37 @@ describe('checkPipelineHealth Discord alert integration', () => {
     await checkPipelineHealth({ jobKey: 'test', dryRun: false });
 
     expect(sendDiscordMessages).not.toHaveBeenCalled();
+  });
+
+  test('persists alert_delivery failure when Discord send rejects and still completes the run', async () => {
+    process.env.ENABLE_PIPELINE_HEALTH_WATCHDOG = 'true';
+    process.env.DISCORD_ALERT_WEBHOOK_URL = 'https://discord.example/webhook';
+
+    const writes = [];
+    const db = makeDb({ scheduleCount: 0, pipelineRows: freshFailedRows(3) });
+    db.prepare = jest.fn((sql) => {
+      const s = sql.replace(/\s+/g, ' ').trim();
+      if (s.includes('INSERT INTO pipeline_health')) {
+        return { run: jest.fn((...args) => writes.push(args)) };
+      }
+      return makeDb({ scheduleCount: 0, pipelineRows: freshFailedRows(3) }).prepare(sql);
+    });
+    getDatabase.mockReturnValue(db);
+    sendDiscordMessages.mockRejectedValueOnce(new Error('discord transport failed'));
+
+    await expect(checkPipelineHealth({ jobKey: 'test', dryRun: false })).resolves.toMatchObject({
+      allOk: false,
+    });
+
+    expect(
+      writes.some(
+        (args) =>
+          args[0] === 'watchdog' &&
+          args[1] === 'alert_delivery' &&
+          args[2] === 'failed' &&
+          String(args[3]).includes('discord transport failed'),
+      ),
+    ).toBe(true);
   });
 });
 
