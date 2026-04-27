@@ -117,18 +117,9 @@ migration can be filed as a separate serialized DB WI if desired.
 ## Deprecated fields (WI-0763 traceability — retained for audit compat)
 
 These fields are still present in the `calculateProjectionK` return object but
-**no longer drive projection**. They are documented here so consumers can identify
-and eventually remove them.
-
-**Technical debt owner**: WI-1173
-**Follow-up**: File a cleanup WI to remove deprecated field reads once all consumers
-are confirmed migrated to WI-1173 fields.
-
-| Field | Deprecated behavior | Current behavior |
-|---|---|---|
-| `bb_pct_from_logs` | Drove multiplicative BB% penalty when > 10% | Now echoes `recent_bb_pct` for audit compat |
-| `bb_pct_adjustment` | Was the multiplicative factor (clamped 0.88–1.0) | Always `null` |
-| `home_away_adj` | Was the home/away multiplicative factor | Always `null` |
+The deprecated WI-0763 traceability fields (`bb_pct_from_logs`, `bb_pct_adjustment`,
+`home_away_adj`) were removed in WI-1173 after confirming they had no remaining
+in-repo runtime consumers.
 
 ---
 

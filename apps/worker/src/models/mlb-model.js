@@ -2748,10 +2748,6 @@ function calculateProjectionK(pitcher, matchup, leashTier, weather, options = {}
   }
   kMean = Math.max(kMean, projectionPreOverlap - COMMAND_RISK_OVERLAP_CAP);
 
-  // WI-0763 deprecated traceability fields: retained for audit/test compat; no longer drive projection.
-  // See docs/models__mlb_pitcher_k_inputs.md — marked as deprecated, owner: WI-1173.
-  const bbPctFromLogs = recentBbPct !== null ? Math.round(recentBbPct * 1000) / 1000 : null;
-
   const roundedMean = Math.round(kMean * 10) / 10;
   const ladder = buildPitcherKProbabilityLadder(roundedMean);
   const overPlayableAtOrBelow = roundToHalf(
@@ -2802,10 +2798,6 @@ function calculateProjectionK(pitcher, matchup, leashTier, weather, options = {}
     recent_bb_pct_status: recentBbPctStatus,
     command_risk_flag: commandRiskFlag,
     home_away_context: homeAwayContext,
-    // deprecated WI-0763 traceability fields — see docs/models__mlb_pitcher_k_inputs.md
-    bb_pct_from_logs: bbPctFromLogs,
-    bb_pct_adjustment: null,  // WI-1173: multiplicative penalty removed; field retained for compat
-    home_away_adj: null,      // WI-1173: projection impact removed; see HOME_AWAY_CONTEXT_SHIFT
     playability: {
       over_playable_at_or_below: overPlayableAtOrBelow,
       under_playable_at_or_above: underPlayableAtOrAbove,
