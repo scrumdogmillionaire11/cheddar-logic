@@ -304,8 +304,10 @@ jobs:
             # This prevents hidden second writers from surviving into migration/restart.
             pkill -f "node /opt/cheddar-logic/apps/worker/src/schedulers/main.js" || true
             sleep 1
-            # Remove stale lock file in case worker didn't exit cleanly
-            rm -f "${CANONICAL_DB_PATH}.lock"
+            # Remove stale lock file in case worker didn't exit cleanly.
+            # Must use sudo: the lock file is owned by root (worker runs as root via systemd)
+            # and the deploy SSH user cannot rm it without elevated permissions.
+            sudo rm -f "${CANONICAL_DB_PATH}.lock"
             # Run database migrations (will create DB if it doesn't exist)
             echo "[deploy-step] starting migrations"
             echo "Running migrations against: $CANONICAL_DB_PATH"
