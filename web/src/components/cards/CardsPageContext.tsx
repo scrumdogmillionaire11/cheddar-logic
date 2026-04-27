@@ -88,6 +88,46 @@ function isRecoverableHttpError(status: number): boolean {
   return status >= 500 || status === 429;
 }
 
+function toUpperToken(value: unknown): string | null {
+  if (value === null || value === undefined) return null;
+  const normalized = String(value).trim().toUpperCase();
+  return normalized.length > 0 ? normalized : null;
+}
+
+function hasActionableProjectionCall(play: GameData['plays'][number]): boolean {
+  const canonicalEnvelopeStatus = toUpperToken(
+    (play as Record<string, unknown>)?.decision_v2 &&
+      typeof (play as Record<string, unknown>).decision_v2 === 'object'
+      ? ((play as Record<string, unknown>).decision_v2 as Record<string, unknown>)
+          ?.canonical_envelope_v2 &&
+        typeof (
+          ((play as Record<string, unknown>).decision_v2 as Record<string, unknown>)
+            .canonical_envelope_v2
+        ) === 'object'
+        ? (
+            (((play as Record<string, unknown>).decision_v2 as Record<string, unknown>)
+              .canonical_envelope_v2 as Record<string, unknown>
+            ).official_status
+          )
+        : null
+      : null,
+  );
+  if (canonicalEnvelopeStatus === 'PASS') return false;
+  if (canonicalEnvelopeStatus === 'PLAY' || canonicalEnvelopeStatus === 'LEAN') {
+    return true;
+  }
+
+  const decisionStatus = toUpperToken(
+    (play as Record<string, unknown>)?.decision_v2 &&
+      typeof (play as Record<string, unknown>).decision_v2 === 'object'
+      ? (((play as Record<string, unknown>).decision_v2 as Record<string, unknown>)
+          .official_status as unknown)
+      : null,
+  );
+  if (decisionStatus === 'PASS') return false;
+  return decisionStatus === 'PLAY' || decisionStatus === 'LEAN';
+}
+
 function cardsUiReducer(state: CardsUiState, action: CardsUiAction): CardsUiState {
   switch (action.type) {
     case 'set_filters':
@@ -238,6 +278,12 @@ export function CardsPageProvider({
     const seenProjectionKeys = new Set<string>();
     const dedupedItems: Array<{ game: GameData; play: GameData['plays'][number] }> = [];
 
+    // Task 1 data-flow trace:
+    // 1) /api/cards emits payloadData for projection surface types (api/cards/route.ts).
+    // 2) fetchGamesData stores those rows into `games` in this provider.
+    // 3) This `projectionItems` builder selects nhl-pace-1p / mlb-f5 / mlb-f5-ml
+    //    and feeds CardsList -> ProjectionCard.
+    // Gap found: without an actionable-status gate here, PASS rows reach UI cards.
     for (const game of games) {
       const projectionPlays = game.plays.filter(
         (p) =>
@@ -247,11 +293,16 @@ export function CardsPageProvider({
       );
       if (projectionPlays.length === 0) continue;
 
-      const anchorPlay = projectionPlays[0];
+      const actionableProjectionPlays = projectionPlays.filter(
+        hasActionableProjectionCall,
+      );
+      if (actionableProjectionPlays.length === 0) continue;
+
+      const anchorPlay = actionableProjectionPlays[0];
       const filterCard = createProjectionFilterCard(game, anchorPlay);
       if (!evaluateCardFilter(filterCard, f, 'projections').passes) continue;
 
-      for (const play of projectionPlays) {
+      for (const play of actionableProjectionPlays) {
         const projectionKey = [
           String(game.sport || '').toUpperCase(),
           String(game.awayTeam || '').trim().toUpperCase(),

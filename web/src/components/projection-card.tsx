@@ -2,6 +2,15 @@
 
 export interface RawProjectionPlay {
   cardType?: string;
+  action?: string;
+  classification?: string;
+  decision_v2?: {
+    official_status?: string | null;
+    canonical_envelope_v2?: {
+      official_status?: string | null;
+    } | null;
+    [key: string]: unknown;
+  } | null;
   projectedTotal: number | null;
   projectedHomeF5Runs?: number | null;
   projectedAwayF5Runs?: number | null;
@@ -56,6 +65,30 @@ function goalieStatusLabel(status?: string | null): string {
   return 'unknown';
 }
 
+function toUpperToken(value: unknown): string | null {
+  if (value === null || value === undefined) return null;
+  const normalized = String(value).trim().toUpperCase();
+  return normalized.length > 0 ? normalized : null;
+}
+
+function hasActionableProjectionCall(play: RawProjectionPlay): boolean {
+  const canonicalEnvelopeStatus = toUpperToken(
+    play.decision_v2?.canonical_envelope_v2?.official_status,
+  );
+  if (canonicalEnvelopeStatus === 'PASS') return false;
+  if (canonicalEnvelopeStatus === 'PLAY' || canonicalEnvelopeStatus === 'LEAN') {
+    return true;
+  }
+
+  const officialStatus = toUpperToken(play.decision_v2?.official_status);
+  if (officialStatus === 'PASS') return false;
+  if (officialStatus === 'PLAY' || officialStatus === 'LEAN') return true;
+
+  if (toUpperToken(play.action) === 'PASS') return false;
+  if (toUpperToken(play.classification) === 'PASS') return false;
+  return false;
+}
+
 export default function ProjectionCard({
   homeTeam,
   awayTeam,
@@ -63,6 +96,10 @@ export default function ProjectionCard({
   play,
   sport = 'NHL',
 }: ProjectionCardProps) {
+  if (!hasActionableProjectionCall(play)) {
+    return null;
+  }
+
   const isMlb = sport === 'MLB';
   const isMlbF5Ml = isMlb && play.cardType === 'mlb-f5-ml';
   // mlb-f5 PROJECTION_ONLY: no market line, MAE-tracked surface only — no direction badge
