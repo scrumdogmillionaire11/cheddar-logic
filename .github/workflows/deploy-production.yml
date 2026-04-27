@@ -118,7 +118,8 @@ jobs:
           command_timeout: 20m
           envs: CF_API_TOKEN,CF_ZONE_ID
           script: |
-            set -e
+            set -Ee
+            trap 'status=$?; echo "ERROR: command failed at line ${LINENO}: ${BASH_COMMAND} (exit=${status})"; exit ${status}' ERR
             cd /opt/cheddar-logic
             # Recover from stale git lock files left by interrupted prior deploys.
             # If an active git process exists in this repo, abort instead of forcing.
@@ -272,6 +273,7 @@ jobs:
             fi
             CANONICAL_DB_PATH="$CHEDDAR_DB_PATH"
             echo "Resolved database path: $CANONICAL_DB_PATH"
+            echo "[deploy-step] preparing DB directory"
             if ! sudo mkdir -p "$(dirname "$CANONICAL_DB_PATH")"; then
               echo "WARNING: Unable to create DB directory $(dirname "$CANONICAL_DB_PATH") — continuing"
             fi
@@ -284,6 +286,7 @@ jobs:
                 echo "WARNING: Unable to chmod DB file $CANONICAL_DB_PATH — continuing"
               fi
             fi
+            echo "[deploy-step] stopping worker services"
             # Stop worker before migrations to prevent concurrent writes to DB file.
             # Stop the watchdog timer FIRST so it cannot restart the worker during the
             # long build phase and re-acquire the DB lock before our final restart.
@@ -304,6 +307,7 @@ jobs:
             # Remove stale lock file in case worker didn't exit cleanly
             rm -f "${CANONICAL_DB_PATH}.lock"
             # Run database migrations (will create DB if it doesn't exist)
+            echo "[deploy-step] starting migrations"
             echo "Running migrations against: $CANONICAL_DB_PATH"
             CHEDDAR_DB_PATH="$CANONICAL_DB_PATH" NODE_ENV=production timeout 10m node scripts/run-migrations.js || { echo "ERROR: Migrations failed or timed out"; exit 1; }
             # Ensure feature flags are present in .env.production (idempotent)
