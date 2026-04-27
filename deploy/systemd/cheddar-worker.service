@@ -21,7 +21,9 @@ StartLimitBurst=5
 
 # Shutdown handling
 TimeoutStopSec=10s
-KillMode=mixed
+# KillMode=process: only send signal to the main process, not the whole cgroup.
+# KillMode=mixed was killing the entire user slice including the SSH deploy session.
+KillMode=process
 KillSignal=SIGTERM
 
 # Resource limits
