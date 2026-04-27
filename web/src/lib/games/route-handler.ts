@@ -1073,6 +1073,42 @@ export function mergeMlbGameLineFallbackRows(params: {
   return [...currentRows, ...selectedFallbackRows.values()];
 }
 
+function mergePropFallbackRows(params: {
+  currentRows: CardPayloadRow[];
+  fallbackRows: CardPayloadRow[];
+  externalToCanonicalMap: Map<string, string>;
+}): CardPayloadRow[] {
+  const { currentRows, fallbackRows, externalToCanonicalMap } = params;
+
+  const semanticKeys = new Set<string>();
+  const mergedRows = [...currentRows];
+
+  for (const row of currentRows) {
+    const cardType = String(row.card_type || '').trim().toLowerCase();
+    if (!PROP_FALLBACK_CARD_TYPES.has(cardType)) continue;
+    const canonicalGameId = externalToCanonicalMap.get(row.game_id) ?? row.game_id;
+    semanticKeys.add(`${canonicalGameId}|${cardType}|${row.card_title}`);
+  }
+
+  for (const row of fallbackRows) {
+    const cardType = String(row.card_type || '').trim().toLowerCase();
+    if (!PROP_FALLBACK_CARD_TYPES.has(cardType)) continue;
+
+    const canonicalGameId = externalToCanonicalMap.get(row.game_id) ?? row.game_id;
+    const semanticKey = `${canonicalGameId}|${cardType}|${row.card_title}`;
+    if (semanticKeys.has(semanticKey)) continue;
+
+    semanticKeys.add(semanticKey);
+    mergedRows.push(row);
+  }
+
+  const dedupedById = new Map<string, CardPayloadRow>();
+  for (const row of mergedRows) {
+    dedupedById.set(row.id, row);
+  }
+  return Array.from(dedupedById.values());
+}
+
 interface IngestFailureRow {
   game_id: string;
   reason_code: string;
@@ -2506,41 +2542,6 @@ export async function GET(request: NextRequest) {
 
           // MLB full-game fallback merge by canonical (game_id, card_type) so
           // current-run mlb-f5 rows do not mask publishable full-game rows.
-function mergePropFallbackRows(params: {
-  currentRows: CardPayloadRow[];
-  fallbackRows: CardPayloadRow[];
-  externalToCanonicalMap: Map<string, string>;
-}): CardPayloadRow[] {
-  const { currentRows, fallbackRows, externalToCanonicalMap } = params;
-
-  const semanticKeys = new Set<string>();
-  const mergedRows = [...currentRows];
-
-  for (const row of currentRows) {
-    const cardType = String(row.card_type || '').trim().toLowerCase();
-    if (!PROP_FALLBACK_CARD_TYPES.has(cardType)) continue;
-    const canonicalGameId = externalToCanonicalMap.get(row.game_id) ?? row.game_id;
-    semanticKeys.add(`${canonicalGameId}|${cardType}|${row.card_title}`);
-  }
-
-  for (const row of fallbackRows) {
-    const cardType = String(row.card_type || '').trim().toLowerCase();
-    if (!PROP_FALLBACK_CARD_TYPES.has(cardType)) continue;
-
-    const canonicalGameId = externalToCanonicalMap.get(row.game_id) ?? row.game_id;
-    const semanticKey = `${canonicalGameId}|${cardType}|${row.card_title}`;
-    if (semanticKeys.has(semanticKey)) continue;
-
-    semanticKeys.add(semanticKey);
-    mergedRows.push(row);
-  }
-
-  const dedupedById = new Map<string, CardPayloadRow>();
-  for (const row of mergedRows) {
-    dedupedById.set(row.id, row);
-  }
-  return Array.from(dedupedById.values());
-}
           if (allQueryableIds.length > 0) {
             const fallbackStmt = db.prepare(buildCardsSql(allQueryableIds, ''));
             const fallbackRows = fallbackStmt.all(
@@ -2553,17 +2554,17 @@ function mergePropFallbackRows(params: {
                 externalToCanonicalMap,
               });
 
-              // DISABLED (DEAD_CODE_CLEANUP): MLB game-line fallback injection removed.
-              // Current-run MLB full-game/ML cards are now required to be present.
-              // If missing, the API serves empty/PASS for the missing game to avoid
-              // stale card injection from previous model runs.
-              // See: DEAD_CODE_AND_PIPELINE_CLEANUP.md, Phase 1, highest-risk ghost path
-              // Former implementation:
-              //   const latestOddsCapturedAtByCanonicalId = new Map(
-              //     rows.map(row => [row.game_id, row.odds_captured_at])
-              //   );
-              //   cardRows = mergeMLBGameLineFallback(cardRows, fallbackRows, externalToCanonicalMap, latestOddsCapturedAtByCanonicalId);
-              // Now removed: no fallback merge occurs
+              // Re-enable MLB full-game fallback merge with strict eligibility guards
+              // so active-run filtering does not drop valid publishable game-line rows.
+              const latestOddsCapturedAtByCanonicalId = new Map(
+                rows.map((row) => [row.game_id, row.odds_captured_at]),
+              );
+              cardRows = mergeMlbGameLineFallbackRows({
+                currentRows: cardRows,
+                fallbackRows,
+                externalToCanonicalMap,
+                latestOddsCapturedAtByCanonicalId,
+              });
             }
           }
         }
