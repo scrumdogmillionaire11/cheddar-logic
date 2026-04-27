@@ -294,6 +294,7 @@ export interface PitcherKFairPrices {
 export interface TransformMeta {
   quality: CardQuality;
   missing_inputs: string[];
+  missing_market_types?: string[];
   placeholders_found: string[];
   drop_reason?: { drop_reason_code: string; drop_reason_layer: string } | null;
 }

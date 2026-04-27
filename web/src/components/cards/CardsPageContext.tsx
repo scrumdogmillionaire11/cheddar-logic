@@ -790,12 +790,25 @@ export function CardsPageProvider({
         const isAbort =
           err instanceof Error &&
           (err.name === 'AbortError' || err.name === 'TimeoutError');
-        const message = err instanceof Error ? err.message : 'Unknown error';
-        console.error(`[${FETCH_ERROR_LOG_CODE}]`, {
+        const fallbackMessage = stringifyUnknownError(err);
+        const message =
+          err instanceof Error
+            ? err.message || fallbackMessage
+            : fallbackMessage;
+        const logPayload = {
           message,
           error_name: err instanceof Error ? err.name : 'UnknownError',
           is_initial_load: wasInitialLoad,
-        });
+          lifecycle: requestedLifecycleMode,
+          timeout_ms: CLIENT_FETCH_TIMEOUT_MS,
+          is_abort: isAbort,
+        };
+        const serializedLogPayload = JSON.stringify(logPayload);
+        if (isAbort) {
+          console.warn(`[${FETCH_ERROR_LOG_CODE}] ${serializedLogPayload}`);
+        } else {
+          console.error(`[${FETCH_ERROR_LOG_CODE}] ${serializedLogPayload}`);
+        }
         if (wasInitialLoad) {
           // Network errors and timeouts are recoverable on initial load
           failedRecoverably = true;

@@ -1016,6 +1016,123 @@ function checkNbaMarketCallDiagnostics() {
   return { ok, reason, diagnostics: diag };
 }
 
+function checkNbaMoneylineCoverage({ lookaheadHours = 6, lookbackHours = 12 } = {}) {
+  const db = getDatabase();
+  const nowUtc = DateTime.utc();
+  const endUtc = nowUtc.plus({ hours: lookaheadHours });
+
+  const upcomingGames = db
+    .prepare(
+      `SELECT game_id, sport, game_time_utc
+       FROM games
+       WHERE sport = 'NBA'
+         AND game_time_utc >= ?
+         AND game_time_utc <= ?
+       ORDER BY game_time_utc ASC`,
+    )
+    .all(nowUtc.toISO(), endUtc.toISO());
+
+  if (!Array.isArray(upcomingGames) || upcomingGames.length === 0) {
+    const reason = `NBA moneyline coverage: no NBA games in next ${lookaheadHours}h`;
+    writePipelineHealth('nba', 'moneyline_coverage', 'ok', reason);
+    return {
+      ok: true,
+      reason,
+      diagnostics: {
+        nba_games_with_spread_or_total: 0,
+        nba_games_missing_ml: 0,
+        nba_moneyline_cards_count: 0,
+        alert_code: null,
+      },
+    };
+  }
+
+  let gamesWithSpreadOrTotal = 0;
+  let gamesMissingMl = 0;
+  const sampleMissingGameIds = [];
+
+  for (const game of upcomingGames) {
+    const snapshot = getLatestOddsSnapshot(db, game.game_id);
+    if (!snapshot) continue;
+
+    const hasSpreadOrTotal =
+      snapshot.spread_home != null ||
+      snapshot.spread_away != null ||
+      snapshot.total != null;
+    const hasMoneyline = snapshot.h2h_home != null || snapshot.h2h_away != null;
+
+    if (!hasSpreadOrTotal) continue;
+    gamesWithSpreadOrTotal += 1;
+    if (!hasMoneyline) {
+      gamesMissingMl += 1;
+      if (sampleMissingGameIds.length < 5) {
+        sampleMissingGameIds.push(game.game_id);
+      }
+    }
+  }
+
+  const mlCardsRow = db
+    .prepare(
+      `SELECT COUNT(*) AS cnt
+       FROM card_payloads
+       WHERE sport = 'NBA'
+         AND card_type = 'nba-moneyline-call'
+         AND created_at > datetime('now', ?)`,
+    )
+    .get(`-${lookbackHours} hours`);
+  const moneylineCardsCount = Number(mlCardsRow?.cnt || 0);
+
+  if (gamesWithSpreadOrTotal === 0) {
+    const reason =
+      `NBA moneyline coverage: no games with spread/total odds in next ${lookaheadHours}h`;
+    writePipelineHealth('nba', 'moneyline_coverage', 'ok', reason);
+    return {
+      ok: true,
+      reason,
+      diagnostics: {
+        nba_games_with_spread_or_total: 0,
+        nba_games_missing_ml: 0,
+        nba_moneyline_cards_count: moneylineCardsCount,
+        alert_code: null,
+      },
+    };
+  }
+
+  if (gamesMissingMl > 0) {
+    const reason =
+      `NBA_ML_MISSING_WITH_OTHER_MARKETS: ${gamesMissingMl}/${gamesWithSpreadOrTotal} game(s) have spread/total odds but missing moneyline in next ${lookaheadHours}h` +
+      (sampleMissingGameIds.length > 0
+        ? ` (sample=${sampleMissingGameIds.join(',')})`
+        : '');
+    writePipelineHealth('nba', 'moneyline_coverage', 'warning', reason);
+    return {
+      ok: false,
+      reason,
+      diagnostics: {
+        nba_games_with_spread_or_total: gamesWithSpreadOrTotal,
+        nba_games_missing_ml: gamesMissingMl,
+        nba_moneyline_cards_count: moneylineCardsCount,
+        sample_game_ids: sampleMissingGameIds,
+        alert_code: 'NBA_ML_MISSING_WITH_OTHER_MARKETS',
+      },
+    };
+  }
+
+  const reason =
+    `NBA moneyline coverage: ${gamesWithSpreadOrTotal} game(s) have spread/total+moneyline odds in next ${lookaheadHours}h`;
+  writePipelineHealth('nba', 'moneyline_coverage', 'ok', reason);
+  return {
+    ok: true,
+    reason,
+    diagnostics: {
+      nba_games_with_spread_or_total: gamesWithSpreadOrTotal,
+      nba_games_missing_ml: 0,
+      nba_moneyline_cards_count: moneylineCardsCount,
+      alert_code: null,
+    },
+  };
+}
+
 /**
  * Check 4: MLB F5 market availability
  * For upcoming MLB games in the near T-minus window, report F5 total
@@ -1776,6 +1893,7 @@ async function checkPipelineHealth({ jobKey, dryRun }) {
       nba_model_freshness: () =>
         checkSportModelFreshness('nba', 'run_nba_model', 'model_freshness', getModelFreshnessMaxAgeMinutes()),
       nba_market_call_diagnostics: checkNbaMarketCallDiagnostics,
+      nba_moneyline_coverage: checkNbaMoneylineCoverage,
       mlb_model_freshness: () =>
         checkSportModelFreshness('mlb', 'run_mlb_model', 'model_freshness', getModelFreshnessMaxAgeMinutes()),
       calibration_kill_switches: checkCalibrationKillSwitches,
@@ -1817,6 +1935,7 @@ async function checkPipelineHealth({ jobKey, dryRun }) {
         nhl_blk_source_integrity: ['nhl', 'blk_source_integrity'],
         nba_model_freshness: ['nba', 'model_freshness'],
         nba_market_call_diagnostics: ['nba', 'market_call_blockers'],
+        nba_moneyline_coverage: ['nba', 'moneyline_coverage'],
         mlb_model_freshness: ['mlb', 'model_freshness'],
         calibration_kill_switches: ['calibration', 'kill_switch'],
       };
@@ -1996,6 +2115,7 @@ module.exports = {
   checkNhlMoneylineCoverage,
   summarizeNbaRejectReasonFamilies,
   checkNbaMarketCallDiagnostics,
+  checkNbaMoneylineCoverage,
   NBA_MARKET_CALL_CARD_TYPES,
   NBA_REJECT_REASON_FAMILIES,
 };

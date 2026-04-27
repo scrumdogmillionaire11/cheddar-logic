@@ -608,12 +608,7 @@ function applyDecisionNamespaceMetadata(card) {
 
   // Compatibility mirror: legacy fields are now derived from namespaced authority.
   payload.projection_inputs_complete = coreInputsComplete;
-  payload.missing_inputs = Array.from(new Set([
-    ...payload.core_missing_inputs,
-    ...(featureFlags.some((flag) => String(flag).startsWith('FEATURE_BLOCK_RATES_'))
-      ? ['feature_freshness:block_rates_stale']
-      : []),
-  ]));
+  payload.missing_inputs = Array.from(new Set(payload.core_missing_inputs));
 
   const executionStatus = String(payload.execution_status || '').toUpperCase();
   const basis = String(payload.basis || '').toUpperCase();

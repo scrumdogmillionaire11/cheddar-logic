@@ -55,6 +55,7 @@ const {
   checkNhlBlkSourceIntegrity,
   checkNhlBlkRatesFreshness,
   checkNhlMoneyPuckBlkRatesFreshness,
+  checkNbaMoneylineCoverage,
 } = require('../check_pipeline_health');
 
 // ---------------------------------------------------------------------------
@@ -70,6 +71,7 @@ function makeDb({
   upcomingGames = [],
   latestCardsByGame = {},
   latestOddsByGame = {},
+  nbaMoneylineCardsCount = 0,
   jobRunsByKey = {},
   failedJobRunsByName = {},
 } = {}) {
@@ -112,6 +114,12 @@ function makeDb({
       if (s.includes('FROM card_payloads') && s.includes('WHERE game_id = ?')) {
         return {
           get: jest.fn((gameId) => latestCardsByGame[gameId] ?? null),
+        };
+      }
+
+      if (s.includes('FROM card_payloads') && s.includes("card_type = 'nba-moneyline-call'")) {
+        return {
+          get: jest.fn(() => ({ cnt: nbaMoneylineCardsCount })),
         };
       }
 
@@ -286,6 +294,69 @@ describe('checkCardsFreshness', () => {
     expect(result.ok).toBe(false);
     expect(result.reason).toContain('missing expected model runs');
     expect(writes[0][2]).toBe('warning');
+  });
+});
+
+describe('checkNbaMoneylineCoverage', () => {
+  test('returns warning when spread/total exist but moneyline is missing', () => {
+    const now = DateTime.utc();
+    const upcomingGames = [
+      {
+        game_id: 'nba-ml-missing-001',
+        sport: 'NBA',
+        game_time_utc: now.plus({ minutes: 50 }).toISO(),
+      },
+    ];
+    const latestOddsByGame = {
+      'nba-ml-missing-001': {
+        captured_at: now.minus({ minutes: 3 }).toISO(),
+        spread_home: -4.5,
+        spread_away: 4.5,
+        total: 226.5,
+        h2h_home: null,
+        h2h_away: null,
+      },
+    };
+
+    getDatabase.mockReturnValue(makeDb({ upcomingGames, latestOddsByGame }));
+
+    const result = checkNbaMoneylineCoverage();
+
+    expect(result.ok).toBe(false);
+    expect(result.reason).toContain('NBA_ML_MISSING_WITH_OTHER_MARKETS');
+    expect(result.diagnostics.nba_games_missing_ml).toBe(1);
+    expect(result.diagnostics.alert_code).toBe('NBA_ML_MISSING_WITH_OTHER_MARKETS');
+  });
+
+  test('returns ok when spread/total and moneyline are both present', () => {
+    const now = DateTime.utc();
+    const upcomingGames = [
+      {
+        game_id: 'nba-ml-present-001',
+        sport: 'NBA',
+        game_time_utc: now.plus({ minutes: 45 }).toISO(),
+      },
+    ];
+    const latestOddsByGame = {
+      'nba-ml-present-001': {
+        captured_at: now.minus({ minutes: 4 }).toISO(),
+        spread_home: -2.5,
+        spread_away: 2.5,
+        total: 219.5,
+        h2h_home: -125,
+        h2h_away: 110,
+      },
+    };
+
+    getDatabase.mockReturnValue(
+      makeDb({ upcomingGames, latestOddsByGame, nbaMoneylineCardsCount: 1 }),
+    );
+
+    const result = checkNbaMoneylineCoverage();
+
+    expect(result.ok).toBe(true);
+    expect(result.reason).toContain('spread/total+moneyline odds');
+    expect(result.diagnostics.nba_games_missing_ml).toBe(0);
   });
 });
 

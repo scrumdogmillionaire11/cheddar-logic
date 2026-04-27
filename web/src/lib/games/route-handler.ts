@@ -611,6 +611,51 @@ function normalizeApiMarketStatus(value: unknown): {
         : null,
   };
 }
+
+function normalizeDiagnosticToken(value: unknown): string | null {
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : null;
+  }
+  if (!value || typeof value !== 'object') return null;
+
+  const entry = value as Record<string, unknown>;
+  const code =
+    typeof entry.code === 'string'
+      ? entry.code.trim()
+      : typeof entry.status === 'string'
+        ? entry.status.trim().toUpperCase()
+        : '';
+  const team = typeof entry.team === 'string' ? entry.team.trim() : '';
+  const sport = typeof entry.sport === 'string' ? entry.sport.trim().toUpperCase() : '';
+  if (code && sport && team) return `${code}:${sport}:${team}`;
+  if (code && team) return `${code}:${team}`;
+  if (code && sport) return `${code}:${sport}`;
+
+  for (const key of ['reason', 'code', 'label', 'message', 'field', 'key']) {
+    if (typeof entry[key] === 'string' && entry[key]!.trim().length > 0) {
+      return entry[key]!.trim();
+    }
+  }
+
+  try {
+    const json = JSON.stringify(value);
+    return json && json !== '{}' ? json : null;
+  } catch {
+    return null;
+  }
+}
+
+function normalizeDiagnosticArray(values: unknown[]): string[] {
+  return Array.from(
+    new Set(
+      values
+        .map((value) => normalizeDiagnosticToken(value))
+        .filter((value): value is string => Boolean(value)),
+    ),
+  );
+}
+
 const TRUE_PLAY_AUTHORITY_SOURCE = 'CARD_PAYLOADS_DECISION_V2' as const;
 const TRUE_PLAY_AUTHORITY_VERSION = 'ADR-0003' as const;
 const TRUE_PLAY_AUTHORITY_RATIONALE =
@@ -3456,8 +3501,7 @@ function mergePropFallbackRows(params: {
               : typeof payloadPlay?.core_inputs_complete === 'boolean'
                 ? payloadPlay.core_inputs_complete
                 : null,
-          missing_inputs: Array.from(
-            new Set([
+          missing_inputs: normalizeDiagnosticArray([
               ...(Array.isArray(payload.core_missing_inputs)
                 ? payload.core_missing_inputs
                 : Array.isArray(payload.missing_inputs)
@@ -3469,18 +3513,15 @@ function mergePropFallbackRows(params: {
               ...(Array.isArray(payloadPlay?.missing_inputs)
                 ? payloadPlay.missing_inputs
                 : []),
-            ].map((value) => String(value))),
-          ),
-          core_missing_inputs: Array.from(
-            new Set([
+            ]),
+          core_missing_inputs: normalizeDiagnosticArray([
               ...(Array.isArray(payload.core_missing_inputs)
                 ? payload.core_missing_inputs
                 : []),
               ...(Array.isArray(payloadPlay?.core_missing_inputs)
                 ? payloadPlay.core_missing_inputs
                 : []),
-            ].map((value) => String(value))),
-          ),
+            ]),
           feature_flags: Array.from(
             new Set([
               ...(Array.isArray(payload.feature_flags) ? payload.feature_flags : []),
@@ -3498,16 +3539,14 @@ function mergePropFallbackRows(params: {
               : typeof payloadPlay?.source_mapping_ok === 'boolean'
                 ? payloadPlay.source_mapping_ok
                 : null,
-          source_mapping_failures: Array.from(
-            new Set([
+          source_mapping_failures: normalizeDiagnosticArray([
               ...(Array.isArray(payload.source_mapping_failures)
                 ? payload.source_mapping_failures
                 : []),
               ...(Array.isArray(payloadPlay?.source_mapping_failures)
                 ? payloadPlay.source_mapping_failures
                 : []),
-            ].map((value) => String(value))),
-          ),
+            ]),
           tags: dedupedTags,
           run_id: normalizedRunId,
           created_at: normalizedCreatedAt ?? cardRow.created_at,

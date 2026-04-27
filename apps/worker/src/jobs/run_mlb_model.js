@@ -668,12 +668,7 @@ function applyDecisionNamespaceMetadata(payload) {
 
   // Compatibility mirror: legacy fields are derived from namespaced authority.
   payload.projection_inputs_complete = coreInputsComplete;
-  payload.missing_inputs = Array.from(new Set([
-    ...payload.core_missing_inputs,
-    ...(featureFlags.some((flag) => String(flag).startsWith('FEATURE_BLOCK_RATES_'))
-      ? ['feature_freshness:block_rates_stale']
-      : []),
-  ]));
+  payload.missing_inputs = Array.from(new Set(payload.core_missing_inputs));
 
   const executionStatus = String(payload.execution_status || '').toUpperCase();
   const basis = String(payload.basis || '').toUpperCase();
@@ -865,6 +860,36 @@ function resolveMlbTeamAbbreviation(teamName) {
     }
   }
   return null;
+}
+
+function deriveMlbTeamMappingHealth(oddsSnapshot) {
+  const homeTeam =
+    typeof oddsSnapshot?.home_team === 'string' ? oddsSnapshot.home_team.trim() : '';
+  const awayTeam =
+    typeof oddsSnapshot?.away_team === 'string' ? oddsSnapshot.away_team.trim() : '';
+
+  const failures = [];
+  const homeTeamAbbr = homeTeam ? resolveMlbTeamAbbreviation(homeTeam) : null;
+  const awayTeamAbbr = awayTeam ? resolveMlbTeamAbbreviation(awayTeam) : null;
+
+  if (!homeTeam) {
+    failures.push('home_team_missing');
+  } else if (!homeTeamAbbr) {
+    failures.push(`TEAM_ALIAS_MISS:${homeTeam}`);
+  }
+
+  if (!awayTeam) {
+    failures.push('away_team_missing');
+  } else if (!awayTeamAbbr) {
+    failures.push(`TEAM_ALIAS_MISS:${awayTeam}`);
+  }
+
+  return {
+    ok: failures.length === 0,
+    home_team_abbr: homeTeamAbbr,
+    away_team_abbr: awayTeamAbbr,
+    failures: uniqueReasonCodes(failures),
+  };
 }
 
 function resolveMlbSnapshotGameDate(oddsSnapshot) {
@@ -1278,6 +1303,7 @@ function buildMlbMarketAvailability(oddsSnapshot, { expectF5Ml = false, withoutO
 function buildMlbPipelineState({
   oddsSnapshot,
   marketAvailability,
+  teamMappingHealth,
   projectionReady,
   driversReady,
   pricingReady,
@@ -1304,20 +1330,25 @@ function buildMlbPipelineState({
           (envelope) => envelope?._publish_state?.emit_allowed === true,
         )
       : cardReady === true;
+  const mappingHealth = teamMappingHealth || deriveMlbTeamMappingHealth(oddsSnapshot);
+  const blockingReasonCodes = uniqueReasonCodes([
+    ...(Array.isArray(availability.blocking_reason_codes)
+      ? availability.blocking_reason_codes
+      : []),
+    ...mappingHealth.failures,
+  ]);
 
   return {
     ...buildPipelineState({
       ingested: Boolean(oddsSnapshot),
-      team_mapping_ok: Boolean(
-        oddsSnapshot?.home_team && oddsSnapshot?.away_team,
-      ),
-      odds_ok: Boolean(oddsSnapshot?.captured_at) && marketLinesOk,
+      team_mapping_ok: mappingHealth.ok,
+      odds_ok: Boolean(oddsSnapshot?.captured_at) && marketLinesOk && mappingHealth.ok,
       market_lines_ok: marketLinesOk,
-      projection_ready: projectionReady === true,
-      drivers_ready: driversReady === true,
+      projection_ready: projectionReady === true && mappingHealth.ok,
+      drivers_ready: driversReady === true && mappingHealth.ok,
       pricing_ready: derivedPricingReady,
       card_ready: derivedCardReady,
-      blocking_reason_codes: availability.blocking_reason_codes,
+      blocking_reason_codes: blockingReasonCodes,
     }),
     f5_line_ok: availability.f5_line_ok,
     f5_ml_ok: availability.f5_ml_ok,
@@ -4156,6 +4187,23 @@ async function runMLBModel({
             forKEngine: false,
             useF5ProjectionFloor: withoutOddsMode,
           });
+          const teamMappingHealth = deriveMlbTeamMappingHealth(gameOddsSnapshot);
+          if (!teamMappingHealth.ok) {
+            gamePipelineStates[gameId] = buildMlbPipelineState({
+              oddsSnapshot: gameOddsSnapshot,
+              marketAvailability: buildMlbMarketAvailability(gameOddsSnapshot),
+              teamMappingHealth,
+              projectionReady: false,
+              driversReady: false,
+              pricingReady: false,
+              cardReady: false,
+              executionEnvelopes: [],
+            });
+            console.warn(
+              `[MLB_TEAM_MAPPING_BLOCK] ${gameId}: ${teamMappingHealth.failures.join(', ')}`,
+            );
+            continue;
+          }
           let pitcherKOddsSnapshot = enrichMlbPitcherData(baseOddsSnapshot, {
             forKEngine: true,
           });
@@ -4544,6 +4592,7 @@ async function runMLBModel({
             gamePipelineStates[gameId] = buildMlbPipelineState({
               oddsSnapshot: gameOddsSnapshot,
               marketAvailability,
+              teamMappingHealth,
               projectionReady: gameEval.status !== 'SKIP_GAME_INPUT_FAILURE',
               driversReady: false,
               pricingReady: false,
@@ -4642,6 +4691,7 @@ async function runMLBModel({
           const pipelineState = buildMlbPipelineState({
             oddsSnapshot: gameOddsSnapshot,
             marketAvailability,
+            teamMappingHealth,
             projectionReady: true,
             driversReady:
               gameDriverCards.length > 0 || pitcherKDriverCards.length > 0 || projectionFloorDriver !== null,
@@ -5274,6 +5324,7 @@ module.exports = {
   buildNeutralBullpenContext,
   MLB_PIPELINE_REASON_CODES,
   resolveMlbTeamLookupKeys,
+  deriveMlbTeamMappingHealth,
   selectPitcherRowForTeam,
   getProbableStarterMapRow,
   getProbableStarterIdentity,

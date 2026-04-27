@@ -599,22 +599,62 @@ function deriveMarketStatus(game: GameData): {
   const statuses = [game.market_status, ...game.plays.map((play) => play.market_status)]
     .filter((status): status is ApiMarketStatus => Boolean(status));
 
-  const hasOddsSignal = statuses
+  const hasOddsSignals = statuses
     .map((status) => status.has_odds)
-    .find((value) => typeof value === 'boolean');
+    .filter((value): value is boolean => typeof value === 'boolean');
   const executionBlocked = statuses.some(
     (status) => status.execution_blocked === true,
   );
+  const freshnessRank: Record<string, number> = {
+    expired: 3,
+    stale: 2,
+    warn: 1,
+    fresh: 0,
+  };
   const freshnessTierRaw = statuses
     .map((status) => status.freshness_tier)
-    .find((value) => typeof value === 'string' && value.trim().length > 0);
+    .filter((value): value is string =>
+      typeof value === 'string' && value.trim().length > 0,
+    )
+    .map((value) => value.toLowerCase())
+    .sort((a, b) => (freshnessRank[b] ?? -1) - (freshnessRank[a] ?? -1))[0];
 
   return {
-    hasOdds: typeof hasOddsSignal === 'boolean' ? hasOddsSignal : null,
+    hasOdds:
+      hasOddsSignals.length === 0
+        ? null
+        : hasOddsSignals.some((value) => value === true),
     executionBlocked,
     freshnessTier:
       typeof freshnessTierRaw === 'string' ? freshnessTierRaw.toLowerCase() : null,
   };
+}
+
+function detectMissingMarketTypes(game: GameData): string[] {
+  const sport = normalizeSport(game.sport);
+  if (sport !== 'NBA') return [];
+  if (!game.odds) return ['ML', 'SPREAD', 'TOTAL'];
+
+  const missing: string[] = [];
+  const hasMoneyline =
+    typeof game.odds.h2hHome === 'number' &&
+    Number.isFinite(game.odds.h2hHome) &&
+    typeof game.odds.h2hAway === 'number' &&
+    Number.isFinite(game.odds.h2hAway);
+  if (!hasMoneyline) missing.push('ML');
+
+  const hasSpread =
+    typeof game.odds.spreadHome === 'number' &&
+    Number.isFinite(game.odds.spreadHome) &&
+    typeof game.odds.spreadAway === 'number' &&
+    Number.isFinite(game.odds.spreadAway);
+  if (!hasSpread) missing.push('SPREAD');
+
+  const hasTotal =
+    typeof game.odds.total === 'number' && Number.isFinite(game.odds.total);
+  if (!hasTotal) missing.push('TOTAL');
+
+  return missing;
 }
 
 function normalizeDropReasonMeta(
@@ -1798,10 +1838,11 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
       coreMissingInputs.length > 0 ||
       projectionCoreMissingInputs.length > 0;
     const hasFeatureFreshnessFailure = featureFreshnessMissingInputs.length > 0;
+    const missingMarketTypes = detectMissingMarketTypes(game);
     const hasMarketFailure =
       marketStatus.hasOdds === false ||
-      marketStatus.executionBlocked ||
       marketMissingInputs.length > 0 ||
+      missingMarketTypes.length > 0 ||
       marketStatus.freshnessTier === 'stale' ||
       marketStatus.freshnessTier === 'expired';
     const noActionablePlayInputs = hasEvidenceOnly
@@ -1854,6 +1895,8 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
       : hasMarketFailure
         ? marketMissingInputs.length > 0
           ? marketMissingInputs
+          : missingMarketTypes.length > 0
+            ? [`missing_market_types:${missingMarketTypes.join('|')}`]
           : ['market_unavailable']
       : hasProjectionInputsFailure
         ? coreMissingInputs.length > 0
@@ -1896,6 +1939,7 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
       transform_meta: {
         quality: isHealthyNoEdge ? 'OK' : 'DEGRADED',
         missing_inputs: missingInputs,
+        missing_market_types: missingMarketTypes,
         placeholders_found: [],
         drop_reason: null,
       },
@@ -3095,6 +3139,7 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
     transform_meta: {
       quality,
       missing_inputs: Array.from(missingInputs),
+      missing_market_types: detectMissingMarketTypes(game),
       placeholders_found: placeholdersFound,
       drop_reason: resolvePlayDropReason(
         propPlay ?? spreadPlay ?? totalPlay ?? scopedPlayCandidates[0],

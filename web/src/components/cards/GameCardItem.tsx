@@ -68,6 +68,39 @@ function readDriverVisibility(storageKey: string) {
   return window.sessionStorage.getItem(storageKey) === 'true';
 }
 
+function normalizeMissingInputLabel(value: unknown): string | null {
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : null;
+  }
+  if (!value || typeof value !== 'object') return null;
+
+  const entry = value as Record<string, unknown>;
+  for (const key of ['reason', 'code', 'label', 'message', 'field', 'key']) {
+    if (typeof entry[key] === 'string' && entry[key]!.trim().length > 0) {
+      return entry[key]!.trim();
+    }
+  }
+
+  try {
+    const json = JSON.stringify(value);
+    return json && json !== '{}' ? json : null;
+  } catch {
+    return null;
+  }
+}
+
+function formatMissingInputs(values: unknown[]): string {
+  const normalized = Array.from(
+    new Set(
+      values
+        .map((value) => normalizeMissingInputLabel(value))
+        .filter((value): value is string => Boolean(value)),
+    ),
+  );
+  return normalized.join(', ');
+}
+
 export default function GameCardItem({
   card,
   originalGame,
@@ -1355,8 +1388,8 @@ export default function GameCardItem({
                 <p className="text-xs text-amber-200/90">
                   Missing inputs:{' '}
                   {decisionV2
-                    ? decisionV2.missing_data.missing_fields.join(', ')
-                    : displayPlay.transform_meta?.missing_inputs.join(', ')}
+                    ? formatMissingInputs(decisionV2.missing_data.missing_fields)
+                    : formatMissingInputs(displayPlay.transform_meta?.missing_inputs ?? [])}
                 </p>
               )}
 
