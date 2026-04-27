@@ -10,6 +10,11 @@ interface PipelineHealthRow {
   status: string;
   reason: string | null;
   created_at: string;
+  check_id?: string | null;
+  dedupe_key?: string | null;
+  first_seen_at?: string | null;
+  last_seen_at?: string | null;
+  resolved_at?: string | null;
 }
 
 interface ModelOutputRow {
@@ -118,6 +123,10 @@ function formatTs(ts: string) {
   } catch {
     return ts;
   }
+}
+
+function lifecycleLabel(row: PipelineHealthRow): 'active' | 'resolved' {
+  return row.resolved_at ? 'resolved' : 'active';
 }
 
 function formatPct(value: number | null) {
@@ -596,6 +605,7 @@ export default function AdminPage() {
                   {snapshot.map((row) => {
                     const streak = computeStreak(health, row.phase, row.check_name);
                     const stale = isStale(row.created_at);
+                    const lifecycle = lifecycleLabel(row);
                     return (
                       <div
                         key={`${row.phase}:${row.check_name}`}
@@ -616,9 +626,12 @@ export default function AdminPage() {
                               check dormant
                             </span>
                           ) : (
-                            <span className="text-xs text-cloud/30">{formatAge(row.created_at)}</span>
+                            <span className="text-xs text-cloud/30">{formatAge(row.last_seen_at || row.created_at)}</span>
                           )}
                         </div>
+                        <span className="text-xs text-cloud/35">
+                          {lifecycle === 'active' ? 'active condition' : 'resolved condition'}
+                        </span>
                         <StreakBadge status={row.status} streak={streak} />
                       </div>
                     );
@@ -644,9 +657,10 @@ export default function AdminPage() {
                       <tr className="border-b border-white/10 text-left text-xs uppercase tracking-wide text-cloud/50">
                         <th className="px-4 py-3">Phase</th>
                         <th className="px-4 py-3">Check</th>
+                        <th className="px-4 py-3">State</th>
                         <th className="px-4 py-3">Status</th>
                         <th className="px-4 py-3">Reason</th>
-                        <th className="px-4 py-3">Timestamp</th>
+                        <th className="px-4 py-3">Seen</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -662,13 +676,20 @@ export default function AdminPage() {
                             {row.check_name}
                           </td>
                           <td className="px-4 py-3">
+                            <span className="text-xs text-cloud/60">
+                              {lifecycleLabel(row)}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3">
                             <StatusBadge status={row.status} />
                           </td>
                           <td className="max-w-xs truncate px-4 py-3 text-cloud/60">
                             {row.reason ?? '—'}
                           </td>
                           <td className="whitespace-nowrap px-4 py-3 text-xs text-cloud/50">
-                            {formatTs(row.created_at)}
+                            {row.first_seen_at && row.last_seen_at
+                              ? `${formatTs(row.first_seen_at)} -> ${formatTs(row.last_seen_at)}`
+                              : formatTs(row.created_at)}
                           </td>
                         </tr>
                       ))}
