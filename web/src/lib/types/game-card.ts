@@ -437,6 +437,12 @@ export interface Play {
   cardType?: string;
   /** Pipeline execution status token. 'PROJECTION_ONLY' means no odds backing. */
   execution_status?: 'EXECUTABLE' | 'PROJECTION_ONLY' | 'BLOCKED';
+  /** Raw market status envelope from API payloads (snake_case contract). */
+  market_status?: {
+    has_odds?: boolean | null;
+    freshness_tier?: string | null;
+    execution_blocked?: boolean | null;
+  };
 
   // Canonical fields (preferred)
   market_type?: CanonicalMarketType;
