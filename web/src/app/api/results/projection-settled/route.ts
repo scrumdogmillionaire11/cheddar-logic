@@ -600,7 +600,10 @@ export async function GET(
       const dateDiff = Date.parse(b.gameDateUtc) - Date.parse(a.gameDateUtc);
       if (Number.isFinite(dateDiff) && dateDiff !== 0) return dateDiff;
       return b.id - a.id;
-    }).map(({ canonicalAnalyticsPresent: _canonicalAnalyticsPresent, ...row }) => row);
+    }).map(({ canonicalAnalyticsPresent, ...row }) => {
+      void canonicalAnalyticsPresent;
+      return row;
+    });
 
     const response = NextResponse.json({
       success: true,

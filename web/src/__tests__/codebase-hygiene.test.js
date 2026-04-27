@@ -7,7 +7,6 @@
  * Run: node web/src/__tests__/codebase-hygiene.test.js
  */
 
-import assert from 'node:assert';
 import fs from 'node:fs';
 import path from 'node:path';
 

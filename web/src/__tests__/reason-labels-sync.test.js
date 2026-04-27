@@ -7,8 +7,6 @@
  */
 
 async function run() {
-  const assert = (await import('node:assert')).default;
-
   // Import canonical labels directly from the source file (no SQLite dependency).
   const canonical = await import('../../../packages/data/src/reason-codes.js');
   const { REASON_CODE_LABELS: canonicalLabels, ALL_REASON_CODES } = canonical;
