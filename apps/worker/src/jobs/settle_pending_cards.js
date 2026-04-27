@@ -433,7 +433,7 @@ function normalizeBackfillMarketType(value) {
 }
 
 function resolveBackfillOfficialStatus(payloadData) {
-  return resolveNormalizedDecisionStatus(payloadData);
+  return resolveExplicitOfficialDecisionStatus(payloadData);
 }
 
 function resolveBackfillSelection(payloadData, fallbackSelection) {
