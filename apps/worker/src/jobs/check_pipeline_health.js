@@ -73,6 +73,9 @@ const MODEL_FRESHNESS_ALERT_WINDOW_HOURS = Number(
 const MLB_F5_ALERT_WINDOW_HOURS = Number(
   process.env.MLB_F5_ALERT_WINDOW_HOURS || 2,
 );
+const NHL_BLK_RATES_MAX_AGE_HOURS = Number(
+  process.env.NHL_BLK_RATES_MAX_AGE_HOURS || 96,
+);
 const PIPELINE_HEALTH_ALERT_CONSECUTIVE = Number(
   process.env.PIPELINE_HEALTH_ALERT_CONSECUTIVE || 3,
 );
@@ -1764,10 +1767,11 @@ async function checkPipelineHealth({ jobKey, dryRun }) {
       nhl_market_call_diagnostics: checkNhlMarketCallDiagnostics,
       nhl_moneyline_coverage: checkNhlMoneylineCoverage,
       nhl_sog_sync_freshness: checkNhlSogSyncFreshness,
-      nhl_sog_pull_freshness: () =>
-        checkSportModelFreshness('nhl', 'pull_nhl_player_shots', 'sog_pull_freshness', 1440),
+      nhl_sog_pull_freshness: checkNhlSogPullFreshness,
       nhl_shots_model_freshness: () =>
         checkSportModelFreshness('nhl', 'run-nhl-player-shots-model', 'shots_model_freshness', getModelFreshnessMaxAgeMinutes()),
+      nhl_blk_rates_nst_freshness: checkNhlBlkRatesFreshness,
+      nhl_blk_rates_moneypuck_freshness: checkNhlMoneyPuckBlkRatesFreshness,
       nba_model_freshness: () =>
         checkSportModelFreshness('nba', 'run_nba_model', 'model_freshness', getModelFreshnessMaxAgeMinutes()),
       nba_market_call_diagnostics: checkNbaMarketCallDiagnostics,
@@ -1807,6 +1811,8 @@ async function checkPipelineHealth({ jobKey, dryRun }) {
         nhl_sog_sync_freshness: ['nhl', 'sog_sync_freshness'],
         nhl_sog_pull_freshness: ['nhl', 'sog_pull_freshness'],
         nhl_shots_model_freshness: ['nhl', 'shots_model_freshness'],
+        nhl_blk_rates_nst_freshness: ['nhl', 'blk_rates_nst_freshness'],
+        nhl_blk_rates_moneypuck_freshness: ['nhl', 'blk_rates_moneypuck_freshness'],
         nba_model_freshness: ['nba', 'model_freshness'],
         nba_market_call_diagnostics: ['nba', 'market_call_blockers'],
         mlb_model_freshness: ['mlb', 'model_freshness'],
@@ -1884,11 +1890,49 @@ function checkNhlSogPullFreshness() {
   return checkSportModelFreshness('nhl', 'pull_nhl_player_shots', 'sog_pull_freshness', 1440);
 }
 
+function checkNhlBlkRatesFreshness() {
+  if (!isFeatureEnabled('nhl', 'blk-ingest')) {
+    const reason = 'NHL BLK ingest feature disabled';
+    writePipelineHealth('nhl', 'blk_rates_nst_freshness', 'ok', reason);
+    return { ok: true, reason };
+  }
+
+  return checkSportModelFreshness(
+    'nhl',
+    'pull_nst_blk_rates',
+    'blk_rates_nst_freshness',
+    NHL_BLK_RATES_MAX_AGE_HOURS * 60,
+  );
+}
+
+function checkNhlMoneyPuckBlkRatesFreshness() {
+  if (!isFeatureEnabled('nhl', 'blk-ingest')) {
+    const reason = 'NHL BLK ingest feature disabled';
+    writePipelineHealth('nhl', 'blk_rates_moneypuck_freshness', 'ok', reason);
+    return { ok: true, reason };
+  }
+
+  if (!isFeatureEnabled('nhl', 'moneypuck-blk')) {
+    const reason = 'MoneyPuck BLK feature disabled';
+    writePipelineHealth('nhl', 'blk_rates_moneypuck_freshness', 'ok', reason);
+    return { ok: true, reason };
+  }
+
+  return checkSportModelFreshness(
+    'nhl',
+    'pull_moneypuck_blk_rates',
+    'blk_rates_moneypuck_freshness',
+    NHL_BLK_RATES_MAX_AGE_HOURS * 60,
+  );
+}
+
 module.exports = {
   writePipelineHealth,
   checkPipelineHealth,
   checkNhlSogSyncFreshness,
   checkNhlSogPullFreshness,
+  checkNhlBlkRatesFreshness,
+  checkNhlMoneyPuckBlkRatesFreshness,
   checkCardsFreshness,
   checkMlbF5MarketAvailability,
   checkMlbGameLineCoverage,

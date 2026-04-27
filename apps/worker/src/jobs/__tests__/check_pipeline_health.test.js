@@ -52,6 +52,8 @@ const {
   checkMlbSeedFreshness,
   checkPipelineHealth,
   checkNhlSogSyncFreshness,
+  checkNhlBlkRatesFreshness,
+  checkNhlMoneyPuckBlkRatesFreshness,
 } = require('../check_pipeline_health');
 
 // ---------------------------------------------------------------------------
@@ -463,6 +465,66 @@ describe('checkNhlSogSyncFreshness', () => {
 
     expect(result.ok).toBe(true);
     expect(result.reason).toMatch(/ran successfully/);
+  });
+});
+
+// ===========================================================================
+describe('NHL BLK rates freshness watchdog checks', () => {
+  test('checkNhlBlkRatesFreshness: feature disabled returns ok and writes ok health row', () => {
+    isFeatureEnabled.mockImplementation(() => false);
+    const writes = [];
+    const db = makeDb();
+    db.prepare = jest.fn((sql) => {
+      if (sql.includes('INSERT INTO pipeline_health')) {
+        return { run: (...args) => writes.push(args) };
+      }
+      return makeDb().prepare(sql);
+    });
+    getDatabase.mockReturnValue(db);
+
+    const result = checkNhlBlkRatesFreshness();
+
+    expect(result.ok).toBe(true);
+    expect(result.reason).toMatch(/feature disabled/i);
+    expect(writes).toHaveLength(1);
+    expect(writes[0][1]).toBe('blk_rates_nst_freshness');
+    expect(writes[0][2]).toBe('ok');
+  });
+
+  test('checkNhlBlkRatesFreshness: enabled + stale returns failed', () => {
+    isFeatureEnabled.mockImplementation((sport, feature) =>
+      sport === 'nhl' && feature === 'blk-ingest',
+    );
+    wasJobRecentlySuccessful.mockReturnValueOnce(false);
+    getDatabase.mockReturnValue(makeDb({ scheduleCount: 1 }));
+
+    const result = checkNhlBlkRatesFreshness();
+
+    expect(result.ok).toBe(false);
+    expect(result.reason).toMatch(/has NOT run successfully/i);
+  });
+
+  test('checkNhlMoneyPuckBlkRatesFreshness: moneypuck feature disabled returns ok skip', () => {
+    isFeatureEnabled.mockImplementation((sport, feature) =>
+      sport === 'nhl' && feature === 'blk-ingest',
+    );
+    const writes = [];
+    const db = makeDb();
+    db.prepare = jest.fn((sql) => {
+      if (sql.includes('INSERT INTO pipeline_health')) {
+        return { run: (...args) => writes.push(args) };
+      }
+      return makeDb().prepare(sql);
+    });
+    getDatabase.mockReturnValue(db);
+
+    const result = checkNhlMoneyPuckBlkRatesFreshness();
+
+    expect(result.ok).toBe(true);
+    expect(result.reason).toMatch(/feature disabled/i);
+    expect(writes).toHaveLength(1);
+    expect(writes[0][1]).toBe('blk_rates_moneypuck_freshness');
+    expect(writes[0][2]).toBe('ok');
   });
 });
 

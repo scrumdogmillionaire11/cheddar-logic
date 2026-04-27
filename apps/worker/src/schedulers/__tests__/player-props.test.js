@@ -246,6 +246,37 @@ describe('computePlayerPropsDueJobs', () => {
     });
   });
 
+  describe('BLK rates backstop windows', () => {
+    it('queues pull_nst_blk_rates on Wednesday 09:00 ET as a daily backstop', () => {
+      const nowEt = DateTime.fromObject(
+        { year: 2026, month: 4, day: 1, hour: 9, minute: 0, second: 0 },
+        { zone: ET_ZONE },
+      );
+
+      const result = computePlayerPropsDueJobs(nowEt, { games: [], dryRun: false });
+      const jobNames = result.map((j) => j.jobName);
+      const nstPull = result.find((j) => j.jobName === 'pull_nst_blk_rates');
+
+      expect(jobNames).toContain('pull_nst_blk_rates');
+      expect(nstPull).toBeDefined();
+      expect(nstPull.jobKey).toMatch(/^player_props\|nst_blk_rates\|weekly\|2026-W\d{2}$/);
+    });
+
+    it('ENABLE_NHL_BLK_RATES_BACKSTOP_DAILY=false suppresses non-Monday 09:00 BLK pulls', () => {
+      process.env.ENABLE_NHL_BLK_RATES_BACKSTOP_DAILY = 'false';
+      const nowEt = DateTime.fromObject(
+        { year: 2026, month: 4, day: 1, hour: 9, minute: 0, second: 0 },
+        { zone: ET_ZONE },
+      );
+
+      const result = computePlayerPropsDueJobs(nowEt, { games: [], dryRun: false });
+      const jobNames = result.map((j) => j.jobName);
+
+      expect(jobNames).not.toContain('pull_nst_blk_rates');
+      expect(jobNames).not.toContain('pull_moneypuck_blk_rates');
+    });
+  });
+
   describe('SOG sync catch-up at both fixed windows', () => {
     it('sync_nhl_sog_player_ids is queued at 09:00 AND 15:00 with distinct job keys', () => {
       process.env.ENABLE_NHL_SOG_PLAYER_SYNC = 'true';

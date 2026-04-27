@@ -485,6 +485,30 @@ function normalizeMissingInputs(values: unknown): string[] {
   return normalized;
 }
 
+const FEATURE_FRESHNESS_INPUT_TOKENS = new Set([
+  'block_rates_stale',
+  'feature_freshness:block_rates_stale',
+]);
+
+function splitProjectionMissingInputs(inputs: string[]): {
+  projectionCoreMissingInputs: string[];
+  featureFreshnessMissingInputs: string[];
+} {
+  const projectionCoreMissingInputs: string[] = [];
+  const featureFreshnessMissingInputs: string[] = [];
+
+  for (const input of inputs) {
+    const normalized = input.trim().toLowerCase();
+    if (FEATURE_FRESHNESS_INPUT_TOKENS.has(normalized)) {
+      featureFreshnessMissingInputs.push(input);
+      continue;
+    }
+    projectionCoreMissingInputs.push(input);
+  }
+
+  return { projectionCoreMissingInputs, featureFreshnessMissingInputs };
+}
+
 function normalizeDropReasonMeta(
   value: ApiPlay['execution_gate'] extends { drop_reason?: infer T } ? T : unknown,
 ): DropReasonMeta | null {
@@ -1639,13 +1663,16 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
         ),
       ]),
     );
+    const { projectionCoreMissingInputs, featureFreshnessMissingInputs } =
+      splitProjectionMissingInputs(projectionMissingInputs);
     const hasMappingFailure =
       game.ingest_failure_reason_code === 'TEAM_MAPPING_UNMAPPED' ||
       game.source_mapping_ok === false || sourceMappingFailures.length > 0;
     const hasProjectionInputsFailure =
       game.projection_inputs_complete === false ||
       game.plays.some((play) => play.projection_inputs_complete === false) ||
-      projectionMissingInputs.length > 0;
+      projectionCoreMissingInputs.length > 0;
+    const hasFeatureFreshnessFailure = featureFreshnessMissingInputs.length > 0;
     const noActionablePlayInputs = hasEvidenceOnly
       ? collectNoActionablePlayInputs(game)
       : [];
@@ -1656,6 +1683,8 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
         ? 'MISSING_DATA_NO_ODDS'
         : hasMappingFailure
           ? 'MISSING_DATA_TEAM_MAPPING'
+          : hasFeatureFreshnessFailure
+            ? 'MISSING_DATA_FEATURE_FRESHNESS'
           : hasProjectionInputsFailure
             ? 'MISSING_DATA_PROJECTION_INPUTS'
             : hasNoPlays
@@ -1668,8 +1697,10 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
         ? 'No odds available'
         : hasMappingFailure
           ? `Team mapping unresolved${game.ingest_failure_reason_detail ? `: ${game.ingest_failure_reason_detail}` : sourceMappingFailures.length ? `: ${sourceMappingFailures.join(', ')}` : ''}`
+          : hasFeatureFreshnessFailure
+            ? `Feature freshness stale${featureFreshnessMissingInputs.length ? `: ${featureFreshnessMissingInputs.join(', ')}` : ''}`
           : hasProjectionInputsFailure
-            ? `Missing projection inputs${projectionMissingInputs.length ? `: ${projectionMissingInputs.join(', ')}` : ''}`
+            ? `Missing projection inputs${projectionCoreMissingInputs.length ? `: ${projectionCoreMissingInputs.join(', ')}` : ''}`
             : hasNoPlays
               ? 'Driver output unavailable'
             : hasEvidenceOnly
@@ -1681,9 +1712,13 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
       ? sourceMappingFailures.length > 0
         ? sourceMappingFailures
         : ['team_mapping']
+      : hasFeatureFreshnessFailure
+        ? featureFreshnessMissingInputs.length > 0
+          ? featureFreshnessMissingInputs
+          : ['feature_freshness_stale']
       : hasProjectionInputsFailure
-        ? projectionMissingInputs.length > 0
-          ? projectionMissingInputs
+        ? projectionCoreMissingInputs.length > 0
+          ? projectionCoreMissingInputs
           : ['projection_inputs']
         : hasEvidenceOnly
           ? hasFetchFailureInputs
