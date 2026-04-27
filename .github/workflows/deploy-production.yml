@@ -295,11 +295,6 @@ jobs:
             # long build phase and re-acquire the DB lock before our final restart.
             sudo systemctl stop cheddar-worker-watchdog.timer || true
             sudo systemctl stop cheddar-worker-watchdog.service || true
-            # Stop PM2-managed processes first (Pi may still be using PM2 before systemd takeover)
-            PM2_BIN=$(find /home -name pm2 -path "*/bin/pm2" 2>/dev/null | head -1 || true)
-            if [ -n "$PM2_BIN" ]; then
-              "$PM2_BIN" stop all || true
-            fi
             sudo systemctl stop cheddar-worker || true
             # Wait for the worker process to fully exit before touching the lock file.
             for _wait_i in $(seq 1 15); do
@@ -308,6 +303,10 @@ jobs:
               fi
               sleep 1
             done
+            # Safety net: terminate any stray scheduler process not managed by systemd.
+            # This prevents hidden second writers from surviving into migration/restart.
+            pkill -f "node /opt/cheddar-logic/apps/worker/src/schedulers/main.js" || true
+            sleep 1
             # Remove stale lock file in case worker didn't exit cleanly
             rm -f "${CANONICAL_DB_PATH}.lock"
             # Run database migrations (will create DB if it doesn't exist)
@@ -501,12 +500,6 @@ jobs:
             sudo systemctl restart cheddar-worker
             restart_web_with_diagnostics
             sudo systemctl restart cheddar-fpl-sage || { echo "WARNING: cheddar-fpl-sage failed to restart — continuing deploy (web/worker unaffected)"; true; }
-            # Restart PM2-managed processes if PM2 is active (keeps pm2 list in sync after deploy)
-            if [ -n "$PM2_BIN" ]; then
-              "$PM2_BIN" restart cheddar-worker || true
-              "$PM2_BIN" restart cheddar-web || true
-              echo "PM2 processes restarted"
-            fi
             sleep 5
             if ! sudo systemctl is-active --quiet cheddar-worker; then
               fail_worker_smoke "worker-smoke-1" "cheddar-worker is not active after restart"
