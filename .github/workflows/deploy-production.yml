@@ -163,8 +163,21 @@ jobs:
             echo "[deploy-step] enabling units"
             sudo systemctl enable cheddar-worker cheddar-web cheddar-worker-watchdog.timer
             sudo systemctl enable cheddar-fpl-sage || echo "WARNING: Unable to enable cheddar-fpl-sage — continuing"
-            echo "[deploy-step] (re)starting watchdog timer"
-            sudo systemctl restart cheddar-worker-watchdog.timer || sudo systemctl start cheddar-worker-watchdog.timer || echo "WARNING: Unable to start cheddar-worker-watchdog.timer — continuing"
+            echo "[deploy-step] stopping worker before npm installs"
+            # Stop worker BEFORE deleting node_modules. A running worker crashes when its
+            # node_modules are wiped, then systemd's Restart=on-failure fires using the
+            # OLD cgroup settings (pre-daemon-reload KillMode) and kills the SSH session.
+            # Stopping explicitly now avoids that race entirely.
+            sudo systemctl stop cheddar-worker-watchdog.timer || true
+            sudo systemctl stop cheddar-worker-watchdog.service || true
+            sudo systemctl stop cheddar-worker || true
+            for _pre_wait in $(seq 1 10); do
+              if ! sudo systemctl is-active --quiet cheddar-worker 2>/dev/null; then break; fi
+              sleep 1
+            done
+            pkill -f "node /opt/cheddar-logic/apps/worker/src/schedulers/main.js" || true
+            sleep 1
+            sudo rm -f /opt/data/cheddar-prod.db.lock || true
             # ── Disk hygiene before installs ───────────────────────────────────
             # Abort early with a clear message if available disk is critically low.
             AVAIL_KB=$(df /opt --output=avail | tail -1)
