@@ -32,6 +32,11 @@ declare module '@cheddar-logic/data' {
     status: string;
     reason: string | null;
     created_at: string;
+    check_id?: string | null;
+    dedupe_key?: string | null;
+    first_seen_at?: string | null;
+    last_seen_at?: string | null;
+    resolved_at?: string | null;
   }
   export function getPipelineHealth(limit?: number): PipelineHealthRow[];
 

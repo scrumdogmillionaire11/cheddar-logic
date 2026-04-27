@@ -76,9 +76,23 @@ export async function GET(request: NextRequest) {
 
     const rows = db
       .prepare(
-        `SELECT id, phase, check_name, status, reason, created_at
+        `SELECT
+           id,
+           phase,
+           check_name,
+           status,
+           reason,
+           created_at,
+           check_id,
+           dedupe_key,
+           first_seen_at,
+           last_seen_at,
+           resolved_at
          FROM pipeline_health
-         ORDER BY created_at DESC
+         ORDER BY
+           CASE WHEN resolved_at IS NULL THEN 0 ELSE 1 END,
+           COALESCE(last_seen_at, created_at) DESC,
+           id DESC
          LIMIT 100`,
       )
       .all() as PipelineHealthRow[];
