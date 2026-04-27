@@ -91,8 +91,8 @@ const DATA_REASON_CODES = Object.freeze(new Set([
   'PASS_PROJECTION_ONLY_NO_MARKET',
   'PASS_SYNTHETIC_FALLBACK',
   'SOFT_DEGRADED_TOTAL_MODEL',
-  'SOFT_MARKET_SANITY_FAIL',
-]));
+  'SOFT_MARKET_SANITY_FAIL',  // Feature timestamp guard (all sports)
+  'PASS_FEATURE_TIMESTAMP_LEAK',]));
 
 // Subset of DATA codes that are hard blockers warranting WATCH state when edge exists.
 // Not every DATA code triggers WATCH — only critical input failures do.
@@ -173,7 +173,7 @@ const ALL_REASON_CODES = Object.freeze([
   ...GATE_REASON_CODES,
 ]);
 
-const REASON_CODE_SCHEMA_VERSION = 3;
+const REASON_CODE_SCHEMA_VERSION = 4;
 
 // ─── Human-readable labels ───────────────────────────────────────────────────
 // Every code in ALL_REASON_CODES must appear here.
@@ -307,6 +307,8 @@ const REASON_CODE_LABELS = Object.freeze({
   PASS_SYNTHETIC_FALLBACK: 'Pass — synthetic fallback data used',
   SOFT_DEGRADED_TOTAL_MODEL: 'Soft advisory — total model degraded',
   SOFT_MARKET_SANITY_FAIL: 'Soft advisory — market sanity check failed',
+  // Feature timestamp guard (all sports)
+  PASS_FEATURE_TIMESTAMP_LEAK: 'Pass — feature data leaked future timestamp',
   // Legacy aliases also need labels so inlined clients don't fall through
   EDGE_CLEAR: 'Edge clear',
   EDGE_FOUND_SIDE: 'Edge found',

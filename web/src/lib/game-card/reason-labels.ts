@@ -126,6 +126,7 @@ export const REASON_CODE_LABELS: Record<string, string> = Object.freeze({
   PASS_SYNTHETIC_FALLBACK: 'Pass \u2014 synthetic fallback data used',
   SOFT_DEGRADED_TOTAL_MODEL: 'Soft advisory \u2014 total model degraded',
   SOFT_MARKET_SANITY_FAIL: 'Soft advisory \u2014 market sanity check failed',
+  PASS_FEATURE_TIMESTAMP_LEAK: 'Pass \u2014 feature data leaked future timestamp',
   EDGE_CLEAR: 'Edge clear',
   EDGE_FOUND_SIDE: 'Edge found',
   EDGE_FOUND: 'Edge found',

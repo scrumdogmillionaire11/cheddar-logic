@@ -102,7 +102,18 @@ describe('reason-codes canonical registry', () => {
     }
   });
 
-  test('REASON_CODE_SCHEMA_VERSION is current (3)', () => {
-    expect(REASON_CODE_SCHEMA_VERSION).toBe(3);
+  test('feature-time-guard reason codes are in the canonical registry with labels', () => {
+    const FEATURE_TIME_GUARD_CODES = [
+      'PASS_FEATURE_TIMESTAMP_LEAK',
+    ];
+    for (const code of FEATURE_TIME_GUARD_CODES) {
+      expect(REASON_CODE_LABELS[code]).toBeDefined();
+      expect(typeof REASON_CODE_LABELS[code]).toBe('string');
+      expect(getReasonCodeLabel(code)).toBe(REASON_CODE_LABELS[code]);
+    }
+  });
+
+  test('REASON_CODE_SCHEMA_VERSION is current (4)', () => {
+    expect(REASON_CODE_SCHEMA_VERSION).toBe(4);
   });
 });
