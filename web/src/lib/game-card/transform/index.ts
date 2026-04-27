@@ -603,8 +603,18 @@ function deriveMarketStatus(game: GameData): {
   executionBlocked: boolean;
   freshnessTier: string | null;
 } {
-  const statuses = [game.market_status, ...game.plays.map((play) => play.market_status)]
+  const actionableStatuses = game.plays
+    .filter((play) => isPlayItem(play, game.sport))
+    .map((play) => play.market_status)
     .filter((status): status is ApiMarketStatus => Boolean(status));
+
+  const statuses = (
+    actionableStatuses.length > 0
+      ? actionableStatuses
+      : [game.market_status].filter((status): status is ApiMarketStatus =>
+          Boolean(status),
+        )
+  );
 
   const hasOddsSignals = statuses
     .map((status) => status.has_odds)
