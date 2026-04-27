@@ -50,6 +50,14 @@ WI-1174 audit status (2026-04-27):
 - Safe to remove now: none proven in this audit slice. No branch was deleted without payload evidence.
 - Follow-on removal gate: re-audit after MLB historical fallback is either deleted or moved behind an explicit historical-only read path.
 
+Classification snapshot:
+
+| Category | Branches | Evidence |
+| --- | --- | --- |
+| Still required | v1 fallback probes (`resolveMlbFallbackOfficialStatus`, `hasMlbFallbackDropReason`, `hasMlbFallbackActionableSelection`, `hasMlbFallbackMarketContext`, `getMlbFallbackSnapshotEpoch`) and transform helper exports (`isPlayItem`, `isEvidenceItem`, `isWelcomeHomePlay`, `getSourcePlayAction`, `resolveSourceModelProb`) | Active imports in [route-handler.ts](/Users/ajcolubiale/projects/cheddar-logic/web/src/lib/games/route-handler.ts) and [transform/index.ts](/Users/ajcolubiale/projects/cheddar-logic/web/src/lib/game-card/transform/index.ts) with adapter-boundary tests in [game-card-transform-adapters.test.js](/Users/ajcolubiale/projects/cheddar-logic/web/src/__tests__/game-card-transform-adapters.test.js) |
+| Safe to remove now | None | No payload-backed evidence that any listed branch is unused in active read paths |
+| Needs follow-on migration evidence | MLB historical fallback eligibility logic in games route | Can only be removed after historical fallback is retired or moved to explicit historical-only path |
+
 [Worker Runner Monoliths]  
 Debt Type: Historical / Testing  
 Location: [run_mlb_model.js](/Users/ajcolubiale/projects/cheddar-logic/apps/worker/src/jobs/run_mlb_model.js), [run_nhl_model.js](/Users/ajcolubiale/projects/cheddar-logic/apps/worker/src/jobs/run_nhl_model.js), [run_nhl_player_shots_model.js](/Users/ajcolubiale/projects/cheddar-logic/apps/worker/src/jobs/run_nhl_player_shots_model.js)  
