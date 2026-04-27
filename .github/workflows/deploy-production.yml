@@ -290,13 +290,24 @@ jobs:
             if [ -f "$CANONICAL_DB_PATH" ]; then
               chmod 664 "$CANONICAL_DB_PATH"
             fi
-            # Stop worker before migrations to prevent concurrent writes to DB file
+            # Stop worker before migrations to prevent concurrent writes to DB file.
+            # Stop the watchdog timer FIRST so it cannot restart the worker during the
+            # long build phase and re-acquire the DB lock before our final restart.
+            sudo systemctl stop cheddar-worker-watchdog.timer || true
+            sudo systemctl stop cheddar-worker-watchdog.service || true
             # Stop PM2-managed processes first (Pi may still be using PM2 before systemd takeover)
             PM2_BIN=$(find /home -name pm2 -path "*/bin/pm2" 2>/dev/null | head -1 || true)
             if [ -n "$PM2_BIN" ]; then
               "$PM2_BIN" stop all || true
             fi
             sudo systemctl stop cheddar-worker || true
+            # Wait for the worker process to fully exit before touching the lock file.
+            for _wait_i in $(seq 1 15); do
+              if ! sudo systemctl is-active --quiet cheddar-worker 2>/dev/null; then
+                break
+              fi
+              sleep 1
+            done
             # Remove stale lock file in case worker didn't exit cleanly
             rm -f "${CANONICAL_DB_PATH}.lock"
             # Run database migrations (will create DB if it doesn't exist)
@@ -475,9 +486,18 @@ jobs:
               sudo ss -ltnp '( sport = :3000 )' || true
               return 1
             }
-            # Belt-and-suspenders: remove any lock file that may have re-appeared since
-            # the earlier cleanup (e.g. from a migration run or a crash-loop restart).
-            rm -f "${CANONICAL_DB_PATH}.lock" || true
+            # Belt-and-suspenders: kill any process that may have re-acquired the lock
+            # (e.g. a watchdog-triggered restart that slipped in during the build).
+            # If a live process holds the lock, stop it cleanly before removing the file.
+            if [ -f "${CANONICAL_DB_PATH}.lock" ]; then
+              _lock_pid=$(grep -oP '(?<="pid":)[0-9]+' "${CANONICAL_DB_PATH}.lock" 2>/dev/null || true)
+              if [ -n "$_lock_pid" ] && kill -0 "$_lock_pid" 2>/dev/null; then
+                echo "Stopping stale lock-holder PID $_lock_pid before worker restart"
+                kill "$_lock_pid" 2>/dev/null || true
+                sleep 2
+              fi
+              rm -f "${CANONICAL_DB_PATH}.lock" || true
+            fi
             sudo systemctl restart cheddar-worker
             restart_web_with_diagnostics
             sudo systemctl restart cheddar-fpl-sage || { echo "WARNING: cheddar-fpl-sage failed to restart — continuing deploy (web/worker unaffected)"; true; }
@@ -518,6 +538,8 @@ jobs:
               fail_worker_smoke "worker-smoke-5" "second writer detected after restart; cheddar-worker hit DB lock contention"
             fi
             echo "worker-smoke-3 passed: cheddar-worker remained active for ${POST_READY_HOLD_SEC}s after startup"
+            # Re-enable the watchdog timer now that the worker is confirmed healthy.
+            sudo systemctl start cheddar-worker-watchdog.timer || true
             restore_previous_next() {
               if [ "$ROLLBACK_READY" != "1" ] || [ ! -d "$PREV_NEXT_ROLLBACK" ]; then
                 echo "Rollback snapshot unavailable; skipping .next restore"
