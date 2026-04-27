@@ -1482,6 +1482,14 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
     const canonicalSelectionDirection = normalizeSideToken(canonicalSelection.side);
     const effectiveDecisionV2: DecisionV2 = {
       ...decisionV2,
+      primary_reason_code: decisionV2.primary_reason_code ?? 'EDGE_CLEAR',
+      watchdog_reason_codes: Array.isArray(decisionV2.watchdog_reason_codes)
+        ? decisionV2.watchdog_reason_codes
+        : [],
+      price_reason_codes: Array.isArray(decisionV2.price_reason_codes)
+        ? decisionV2.price_reason_codes
+        : [],
+      consistency: decisionV2.consistency ?? { total_bias: 'UNKNOWN' },
       direction:
         canonicalSelectionDirection !== 'NONE'
           ? canonicalSelectionDirection
@@ -1615,29 +1623,38 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
         : decisionV2.play_tier === 'OK'
           ? 'OK'
           : 'BAD';
+    const watchdogReasonCodes = Array.isArray(
+      effectiveDecisionV2.watchdog_reason_codes,
+    )
+      ? effectiveDecisionV2.watchdog_reason_codes
+      : [];
+    const priceReasonCodes = Array.isArray(effectiveDecisionV2.price_reason_codes)
+      ? effectiveDecisionV2.price_reason_codes
+      : [];
     const mergedReasonCodes = Array.from(
       new Set([
         ...(wave1DecisionPlay.reason_codes ?? []),
-        ...effectiveDecisionV2.watchdog_reason_codes,
-        ...effectiveDecisionV2.price_reason_codes,
+        ...watchdogReasonCodes,
+        ...priceReasonCodes,
         effectiveDecisionV2.primary_reason_code,
         ...(edgeVerificationBlocked
           ? ['BLOCKED_BET_VERIFICATION_REQUIRED']
           : []),
       ]),
     );
+    const decisionV2TotalBias = decisionV2.consistency?.total_bias;
     const tags = Array.from(new Set([...(wave1DecisionPlay.tags ?? [])]));
     if (edgeVerificationBlocked) {
       tags.push('LINE_NOT_CONFIRMED');
     }
     if (
       effectiveDecisionV2.proxy_capped === true ||
-      effectiveDecisionV2.price_reason_codes.includes('PROXY_EDGE_CAPPED') ||
-      effectiveDecisionV2.price_reason_codes.includes('PROXY_EDGE_BLOCKED')
+      priceReasonCodes.includes('PROXY_EDGE_CAPPED') ||
+      priceReasonCodes.includes('PROXY_EDGE_BLOCKED')
     ) {
       tags.push('PROXY_CARD');
     }
-    const gates: CanonicalGate[] = effectiveDecisionV2.watchdog_reason_codes.map((code) => ({
+    const gates: CanonicalGate[] = watchdogReasonCodes.map((code) => ({
       code,
       severity: effectiveDecisionV2.watchdog_status === 'BLOCKED' ? 'BLOCK' : 'WARN',
       blocks_bet: effectiveDecisionV2.watchdog_status === 'BLOCKED',
@@ -1690,12 +1707,12 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
       evidence_count: scopedEvidenceCandidates.length,
       consistency: {
         total_bias:
-          decisionV2.consistency.total_bias === 'OK' ||
-          decisionV2.consistency.total_bias === 'INSUFFICIENT_DATA' ||
-          decisionV2.consistency.total_bias === 'CONFLICTING_SIGNALS' ||
-          decisionV2.consistency.total_bias === 'VOLATILE_ENV' ||
-          decisionV2.consistency.total_bias === 'UNKNOWN'
-            ? decisionV2.consistency.total_bias
+          decisionV2TotalBias === 'OK' ||
+          decisionV2TotalBias === 'INSUFFICIENT_DATA' ||
+          decisionV2TotalBias === 'CONFLICTING_SIGNALS' ||
+          decisionV2TotalBias === 'VOLATILE_ENV' ||
+          decisionV2TotalBias === 'UNKNOWN'
+            ? decisionV2TotalBias
             : 'UNKNOWN',
       },
       selection: wave1DecisionPlay.selection
@@ -3074,7 +3091,10 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
   const finalAction = actionFromDecision(finalDecision);
   const finalClassificationLabel =
     decisionClassificationFromAction(finalAction);
-  const resolvedDisplayDecision = resolvePlayDisplayDecision({
+  const resolvedDisplayDecision: {
+    action: 'FIRE' | 'HOLD' | 'PASS';
+    classification: 'BASE' | 'LEAN' | 'PASS';
+  } = {
     action: finalAction,
     classification:
       finalAction === 'FIRE'
@@ -3082,7 +3102,7 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
         : finalAction === 'HOLD'
           ? 'LEAN'
           : 'PASS',
-  });
+  };
 
   const pickWithContext = pick;
   if (!finalBet) {
@@ -3145,6 +3165,7 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
         propPlay ?? spreadPlay ?? totalPlay ?? scopedPlayCandidates[0],
       ),
     },
+    cardType: sourcePlay?.cardType,
     market_type: resolvedMarketType,
     kind: 'PLAY',
     evidence_count: linkedEvidence.length,

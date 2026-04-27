@@ -88,6 +88,7 @@ const DIRECTION_OPPOSITE: Partial<Record<Direction, Direction>> = {
   OVER: 'UNDER',
   UNDER: 'OVER',
 };
+const MLB_FULL_GAME_CARD_TYPES = new Set(['mlb-full-game', 'mlb-full-game-ml']);
 
 function normalizeText(value: unknown): string {
   if (typeof value !== 'string') return '';
@@ -144,12 +145,50 @@ function resolveLegacyDisplayAction(
   return null;
 }
 
+function isMlbFullGameLegacyDisplayPlay(
+  play:
+    | {
+        cardType?: string;
+        market_type?: string;
+        decision_v2?: {
+          official_status?: 'PLAY' | 'LEAN' | 'PASS';
+          canonical_envelope_v2?: {
+            official_status?: 'PLAY' | 'LEAN' | 'PASS';
+          } | null;
+        } | null;
+        action?: Play['action'];
+        classification?: Play['classification'];
+        status?: Play['status'];
+        final_market_decision?: Play['final_market_decision'];
+      }
+    | null
+    | undefined,
+): boolean {
+  if (!play || play.decision_v2) return false;
+
+  const cardType = normalizeText(play.cardType).toLowerCase();
+  if (!MLB_FULL_GAME_CARD_TYPES.has(cardType)) return false;
+
+  const marketType = normalizeText(play.market_type).toUpperCase();
+  if (
+    marketType.length > 0 &&
+    marketType !== 'TOTAL' &&
+    marketType !== 'MONEYLINE'
+  ) {
+    return false;
+  }
+
+  return resolveLegacyDisplayAction(play) !== null;
+}
+
 export function resolvePlayDisplayDecision(
   play?:
     | {
         action?: Play['action'];
         classification?: Play['classification'];
         status?: Play['status'];
+        cardType?: string;
+        market_type?: string;
         final_market_decision?: Play['final_market_decision'];
         decision_v2?: {
           official_status?: 'PLAY' | 'LEAN' | 'PASS';
@@ -160,9 +199,11 @@ export function resolvePlayDisplayDecision(
       }
     | null,
 ): ResolvedPlayDisplayDecision {
-  // For rows with no decision_v2, use legacy display fields before running the
-  // canonical fail-closed resolver (which would default everything to PASS).
-  const legacyAction = !play?.decision_v2 ? resolveLegacyDisplayAction(play) : null;
+  // Only MLB full-game legacy rows bypass canonical read.
+  // All other rows remain fail-closed on missing canonical decision_v2.
+  const legacyAction = isMlbFullGameLegacyDisplayPlay(play)
+    ? resolveLegacyDisplayAction(play)
+    : null;
   if (legacyAction) {
     return {
       action: legacyAction,

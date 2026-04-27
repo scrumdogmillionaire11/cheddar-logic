@@ -4,7 +4,6 @@
  */
 
 import type { ApiPlay } from './index';
-import { resolvePlayDisplayDecision } from '../decision';
 import { getSportCardTypeContract as getSharedSportCardTypeContract } from '../../games/market-inference';
 import { isWelcomeHomeCardType } from '../welcome-home';
 
@@ -65,10 +64,12 @@ export function getSourcePlayAction(
     return undefined;
   }
 
-  return resolvePlayDisplayDecision({
-    action: hasExplicitAction ? play.action : undefined,
-    classification: hasClassification ? play.classification : undefined,
-  }).action;
+  if (hasExplicitAction) {
+    return play.action;
+  }
+  if (play.classification === 'BASE') return 'FIRE';
+  if (play.classification === 'LEAN') return 'HOLD';
+  return 'PASS';
 }
 
 function _clamp(value: number, min: number, max: number): number {

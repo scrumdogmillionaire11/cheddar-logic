@@ -925,6 +925,28 @@ function parseCardPayloadData(payloadData: string): Record<string, unknown> | nu
   }
 }
 
+export function isNativeTotalBiasActionable(play: {
+  market_type?: Play['market_type'] | null;
+  status?: Play['status'] | null;
+  line?: number | null;
+  edge_pct?: number | null;
+  edge?: number | null;
+}): boolean {
+  const nativeTotalStatus =
+    typeof play.status === 'string' ? play.status.toUpperCase() : null;
+  const nativeTotalLine = typeof play.line === 'number';
+  const nativeTotalEdge =
+    typeof play.edge_pct === 'number' || typeof play.edge === 'number';
+
+  return Boolean(
+    play.market_type === 'TOTAL' &&
+      nativeTotalStatus !== null &&
+      nativeTotalStatus !== 'PASS' &&
+      nativeTotalLine &&
+      nativeTotalEdge,
+  );
+}
+
 function isEligibleMlbGameLineFallbackRow(params: {
   row: CardPayloadRow;
   payload: Record<string, unknown>;
@@ -3130,14 +3152,23 @@ function mergePropFallbackRows(params: {
         const dedupedReasonCodes = combinedReasonCodes;
         const dedupedTags = Array.from(new Set(combinedTags));
 
-        // MLB full-game card types carry native status/edge directly in the
-        // payload and do not go through the decision_authority pipeline (no
-        // decision_v2).  Skip readRuntimeCanonicalDecision for them so the
-        // native LEAN/WATCH status is preserved rather than forced to PASS.
+        // MLB full-game legacy rows (no decision_v2) carry native status/edge
+        // directly in payload fields. Preserve those statuses without relaxing
+        // fail-closed canonical reads for modern/non-MLB rows.
         const isMlbFullGameCardType = (MLB_GAME_LINE_FALLBACK_CARD_TYPES as readonly string[]).includes(
           cardRow.card_type,
         );
-        const runtimeDecision = isMlbFullGameCardType
+        const hasLegacyNativeDecisionFields =
+          normalizedDecisionV2 == null &&
+          (typeof payload.status === 'string' ||
+            typeof payload.action === 'string' ||
+            typeof payload.classification === 'string' ||
+            typeof payloadPlay?.status === 'string' ||
+            typeof payloadPlay?.action === 'string' ||
+            typeof payloadPlay?.classification === 'string');
+        const isMlbFullGameLegacyDecisionPlay =
+          isMlbFullGameCardType && hasLegacyNativeDecisionFields;
+        const runtimeDecision = isMlbFullGameLegacyDecisionPlay
           ? null
           : readRuntimeCanonicalDecision(
               {
@@ -3153,6 +3184,51 @@ function mergePropFallbackRows(params: {
         const resolvedClassification: Play['classification'] =
           runtimeDecision?.classification ?? normalizedClassification;
         const resolvedStatus: Play['status'] = runtimeDecision?.status ?? normalizedStatus;
+        const legacyMlbDecisionV2 = (isMlbFullGameLegacyDecisionPlay
+          ? {
+              official_status:
+                resolvedAction === 'FIRE'
+                  ? 'PLAY'
+                  : resolvedAction === 'HOLD'
+                    ? 'LEAN'
+                    : 'PASS',
+              direction:
+                normalizedSelectionSide === 'HOME' ||
+                normalizedSelectionSide === 'AWAY' ||
+                normalizedSelectionSide === 'OVER' ||
+                normalizedSelectionSide === 'UNDER'
+                  ? normalizedSelectionSide
+                  : 'NONE',
+              fair_prob: normalizedPFair ?? null,
+              implied_prob: normalizedPImplied ?? null,
+              edge_pct: normalizedEdgePct ?? null,
+              edge_delta_pct: normalizedEdgePct ?? null,
+              play_tier: null,
+              support_score: null,
+              conflict_score: null,
+              drivers_used: [],
+              driver_reasons: [],
+              primary_reason_code: normalizedPassReasonCode ?? 'EDGE_CLEAR',
+              watchdog_status: 'OK',
+              watchdog_reason_codes: [],
+              sharp_price_status: null,
+              price_reason_codes: [],
+              missing_data: {
+                missing_fields: [],
+                source_attempts: [],
+                severity: 'INFO',
+              },
+              consistency: {
+                total_bias: 'UNKNOWN',
+              },
+              pricing_trace: {
+                line_source: null,
+                price_source: null,
+              },
+              pipeline_version: 'v2',
+              decided_at: cardRow.created_at,
+            }
+          : normalizedDecisionV2) as Play['decision_v2'];
         const onePModelCall =
           cardRow.card_type === 'nhl-pace-1p'
             ? deriveNhl1PModelCall(dedupedReasonCodes, normalizedPrediction)
@@ -3357,7 +3433,7 @@ function mergePropFallbackRows(params: {
           goalie_away_name: normalizedGoalieAwayName ?? null,
           goalie_home_status: normalizedGoalieHomeStatus ?? null,
           goalie_away_status: normalizedGoalieAwayStatus ?? null,
-          decision_v2: normalizedDecisionV2,
+          decision_v2: legacyMlbDecisionV2,
           kind:
             payload.kind === 'PLAY' || payload.kind === 'EVIDENCE'
               ? (payload.kind as 'PLAY' | 'EVIDENCE')
@@ -3791,44 +3867,36 @@ function mergePropFallbackRows(params: {
         // PROP plays (nhl-player-shots etc.) carry action/status directly in the
         // payload — they don't use the wave-1 decision_v2 pipeline.  Skip the
         // wave-1 path for them so they aren't silently dropped.
-        // isMlbFullGameCardType is computed above (before readRuntimeCanonicalDecision).
+        // isMlbFullGameLegacyDecisionPlay is computed above (before readRuntimeCanonicalDecision).
         const isPropPlay = play.market_type === 'PROP';
 
-        if (wave1Eligible && !isPropPlay && !isMlbFullGameCardType) {
-          // Wave-1 rows MUST have worker-published canonical decision_v2.
-          if (!play.decision_v2) {
-            incrementStageCounter(
-              stageCounters,
-              'wave1_skipped_no_d2',
-              parsedSport,
-              parsedMarket,
+        if (wave1Eligible && !isPropPlay) {
+          if (!isMlbFullGameLegacyDecisionPlay) {
+            // Wave-1 rows MUST have worker-published canonical decision_v2.
+            if (!play.decision_v2) {
+              incrementStageCounter(
+                stageCounters,
+                'wave1_skipped_no_d2',
+                parsedSport,
+                parsedMarket,
+              );
+              continue;
+            }
+            applyWave1DecisionFields(play);
+            play.reason_codes = Array.from(
+              new Set([
+                ...(play.reason_codes ?? []),
+                play.decision_v2.primary_reason_code,
+              ]),
             );
-            continue;
           }
-          applyWave1DecisionFields(play);
-          play.reason_codes = Array.from(
-            new Set([
-              ...(play.reason_codes ?? []),
-              play.decision_v2.primary_reason_code,
-            ]),
-          );
         }
 
         if (
-          (!wave1Eligible || isPropPlay || isMlbFullGameCardType) &&
+          (!wave1Eligible || isPropPlay || isMlbFullGameLegacyDecisionPlay) &&
           !play.consistency?.total_bias
         ) {
-          const nativeTotalStatus =
-            typeof play.status === 'string' ? play.status.toUpperCase() : null;
-          const nativeTotalLine = typeof play.line === 'number';
-          const nativeTotalEdge =
-            typeof play.edge_pct === 'number' || typeof play.edge === 'number';
-          const nativeTotalBiasOk =
-            play.market_type === 'TOTAL' &&
-            nativeTotalStatus !== null &&
-            nativeTotalStatus !== 'PASS' &&
-            nativeTotalLine &&
-            nativeTotalEdge;
+          const nativeTotalBiasOk = isNativeTotalBiasActionable(play);
           const totalDecision =
             payload.all_markets &&
             typeof payload.all_markets === 'object' &&
