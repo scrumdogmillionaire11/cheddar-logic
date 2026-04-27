@@ -182,6 +182,54 @@ function normalizeSqlDateTime(value: string | null): number | null {
   return Number.isNaN(timestamp) ? null : timestamp;
 }
 
+function toUpperToken(value: unknown): string | null {
+  if (value === null || value === undefined) return null;
+  const normalized = String(value).trim().toUpperCase();
+  return normalized.length > 0 ? normalized : null;
+}
+
+function readProjectionOfficialStatus(payload: Record<string, unknown> | null): string | null {
+  if (!payload) return null;
+  const play =
+    payload.play && typeof payload.play === 'object'
+      ? (payload.play as Record<string, unknown>)
+      : null;
+  const playDecisionV2 =
+    play?.decision_v2 && typeof play.decision_v2 === 'object'
+      ? (play.decision_v2 as Record<string, unknown>)
+      : null;
+  const topDecisionV2 =
+    payload.decision_v2 && typeof payload.decision_v2 === 'object'
+      ? (payload.decision_v2 as Record<string, unknown>)
+      : null;
+
+  const playCanonicalEnvelope =
+    playDecisionV2?.canonical_envelope_v2 &&
+    typeof playDecisionV2.canonical_envelope_v2 === 'object'
+      ? (playDecisionV2.canonical_envelope_v2 as Record<string, unknown>)
+      : null;
+  const topCanonicalEnvelope =
+    topDecisionV2?.canonical_envelope_v2 &&
+    typeof topDecisionV2.canonical_envelope_v2 === 'object'
+      ? (topDecisionV2.canonical_envelope_v2 as Record<string, unknown>)
+      : null;
+
+  return (
+    toUpperToken(playCanonicalEnvelope?.official_status) ||
+    toUpperToken(topCanonicalEnvelope?.official_status) ||
+    toUpperToken(playDecisionV2?.official_status) ||
+    toUpperToken(topDecisionV2?.official_status)
+  );
+}
+
+function hasActionableProjectionCall(
+  payload: Record<string, unknown> | null,
+): boolean {
+  const officialStatus = readProjectionOfficialStatus(payload);
+  if (officialStatus === 'PASS') return false;
+  return officialStatus === 'PLAY' || officialStatus === 'LEAN';
+}
+
 function addDropReason(
   reasonCounts: Map<CardsDropReasonCode, number>,
   cardTypeReasonCounts: Map<string, number>,
@@ -600,6 +648,13 @@ export async function GET(request: NextRequest) {
       const normalizedPayload = normalizePayloadMeta(parsed.data);
       const isProjectionSurfaceType =
         isProjectionSurfaceCardType(card.card_type);
+      if (
+        !parsed.error &&
+        isProjectionSurfaceType &&
+        !hasActionableProjectionCall(normalizedPayload)
+      ) {
+        return [];
+      }
       // Serialization safety gate. Purpose: mirror the SQL projection
       // visibility gate after JSON parsing so malformed query predicates or
       // future SQL drift cannot leak projection-only betting rows. Failure
