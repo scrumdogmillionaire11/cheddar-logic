@@ -145,15 +145,20 @@ jobs:
               exit 1
             fi
             # Ensure deploy scripts are executable (git preserves the bit, but belt-and-suspenders).
-            chmod +x /opt/cheddar-logic/deploy/restart-cloudflared-when-ready.sh
-            chmod +x /opt/cheddar-logic/scripts/check-scheduler-running.sh
+            if ! chmod +x /opt/cheddar-logic/deploy/restart-cloudflared-when-ready.sh; then
+              echo "WARNING: Unable to chmod deploy/restart-cloudflared-when-ready.sh — continuing"
+            fi
+            if ! chmod +x /opt/cheddar-logic/scripts/check-scheduler-running.sh; then
+              echo "WARNING: Unable to chmod scripts/check-scheduler-running.sh — continuing"
+            fi
             sudo cp /opt/cheddar-logic/deploy/systemd/cheddar-worker.service /etc/systemd/system/cheddar-worker.service
             sudo cp /opt/cheddar-logic/deploy/systemd/cheddar-web.service /etc/systemd/system/cheddar-web.service
             sudo cp /opt/cheddar-logic/deploy/systemd/cheddar-fpl-sage.service /etc/systemd/system/cheddar-fpl-sage.service
             sudo cp /opt/cheddar-logic/deploy/systemd/cheddar-worker-watchdog.service /etc/systemd/system/cheddar-worker-watchdog.service
             sudo cp /opt/cheddar-logic/deploy/systemd/cheddar-worker-watchdog.timer /etc/systemd/system/cheddar-worker-watchdog.timer
             sudo systemctl daemon-reload
-            sudo systemctl enable cheddar-worker cheddar-web cheddar-fpl-sage cheddar-worker-watchdog.timer
+            sudo systemctl enable cheddar-worker cheddar-web cheddar-worker-watchdog.timer
+            sudo systemctl enable cheddar-fpl-sage || echo "WARNING: Unable to enable cheddar-fpl-sage — continuing"
             sudo systemctl restart cheddar-worker-watchdog.timer || sudo systemctl start cheddar-worker-watchdog.timer
             # ── Disk hygiene before installs ───────────────────────────────────
             # Abort early with a clear message if available disk is critically low.
@@ -304,38 +309,47 @@ jobs:
             # Ensure feature flags are present in .env.production (idempotent)
             ENV_PROD=/opt/cheddar-logic/.env.production
             grep -q '^ENABLE_CLV_LEDGER=' "$ENV_PROD" 2>/dev/null || echo 'ENABLE_CLV_LEDGER=true' >> "$ENV_PROD"
+            SQLITE3_AVAILABLE=true
             if ! command -v sqlite3 >/dev/null 2>&1; then
-              sudo apt-get update -y
-              sudo apt-get install -y sqlite3
+              SQLITE3_AVAILABLE=false
+              if ! sudo apt-get update -y || ! sudo apt-get install -y sqlite3; then
+                echo "WARNING: Unable to install sqlite3 for post-migration verification — continuing"
+              elif command -v sqlite3 >/dev/null 2>&1; then
+                SQLITE3_AVAILABLE=true
+              fi
             fi
             # Fail deploy if expected schema is missing from production DB
             test -s "$CANONICAL_DB_PATH" || { echo "ERROR: missing or empty canonical DB after migrations: $CANONICAL_DB_PATH"; exit 1; }
-            TABLE_CHECK_OK=0
-            TABLE_CHECK_OUTPUT=""
-            for attempt in $(seq 1 10); do
-              TABLE_CHECK_OUTPUT=$(sqlite3 "$CANONICAL_DB_PATH" "PRAGMA busy_timeout=5000; SELECT name FROM sqlite_master WHERE type='table' AND name='card_payloads';" 2>&1 || true)
-              if printf '%s\n' "$TABLE_CHECK_OUTPUT" | grep -qx "card_payloads"; then
-                TABLE_CHECK_OK=1
+            if [ "$SQLITE3_AVAILABLE" = true ] && command -v sqlite3 >/dev/null 2>&1; then
+              TABLE_CHECK_OK=0
+              TABLE_CHECK_OUTPUT=""
+              for attempt in $(seq 1 10); do
+                TABLE_CHECK_OUTPUT=$(sqlite3 "$CANONICAL_DB_PATH" "PRAGMA busy_timeout=5000; SELECT name FROM sqlite_master WHERE type='table' AND name='card_payloads';" 2>&1 || true)
+                if printf '%s\n' "$TABLE_CHECK_OUTPUT" | grep -qx "card_payloads"; then
+                  TABLE_CHECK_OK=1
+                  break
+                fi
+                if printf '%s' "$TABLE_CHECK_OUTPUT" | grep -qi "database is locked"; then
+                  echo "Schema check waiting for DB lock to clear (attempt $attempt/10)..."
+                  sleep 2
+                  continue
+                fi
+                if [ -n "$TABLE_CHECK_OUTPUT" ]; then
+                  echo "ERROR: sqlite schema check failed: $TABLE_CHECK_OUTPUT"
+                  exit 1
+                fi
                 break
-              fi
-              if printf '%s' "$TABLE_CHECK_OUTPUT" | grep -qi "database is locked"; then
-                echo "Schema check waiting for DB lock to clear (attempt $attempt/10)..."
-                sleep 2
-                continue
-              fi
-              if [ -n "$TABLE_CHECK_OUTPUT" ]; then
-                echo "ERROR: sqlite schema check failed: $TABLE_CHECK_OUTPUT"
+              done
+              if [ "$TABLE_CHECK_OK" -ne 1 ]; then
+                if printf '%s' "$TABLE_CHECK_OUTPUT" | grep -qi "database is locked"; then
+                  echo "ERROR: database remained locked while verifying schema after migrations"
+                else
+                  echo "ERROR: required table card_payloads missing after migrations"
+                fi
                 exit 1
               fi
-              break
-            done
-            if [ "$TABLE_CHECK_OK" -ne 1 ]; then
-              if printf '%s' "$TABLE_CHECK_OUTPUT" | grep -qi "database is locked"; then
-                echo "ERROR: database remained locked while verifying schema after migrations"
-              else
-                echo "ERROR: required table card_payloads missing after migrations"
-              fi
-              exit 1
+            else
+              echo "WARNING: Skipping sqlite3 schema verification because sqlite3 is unavailable"
             fi
             PREV_NEXT_ROLLBACK="/tmp/cheddar-prev-next-full"
             NEXT_STATIC_ARCHIVE_ROOT="/opt/cheddar-logic/.next-static-archive"
