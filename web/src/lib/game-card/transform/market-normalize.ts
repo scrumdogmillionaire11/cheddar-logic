@@ -8,7 +8,7 @@ import type {
   GameMarkets,
   Market,
 } from '../../types';
-import { isPlayItem } from './legacy-repair';
+import { isPlayItem } from './adapters/v1-legacy-repair';
 
 type Prediction = 'HOME' | 'AWAY' | 'OVER' | 'UNDER' | 'NEUTRAL';
 type Kind = 'PLAY' | 'EVIDENCE';

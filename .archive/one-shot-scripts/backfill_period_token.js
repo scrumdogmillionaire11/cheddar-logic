@@ -13,7 +13,6 @@
 
 'use strict';
 
-require('dotenv').config();
 const { v4: uuidV4 } = require('uuid');
 
 const {
@@ -196,6 +195,7 @@ async function backfillPeriodToken({
 }
 
 if (require.main === module) {
+  require('dotenv').config();
   const args = parseArgs(process.argv.slice(2));
   backfillPeriodToken({ dryRun: args.dryRun, since: args.since })
     .then((result) => {
