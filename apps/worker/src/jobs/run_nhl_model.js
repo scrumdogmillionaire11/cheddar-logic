@@ -105,6 +105,7 @@ const {
 const { computeRestDays } = require('../utils/rest-days');
 const { sendDiscordMessages } = require('./post_discord_cards');
 const { applyCalibration } = require('../utils/calibration');
+const { ensureCanonicalDecisionV2 } = require('./helpers/ensure-canonical-decision-v2.js'); // WI-1205
 const {
   assertFeatureTimeliness,
   applyFeatureTimelinessEnforcement,
@@ -4422,6 +4423,7 @@ async function runNHLModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
             }
             for (const entry of pendingCards) {
               entry.card.payloadData.pipeline_state = pipelineState;
+              ensureCanonicalDecisionV2(entry.card.payloadData); // WI-1205: guarantee decision_v2 before write
               insertCardPayload(entry.card);
             }
           });
