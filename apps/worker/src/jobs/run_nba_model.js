@@ -101,6 +101,7 @@ const {
   applyNbaResidualCombinedCeiling,
 } = require('../models/residual-projection');
 const { detectNbaRegime } = require('../utils/nba-regime-detection');
+const { ensureCanonicalDecisionV2 } = require('./helpers/ensure-canonical-decision-v2.js'); // WI-1205
 
 const ENABLE_WELCOME_HOME = process.env.ENABLE_WELCOME_HOME === 'true';
 
@@ -3248,6 +3249,7 @@ async function runNBAModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
                 entry.strictDecisionSnapshot,
                 { label: `${entry.card.cardType}:before_insert` },
               );
+              ensureCanonicalDecisionV2(entry.card.payloadData); // WI-1205: guarantee decision_v2 before write
               insertCardPayload(entry.card);
             }
           });
