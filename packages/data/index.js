@@ -21,6 +21,7 @@ const dbTelemetry = require('./src/db-telemetry');
 const projAccuracy = require('./src/db/projection-accuracy');
 const reasonCodes = require('./src/reason-codes');
 const horizonContract = require('./src/games/horizon-contract');
+const decisionOutcome = require('./src/decision-outcome');
 
 // Ensure migrations are run on first import (optional but recommended)
 // Uncomment to auto-run migrations:
@@ -266,4 +267,10 @@ module.exports = {
   classifyReasonCode:          reasonCodes.classifyReasonCode,
   assertExclusiveBuckets:      reasonCodes.assertExclusiveBuckets,
   assertAllCodesLabeled:       reasonCodes.assertAllCodesLabeled,
+
+  // Canonical decision outcome contract (WI-1199)
+  buildDecisionOutcomeFromDecisionV2: decisionOutcome.buildDecisionOutcomeFromDecisionV2,
+  normalizeDecisionOutcomeStatus: decisionOutcome.normalizeDecisionOutcomeStatus,
+  mapReasonsToOutcome: decisionOutcome.mapReasonsToOutcome,
+  validateDecisionOutcome: decisionOutcome.validateDecisionOutcome,
 };

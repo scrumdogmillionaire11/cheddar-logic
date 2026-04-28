@@ -133,7 +133,6 @@ function buildMockDb({
   playerLogs = [],
   playerBlkLogs = [],
   playerBlkRateRow = null,
-  blkRatesJobRunMaxStartedAt = null,
   playerPropLines = [],
   availabilityRow = null,
   teamMetricsRow = null,
@@ -160,15 +159,6 @@ function buildMockDb({
       }
       if (s.includes('from player_blk_rates')) {
         return { get: jest.fn(() => playerBlkRateRow) };
-      }
-      if (s.includes('from job_runs') && s.includes("pull_nst_blk_rates")) {
-        return {
-          get: jest.fn(() =>
-            blkRatesJobRunMaxStartedAt
-              ? { max_started_at: blkRatesJobRunMaxStartedAt }
-              : { max_started_at: null },
-          ),
-        };
       }
       if (s.includes('from player_prop_lines')) {
         return {

@@ -169,6 +169,15 @@ const { getDatabaseReadOnly, closeReadOnlyInstance } = cheddarData as {
   closeReadOnlyInstance: typeof import('@cheddar-logic/data').closeReadOnlyInstance;
 };
 
+const buildDecisionOutcomeFromDecisionV2 = (
+  cheddarData as {
+    buildDecisionOutcomeFromDecisionV2: (decisionV2: unknown) => {
+      status: 'PLAY' | 'SLIGHT_EDGE' | 'PASS';
+      reasons?: { blockers?: unknown[] };
+    };
+  }
+).buildDecisionOutcomeFromDecisionV2;
+
 const ENABLE_WELCOME_HOME =
   process.env.ENABLE_WELCOME_HOME === 'true' ||
   process.env.NEXT_PUBLIC_ENABLE_WELCOME_HOME === 'true';
@@ -454,6 +463,12 @@ export interface Play {
   classification?: 'BASE' | 'LEAN' | 'PASS';
   action?: PlayDisplayAction;
   pass_reason_code?: string | null;
+  decision_outcome?: {
+    status: 'PLAY' | 'SLIGHT_EDGE' | 'PASS';
+    reasons?: {
+      blockers?: string[];
+    };
+  } | null;
   one_p_model_call?:
     | 'BEST_OVER'
     | 'PLAY_OVER'
@@ -762,18 +777,21 @@ function buildDropReasonMeta(
   };
 }
 
+function buildPlayDecisionOutcome(play: Play) {
+  const decisionV2 =
+    play?.decision_v2 && typeof play.decision_v2 === 'object'
+      ? (play.decision_v2 as Record<string, unknown>)
+      : null;
+  if (!decisionV2) return null;
+  return buildDecisionOutcomeFromDecisionV2(decisionV2);
+}
+
 export function resolveLiveOfficialStatus(play: Play): 'PLAY' | 'LEAN' | 'PASS' {
-  const decision = readRuntimeCanonicalDecision(
-    {
-      decision_v2: (play?.decision_v2 ?? null) as Record<string, unknown> | null,
-      action: play?.action,
-      classification: play?.classification,
-      status: play?.status,
-      pass_reason_code: play?.pass_reason_code,
-    },
-    { stage: 'read_api' },
-  );
-  return decision.officialStatus;
+  const decisionOutcome = play.decision_outcome ?? buildPlayDecisionOutcome(play);
+  if (!decisionOutcome) return 'PASS';
+  if (decisionOutcome.status === 'PLAY') return 'PLAY';
+  if (decisionOutcome.status === 'SLIGHT_EDGE') return 'LEAN';
+  return 'PASS';
 }
 
 function resolveTruePlayStatusRank(play: Play): number {
@@ -3321,9 +3339,34 @@ export async function GET(request: NextRequest) {
               decided_at: cardRow.created_at,
             }
           : normalizedDecisionV2) as Play['decision_v2'];
+        const decisionOutcome = legacyMlbDecisionV2
+          ? buildDecisionOutcomeFromDecisionV2(legacyMlbDecisionV2)
+          : null;
+        const decisionOutcomeBlockers = Array.isArray(
+          decisionOutcome?.reasons?.blockers,
+        )
+          ? decisionOutcome.reasons.blockers.filter(
+              (value: unknown): value is string =>
+                typeof value === 'string' && value.length > 0,
+            )
+          : [];
+        const normalizedDecisionOutcome = decisionOutcome
+          ? {
+              ...decisionOutcome,
+              reasons: {
+                ...(decisionOutcome.reasons ?? {}),
+                blockers: decisionOutcomeBlockers,
+              },
+            }
+          : null;
+        const resolvedPassReasonCode =
+          normalizedPassReasonCode ?? decisionOutcomeBlockers[0] ?? null;
+        const dedupedReasonCodesWithOutcome = Array.from(
+          new Set([...dedupedReasonCodes, ...decisionOutcomeBlockers]),
+        );
         const onePModelCall =
           cardRow.card_type === 'nhl-pace-1p'
-            ? deriveNhl1PModelCall(dedupedReasonCodes, normalizedPrediction)
+            ? deriveNhl1PModelCall(dedupedReasonCodesWithOutcome, normalizedPrediction)
             : undefined;
         const onePBetStatus =
           cardRow.card_type === 'nhl-pace-1p'
@@ -3518,7 +3561,8 @@ export async function GET(request: NextRequest) {
           // Canonical decision fields (preferred over legacy status field)
           classification: resolvedClassification,
           action: resolvedAction,
-          pass_reason_code: normalizedPassReasonCode,
+          pass_reason_code: resolvedPassReasonCode,
+          decision_outcome: normalizedDecisionOutcome,
           one_p_model_call: onePModelCall,
           one_p_bet_status: onePBetStatus,
           goalie_home_name: normalizedGoalieHomeName ?? null,
@@ -3661,7 +3705,7 @@ export async function GET(request: NextRequest) {
                   : undefined,
               }
             : undefined,
-          reason_codes: dedupedReasonCodes,
+          reason_codes: dedupedReasonCodesWithOutcome,
           projection_inputs_complete:
             typeof payload.core_inputs_complete === 'boolean'
               ? payload.core_inputs_complete

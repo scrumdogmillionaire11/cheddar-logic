@@ -431,9 +431,16 @@ export function CardsPageProvider({
     const droppedByReason = createDropReasonCounts();
     const droppedByReasonBySport: Record<string, ReturnType<typeof createDropReasonCounts>> = {};
     const droppedMetaBySport: Record<string, ReturnType<typeof createDroppedMeta>> = {};
+    const evaluateEffectiveCardFilter = (
+      filterCard: (typeof enrichedCards)[number],
+      f: typeof effectiveFilters,
+    ) =>
+      uiState.viewMode === 'projections'
+        ? evaluateCardFilter(filterCard, f, 'projections')
+        : evaluateCardFilter(filterCard, f, uiState.viewMode);
 
     for (const card of enrichedCards) {
-      const predicate = evaluateCardFilter(card, effectiveFilters, uiState.viewMode);
+      const predicate = evaluateEffectiveCardFilter(card, effectiveFilters);
       if (predicate.passes) continue;
 
       const reason = getFirstDropReason(predicate.flags);

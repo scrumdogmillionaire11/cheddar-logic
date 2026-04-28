@@ -64,9 +64,11 @@ const {
 // scheduleCount: returned for COUNT(*) FROM games queries (schedule freshness, model freshness)
 // backlogCount:  returned for settlement backlog query
 // pipelineRows:  returned for pipeline_health SELECT queries (used by shouldSendAlert)
+// activePipelineRow: returned for active unresolved state query in shouldSendAlert
 // ---------------------------------------------------------------------------
 function makeDb({
   pipelineRows = [],
+  activePipelineRow = null,
   scheduleCount = 5,
   backlogCount = 0,
   upcomingGames = [],
@@ -84,6 +86,11 @@ function makeDb({
       // writePipelineHealth INSERT
       if (s.includes('INSERT INTO pipeline_health')) {
         return { run: jest.fn() };
+      }
+
+      // shouldSendAlert active unresolved row query
+      if (s.includes('FROM pipeline_health') && s.includes('resolved_at IS NULL')) {
+        return { get: jest.fn(() => activePipelineRow) };
       }
 
       // shouldSendAlert SELECT from pipeline_health
@@ -218,6 +225,28 @@ describe('shouldSendAlert (unit)', () => {
     ];
     getDatabase.mockReturnValue(makeDb({ pipelineRows: rows }));
     expect(shouldSendAlert('schedule', 'freshness', 3, 30)).toBe(false);
+  });
+  test('active unresolved failed row does not page before consecutive threshold window', () => {
+    const firstSeen = DateTime.utc().minus({ minutes: 5 }).toISO();
+    const lastSeen = DateTime.utc().minus({ seconds: 10 }).toISO();
+    getDatabase.mockReturnValue(makeDb({
+      activePipelineRow: { status: 'failed', first_seen_at: firstSeen, last_seen_at: lastSeen },
+      pipelineRows: freshFailedRows(3),
+    }));
+
+    // default interval=5m and consecutive=3 => need about 10m streak age
+    expect(shouldSendAlert('schedule', 'freshness', 3, 30)).toBe(false);
+  });
+
+  test('active unresolved failed row pages when consecutive threshold window is reached', () => {
+    const firstSeen = DateTime.utc().minus({ minutes: 10 }).toISO();
+    const lastSeen = DateTime.utc().minus({ seconds: 10 }).toISO();
+    getDatabase.mockReturnValue(makeDb({
+      activePipelineRow: { status: 'failed', first_seen_at: firstSeen, last_seen_at: lastSeen },
+      pipelineRows: freshFailedRows(3),
+    }));
+
+    expect(shouldSendAlert('schedule', 'freshness', 3, 30)).toBe(true);
   });
 });
 
@@ -444,37 +473,25 @@ describe('checkNbaMoneylineCoverage', () => {
 });
 
 describe('checkNhlBlkSourceIntegrity', () => {
-  test('returns failed when recent NST schema drift is detected', () => {
-    const db = makeDb({
-      failedJobRunsByName: {
-        pull_nst_blk_rates: {
-          started_at: DateTime.utc().minus({ hours: 1 }).toISO(),
-          error_message: '[SCHEMA_DRIFT] NST season CSV missing required headers: ev blocks',
-        },
-      },
-    });
-    getDatabase.mockReturnValue(db);
-    isFeatureEnabled.mockImplementation((sport, flag) =>
-      sport === 'nhl' && flag === 'blk-ingest',
-    );
-
-    const result = checkNhlBlkSourceIntegrity();
-
-    expect(result.ok).toBe(false);
-    expect(result.reason).toContain('schema drift');
-  });
-
-  test('returns ok when no recent schema drift failures exist', () => {
+  test('returns decommissioned ok when called', () => {
     const db = makeDb();
     getDatabase.mockReturnValue(db);
-    isFeatureEnabled.mockImplementation((sport, flag) =>
-      sport === 'nhl' && flag === 'blk-ingest',
-    );
 
     const result = checkNhlBlkSourceIntegrity();
 
     expect(result.ok).toBe(true);
-    expect(result.reason).toContain('passed');
+    expect(result.reason).toContain('decommissioned');
+  });
+
+  test('returns decommissioned ok regardless of feature flags', () => {
+    const db = makeDb();
+    getDatabase.mockReturnValue(db);
+    isFeatureEnabled.mockReturnValue(false);
+
+    const result = checkNhlBlkSourceIntegrity();
+
+    expect(result.ok).toBe(true);
+    expect(result.reason).toContain('decommissioned');
   });
 });
 
@@ -690,8 +707,7 @@ describe('checkNhlSogSyncFreshness', () => {
 
 // ===========================================================================
 describe('NHL BLK rates freshness watchdog checks', () => {
-  test('checkNhlBlkRatesFreshness: feature disabled returns ok and writes ok health row', () => {
-    isFeatureEnabled.mockImplementation(() => false);
+  test('checkNhlBlkRatesFreshness: returns decommissioned ok and writes ok health row', () => {
     const writes = [];
     const db = makeDb();
     db.prepare = jest.fn((sql) => {
@@ -705,29 +721,22 @@ describe('NHL BLK rates freshness watchdog checks', () => {
     const result = checkNhlBlkRatesFreshness();
 
     expect(result.ok).toBe(true);
-    expect(result.reason).toMatch(/feature disabled/i);
+    expect(result.reason).toMatch(/decommissioned/i);
     expect(writes).toHaveLength(1);
     expect(writes[0][1]).toBe('blk_rates_nst_freshness');
     expect(writes[0][2]).toBe('ok');
   });
 
-  test('checkNhlBlkRatesFreshness: enabled + stale returns failed', () => {
-    isFeatureEnabled.mockImplementation((sport, feature) =>
-      sport === 'nhl' && feature === 'blk-ingest',
-    );
-    wasJobRecentlySuccessful.mockReturnValueOnce(false);
+  test('checkNhlBlkRatesFreshness: does not evaluate stale CSV jobs anymore', () => {
     getDatabase.mockReturnValue(makeDb({ scheduleCount: 1 }));
 
     const result = checkNhlBlkRatesFreshness();
 
-    expect(result.ok).toBe(false);
-    expect(result.reason).toMatch(/has NOT run successfully/i);
+    expect(result.ok).toBe(true);
+    expect(result.reason).toMatch(/decommissioned/i);
   });
 
-  test('checkNhlMoneyPuckBlkRatesFreshness: moneypuck feature disabled returns ok skip', () => {
-    isFeatureEnabled.mockImplementation((sport, feature) =>
-      sport === 'nhl' && feature === 'blk-ingest',
-    );
+  test('checkNhlMoneyPuckBlkRatesFreshness: returns decommissioned ok and writes status', () => {
     const writes = [];
     const db = makeDb();
     db.prepare = jest.fn((sql) => {
@@ -741,9 +750,29 @@ describe('NHL BLK rates freshness watchdog checks', () => {
     const result = checkNhlMoneyPuckBlkRatesFreshness();
 
     expect(result.ok).toBe(true);
-    expect(result.reason).toMatch(/feature disabled/i);
+    expect(result.reason).toMatch(/decommissioned/i);
     expect(writes).toHaveLength(1);
     expect(writes[0][1]).toBe('blk_rates_moneypuck_freshness');
+    expect(writes[0][2]).toBe('ok');
+  });
+
+  test('checkNhlBlkSourceIntegrity: returns decommissioned ok', () => {
+    const writes = [];
+    const db = makeDb();
+    db.prepare = jest.fn((sql) => {
+      if (sql.includes('INSERT INTO pipeline_health')) {
+        return { run: (...args) => writes.push(args) };
+      }
+      return makeDb().prepare(sql);
+    });
+    getDatabase.mockReturnValue(db);
+
+    const result = checkNhlBlkSourceIntegrity();
+
+    expect(result.ok).toBe(true);
+    expect(result.reason).toMatch(/decommissioned/i);
+    expect(writes).toHaveLength(1);
+    expect(writes[0][1]).toBe('blk_source_integrity');
     expect(writes[0][2]).toBe('ok');
   });
 });

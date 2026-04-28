@@ -13,7 +13,7 @@ const {
   listTrackedPlayers,
 } = require('@cheddar-logic/data');
 
-const { deriveNhlSeasonKey } = require('./pull_moneypuck_blk_rates');
+const { deriveNhlSeasonKey } = require('./utils/nhl-season');
 
 const NHL_API_BASE = 'https://api-web.nhle.com/v1/player';
 const DEFAULT_SLEEP_MS = Number(process.env.NHL_SOG_SLEEP_MS || 500);

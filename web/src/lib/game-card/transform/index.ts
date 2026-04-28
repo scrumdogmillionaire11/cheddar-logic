@@ -163,6 +163,26 @@ interface ApiPropDecision {
   flags?: string[];
 }
 
+function getDecisionOutcomeBlockers(
+  play:
+    | {
+        decision_outcome?: {
+          reasons?: {
+            blockers?: string[];
+          };
+        } | null;
+      }
+    | null
+    | undefined,
+): string[] {
+  const blockers = play?.decision_outcome?.reasons?.blockers;
+  return Array.isArray(blockers)
+    ? blockers.filter(
+        (value): value is string => typeof value === 'string' && value.length > 0,
+      )
+    : [];
+}
+
 // API types from cards page
 export interface ApiPlay {
   source_card_id?: string;
@@ -215,6 +235,12 @@ export interface ApiPlay {
   classification?: 'BASE' | 'LEAN' | 'PASS';
   action?: 'FIRE' | 'HOLD' | 'PASS';
   pass_reason_code?: string | null;
+  decision_outcome?: {
+    status?: 'PLAY' | 'SLIGHT_EDGE' | 'PASS';
+    reasons?: {
+      blockers?: string[];
+    };
+  } | null;
   pass_reason?: string | null;
   basis?: 'PROJECTION_ONLY' | 'ODDS_BACKED';
   execution_status?: 'EXECUTABLE' | 'PROJECTION_ONLY' | 'BLOCKED';
@@ -1757,19 +1783,33 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
               canonicalSelection.team ?? wave1DecisionPlay.selection?.team,
           }
         : undefined,
-      reason_codes: mergedReasonCodes,
+      reason_codes: Array.from(
+        new Set([
+          ...mergedReasonCodes,
+          ...getDecisionOutcomeBlockers(wave1DecisionPlay),
+        ]),
+      ),
       tags: Array.from(new Set(tags)),
       execution_status: wave1DecisionPlay.execution_status,
       classification:
         officialStatus === 'PLAY' ? 'BASE' : officialStatus === 'LEAN' ? 'LEAN' : 'PASS',
       action,
       pass_reason_code:
-        officialStatus === 'PASS' ? effectiveDecisionV2.primary_reason_code : null,
+        officialStatus === 'PASS'
+          ? normalizePassReasonCode(wave1DecisionPlay.pass_reason_code ?? null) ??
+            getDecisionOutcomeBlockers(wave1DecisionPlay)[0] ??
+            effectiveDecisionV2.primary_reason_code
+          : null,
       decision_v2: effectiveDecisionV2,
       final_market_decision: buildFinalMarketDecision({
         decisionV2: effectiveDecisionV2,
         reasonCodes: mergedReasonCodes,
-        passReasonCode: officialStatus === 'PASS' ? effectiveDecisionV2.primary_reason_code : null,
+        passReasonCode:
+          officialStatus === 'PASS'
+            ? normalizePassReasonCode(wave1DecisionPlay.pass_reason_code ?? null) ??
+              getDecisionOutcomeBlockers(wave1DecisionPlay)[0] ??
+              effectiveDecisionV2.primary_reason_code
+            : null,
         edge: edgePct,
         goalieHomeStatus: wave1DecisionPlay.goalie_home_status,
         goalieAwayStatus: wave1DecisionPlay.goalie_away_status,
@@ -3157,6 +3197,18 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
     pick = `${pickWithContext} (Verification Required)`;
   }
   reasonCodesUnique = Array.from(new Set(reasonCodesUnique));
+  const outcomeBlockers = getDecisionOutcomeBlockers(
+    decision.play as unknown as
+      | {
+          decision_outcome?: {
+            reasons?: {
+              blockers?: string[];
+            };
+          } | null;
+        }
+      | null,
+  );
+  reasonCodesUnique = Array.from(new Set([...reasonCodesUnique, ...outcomeBlockers]));
   const dedupedTags = Array.from(new Set(tags));
   const passReasonCode =
     reasonCodesUnique.find((code) => code.startsWith('PASS_')) ?? null;
@@ -3166,6 +3218,7 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
   const resolvedPassReasonCode =
     finalDecision === 'PASS'
       ? (sourcePassReasonCode ??
+        outcomeBlockers[0] ??
         passReasonCode ??
         gates.find((gate) => gate.blocks_bet)?.code ??
         null)
