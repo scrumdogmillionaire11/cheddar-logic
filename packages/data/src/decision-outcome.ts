@@ -1,4 +1,4 @@
-export type DecisionOutcomeStatus = 'PLAY' | 'SLIGHT_EDGE' | 'PASS';
+export type DecisionOutcomeStatus = 'PLAY' | 'SLIGHT_EDGE' | 'PASS' | 'INVALID';
 
 export interface DecisionOutcomeSelection {
   market: string;

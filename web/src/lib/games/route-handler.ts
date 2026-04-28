@@ -786,11 +786,14 @@ function buildPlayDecisionOutcome(play: Play) {
   return buildDecisionOutcomeFromDecisionV2(decisionV2);
 }
 
-export function resolveLiveOfficialStatus(play: Play): 'PLAY' | 'LEAN' | 'PASS' {
+export function resolveLiveOfficialStatus(play: Play): 'PLAY' | 'LEAN' | 'PASS' | 'INVALID' {
+  const invalidEnforcementEnabled = process.env.ENABLE_INVALID_DECISION_ENFORCEMENT !== 'false';
   const decisionOutcome = play.decision_outcome ?? buildPlayDecisionOutcome(play);
-  if (!decisionOutcome) return 'PASS';
-  if (decisionOutcome.status === 'PLAY') return 'PLAY';
-  if (decisionOutcome.status === 'SLIGHT_EDGE') return 'LEAN';
+  if (!decisionOutcome) return invalidEnforcementEnabled ? 'INVALID' : 'PASS';
+  const outcomeStatus = String(decisionOutcome.status || '').toUpperCase();
+  if (outcomeStatus === 'INVALID') return 'INVALID';
+  if (outcomeStatus === 'PLAY') return 'PLAY';
+  if (outcomeStatus === 'SLIGHT_EDGE') return 'LEAN';
   return 'PASS';
 }
 
@@ -798,6 +801,7 @@ function resolveTruePlayStatusRank(play: Play): number {
   const officialStatus = resolveLiveOfficialStatus(play);
   if (officialStatus === 'PLAY') return 2;
   if (officialStatus === 'LEAN') return 1;
+  if (officialStatus === 'INVALID') return -1;
   return 0;
 }
 

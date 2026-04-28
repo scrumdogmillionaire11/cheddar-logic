@@ -1,7 +1,4 @@
-import {
-  deriveLockedMarketContext,
-  formatMarketSelectionLabel,
-} from '@cheddar-logic/data';
+import cheddarData from '@cheddar-logic/data';
 import {
   hasActionableProjectionCall,
   buildProjectionSummaries,
@@ -18,8 +15,49 @@ import type {
   ResultsRequestFilters,
 } from './query-layer';
 
+type LockedMarketContext = {
+  marketType: string;
+  selection: string;
+  line: number | null;
+  marketKey: string;
+  lockedPrice: number | null;
+};
+
+const buildDecisionOutcomeFromDecisionV2 = (
+  cheddarData as {
+    buildDecisionOutcomeFromDecisionV2: (decisionV2: unknown) => {
+      status: 'PLAY' | 'SLIGHT_EDGE' | 'PASS' | 'INVALID';
+      reasons?: { blockers?: string[] };
+    };
+  }
+).buildDecisionOutcomeFromDecisionV2;
+
+const deriveLockedMarketContext = (
+  cheddarData as {
+    deriveLockedMarketContext: (
+      payload: Record<string, unknown>,
+      options: {
+        gameId?: string | null;
+        homeTeam?: string | null;
+        awayTeam?: string | null;
+        requirePrice?: boolean;
+        requireLineForMarket?: boolean;
+      },
+    ) => LockedMarketContext | null;
+  }
+).deriveLockedMarketContext;
+
+const formatMarketSelectionLabel = (
+  cheddarData as {
+    formatMarketSelectionLabel: (
+      marketType: string,
+      selection: string,
+    ) => string;
+  }
+).formatMarketSelectionLabel;
+
 export type DecisionSegmentId = 'play' | 'slight_edge';
-type DecisionTierStatus = 'PLAY' | 'LEAN' | 'PASS';
+type DecisionTierStatus = 'PLAY' | 'LEAN' | 'PASS' | 'INVALID';
 export type DecisionTierSource =
   | 'DECISION_V2'
   | 'LEGACY_MLB_RESULTS_ADAPTER'
@@ -137,45 +175,39 @@ export function resolveDecisionTierResolution(
   payload: Record<string, unknown> | null,
   context: DecisionTierContext,
 ): DecisionTierResolution {
-  if (hasDecisionV2(payload)) {
-    if (!hasActionableProjectionCall(payload)) {
-      return { tier: 'PASS', source: 'DECISION_V2' };
-    }
-
-    const play =
-      payload?.play && typeof payload.play === 'object'
-        ? (payload.play as Record<string, unknown>)
+  const play =
+    payload?.play && typeof payload.play === 'object'
+      ? (payload.play as Record<string, unknown>)
+      : null;
+  const decisionV2 =
+    payload?.decision_v2 && typeof payload.decision_v2 === 'object'
+      ? (payload.decision_v2 as Record<string, unknown>)
+      : play?.decision_v2 && typeof play.decision_v2 === 'object'
+        ? (play.decision_v2 as Record<string, unknown>)
         : null;
-    const decisionV2 =
-      payload?.decision_v2 && typeof payload.decision_v2 === 'object'
-        ? (payload.decision_v2 as Record<string, unknown>)
-        : play?.decision_v2 && typeof play.decision_v2 === 'object'
-          ? (play.decision_v2 as Record<string, unknown>)
-          : null;
 
-    const officialStatus = String(decisionV2?.official_status || '')
-      .trim()
-      .toUpperCase();
-    if (officialStatus === 'PLAY') {
-      return { tier: 'PLAY', source: 'DECISION_V2' };
-    }
-    if (officialStatus === 'LEAN' || officialStatus === 'SLIGHT_EDGE') {
-      return { tier: 'LEAN', source: 'DECISION_V2' };
-    }
+  if (!decisionV2) {
+    const invalidEnforcementEnabled = process.env.ENABLE_INVALID_DECISION_ENFORCEMENT !== 'false';
+    return {
+      tier: invalidEnforcementEnabled ? 'INVALID' : 'PASS',
+      source: 'FAIL_CLOSED',
+    };
+  }
+
+  if (!hasActionableProjectionCall(payload)) {
     return { tier: 'PASS', source: 'DECISION_V2' };
   }
 
-  if (canUseLegacyMlbResultsAdapter(context)) {
-    const adaptedTier = resolveLegacyMlbResultsTier(payload);
-    if (adaptedTier) {
-      return {
-        tier: adaptedTier,
-        source: 'LEGACY_MLB_RESULTS_ADAPTER',
-      };
-    }
+  const outcome = buildDecisionOutcomeFromDecisionV2(decisionV2);
+  const status = String(outcome?.status || '').toUpperCase();
+  if (status === 'PLAY') return { tier: 'PLAY', source: 'DECISION_V2' };
+  if (status === 'SLIGHT_EDGE' || status === 'LEAN') {
+    return { tier: 'LEAN', source: 'DECISION_V2' };
   }
-
-  return { tier: 'PASS', source: 'FAIL_CLOSED' };
+  if (status === 'INVALID') {
+    return { tier: 'INVALID', source: 'DECISION_V2' };
+  }
+  return { tier: 'PASS', source: 'DECISION_V2' };
 }
 
 export function resolveDecisionTier(
@@ -273,6 +305,8 @@ export function buildResultsAggregation(
   let hasTotalPnl = false;
   let totalClvPctSum = 0;
   let totalClvPctCount = 0;
+  let invalidDecisionCount = 0;
+  let missingDecisionV2Count = 0;
 
   for (const row of actionableRows) {
     if (!shouldTrackInResults(row.card_type)) {
@@ -293,6 +327,13 @@ export function buildResultsAggregation(
       result: row.result,
     });
     const decisionTier = decisionResolution.tier;
+    if (decisionTier === 'INVALID') {
+      invalidDecisionCount += 1;
+      if (decisionResolution.source === 'FAIL_CLOSED') {
+        missingDecisionV2Count += 1;
+      }
+      continue;
+    }
     if (decisionTier === 'PASS') {
       continue;
     }
@@ -423,6 +464,10 @@ export function buildResultsAggregation(
       winRate,
       avgPnl,
       avgClvPct,
+    },
+    diagnostics: {
+      invalidDecisionCount,
+      missingDecisionV2Count,
     },
   };
 }

@@ -78,6 +78,8 @@ function makeDb({
   jobRunsByKey = {},
   failedJobRunsByName = {},
   cardOutputIntegrityRow = null,
+  invalidBySportRows = [],
+  recentInvalidExamples = [],
 } = {}) {
   return {
     prepare: jest.fn((sql) => {
@@ -139,7 +141,21 @@ function makeDb({
             pass_cards: 0,
             missing_odds_cards: 0,
             degraded_cards: 0,
+            missing_decision_v2_count: 0,
+            invalid_decision_count: 0,
           }),
+        };
+      }
+
+      if (s.includes('FROM card_payloads') && s.includes('GROUP BY UPPER(COALESCE(json_extract(payload_data, \'$.sport\')')) {
+        return {
+          all: jest.fn(() => invalidBySportRows),
+        };
+      }
+
+      if (s.includes('FROM card_payloads') && s.includes('LIMIT 5')) {
+        return {
+          all: jest.fn(() => recentInvalidExamples),
         };
       }
 
@@ -359,6 +375,8 @@ describe('checkCardOutputIntegrity', () => {
           pass_cards: 4,
           missing_odds_cards: 1,
           degraded_cards: 2,
+          missing_decision_v2_count: 0,
+          invalid_decision_count: 0,
         },
       }),
     );
@@ -377,7 +395,11 @@ describe('checkCardOutputIntegrity', () => {
           pass_cards: 98,
           missing_odds_cards: 80,
           degraded_cards: 70,
+          missing_decision_v2_count: 12,
+          invalid_decision_count: 6,
         },
+        invalidBySportRows: [{ sport: 'MLB', count: 4 }, { sport: 'NHL', count: 2 }],
+        recentInvalidExamples: [{ game_id: 'g1', card_type: 'mlb-full-game', created_at: DateTime.utc().toISO() }],
       }),
     );
 
@@ -388,6 +410,10 @@ describe('checkCardOutputIntegrity', () => {
     expect(result.reason).toContain('PASS spike');
     expect(result.reason).toContain('missing_odds spike');
     expect(result.reason).toContain('degraded spike');
+    expect(result.reason).toContain('missing_decision_v2_count=12');
+    expect(result.reason).toContain('invalid_decision_count=6');
+    expect(result.diagnostics.invalidBySport.MLB).toBe(4);
+    expect(result.diagnostics.recentInvalidExamples).toHaveLength(1);
   });
 
   test('returns ok when rates are within thresholds', () => {
@@ -398,6 +424,8 @@ describe('checkCardOutputIntegrity', () => {
           pass_cards: 60,
           missing_odds_cards: 10,
           degraded_cards: 20,
+          missing_decision_v2_count: 0,
+          invalid_decision_count: 0,
         },
       }),
     );

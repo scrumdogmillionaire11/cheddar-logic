@@ -133,6 +133,7 @@ function resolveCanonicalBucket(payload) {
     strictSource: true,
   });
   if (!canonicalDecision) return '';
+  if (canonicalDecision.official_status === 'INVALID') return 'invalid';
   if (canonicalDecision.official_status === 'PLAY') return 'official';
   if (canonicalDecision.official_status === 'SLIGHT_EDGE') return 'lean';
   return 'pass_blocked';
@@ -629,6 +630,12 @@ function classifyDecisionBucket(card) {
   const publishBucket = webhookPublishBucket(card);
   if (publishBucket) return publishBucket;
   const canonicalBucket = resolveCanonicalBucket(card?.payloadData || {});
+  if (canonicalBucket === 'invalid') {
+    console.warn(
+      `[post_discord_cards] skipping INVALID decision card ${card?.id || card?.sourceCardId || 'unknown'}`,
+    );
+    return 'invalid';
+  }
   if (canonicalBucket) return canonicalBucket;
   const bucket = normalizeWebhookBucketToken(card?.payloadData?.webhook_bucket);
   if (bucket === 'official' || bucket === 'lean' || bucket === 'pass_blocked') return bucket;

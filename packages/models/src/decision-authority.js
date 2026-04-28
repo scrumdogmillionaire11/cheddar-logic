@@ -4,12 +4,14 @@ const AUTHORITY_STATUSES = Object.freeze({
   PLAY: 'PLAY',
   SLIGHT_EDGE: 'SLIGHT_EDGE',
   PASS: 'PASS',
+  INVALID: 'INVALID',
 });
 
 const PIPELINE_OFFICIAL_STATUS = Object.freeze({
   PLAY: 'PLAY',
   LEAN: 'LEAN',
   PASS: 'PASS',
+  INVALID: 'INVALID',
 });
 
 const DECISION_STAGES = new Set([
@@ -21,11 +23,14 @@ const DECISION_STAGES = new Set([
 ]);
 
 const LIFECYCLE_STATUSES = new Set([
+  'INVALID',
   'CLEARED',
   'DOWNGRADED',
   'BLOCKED',
   'PASS',
 ]);
+
+let hasLoggedInvalidEnforcementDisabled = false;
 
 function asString(value) {
   if (typeof value !== 'string') return null;
@@ -46,6 +51,9 @@ function normalizeAuthorityStatus(value) {
   if (token === 'SLIGHT_EDGE' || token === 'SLIGHT EDGE' || token === 'LEAN' || token === 'WATCH') {
     return AUTHORITY_STATUSES.SLIGHT_EDGE;
   }
+  if (token === 'INVALID') {
+    return AUTHORITY_STATUSES.INVALID;
+  }
   return AUTHORITY_STATUSES.PASS;
 }
 
@@ -56,6 +64,9 @@ function toPipelineOfficialStatus(value) {
   }
   if (normalized === AUTHORITY_STATUSES.SLIGHT_EDGE) {
     return PIPELINE_OFFICIAL_STATUS.LEAN;
+  }
+  if (normalized === AUTHORITY_STATUSES.INVALID) {
+    return PIPELINE_OFFICIAL_STATUS.INVALID;
   }
   return PIPELINE_OFFICIAL_STATUS.PASS;
 }
@@ -134,12 +145,23 @@ function normalizeLifecycle(lifecycle, fallbackStage, fallbackStatus, fallbackRe
   return normalized;
 }
 
+function isInvalidDecisionEnforcementEnabled() {
+  const enabled = process.env.ENABLE_INVALID_DECISION_ENFORCEMENT !== 'false';
+  if (!enabled && !hasLoggedInvalidEnforcementDisabled) {
+    hasLoggedInvalidEnforcementDisabled = true;
+    console.warn(
+      '[decision-authority] ENABLE_INVALID_DECISION_ENFORCEMENT=false: missing canonical decisions will fall back to PASS',
+    );
+  }
+  return enabled;
+}
+
 function resolveCanonicalDecision(payload, options = {}) {
   const {
     stage = 'read_api',
     fallbackToLegacy = false,
     strictSource = true,
-    missingReasonCode = 'CANONICAL_DECISION_MISSING',
+    missingReasonCode = 'MISSING_DECISION_V2',
   } = options;
 
   const decisionV2 = payload?.decision_v2 && typeof payload.decision_v2 === 'object'
@@ -156,8 +178,22 @@ function resolveCanonicalDecision(payload, options = {}) {
     decisionV2?.official_status ||
     null;
 
+  const invalidEnforcementEnabled = isInvalidDecisionEnforcementEnabled();
+
   if (!explicitStatus && !fallbackToLegacy) {
-    return null;
+    const fallbackStatus = invalidEnforcementEnabled
+      ? AUTHORITY_STATUSES.INVALID
+      : AUTHORITY_STATUSES.PASS;
+    const lifecycleStatus = invalidEnforcementEnabled ? 'INVALID' : 'PASS';
+
+    return {
+      official_status: fallbackStatus,
+      is_actionable: false,
+      tier: fallbackStatus,
+      reason_code: missingReasonCode,
+      source: CANONICAL_DECISION_SOURCE,
+      lifecycle: normalizeLifecycle([], stage, lifecycleStatus, missingReasonCode),
+    };
   }
 
   const officialStatus = explicitStatus
@@ -176,13 +212,15 @@ function resolveCanonicalDecision(payload, options = {}) {
     [];
 
   const canonicalStatus =
-    officialStatus === AUTHORITY_STATUSES.PASS
-      ? 'PASS'
-      : decisionV2?.watchdog_status === 'BLOCKED'
-        ? 'BLOCKED'
-        : officialStatus === AUTHORITY_STATUSES.SLIGHT_EDGE
-          ? 'DOWNGRADED'
-          : 'CLEARED';
+    officialStatus === AUTHORITY_STATUSES.INVALID
+      ? 'INVALID'
+      : officialStatus === AUTHORITY_STATUSES.PASS
+        ? 'PASS'
+        : decisionV2?.watchdog_status === 'BLOCKED'
+          ? 'BLOCKED'
+          : officialStatus === AUTHORITY_STATUSES.SLIGHT_EDGE
+            ? 'DOWNGRADED'
+            : 'CLEARED';
 
   const lifecycle = normalizeLifecycle(rawLifecycle, stage, canonicalStatus, reasonCode);
 
