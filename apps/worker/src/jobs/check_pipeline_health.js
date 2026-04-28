@@ -720,11 +720,70 @@ function checkCardOutputIntegrity() {
                  OR UPPER(COALESCE(json_extract(payload_data, '$.decision_v2.primary_reason_code'), json_extract(payload_data, '$.pass_reason_code'), '')) LIKE '%PROJECTION_ONLY%'
                  OR UPPER(COALESCE(json_extract(payload_data, '$.decision_v2.primary_reason_code'), json_extract(payload_data, '$.pass_reason_code'), '')) LIKE '%MISSING_INPUT%'
                  OR UPPER(COALESCE(json_extract(payload_data, '$.decision_v2.primary_reason_code'), json_extract(payload_data, '$.pass_reason_code'), '')) LIKE '%CONTRACT%'
-                 THEN 1 ELSE 0 END) AS degraded_cards
+                 THEN 1 ELSE 0 END) AS degraded_cards,
+         SUM(CASE
+               WHEN COALESCE(
+                 json_type(payload_data, '$.decision_v2'),
+                 json_type(payload_data, '$.play.decision_v2')
+               ) IS NULL
+                 THEN 1 ELSE 0 END) AS missing_decision_v2_count,
+         SUM(CASE
+               WHEN UPPER(COALESCE(
+                 json_extract(payload_data, '$.decision_v2.official_status'),
+                 json_extract(payload_data, '$.play.decision_v2.official_status'),
+                 ''
+               )) = 'INVALID'
+                 THEN 1 ELSE 0 END) AS invalid_decision_count
        FROM card_payloads
        WHERE created_at > datetime('now', ?)`,
     )
     .get(`-${CARD_OUTPUT_INTEGRITY_LOOKBACK_HOURS} hours`);
+
+  const invalidBySportRows = db
+    .prepare(
+      `SELECT
+         UPPER(COALESCE(json_extract(payload_data, '$.sport'), 'UNKNOWN')) AS sport,
+         COUNT(*) AS count
+       FROM card_payloads
+       WHERE created_at > datetime('now', ?)
+         AND UPPER(COALESCE(
+           json_extract(payload_data, '$.decision_v2.official_status'),
+           json_extract(payload_data, '$.play.decision_v2.official_status'),
+           ''
+         )) = 'INVALID'
+       GROUP BY UPPER(COALESCE(json_extract(payload_data, '$.sport'), 'UNKNOWN'))
+       ORDER BY count DESC`,
+    )
+    .all(`-${CARD_OUTPUT_INTEGRITY_LOOKBACK_HOURS} hours`);
+
+  const recentInvalidExamples = db
+    .prepare(
+      `SELECT
+         game_id,
+         card_type,
+         created_at
+       FROM card_payloads
+       WHERE created_at > datetime('now', ?)
+         AND (
+           COALESCE(
+             json_type(payload_data, '$.decision_v2'),
+             json_type(payload_data, '$.play.decision_v2')
+           ) IS NULL
+           OR UPPER(COALESCE(
+             json_extract(payload_data, '$.decision_v2.official_status'),
+             json_extract(payload_data, '$.play.decision_v2.official_status'),
+             ''
+           )) = 'INVALID'
+         )
+       ORDER BY datetime(created_at) DESC
+       LIMIT 5`,
+    )
+    .all(`-${CARD_OUTPUT_INTEGRITY_LOOKBACK_HOURS} hours`)
+    .map((row) => ({
+      game_id: row.game_id || null,
+      card_type: row.card_type || null,
+      created_at: row.created_at || null,
+    }));
 
   const totalCards = Number(row?.total_cards || 0);
   if (totalCards < CARD_OUTPUT_INTEGRITY_MIN_SAMPLE) {
@@ -736,8 +795,25 @@ function checkCardOutputIntegrity() {
   const passRate = Number(row?.pass_cards || 0) / totalCards;
   const missingOddsRate = Number(row?.missing_odds_cards || 0) / totalCards;
   const degradedRate = Number(row?.degraded_cards || 0) / totalCards;
+  const missingDecisionV2Count = Number(row?.missing_decision_v2_count || 0);
+  const invalidDecisionCount = Number(row?.invalid_decision_count || 0);
+  const invalidBySport = Array.isArray(invalidBySportRows)
+    ? invalidBySportRows.reduce((acc, item) => {
+        const sport = String(item?.sport || 'UNKNOWN');
+        acc[sport] = Number(item?.count || 0);
+        return acc;
+      }, {})
+    : {};
 
   const failingSignals = [];
+  // Pre-baseline hard fail policy: any invalid/missing canonical decision is a failure.
+  // This should be revisited after baseline measurement to tune alert thresholds.
+  if (missingDecisionV2Count > 0) {
+    failingSignals.push(`missing_decision_v2_count=${missingDecisionV2Count}`);
+  }
+  if (invalidDecisionCount > 0) {
+    failingSignals.push(`invalid_decision_count=${invalidDecisionCount}`);
+  }
   if (passRate > CARD_OUTPUT_PASS_RATE_MAX) {
     failingSignals.push(`PASS spike ${passRate.toFixed(3)}>${CARD_OUTPUT_PASS_RATE_MAX.toFixed(3)}`);
   }
@@ -748,16 +824,42 @@ function checkCardOutputIntegrity() {
     failingSignals.push(`degraded spike ${degradedRate.toFixed(3)}>${CARD_OUTPUT_DEGRADED_RATE_MAX.toFixed(3)}`);
   }
 
-  const metrics = `sample=${totalCards} pass_rate=${passRate.toFixed(3)} missing_odds_rate=${missingOddsRate.toFixed(3)} degraded_rate=${degradedRate.toFixed(3)}`;
+  const metrics = `sample=${totalCards} pass_rate=${passRate.toFixed(3)} missing_odds_rate=${missingOddsRate.toFixed(3)} degraded_rate=${degradedRate.toFixed(3)} missing_decision_v2_count=${missingDecisionV2Count} invalid_decision_count=${invalidDecisionCount}`;
   if (failingSignals.length === 0) {
     const reason = `Card output integrity healthy (${metrics})`;
     writePipelineHealth('cards', 'output_integrity', 'ok', reason);
-    return { ok: true, reason, diagnostics: { totalCards, passRate, missingOddsRate, degradedRate } };
+    return {
+      ok: true,
+      reason,
+      diagnostics: {
+        totalCards,
+        passRate,
+        missingOddsRate,
+        degradedRate,
+        missingDecisionV2Count,
+        invalidDecisionCount,
+        invalidBySport,
+        recentInvalidExamples,
+      },
+    };
   }
 
   const reason = `CARD_OUTPUT_INTEGRITY_DEGRADED — ${failingSignals.join('; ')} (${metrics})`;
   writePipelineHealth('cards', 'output_integrity', 'failed', reason);
-  return { ok: false, reason, diagnostics: { totalCards, passRate, missingOddsRate, degradedRate } };
+  return {
+    ok: false,
+    reason,
+    diagnostics: {
+      totalCards,
+      passRate,
+      missingOddsRate,
+      degradedRate,
+      missingDecisionV2Count,
+      invalidDecisionCount,
+      invalidBySport,
+      recentInvalidExamples,
+    },
+  };
 }
 
 function getLatestOddsSnapshot(db, gameId) {

@@ -37,7 +37,7 @@ export type CanonicalLifecycleEntry = {
   reason_code: string;
 };
 
-export type RuntimeCanonicalDecision = {
+type RuntimeCanonicalDecisionValid = {
   officialStatus: 'PLAY' | 'LEAN' | 'PASS';
   action: 'FIRE' | 'HOLD' | 'PASS';
   classification: 'BASE' | 'LEAN' | 'PASS';
@@ -47,6 +47,21 @@ export type RuntimeCanonicalDecision = {
   missingCanonicalDecision: boolean;
   lifecycle: CanonicalLifecycleEntry[];
 };
+
+type RuntimeCanonicalDecisionInvalid = {
+  officialStatus: 'INVALID';
+  action: null;
+  classification: null;
+  status: null;
+  isActionable: false;
+  reasonCode: string;
+  missingCanonicalDecision: true;
+  lifecycle: CanonicalLifecycleEntry[];
+};
+
+export type RuntimeCanonicalDecision =
+  | RuntimeCanonicalDecisionValid
+  | RuntimeCanonicalDecisionInvalid;
 
 export type LifecycleModeForFallback = 'pregame' | 'active';
 
@@ -67,12 +82,12 @@ type ReadRuntimeDecisionOptions = {
 // Internal constants
 // ---------------------------------------------------------------------------
 
-const MISSING_CANONICAL_DECISION_REASON = 'MISSING_CANONICAL_DECISION';
+const MISSING_CANONICAL_DECISION_REASON = 'MISSING_DECISION_V2';
 
 const MISSING_CANONICAL_LIFECYCLE: CanonicalLifecycleEntry[] = [
   {
     stage: 'read_api',
-    status: 'PASS',
+    status: 'INVALID',
     reason_code: MISSING_CANONICAL_DECISION_REASON,
   },
 ];
@@ -83,35 +98,39 @@ const MISSING_CANONICAL_LIFECYCLE: CanonicalLifecycleEntry[] = [
 
 function canonicalStatusToOfficialStatus(
   raw: string,
-): 'PLAY' | 'LEAN' | 'PASS' {
+): 'PLAY' | 'LEAN' | 'PASS' | 'INVALID' {
   const s = raw.toUpperCase();
   if (s === 'PLAY') return 'PLAY';
   if (s === 'SLIGHT_EDGE') return 'LEAN';
+  if (s === 'INVALID') return 'INVALID';
   return 'PASS';
 }
 
 function actionFromOfficialStatus(
-  officialStatus: 'PLAY' | 'LEAN' | 'PASS',
-): 'FIRE' | 'HOLD' | 'PASS' {
+  officialStatus: 'PLAY' | 'LEAN' | 'PASS' | 'INVALID',
+): 'FIRE' | 'HOLD' | 'PASS' | null {
   if (officialStatus === 'PLAY') return 'FIRE';
   if (officialStatus === 'LEAN') return 'HOLD';
-  return 'PASS';
+  if (officialStatus === 'PASS') return 'PASS';
+  return null;
 }
 
 function classificationFromAction(
-  action: 'FIRE' | 'HOLD' | 'PASS',
-): 'BASE' | 'LEAN' | 'PASS' {
+  action: 'FIRE' | 'HOLD' | 'PASS' | null,
+): 'BASE' | 'LEAN' | 'PASS' | null {
   if (action === 'FIRE') return 'BASE';
   if (action === 'HOLD') return 'LEAN';
-  return 'PASS';
+  if (action === 'PASS') return 'PASS';
+  return null;
 }
 
 function statusFromAction(
-  action: 'FIRE' | 'HOLD' | 'PASS',
-): 'FIRE' | 'WATCH' | 'PASS' {
+  action: 'FIRE' | 'HOLD' | 'PASS' | null,
+): 'FIRE' | 'WATCH' | 'PASS' | null {
   if (action === 'HOLD') return 'WATCH';
   if (action === 'FIRE') return 'FIRE';
-  return 'PASS';
+  if (action === 'PASS') return 'PASS';
+  return null;
 }
 
 // ---------------------------------------------------------------------------
@@ -158,7 +177,7 @@ export function readRuntimeCanonicalDecision(
   const canonical = resolveCanonicalDecision(payload ?? null, {
     stage: options.stage ?? 'read_api',
     // Legacy fallback is permanently disabled on web read paths.
-    // The feature flag controls strictness (throw vs silent PASS), not inference.
+    // The feature flag controls strictness (throw vs INVALID), not inference.
     fallbackToLegacy: false,
     strictSource: true,
     missingReasonCode: MISSING_CANONICAL_DECISION_REASON,
@@ -170,10 +189,10 @@ export function readRuntimeCanonicalDecision(
     }
 
     return {
-      officialStatus: 'PASS',
-      action: 'PASS',
-      classification: 'PASS',
-      status: 'PASS',
+      officialStatus: 'INVALID',
+      action: null,
+      classification: null,
+      status: null,
       isActionable: false,
       reasonCode: MISSING_CANONICAL_DECISION_REASON,
       missingCanonicalDecision: true,
@@ -184,11 +203,28 @@ export function readRuntimeCanonicalDecision(
   const officialStatus = canonicalStatusToOfficialStatus(canonical.official_status);
   const action = actionFromOfficialStatus(officialStatus);
 
+  if (officialStatus === 'INVALID' || action === null) {
+    if (strictTestMode) {
+      throw new Error('Canonical decision missing');
+    }
+
+    return {
+      officialStatus: 'INVALID',
+      action: null,
+      classification: null,
+      status: null,
+      isActionable: false,
+      reasonCode: String(canonical.reason_code || MISSING_CANONICAL_DECISION_REASON),
+      missingCanonicalDecision: true,
+      lifecycle: Array.isArray(canonical.lifecycle) ? canonical.lifecycle : MISSING_CANONICAL_LIFECYCLE,
+    };
+  }
+
   return {
     officialStatus,
     action,
-    classification: classificationFromAction(action),
-    status: statusFromAction(action),
+    classification: action === 'FIRE' ? 'BASE' : action === 'HOLD' ? 'LEAN' : 'PASS',
+    status: action === 'HOLD' ? 'WATCH' : action === 'FIRE' ? 'FIRE' : 'PASS',
     isActionable: Boolean(canonical.is_actionable),
     reasonCode: String(canonical.reason_code || MISSING_CANONICAL_DECISION_REASON),
     missingCanonicalDecision: false,

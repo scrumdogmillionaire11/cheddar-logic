@@ -8,7 +8,7 @@ import {
 import { readRuntimeCanonicalDecision } from '../lib/runtime-decision-authority';
 
 // resolveDecisionTier now returns canonical status directly
-function resolveDecisionTier(payload: Record<string, unknown> | null): 'PLAY' | 'LEAN' | 'PASS' {
+function resolveDecisionTier(payload: Record<string, unknown> | null): 'PLAY' | 'LEAN' | 'PASS' | 'INVALID' {
   return readRuntimeCanonicalDecision(payload, { stage: 'read_api' }).officialStatus;
 }
 
@@ -44,25 +44,25 @@ withEnv({ ENFORCE_CANONICAL_DECISION_ONLY: 'true', ENFORCE_CANONICAL_DECISION_ON
 });
 
 // ---------------------------------------------------------------------------
-// Flag ON: legacy-only payload (no decision_v2) → all surfaces return PASS
+// Invalid enforcement ON: legacy-only payload (no decision_v2) → INVALID/null
 // ---------------------------------------------------------------------------
-withEnv({ ENFORCE_CANONICAL_DECISION_ONLY: 'true', ENFORCE_CANONICAL_DECISION_ONLY_STRICT_TEST: 'false' }, () => {
+withEnv({ ENABLE_INVALID_DECISION_ENFORCEMENT: 'true', ENFORCE_CANONICAL_DECISION_ONLY_STRICT_TEST: 'false' }, () => {
   const legacyOnlyPayload = { action: 'FIRE', classification: 'BASE', status: 'PLAY' };
 
-  assert.strictEqual(resolvePlayDisplayDecision(legacyOnlyPayload as never).action, 'PASS', 'cards must be PASS on legacy-only, flag ON');
-  assert.strictEqual(resolveLiveOfficialStatus(legacyOnlyPayload as never), 'PASS', 'games must be PASS on legacy-only, flag ON');
-  assert.strictEqual(resolveDecisionTier(legacyOnlyPayload as Record<string, unknown>), 'PASS', 'results must be PASS on legacy-only, flag ON');
+  assert.strictEqual(resolvePlayDisplayDecision(legacyOnlyPayload as never).action, null, 'cards must be null/hidden on legacy-only payload when INVALID enforcement is ON');
+  assert.strictEqual(resolveLiveOfficialStatus(legacyOnlyPayload as never), 'INVALID', 'games must resolve INVALID on legacy-only payload when INVALID enforcement is ON');
+  assert.strictEqual(resolveDecisionTier(legacyOnlyPayload as Record<string, unknown>), 'INVALID', 'results must resolve INVALID on legacy-only payload when INVALID enforcement is ON');
 });
 
 // ---------------------------------------------------------------------------
-// Flag OFF: legacy-only payload still returns PASS (no inference ever)
+// Kill switch OFF: legacy-only payload reverts to PASS fallback
 // ---------------------------------------------------------------------------
-withEnv({ ENFORCE_CANONICAL_DECISION_ONLY: 'false', ENFORCE_CANONICAL_DECISION_ONLY_STRICT_TEST: 'false' }, () => {
+withEnv({ ENABLE_INVALID_DECISION_ENFORCEMENT: 'false', ENFORCE_CANONICAL_DECISION_ONLY_STRICT_TEST: 'false' }, () => {
   const legacyOnlyPayload = { action: 'FIRE', classification: 'BASE', status: 'PLAY' };
 
-  assert.strictEqual(resolvePlayDisplayDecision(legacyOnlyPayload as never).action, 'PASS', 'cards must still be PASS on legacy-only, flag OFF');
-  assert.strictEqual(resolveLiveOfficialStatus(legacyOnlyPayload as never), 'PASS', 'games must still be PASS on legacy-only, flag OFF');
-  assert.strictEqual(resolveDecisionTier(legacyOnlyPayload as Record<string, unknown>), 'PASS', 'results must still be PASS on legacy-only, flag OFF');
+  assert.strictEqual(resolvePlayDisplayDecision(legacyOnlyPayload as never).action, 'PASS', 'cards must revert to PASS on legacy-only payload when kill switch is OFF');
+  assert.strictEqual(resolveLiveOfficialStatus(legacyOnlyPayload as never), 'PASS', 'games must revert to PASS on legacy-only payload when kill switch is OFF');
+  assert.strictEqual(resolveDecisionTier(legacyOnlyPayload as Record<string, unknown>), 'PASS', 'results must revert to PASS on legacy-only payload when kill switch is OFF');
 });
 
 // ---------------------------------------------------------------------------
@@ -77,7 +77,7 @@ withEnv({ ENFORCE_CANONICAL_DECISION_ONLY: 'false', ENFORCE_CANONICAL_DECISION_O
 });
 
 // ---------------------------------------------------------------------------
-// MLB full-game legacy (no decision_v2) preserves native PLAY/SLIGHT EDGE/PASS
+// MLB full-game legacy (no decision_v2) is also invalid under canonical-only rules
 // ---------------------------------------------------------------------------
 {
   const mlbLegacyLeanPayload = {
@@ -90,8 +90,8 @@ withEnv({ ENFORCE_CANONICAL_DECISION_ONLY: 'false', ENFORCE_CANONICAL_DECISION_O
   };
   assert.strictEqual(
     resolvePlayDisplayDecision(mlbLegacyLeanPayload as never).action,
-    'HOLD',
-    'MLB full-game legacy SLIGHT EDGE must remain HOLD/LEAN',
+    null,
+    'MLB full-game legacy rows must not infer HOLD without decision_v2',
   );
 
   const mlbLegacyPlayPayload = {
@@ -103,8 +103,8 @@ withEnv({ ENFORCE_CANONICAL_DECISION_ONLY: 'false', ENFORCE_CANONICAL_DECISION_O
   };
   assert.strictEqual(
     resolvePlayDisplayDecision(mlbLegacyPlayPayload as never).action,
-    'FIRE',
-    'MLB full-game legacy PLAY must remain FIRE',
+    null,
+    'MLB full-game legacy rows must not infer FIRE without decision_v2',
   );
 
   const mlbLegacyPassPayload = {
@@ -116,8 +116,8 @@ withEnv({ ENFORCE_CANONICAL_DECISION_ONLY: 'false', ENFORCE_CANONICAL_DECISION_O
   };
   assert.strictEqual(
     resolvePlayDisplayDecision(mlbLegacyPassPayload as never).action,
-    'PASS',
-    'MLB full-game legacy PASS must remain PASS',
+    null,
+    'MLB full-game legacy rows must not infer PASS without decision_v2',
   );
 }
 
@@ -144,7 +144,7 @@ withEnv({ ENFORCE_CANONICAL_DECISION_ONLY: 'false', ENFORCE_CANONICAL_DECISION_O
 }
 
 // ---------------------------------------------------------------------------
-// Non-MLB legacy rows without decision_v2 remain fail-closed PASS
+// Non-MLB legacy rows without decision_v2 are invalid
 // ---------------------------------------------------------------------------
 {
   const nonMlbLegacyPayload = {
@@ -156,8 +156,8 @@ withEnv({ ENFORCE_CANONICAL_DECISION_ONLY: 'false', ENFORCE_CANONICAL_DECISION_O
   };
   assert.strictEqual(
     resolvePlayDisplayDecision(nonMlbLegacyPayload as never).action,
-    'PASS',
-    'non-MLB rows must not bypass canonical fail-closed behavior',
+    null,
+    'non-MLB rows without decision_v2 must resolve as INVALID (no action)',
   );
 }
 
@@ -202,9 +202,11 @@ withEnv({ ENFORCE_CANONICAL_DECISION_ONLY: 'false' }, () => {
 withEnv({ ENFORCE_CANONICAL_DECISION_ONLY: 'false', ENFORCE_CANONICAL_DECISION_ONLY_STRICT_TEST: 'false' }, () => {
   const result = readRuntimeCanonicalDecision(null);
   assert.ok(result.missingCanonicalDecision, 'missingCanonicalDecision must be true');
+  assert.strictEqual(result.officialStatus, 'INVALID', 'missing canonical decision must resolve to INVALID');
+  assert.strictEqual(result.action, null, 'missing canonical decision must not produce a betting action');
   assert.ok(Array.isArray(result.lifecycle) && result.lifecycle.length > 0, 'must emit failure lifecycle entry when canonical missing');
   assert.strictEqual(result.lifecycle[0].stage, 'read_api', 'failure lifecycle entry stage must be read_api');
-  assert.strictEqual(result.lifecycle[0].reason_code, 'MISSING_CANONICAL_DECISION', 'failure lifecycle entry must have MISSING_CANONICAL_DECISION reason');
+  assert.strictEqual(result.lifecycle[0].reason_code, 'MISSING_DECISION_V2', 'failure lifecycle entry must have MISSING_DECISION_V2 reason');
 });
 
 // ---------------------------------------------------------------------------

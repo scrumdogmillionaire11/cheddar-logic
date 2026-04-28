@@ -13,7 +13,7 @@ declare module '@cheddar-logic/models/decision-authority' {
   };
 
   export type CanonicalDecisionResult = {
-    official_status: string;
+    official_status: 'PLAY' | 'SLIGHT_EDGE' | 'PASS' | 'INVALID';
     is_actionable: boolean;
     reason_code: string;
     source: string;

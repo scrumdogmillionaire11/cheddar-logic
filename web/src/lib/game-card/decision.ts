@@ -60,9 +60,9 @@ export type DecisionModel = {
 export type PlayDisplayAction = 'FIRE' | 'HOLD' | 'PASS';
 
 export type ResolvedPlayDisplayDecision = {
-  action: PlayDisplayAction;
-  status: ExpressionStatus;
-  classification: 'BASE' | 'LEAN' | 'PASS';
+  action: PlayDisplayAction | null;
+  status: ExpressionStatus | null;
+  classification: 'BASE' | 'LEAN' | 'PASS' | null;
 };
 
 interface Odds {
@@ -175,6 +175,14 @@ export function resolvePlayDisplayDecision(
     { stage: 'read_api' },
   );
   const action = authorityDecision.action;
+
+  if (action === null) {
+    return {
+      action: null,
+      status: null,
+      classification: null,
+    };
+  }
 
   return {
     action,
@@ -609,6 +617,18 @@ function selectPrimaryPlay(
   // Use pre-built play if available
   if (card.play) {
     const resolved = resolvePlayDisplayDecision(card.play);
+    if (resolved.status === null) {
+      return {
+        source: 'none',
+        market: 'NONE',
+        status: 'PASS',
+        pick: 'NO PLAY',
+        direction: null,
+        tier: null,
+        confidence: null,
+      };
+    }
+
     return {
       source: 'play',
       market:
@@ -1001,6 +1021,6 @@ export function getCardDecisionModel(
  */
 export function getPlayDisplayAction(
   play?: Play | null,
-): 'FIRE' | 'HOLD' | 'PASS' {
+): 'FIRE' | 'HOLD' | 'PASS' | null {
   return resolvePlayDisplayDecision(play).action;
 }

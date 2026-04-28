@@ -9,6 +9,7 @@ import {
   closeReadOnlyInstance,
 } from '@cheddar-logic/data';
 import { ensureDbReady } from '@/lib/db-init';
+import { readRuntimeCanonicalDecision } from '@/lib/runtime-decision-authority';
 
 const ET_TIME_ZONE = 'America/New_York';
 const ET_DATE_FORMATTER = new Intl.DateTimeFormat('en-CA', {
@@ -455,6 +456,48 @@ function mapPlayRow(row: PotdPlayRow): PotdApiPlay {
   };
 }
 
+function isPotdRowDecisionValid(
+  db: ReturnType<typeof getDatabaseReadOnly>,
+  row: PotdPlayRow | null,
+): boolean {
+  if (!row || !row.card_id) return true;
+
+  const enforcementEnabled = process.env.ENABLE_INVALID_DECISION_ENFORCEMENT !== 'false';
+  if (!enforcementEnabled) return true;
+
+  try {
+    const payloadRow = db
+      .prepare(
+        `SELECT payload_data
+         FROM card_payloads
+         WHERE id = ?
+         LIMIT 1`,
+      )
+      .get(row.card_id) as { payload_data?: string | null } | undefined;
+
+    if (!payloadRow?.payload_data) return true;
+
+    const payload = JSON.parse(payloadRow.payload_data) as Record<string, unknown>;
+    const play =
+      payload?.play && typeof payload.play === 'object'
+        ? (payload.play as Record<string, unknown>)
+        : null;
+    const decision = readRuntimeCanonicalDecision(
+      {
+        decision_v2:
+          (payload?.decision_v2 as Record<string, unknown> | null) ||
+          (play?.decision_v2 as Record<string, unknown> | null) ||
+          null,
+      },
+      { stage: 'read_api' },
+    );
+
+    return decision.officialStatus !== 'INVALID';
+  } catch {
+    return true;
+  }
+}
+
 function buildBankrollSummary(
   latestAmountAfter: number,
   startingAmountAfter: number,
@@ -692,7 +735,7 @@ export async function getPotdResponseData(now = new Date()): Promise<PotdRespons
     const dayStartUtc = zonedTimeToUtc(dayParts, 0, 0).toISOString();
     const nextDayStartUtc = zonedTimeToUtc(nextDayParts, 0, 0).toISOString();
 
-    const todayRow = (db
+    const rawTodayRow = (db
       .prepare(
         `SELECT *
          FROM potd_plays
@@ -700,6 +743,7 @@ export async function getPotdResponseData(now = new Date()): Promise<PotdRespons
          LIMIT 1`,
       )
       .get(todayDateKey) as PotdPlayRow | undefined) ?? null;
+    const todayRow = isPotdRowDecisionValid(db, rawTodayRow) ? rawTodayRow : null;
 
     const historyRows = (db
       .prepare(
@@ -709,7 +753,9 @@ export async function getPotdResponseData(now = new Date()): Promise<PotdRespons
          ORDER BY play_date DESC
          LIMIT 12`,
       )
-      .all(todayDateKey) as PotdPlayRow[]).map(mapPlayRow);
+      .all(todayDateKey) as PotdPlayRow[])
+      .filter((row) => isPotdRowDecisionValid(db, row))
+      .map(mapPlayRow);
 
     const latestLedgerRow =
       db

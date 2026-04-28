@@ -15,6 +15,7 @@ import { getPlayDisplayAction } from './decision';
 import { isNflSeason } from './season-gates';
 import { isWelcomeHomeCardType } from './welcome-home';
 import { PROJECTION_SURFACE_CARD_TYPES } from '../games/projection-surface';
+import { readRuntimeCanonicalDecision } from '@/lib/runtime-decision-authority';
 
 // Season-gated sports list: NFL excluded during off-season (Mar–Aug)
 const NFL_SPORTS: Sport[] = isNflSeason()
@@ -141,62 +142,29 @@ export interface PropsModeFilters extends CommonFilters {
 
 export type GameFilters = GameModeFilters | PropsModeFilters;
 
-function getCanonicalEnvelope(play: GameCard['play']) {
-  if (!play || !play.decision_v2) return null;
-  const envelope = play.decision_v2.canonical_envelope_v2;
-  return envelope && typeof envelope === 'object'
-    ? (envelope as Record<string, unknown>)
-    : null;
-}
-
-function resolveSurfacedOfficialStatus(
-  play: GameCard['play'],
-): 'PLAY' | 'LEAN' | 'PASS' | null {
+function readCanonicalDecision(play: GameCard['play']) {
   if (!play) return null;
-
-  const surfacedStatus = play.final_market_decision?.surfaced_status;
-  if (surfacedStatus === 'PLAY') return 'PLAY';
-  if (surfacedStatus === 'SLIGHT EDGE') return 'LEAN';
-  if (surfacedStatus === 'PASS') return 'PASS';
-
-  if (play.action === 'FIRE' || play.classification === 'BASE') return 'PLAY';
-  if (play.action === 'HOLD' || play.classification === 'LEAN') return 'LEAN';
-  if (play.action === 'PASS' || play.classification === 'PASS') return 'PASS';
-
-  return null;
+  const decision = readRuntimeCanonicalDecision(
+    {
+      decision_v2: (play.decision_v2 as unknown as Record<string, unknown> | null) ?? null,
+    },
+    { stage: 'read_api' },
+  );
+  return decision.officialStatus === 'INVALID' ? null : decision;
 }
 
 function resolveCanonicalOfficialStatus(
   play: GameCard['play'],
 ): 'PLAY' | 'LEAN' | 'PASS' | null {
-  const surfaced = resolveSurfacedOfficialStatus(play);
-  if (surfaced) return surfaced;
-  const envelope = getCanonicalEnvelope(play);
-  const fromEnvelope = envelope?.official_status;
-  if (
-    fromEnvelope === 'PLAY' ||
-    fromEnvelope === 'LEAN' ||
-    fromEnvelope === 'PASS'
-  ) {
-    return fromEnvelope;
-  }
-  const explicit = play?.decision_v2?.official_status;
-  return explicit === 'PLAY' || explicit === 'LEAN' || explicit === 'PASS'
-    ? explicit
-    : null;
+  const decision = readCanonicalDecision(play);
+  if (!decision) return null;
+  return decision.officialStatus;
 }
 
 function resolveCanonicalIsActionable(play: GameCard['play']): boolean | null {
-  const surfaced = resolveSurfacedOfficialStatus(play);
-  if (surfaced) return surfaced !== 'PASS';
-
-  const envelope = getCanonicalEnvelope(play);
-  if (typeof envelope?.is_actionable === 'boolean') {
-    return envelope.is_actionable;
-  }
-  const official = resolveCanonicalOfficialStatus(play);
-  if (official) return official !== 'PASS';
-  return null;
+  const decision = readCanonicalDecision(play);
+  if (!decision) return null;
+  return decision.isActionable;
 }
 
 /**
@@ -345,17 +313,11 @@ function filterByMarketAvailability(
   const includePass = filters.statuses.includes('PASS');
   const displayAction = getPlayDisplayAction(card.play);
   const officialStatus = resolveCanonicalOfficialStatus(card.play);
-  const envelope = getCanonicalEnvelope(card.play);
-  const explicitOfficialPass =
-    card.play?.decision_v2?.official_status === 'PASS' ||
-    envelope?.official_status === 'PASS' ||
-    card.play?.action === 'PASS' ||
-    card.play?.classification === 'PASS';
 
   // Full Slate lenient mode: let PASS plays through regardless of market
   if (
     includePass &&
-    (displayAction === 'PASS' || officialStatus === 'PASS' || explicitOfficialPass)
+    (displayAction === 'PASS' || officialStatus === 'PASS')
   ) {
     return true;
   }
@@ -397,10 +359,15 @@ function filterByActionability(
 
   const includePass = filters.statuses.includes('PASS');
   const displayAction = getPlayDisplayAction(card.play);
+  const canonicalOfficialStatus = resolveCanonicalOfficialStatus(card.play);
   const moneylineExecutionStatus =
     card.play?.market_type === 'MONEYLINE'
       ? card.play.execution_status
       : undefined;
+
+  if (!canonicalOfficialStatus) {
+    return false;
+  }
 
   if (!includePass && moneylineExecutionStatus === 'EXECUTABLE') {
     return true;
@@ -418,10 +385,7 @@ function filterByActionability(
   // in full-slate mode — they cannot be actioned and have no canonical PASS signal.
   if (includePass) {
     const canonicalPassSignal =
-      card.play?.decision_v2?.official_status === 'PASS' ||
-      resolveCanonicalOfficialStatus(card.play) === 'PASS' ||
-      card.play?.action === 'PASS' ||
-      card.play?.classification === 'PASS';
+      canonicalOfficialStatus === 'PASS';
 
     const hasBlockedTotals = Boolean(
       card.play?.market_type === 'TOTAL' &&
@@ -456,9 +420,7 @@ function filterByActionability(
 
   const explicitPassPlay =
     displayAction === 'PASS' ||
-    card.play?.action === 'PASS' ||
-    card.play?.classification === 'PASS' ||
-    resolveCanonicalOfficialStatus(card.play) === 'PASS';
+    canonicalOfficialStatus === 'PASS';
 
   // Allow expressionChoice to override a PASS display action, but never driver
   // tags: HAS_FIRE / HAS_WATCH are derived from the same pipeline that produced
@@ -589,10 +551,7 @@ function hasActionablePlayCall(card: GameCard): boolean {
   const canonicalActionable = resolveCanonicalIsActionable(play);
   if (canonicalActionable === false) return false;
 
-  // Explicit PASS signals are never actionable, checked before pick text inspection.
-  // Edge-verification blocked cards can carry non-'NO PLAY' pick text (e.g.
-  // "Team ML -110 (Verification Required)") while still being PASS decisions.
-  if (play.action === 'PASS' || play.classification === 'PASS') return false;
+  // Canonical PASS signals are never actionable.
   if (resolveCanonicalOfficialStatus(play) === 'PASS') return false;
 
   const canonicalMarket = canonicalToLegacyMarket(play.market_type);
