@@ -20,6 +20,21 @@ import type {
 
 export type DecisionSegmentId = 'play' | 'slight_edge';
 type DecisionTierStatus = 'PLAY' | 'LEAN' | 'PASS';
+export type DecisionTierSource =
+  | 'DECISION_V2'
+  | 'LEGACY_MLB_RESULTS_ADAPTER'
+  | 'FAIL_CLOSED';
+
+type DecisionTierResolution = {
+  tier: DecisionTierStatus;
+  source: DecisionTierSource;
+};
+
+type DecisionTierContext = {
+  sport: string | null;
+  cardType: string | null;
+  result: string | null;
+};
 
 type DecisionSegmentMeta = {
   id: DecisionSegmentId;
@@ -35,6 +50,11 @@ export const DECISION_SEGMENTS: DecisionSegmentMeta[] = [
 const CALL_SUFFIXES = ['%-totals-call', '%-spread-call'].map((pattern) =>
   pattern.replace('%', '').toLowerCase(),
 );
+
+const LEGACY_MLB_RESULTS_CARD_TYPES = new Set([
+  'mlb-full-game',
+  'mlb-full-game-ml',
+]);
 
 function safeJsonParse(payload: string | null) {
   if (!payload) return { data: null, error: false, missing: true };
@@ -65,28 +85,108 @@ function normalizeStatusToken(value: string | null): string | null {
   return normalized.length > 0 ? normalized : null;
 }
 
-export function resolveDecisionTier(
+function hasDecisionV2(
   payload: Record<string, unknown> | null,
-): DecisionTierStatus {
-  if (!payload || !hasActionableProjectionCall(payload)) {
-    return 'PASS';
+): boolean {
+  if (!payload || typeof payload !== 'object') return false;
+  if (payload.decision_v2 && typeof payload.decision_v2 === 'object') {
+    return true;
   }
-
   const play =
     payload.play && typeof payload.play === 'object'
       ? (payload.play as Record<string, unknown>)
       : null;
-  const decisionV2 =
-    payload.decision_v2 && typeof payload.decision_v2 === 'object'
-      ? (payload.decision_v2 as Record<string, unknown>)
-      : play?.decision_v2 && typeof play.decision_v2 === 'object'
-        ? (play.decision_v2 as Record<string, unknown>)
-        : null;
+  return Boolean(play?.decision_v2 && typeof play.decision_v2 === 'object');
+}
 
-  const officialStatus = String(decisionV2?.official_status || '')
-    .trim()
-    .toUpperCase();
-  return officialStatus === 'PLAY' ? 'PLAY' : 'LEAN';
+function isSettledHistoricalResultToken(result: string | null): boolean {
+  const normalized = String(result || '').trim().toLowerCase();
+  return (
+    normalized === 'win' ||
+    normalized === 'loss' ||
+    normalized === 'push' ||
+    normalized === 'no_bet'
+  );
+}
+
+function resolveLegacyMlbResultsTier(
+  payload: Record<string, unknown> | null,
+): 'PLAY' | 'LEAN' | null {
+  if (!payload) return null;
+  const legacyStatus = normalizeStatusToken(
+    getNestedString(payload, ['status']) ||
+      getNestedString(payload, ['decision', 'status']) ||
+      getNestedString(payload, ['play', 'status']),
+  );
+  if (legacyStatus === 'PLAY') return 'PLAY';
+  if (legacyStatus === 'LEAN' || legacyStatus === 'SLIGHT_EDGE') return 'LEAN';
+  return null;
+}
+
+function canUseLegacyMlbResultsAdapter(context: DecisionTierContext): boolean {
+  const sportToken = String(context.sport || '').trim().toUpperCase();
+  const cardTypeToken = String(context.cardType || '').trim().toLowerCase();
+  return (
+    sportToken === 'MLB' &&
+    LEGACY_MLB_RESULTS_CARD_TYPES.has(cardTypeToken) &&
+    isSettledHistoricalResultToken(context.result)
+  );
+}
+
+export function resolveDecisionTierResolution(
+  payload: Record<string, unknown> | null,
+  context: DecisionTierContext,
+): DecisionTierResolution {
+  if (hasDecisionV2(payload)) {
+    if (!hasActionableProjectionCall(payload)) {
+      return { tier: 'PASS', source: 'DECISION_V2' };
+    }
+
+    const play =
+      payload?.play && typeof payload.play === 'object'
+        ? (payload.play as Record<string, unknown>)
+        : null;
+    const decisionV2 =
+      payload?.decision_v2 && typeof payload.decision_v2 === 'object'
+        ? (payload.decision_v2 as Record<string, unknown>)
+        : play?.decision_v2 && typeof play.decision_v2 === 'object'
+          ? (play.decision_v2 as Record<string, unknown>)
+          : null;
+
+    const officialStatus = String(decisionV2?.official_status || '')
+      .trim()
+      .toUpperCase();
+    if (officialStatus === 'PLAY') {
+      return { tier: 'PLAY', source: 'DECISION_V2' };
+    }
+    if (officialStatus === 'LEAN' || officialStatus === 'SLIGHT_EDGE') {
+      return { tier: 'LEAN', source: 'DECISION_V2' };
+    }
+    return { tier: 'PASS', source: 'DECISION_V2' };
+  }
+
+  if (canUseLegacyMlbResultsAdapter(context)) {
+    const adaptedTier = resolveLegacyMlbResultsTier(payload);
+    if (adaptedTier) {
+      return {
+        tier: adaptedTier,
+        source: 'LEGACY_MLB_RESULTS_ADAPTER',
+      };
+    }
+  }
+
+  return { tier: 'PASS', source: 'FAIL_CLOSED' };
+}
+
+export function resolveDecisionTier(
+  payload: Record<string, unknown> | null,
+  context?: Partial<DecisionTierContext>,
+): DecisionTierStatus {
+  return resolveDecisionTierResolution(payload, {
+    sport: context?.sport ?? null,
+    cardType: context?.cardType ?? null,
+    result: context?.result ?? null,
+  }).tier;
 }
 
 export function deriveDecisionSegment(
@@ -187,7 +287,12 @@ export function buildResultsAggregation(
 
     oddsBackedLedgerIds.push(row.id);
 
-    const decisionTier = resolveDecisionTier(payload);
+    const decisionResolution = resolveDecisionTierResolution(payload, {
+      sport: row.sport,
+      cardType: row.card_type,
+      result: row.result,
+    });
+    const decisionTier = decisionResolution.tier;
     if (decisionTier === 'PASS') {
       continue;
     }
@@ -338,7 +443,12 @@ export function buildLedgerRows(ledger: LedgerRow[]) {
     const modelFamily = deriveModelFamily(row.sport, row.card_type);
     const tier =
       payload && typeof payload.tier === 'string' ? payload.tier : null;
-    const decisionTier = resolveDecisionTier(payload);
+    const decisionResolution = resolveDecisionTierResolution(payload, {
+      sport: row.sport,
+      cardType: row.card_type,
+      result: row.result,
+    });
+    const decisionTier = decisionResolution.tier;
     const decisionLabel =
       decisionTier === 'PLAY'
         ? 'PLAY'
@@ -544,6 +654,7 @@ export function buildLedgerRows(ledger: LedgerRow[]) {
         prediction,
         tier,
         decisionTier: decisionTier !== 'PASS' ? decisionTier : null,
+        decisionTierSource: decisionResolution.source,
         decisionLabel,
         market,
         marketType,
