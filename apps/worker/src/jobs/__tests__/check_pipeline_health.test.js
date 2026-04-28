@@ -444,37 +444,25 @@ describe('checkNbaMoneylineCoverage', () => {
 });
 
 describe('checkNhlBlkSourceIntegrity', () => {
-  test('returns failed when recent NST schema drift is detected', () => {
-    const db = makeDb({
-      failedJobRunsByName: {
-        pull_nst_blk_rates: {
-          started_at: DateTime.utc().minus({ hours: 1 }).toISO(),
-          error_message: '[SCHEMA_DRIFT] NST season CSV missing required headers: ev blocks',
-        },
-      },
-    });
-    getDatabase.mockReturnValue(db);
-    isFeatureEnabled.mockImplementation((sport, flag) =>
-      sport === 'nhl' && flag === 'blk-ingest',
-    );
-
-    const result = checkNhlBlkSourceIntegrity();
-
-    expect(result.ok).toBe(false);
-    expect(result.reason).toContain('schema drift');
-  });
-
-  test('returns ok when no recent schema drift failures exist', () => {
+  test('returns decommissioned ok when called', () => {
     const db = makeDb();
     getDatabase.mockReturnValue(db);
-    isFeatureEnabled.mockImplementation((sport, flag) =>
-      sport === 'nhl' && flag === 'blk-ingest',
-    );
 
     const result = checkNhlBlkSourceIntegrity();
 
     expect(result.ok).toBe(true);
-    expect(result.reason).toContain('passed');
+    expect(result.reason).toContain('decommissioned');
+  });
+
+  test('returns decommissioned ok regardless of feature flags', () => {
+    const db = makeDb();
+    getDatabase.mockReturnValue(db);
+    isFeatureEnabled.mockReturnValue(false);
+
+    const result = checkNhlBlkSourceIntegrity();
+
+    expect(result.ok).toBe(true);
+    expect(result.reason).toContain('decommissioned');
   });
 });
 
@@ -690,8 +678,7 @@ describe('checkNhlSogSyncFreshness', () => {
 
 // ===========================================================================
 describe('NHL BLK rates freshness watchdog checks', () => {
-  test('checkNhlBlkRatesFreshness: feature disabled returns ok and writes ok health row', () => {
-    isFeatureEnabled.mockImplementation(() => false);
+  test('checkNhlBlkRatesFreshness: returns decommissioned ok and writes ok health row', () => {
     const writes = [];
     const db = makeDb();
     db.prepare = jest.fn((sql) => {
@@ -705,29 +692,22 @@ describe('NHL BLK rates freshness watchdog checks', () => {
     const result = checkNhlBlkRatesFreshness();
 
     expect(result.ok).toBe(true);
-    expect(result.reason).toMatch(/feature disabled/i);
+    expect(result.reason).toMatch(/decommissioned/i);
     expect(writes).toHaveLength(1);
     expect(writes[0][1]).toBe('blk_rates_nst_freshness');
     expect(writes[0][2]).toBe('ok');
   });
 
-  test('checkNhlBlkRatesFreshness: enabled + stale returns failed', () => {
-    isFeatureEnabled.mockImplementation((sport, feature) =>
-      sport === 'nhl' && feature === 'blk-ingest',
-    );
-    wasJobRecentlySuccessful.mockReturnValueOnce(false);
+  test('checkNhlBlkRatesFreshness: does not evaluate stale CSV jobs anymore', () => {
     getDatabase.mockReturnValue(makeDb({ scheduleCount: 1 }));
 
     const result = checkNhlBlkRatesFreshness();
 
-    expect(result.ok).toBe(false);
-    expect(result.reason).toMatch(/has NOT run successfully/i);
+    expect(result.ok).toBe(true);
+    expect(result.reason).toMatch(/decommissioned/i);
   });
 
-  test('checkNhlMoneyPuckBlkRatesFreshness: moneypuck feature disabled returns ok skip', () => {
-    isFeatureEnabled.mockImplementation((sport, feature) =>
-      sport === 'nhl' && feature === 'blk-ingest',
-    );
+  test('checkNhlMoneyPuckBlkRatesFreshness: returns decommissioned ok and writes status', () => {
     const writes = [];
     const db = makeDb();
     db.prepare = jest.fn((sql) => {
@@ -741,9 +721,29 @@ describe('NHL BLK rates freshness watchdog checks', () => {
     const result = checkNhlMoneyPuckBlkRatesFreshness();
 
     expect(result.ok).toBe(true);
-    expect(result.reason).toMatch(/feature disabled/i);
+    expect(result.reason).toMatch(/decommissioned/i);
     expect(writes).toHaveLength(1);
     expect(writes[0][1]).toBe('blk_rates_moneypuck_freshness');
+    expect(writes[0][2]).toBe('ok');
+  });
+
+  test('checkNhlBlkSourceIntegrity: returns decommissioned ok', () => {
+    const writes = [];
+    const db = makeDb();
+    db.prepare = jest.fn((sql) => {
+      if (sql.includes('INSERT INTO pipeline_health')) {
+        return { run: (...args) => writes.push(args) };
+      }
+      return makeDb().prepare(sql);
+    });
+    getDatabase.mockReturnValue(db);
+
+    const result = checkNhlBlkSourceIntegrity();
+
+    expect(result.ok).toBe(true);
+    expect(result.reason).toMatch(/decommissioned/i);
+    expect(writes).toHaveLength(1);
+    expect(writes[0][1]).toBe('blk_source_integrity');
     expect(writes[0][2]).toBe('ok');
   });
 });

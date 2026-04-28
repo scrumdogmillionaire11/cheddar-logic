@@ -22,9 +22,6 @@ jest.mock('../../jobs/sync_nhl_blk_player_ids', () => ({
 jest.mock('../../jobs/pull_nhl_player_blk', () => ({
   pullNhlPlayerBlk: jest.fn(),
 }));
-jest.mock('../../jobs/ingest_nst_blk_rates', () => ({
-  ingestNstBlkRates: jest.fn(),
-}));
 jest.mock('../../jobs/run_nhl_player_shots_model', () => ({
   runNHLPlayerShotsModel: jest.fn(),
 }));
@@ -152,7 +149,7 @@ describe('computePlayerPropsDueJobs', () => {
   // ─── 09:00 ET fixed window ────────────────────────────────────────────────
 
   describe('09:00 ET fixed window', () => {
-    it('NHL: queues sync_nhl_sog_player_ids, pull_nhl_player_shots, BLK ingest chain, run_nhl_player_shots_model in order', () => {
+    it('NHL: queues sync_nhl_sog_player_ids, pull_nhl_player_shots, BLK sync/pull chain, run_nhl_player_shots_model in order', () => {
       const nowEt = makeNowEt('09:00');
       const result = computePlayerPropsDueJobs(nowEt, { games: [], dryRun: false });
 
@@ -161,7 +158,6 @@ describe('computePlayerPropsDueJobs', () => {
       expect(jobNames).toContain('pull_nhl_player_shots');
       expect(jobNames).toContain('sync_nhl_blk_player_ids');
       expect(jobNames).toContain('pull_nhl_player_blk');
-      expect(jobNames).toContain('ingest_nst_blk_rates');
       expect(jobNames).toContain('run_nhl_player_shots_model');
 
       // Verify ordering: SOG sync before SOG pull before BLK jobs before model
@@ -198,7 +194,6 @@ describe('computePlayerPropsDueJobs', () => {
       const jobNames = result.map((j) => j.jobName);
       expect(jobNames).not.toContain('sync_nhl_blk_player_ids');
       expect(jobNames).not.toContain('pull_nhl_player_blk');
-      expect(jobNames).not.toContain('ingest_nst_blk_rates');
 
       expect(jobNames).toContain('sync_nhl_sog_player_ids');
       expect(jobNames).toContain('pull_nhl_player_shots');
@@ -222,7 +217,6 @@ describe('computePlayerPropsDueJobs', () => {
       expect(jobNames).not.toContain('pull_nhl_player_shots');
       expect(jobNames).not.toContain('sync_nhl_blk_player_ids');
       expect(jobNames).not.toContain('pull_nhl_player_blk');
-      expect(jobNames).not.toContain('ingest_nst_blk_rates');
     });
 
     it('ENABLE_NHL_SOG_PLAYER_SYNC=false at 15:00 → sync suppressed, model still runs', () => {
@@ -246,24 +240,8 @@ describe('computePlayerPropsDueJobs', () => {
     });
   });
 
-  describe('BLK rates backstop windows', () => {
-    it('queues pull_nst_blk_rates on Wednesday 09:00 ET as a daily backstop', () => {
-      const nowEt = DateTime.fromObject(
-        { year: 2026, month: 4, day: 1, hour: 9, minute: 0, second: 0 },
-        { zone: ET_ZONE },
-      );
-
-      const result = computePlayerPropsDueJobs(nowEt, { games: [], dryRun: false });
-      const jobNames = result.map((j) => j.jobName);
-      const nstPull = result.find((j) => j.jobName === 'pull_nst_blk_rates');
-
-      expect(jobNames).toContain('pull_nst_blk_rates');
-      expect(nstPull).toBeDefined();
-      expect(nstPull.jobKey).toMatch(/^player_props\|nst_blk_rates\|weekly\|2026-W\d{2}$/);
-    });
-
-    it('ENABLE_NHL_BLK_RATES_BACKSTOP_DAILY=false suppresses non-Monday 09:00 BLK pulls', () => {
-      process.env.ENABLE_NHL_BLK_RATES_BACKSTOP_DAILY = 'false';
+  describe('CSV BLK pulls decommissioned', () => {
+    it('does not queue CSV BLK pull jobs on Wednesday 09:00 ET', () => {
       const nowEt = DateTime.fromObject(
         { year: 2026, month: 4, day: 1, hour: 9, minute: 0, second: 0 },
         { zone: ET_ZONE },

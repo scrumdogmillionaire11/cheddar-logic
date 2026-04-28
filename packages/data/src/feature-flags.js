@@ -66,12 +66,6 @@ function isFeatureEnabled(sport, featureName) {
     return process.env[key] !== 'false';
   }
 
-  // NHL MoneyPuck BLK rates (default: enabled)
-  if (normalizedFeature === 'moneypuck-blk' && normalizedSport === 'nhl') {
-    const key = 'NHL_MONEYPUCK_BLK_ENABLED';
-    return process.env[key] !== 'false';
-  }
-
   // Player props scheduler (default: enabled)
   if (normalizedFeature === 'player-props-scheduler') {
     const key = 'ENABLE_PLAYER_PROPS_SCHEDULER';

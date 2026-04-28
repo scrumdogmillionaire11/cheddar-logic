@@ -86,9 +86,6 @@ const MODEL_FRESHNESS_ALERT_WINDOW_HOURS = Number(
 const MLB_F5_ALERT_WINDOW_HOURS = Number(
   process.env.MLB_F5_ALERT_WINDOW_HOURS || 2,
 );
-const NHL_BLK_RATES_MAX_AGE_HOURS = Number(
-  process.env.NHL_BLK_RATES_MAX_AGE_HOURS || 96,
-);
 const PIPELINE_HEALTH_ALERT_CONSECUTIVE = Number(
   process.env.PIPELINE_HEALTH_ALERT_CONSECUTIVE || 3,
 );
@@ -162,13 +159,13 @@ const CHECK_REGISTRY = Object.freeze({
     phase: 'nhl', checkName: 'shots_model_freshness', checkId: buildCheckId('model', 'freshness', 'nhl_shots'),
   },
   nhl_blk_rates_nst_freshness: {
-    phase: 'nhl', checkName: 'blk_rates_nst_freshness', checkId: buildCheckId('job', 'freshness', 'pull_nst_blk_rates'),
+    phase: 'nhl', checkName: 'blk_rates_nst_freshness', checkId: buildCheckId('nhl', 'freshness', 'blk_csv_nst_decommissioned'),
   },
   nhl_blk_rates_moneypuck_freshness: {
-    phase: 'nhl', checkName: 'blk_rates_moneypuck_freshness', checkId: buildCheckId('job', 'freshness', 'pull_moneypuck_blk_rates'),
+    phase: 'nhl', checkName: 'blk_rates_moneypuck_freshness', checkId: buildCheckId('nhl', 'freshness', 'blk_csv_moneypuck_decommissioned'),
   },
   nhl_blk_source_integrity: {
-    phase: 'nhl', checkName: 'blk_source_integrity', checkId: buildCheckId('nhl', 'integrity', 'blk_sources'),
+    phase: 'nhl', checkName: 'blk_source_integrity', checkId: buildCheckId('nhl', 'integrity', 'blk_csv_sources_decommissioned'),
   },
   nba_model_freshness: {
     phase: 'nba', checkName: 'model_freshness', checkId: buildCheckId('model', 'freshness', 'nba'),
@@ -2306,93 +2303,25 @@ function checkNhlSogPullFreshness() {
   });
 }
 
-function getLatestBlkSchemaDriftFailure(jobName, lookbackHours = 72) {
-  const db = getDatabase();
-  return db
-    .prepare(
-      `SELECT started_at, error_message
-       FROM job_runs
-       WHERE job_name = ?
-         AND status = 'failed'
-         AND started_at >= datetime('now', ?)
-       ORDER BY started_at DESC
-       LIMIT 1`,
-    )
-    .get(jobName, `-${lookbackHours} hours`);
-}
-
 function checkNhlBlkSourceIntegrity() {
-  if (!isFeatureEnabled('nhl', 'blk-ingest')) {
-    const reason = 'NHL BLK ingest feature disabled';
-    writePipelineHealth('nhl', 'blk_source_integrity', 'ok', reason);
-    return { ok: true, reason };
-  }
-
-  const failures = [];
-  const nstFailure = getLatestBlkSchemaDriftFailure('pull_nst_blk_rates');
-  const moneypuckFailure = getLatestBlkSchemaDriftFailure('pull_moneypuck_blk_rates');
-  const isSchemaDriftMessage = (value) => /schema[_\s-]?drift|missing required headers/i.test(String(value || ''));
-
-  if (nstFailure && isSchemaDriftMessage(nstFailure.error_message)) {
-    failures.push(`NST schema drift at ${nstFailure.started_at}`);
-  }
-  if (moneypuckFailure && isSchemaDriftMessage(moneypuckFailure.error_message)) {
-    failures.push(`MoneyPuck schema drift at ${moneypuckFailure.started_at}`);
-  }
-
-  if (failures.length > 0) {
-    const reason = `BLK source integrity failure: ${failures.join('; ')}`;
-    writePipelineHealth('nhl', 'blk_source_integrity', 'failed', reason);
-    return { ok: false, reason };
-  }
-
-  const reason = 'BLK source integrity checks passed (no recent schema-drift failures)';
+  const reason =
+    'BLK CSV source-integrity checks decommissioned: external NST/MoneyPuck CSV reliance removed';
   writePipelineHealth('nhl', 'blk_source_integrity', 'ok', reason);
   return { ok: true, reason };
 }
 
 function checkNhlBlkRatesFreshness() {
-  if (!isFeatureEnabled('nhl', 'blk-ingest')) {
-    const reason = 'NHL BLK ingest feature disabled';
-    writePipelineHealth('nhl', 'blk_rates_nst_freshness', 'ok', reason);
-    return { ok: true, reason };
-  }
-
-  return checkSportModelFreshness(
-    'nhl',
-    'pull_nst_blk_rates',
-    'blk_rates_nst_freshness',
-    NHL_BLK_RATES_MAX_AGE_HOURS * 60,
-    {
-      expectedIntervalMinutes: 1440,
-      graceWindowMinutes: Math.max((NHL_BLK_RATES_MAX_AGE_HOURS * 60) - 1440, 0),
-    },
-  );
+  const reason =
+    'BLK NST freshness check decommissioned: no external CSV pulls are expected';
+  writePipelineHealth('nhl', 'blk_rates_nst_freshness', 'ok', reason);
+  return { ok: true, reason };
 }
 
 function checkNhlMoneyPuckBlkRatesFreshness() {
-  if (!isFeatureEnabled('nhl', 'blk-ingest')) {
-    const reason = 'NHL BLK ingest feature disabled';
-    writePipelineHealth('nhl', 'blk_rates_moneypuck_freshness', 'ok', reason);
-    return { ok: true, reason };
-  }
-
-  if (!isFeatureEnabled('nhl', 'moneypuck-blk')) {
-    const reason = 'MoneyPuck BLK feature disabled';
-    writePipelineHealth('nhl', 'blk_rates_moneypuck_freshness', 'ok', reason);
-    return { ok: true, reason };
-  }
-
-  return checkSportModelFreshness(
-    'nhl',
-    'pull_moneypuck_blk_rates',
-    'blk_rates_moneypuck_freshness',
-    NHL_BLK_RATES_MAX_AGE_HOURS * 60,
-    {
-      expectedIntervalMinutes: 1440,
-      graceWindowMinutes: Math.max((NHL_BLK_RATES_MAX_AGE_HOURS * 60) - 1440, 0),
-    },
-  );
+  const reason =
+    'BLK MoneyPuck freshness check decommissioned: no external CSV pulls are expected';
+  writePipelineHealth('nhl', 'blk_rates_moneypuck_freshness', 'ok', reason);
+  return { ok: true, reason };
 }
 
 module.exports = {

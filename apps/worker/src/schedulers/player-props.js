@@ -27,14 +27,14 @@
  * ----------
  * player_props|nhl|fixed|YYYY-MM-DD|HH:MM          — fixed-time NHL window
  * player_props|nhl|tminus|<game_id>|T60             — T-60 NHL game
- * player_props|nhl_blk_ingest|daily|YYYY-MM-DD      — BLK ingest daily key
+ * player_props|nhl_blk_ingest|daily|YYYY-MM-DD      — BLK ingest daily key (non-CSV jobs only)
  * player_props|mlb|fixed|YYYY-MM-DD|HH:MM           — fixed-time MLB window
  * player_props|mlb|tminus|<game_id>|T60             — T-60 MLB game
  *
  * env vars
  * --------
  * ENABLE_PLAYER_PROPS_SCHEDULER  — set to "false" to disable entire scheduler
- * ENABLE_NHL_BLK_INGEST          — set to "false" to suppress the three BLK jobs only
+ * ENABLE_NHL_BLK_INGEST          — set to "false" to suppress NHL BLK sync/pull jobs
  * PLAYER_PROPS_FIXED_TIMES_ET    — comma-separated HH:MM times (default "09:00,15:00")
  * FIXED_CATCHUP                  — set to "false" for strict 2×TICK_MS window (default: true)
  * TICK_MS                        — scheduler tick interval in ms (default: 60000)
@@ -52,9 +52,6 @@ const { syncNhlSogPlayerIds } = require('../jobs/sync_nhl_sog_player_ids');
 const { pullNhlPlayerShots } = require('../jobs/pull_nhl_player_shots');
 const { syncNhlBlkPlayerIds } = require('../jobs/sync_nhl_blk_player_ids');
 const { pullNhlPlayerBlk } = require('../jobs/pull_nhl_player_blk');
-const { ingestNstBlkRates } = require('../jobs/ingest_nst_blk_rates');
-const { pullNstBlkRates } = require('../jobs/pull_nst_blk_rates');
-const { pullMoneyPuckBlkRates } = require('../jobs/pull_moneypuck_blk_rates');
 const { runNHLPlayerShotsModel } = require('../jobs/run_nhl_player_shots_model');
 const { pullMlbPitcherStats } = require('../jobs/pull_mlb_pitcher_stats');
 const { pullMlbWeather } = require('../jobs/pull_mlb_weather');
@@ -128,30 +125,6 @@ function keyMlbTminus(gameId) {
   return `player_props|mlb|tminus|${gameId}|T60`;
 }
 
-/**
- * Weekly NST BLK rates pull key.
- * Keyed to ISO week (YYYY-WNN) so the job is idempotent within a calendar week.
- *
- * @param {DateTime} nowEt
- * @returns {string}
- */
-function keyNstBlkRatesWeekly(nowEt) {
-  const week = String(nowEt.weekNumber).padStart(2, '0');
-  return `player_props|nst_blk_rates|weekly|${nowEt.year}-W${week}`;
-}
-
-/**
- * Weekly MoneyPuck BLK rates pull key.
- * Keyed to ISO week so the job is idempotent within a calendar week.
- *
- * @param {DateTime} nowEt
- * @returns {string}
- */
-function keyMoneyPuckBlkRatesWeekly(nowEt) {
-  const week = String(nowEt.weekNumber).padStart(2, '0');
-  return `player_props|moneypuck_blk_rates|weekly|${nowEt.year}-W${week}`;
-}
-
 // ─── Main export ──────────────────────────────────────────────────────────────
 
 /**
@@ -178,47 +151,8 @@ function computePlayerPropsDueJobs(
   const dateStr = nowEt.toISODate();
   const fixedTimes = getPlayerPropsFixedTimes();
   const blkEnabled = isFeatureEnabled('nhl', 'blk-ingest');
-  const mpBlkEnabled = blkEnabled && isFeatureEnabled('nhl', 'moneypuck-blk');
-  const blkRatesDailyBackstopEnabled = process.env.ENABLE_NHL_BLK_RATES_BACKSTOP_DAILY !== 'false';
   const mlbFixedRefreshAllowed = quotaTier === 'FULL' || quotaTier === 'MEDIUM';
   const jobs = [];
-
-  // ── BLK rates pulls (primary weekly + daily 09:00 ET backstop) ──────────
-  // Two complementary sources — both run weekly on Monday so data refreshes
-  // after weekend game activity. Keys remain weekly idempotent, so daily
-  // backstop windows only execute when the weekly pull has not succeeded.
-  //
-  // pull_nst_blk_rates: NST CSV export (requires NHL_BLK_NST_*_CSV_URL env vars;
-  //   warns and returns cleanly when URLs are unset).
-  // pull_moneypuck_blk_rates: MoneyPuck season-summary CSV (no env vars needed;
-  //   URL is derived from the calendar date and updated nightly).
-  const isBlkRatesPrimaryWindow = nowEt.weekday === 1 && isFixedDue(nowEt, '09:00');
-  const isBlkRatesBackstopWindow =
-    blkRatesDailyBackstopEnabled &&
-    nowEt.weekday !== 1 &&
-    isFixedDue(nowEt, '09:00');
-  if (blkEnabled && (isBlkRatesPrimaryWindow || isBlkRatesBackstopWindow)) {
-    const pullMode = isBlkRatesPrimaryWindow ? 'weekly primary' : 'daily backstop';
-    const nstBlkKey = keyNstBlkRatesWeekly(nowEt);
-    jobs.push({
-      jobName: 'pull_nst_blk_rates',
-      jobKey: nstBlkKey,
-      execute: pullNstBlkRates,
-      args: { jobKey: nstBlkKey, dryRun },
-      reason: `${pullMode} NST BLK rates pull (09:00 ET, week ${nowEt.year}-W${String(nowEt.weekNumber).padStart(2, '0')})`,
-    });
-
-    const mpBlkKey = keyMoneyPuckBlkRatesWeekly(nowEt);
-    if (mpBlkEnabled) {
-      jobs.push({
-        jobName: 'pull_moneypuck_blk_rates',
-        jobKey: mpBlkKey,
-        execute: pullMoneyPuckBlkRates,
-        args: { jobKey: mpBlkKey, dryRun },
-        reason: `${pullMode} MoneyPuck BLK rates pull (09:00 ET, week ${nowEt.year}-W${String(nowEt.weekNumber).padStart(2, '0')})`,
-      });
-    }
-  }
 
   // ── Fixed-time windows ────────────────────────────────────────────────────
   for (const hhmm of fixedTimes) {
@@ -266,14 +200,6 @@ function computePlayerPropsDueJobs(
           execute: pullNhlPlayerBlk,
           args: { jobKey: blkPullKey, dryRun },
           reason: `player-props daily NHL BLK stats pull (${hhmm} ET)`,
-        });
-        const blkIngestKey = `${blkKey}|ingest`;
-        jobs.push({
-          jobName: 'ingest_nst_blk_rates',
-          jobKey: blkIngestKey,
-          execute: ingestNstBlkRates,
-          args: { jobKey: blkIngestKey, dryRun },
-          reason: `player-props daily NST BLK rate ingest (${hhmm} ET)`,
         });
       }
     }
@@ -354,6 +280,4 @@ module.exports = {
   keyNhlBlkIngest,
   keyMlbFixed,
   keyMlbTminus,
-  keyNstBlkRatesWeekly,
-  keyMoneyPuckBlkRatesWeekly,
 };

@@ -89,10 +89,6 @@ describe('isFeatureEnabled', () => {
       expect(isFeatureEnabled('nhl', 'blk-ingest')).toBe(true);
     });
 
-    test('moneypuck-blk is enabled by default', () => {
-      delete process.env.NHL_MONEYPUCK_BLK_ENABLED;
-      expect(isFeatureEnabled('nhl', 'moneypuck-blk')).toBe(true);
-    });
   });
 
   describe('player props scheduler', () => {
