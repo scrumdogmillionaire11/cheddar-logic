@@ -1265,11 +1265,13 @@ function getLatestNhlModelOutput(gameId) {
   if (!row) return null;
   const rd = JSON.parse(row.payload_data);
   
-  const statusToken = String(rd.status ?? rd.decision_v2?.official_status ?? '').toUpperCase();
+  const statusToken = String(
+    rd.canonical_decision?.official_status ?? rd.status ?? rd.decision_v2?.official_status ?? ''
+  ).toUpperCase();
   const typeToken = String(rd.type ?? '').toLowerCase();
 
-  // Filter out PASS and evidence payloads (non-actionable)
-  if (statusToken === 'PASS' || typeToken === 'evidence') {
+  // Filter out PASS/INVALID and evidence payloads (non-actionable)
+  if (statusToken === 'PASS' || statusToken === 'INVALID' || typeToken === 'evidence') {
     return null;
   }
   
@@ -1303,6 +1305,10 @@ function getLatestMlbModelOutput(gameId) {
   `).get(gameId);
   if (!row) return null;
   const rd = JSON.parse(row.payload_data);
+  const statusToken = String(
+    rd.canonical_decision?.official_status ?? rd.status ?? rd.decision_v2?.official_status ?? ''
+  ).toUpperCase();
+  if (statusToken === 'INVALID') return null;
   
   // Try modern top-level schema first
   const modernEdge = rd.edge;
@@ -1356,6 +1362,10 @@ function getLatestNbaModelOutput(gameId) {
   `).get(gameId);
   if (!row) return null;
   const rd = JSON.parse(row.payload_data);
+  const statusToken = String(
+    rd.canonical_decision?.official_status ?? rd.status ?? rd.decision_v2?.official_status ?? ''
+  ).toUpperCase();
+  if (statusToken === 'INVALID') return null;
   const totalProjection =
     rd.projection_accuracy?.projection_raw ??
     rd.projection?.total ??

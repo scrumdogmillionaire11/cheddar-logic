@@ -795,6 +795,57 @@ describe('card payload/card_results sport normalization', () => {
     expect(dbModule.getLatestNhlModelOutput(gameId)).toBeNull();
   });
 
+  test('getLatestNhlModelOutput filters out INVALID payloads from decision_v2 official_status', () => {
+    const db = dbModule.getDatabase();
+    const now = new Date();
+    const gameTimeUtc = new Date(now.getTime() + 60 * 60 * 1000).toISOString();
+    const gameId = 'test-nhl-decision-v2-invalid-filter';
+    ensureSettlementTables(db);
+
+    db.prepare(
+      `INSERT INTO games (
+        id, sport, game_id, home_team, away_team, game_time_utc, status
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      'game-nhl-decision-v2-invalid-filter',
+      'nhl',
+      gameId,
+      'Home Team',
+      'Away Team',
+      gameTimeUtc,
+      'scheduled'
+    );
+
+    db.prepare(`
+      INSERT INTO card_payloads (
+        id, game_id, sport, card_type, card_title, created_at, expires_at,
+        payload_data, model_output_ids, metadata, run_id, updated_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      'card-nhl-decision-v2-invalid-filter',
+      gameId,
+      'nhl',
+      'nhl-model-output',
+      'NHL Model Output',
+      now.toISOString(),
+      null,
+      JSON.stringify({
+        decision_v2: { official_status: 'INVALID' },
+        goalie_home_save_pct: 0.918,
+        goalie_home_gsax: 7.4,
+        goalie_away_save_pct: 0.905,
+        goalie_away_gsax: -1.2,
+      }),
+      null,
+      null,
+      'run-nhl-decision-v2-invalid-filter',
+      now.toISOString()
+    );
+
+    expect(dbModule.getLatestNhlModelOutput(gameId)).toBeNull();
+  });
+
   test('getLatestNhlModelOutput filters out payloads with null model probabilities', () => {
     const db = dbModule.getDatabase();
     const now = new Date();
@@ -896,6 +947,105 @@ describe('card payload/card_results sport normalization', () => {
       homeGoalie: { savePct: 0.925, gsax: 5.1 },
       awayGoalie: { savePct: 0.912, gsax: 2.3 },
     });
+  });
+
+  test('getLatestMlbModelOutput filters out INVALID payloads from decision_v2 official_status', () => {
+    const db = dbModule.getDatabase();
+    const now = new Date();
+    const gameTimeUtc = new Date(now.getTime() + 60 * 60 * 1000).toISOString();
+    const gameId = 'test-mlb-decision-v2-invalid-filter';
+    ensureSettlementTables(db);
+
+    db.prepare(
+      `INSERT INTO games (
+        id, sport, game_id, home_team, away_team, game_time_utc, status
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      'game-mlb-decision-v2-invalid-filter',
+      'mlb',
+      gameId,
+      'Home Team',
+      'Away Team',
+      gameTimeUtc,
+      'scheduled'
+    );
+
+    db.prepare(`
+      INSERT INTO card_payloads (
+        id, game_id, sport, card_type, card_title, created_at, expires_at,
+        payload_data, model_output_ids, metadata, run_id, updated_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      'card-mlb-decision-v2-invalid-filter',
+      gameId,
+      'mlb',
+      'mlb-full-game',
+      'MLB Full Game',
+      now.toISOString(),
+      null,
+      JSON.stringify({
+        decision_v2: { official_status: 'INVALID' },
+        projection_source: 'MLB_FULL_GAME_MODEL',
+        model_prob: 0.602,
+        edge: 0.052,
+        selection: { side: 'HOME' },
+      }),
+      null,
+      null,
+      'run-mlb-decision-v2-invalid-filter',
+      now.toISOString()
+    );
+
+    expect(dbModule.getLatestMlbModelOutput(gameId)).toBeNull();
+  });
+
+  test('getLatestNbaModelOutput filters out INVALID payloads from decision_v2 official_status', () => {
+    const db = dbModule.getDatabase();
+    const now = new Date();
+    const gameTimeUtc = new Date(now.getTime() + 60 * 60 * 1000).toISOString();
+    const gameId = 'test-nba-decision-v2-invalid-filter';
+    ensureSettlementTables(db);
+
+    db.prepare(
+      `INSERT INTO games (
+        id, sport, game_id, home_team, away_team, game_time_utc, status
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      'game-nba-decision-v2-invalid-filter',
+      'nba',
+      gameId,
+      'Home Team',
+      'Away Team',
+      gameTimeUtc,
+      'scheduled'
+    );
+
+    db.prepare(`
+      INSERT INTO card_payloads (
+        id, game_id, sport, card_type, card_title, created_at, expires_at,
+        payload_data, model_output_ids, metadata, run_id, updated_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      'card-nba-decision-v2-invalid-filter',
+      gameId,
+      'nba',
+      'nba-totals-call',
+      'NBA Totals Call',
+      now.toISOString(),
+      null,
+      JSON.stringify({
+        decision_v2: { official_status: 'INVALID' },
+        projection_accuracy: { projection_raw: 223.5 },
+      }),
+      null,
+      null,
+      'run-nba-decision-v2-invalid-filter',
+      now.toISOString()
+    );
+
+    expect(dbModule.getLatestNbaModelOutput(gameId)).toBeNull();
   });
 
   test('backfillCardResultsSportCasing normalizes mixed-case sport values', () => {
