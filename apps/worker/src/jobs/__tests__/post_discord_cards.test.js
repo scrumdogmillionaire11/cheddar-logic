@@ -63,23 +63,59 @@ function stampNhlTotals(pd) {
 }
 
 function makeCard(overrides = {}) {
+  const { payloadData: overridePayload = {}, ...cardOverrides } = overrides;
+  const payloadData = {
+    action: 'FIRE',
+    kind: 'PLAY',
+    pass_reason: null,
+    pass_reason_code: null,
+    market_type: 'MONEYLINE',
+    selection: { team: 'Boston Bruins' },
+    price: -115,
+    line: null,
+    projection_only: false,
+    ...overridePayload,
+  };
+
+  if (!Object.prototype.hasOwnProperty.call(payloadData, 'decision_v2')) {
+    const hasCompatibilityBucket =
+      Object.prototype.hasOwnProperty.call(payloadData, 'webhook_bucket') &&
+      !Object.prototype.hasOwnProperty.call(payloadData, 'webhook_publish_status');
+
+    if (hasCompatibilityBucket) {
+      // Force canonical resolver to return null so webhook_bucket compatibility behavior stays testable.
+      payloadData.decision_v2 = {
+        official_status: 'PLAY',
+        source: 'legacy_repair',
+      };
+    } else {
+      const action = String(payloadData.action || payloadData.status || '').toUpperCase();
+      const classification = String(payloadData.classification || '').toUpperCase();
+      const passReason = String(payloadData.pass_reason_code || payloadData.pass_reason || '').toUpperCase();
+      const status =
+        action.includes('PASS') ||
+        classification.includes('PASS') ||
+        passReason.startsWith('PASS')
+          ? 'PASS'
+          : action === 'HOLD' || action === 'WATCH' || action === 'LEAN' || classification === 'LEAN'
+            ? 'LEAN'
+            : 'PLAY';
+
+      payloadData.decision_v2 = {
+        official_status: status,
+        source: 'decision_authority',
+        primary_reason_code: status === 'PASS' ? 'PASS_NO_EDGE' : 'EDGE_CLEAR',
+      };
+    }
+  }
+
   return {
     id: 'card-1',
     sport: 'nhl',
     matchup: 'Boston Bruins @ New York Rangers',
     cardType: 'nhl-model-output',
-    payloadData: {
-      action: 'FIRE',
-      kind: 'PLAY',
-      pass_reason: null,
-      pass_reason_code: null,
-      market_type: 'MONEYLINE',
-      selection: { team: 'Boston Bruins' },
-      price: -115,
-      line: null,
-      projection_only: false,
-    },
-    ...overrides,
+    payloadData,
+    ...cardOverrides,
   };
 }
 
@@ -433,6 +469,9 @@ describe('post_discord_cards helpers', () => {
           pass_reason_code: 'LINE_NOT_CONFIRMED',
           projection_only: false,
           decision_v2: {
+            official_status: 'PASS',
+            source: 'decision_authority',
+            primary_reason_code: 'LINE_NOT_CONFIRMED',
             play_tier: 'BEST',
           },
         },
@@ -501,7 +540,12 @@ describe('post_discord_cards helpers', () => {
           price: 146,
           edge: 0.05,
           pass_reason_code: 'LINE_NOT_CONFIRMED',
-          decision_v2: { play_tier: 'BEST' },
+          decision_v2: {
+            official_status: 'PASS',
+            source: 'decision_authority',
+            primary_reason_code: 'LINE_NOT_CONFIRMED',
+            play_tier: 'BEST',
+          },
           projection_only: false,
         },
       }),
@@ -666,6 +710,9 @@ describe('post_discord_cards helpers', () => {
             },
             surfaced_status: 'SLIGHT EDGE',
             surfaced_reason_code: 'FIRST_PERIOD_PRICE_UNAVAILABLE',
+          },
+          decision_v2: {
+            source: 'legacy_repair',
           },
           projection_only: false,
         },
@@ -1592,6 +1639,11 @@ describe('postDiscordCards integration', () => {
       sport,
       `${sport}-moneyline-call`,
       JSON.stringify({
+        decision_v2: {
+          official_status: 'PLAY',
+          source: 'decision_authority',
+          primary_reason_code: 'EDGE_CLEAR',
+        },
         action: 'FIRE',
         kind: 'PLAY',
         market_type: 'MONEYLINE',
@@ -1656,6 +1708,11 @@ describe('postDiscordCards integration', () => {
       'potd-card',
       'game-1',
       JSON.stringify({
+        decision_v2: {
+          official_status: 'PLAY',
+          source: 'decision_authority',
+          primary_reason_code: 'EDGE_CLEAR',
+        },
         action: 'FIRE',
         kind: 'PLAY',
         market_type: 'TOTAL',
@@ -1666,6 +1723,11 @@ describe('postDiscordCards integration', () => {
       'regular-card',
       'game-1',
       JSON.stringify({
+        decision_v2: {
+          official_status: 'PLAY',
+          source: 'decision_authority',
+          primary_reason_code: 'EDGE_CLEAR',
+        },
         action: 'FIRE',
         kind: 'PLAY',
         market_type: 'MONEYLINE',

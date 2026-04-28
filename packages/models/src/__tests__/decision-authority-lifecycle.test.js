@@ -46,7 +46,20 @@ describe('decision-authority lifecycle contract', () => {
       { stage: 'read_api' },
     );
 
-    expect(decision).toBeNull();
+    expect(decision).toEqual({
+      official_status: AUTHORITY_STATUSES.INVALID,
+      is_actionable: false,
+      tier: AUTHORITY_STATUSES.INVALID,
+      reason_code: 'MISSING_DECISION_V2',
+      source: CANONICAL_DECISION_SOURCE,
+      lifecycle: [
+        {
+          stage: 'read_api',
+          status: 'INVALID',
+          reason_code: 'MISSING_DECISION_V2',
+        },
+      ],
+    });
   });
 
   test('can opt into legacy fallback for migration paths', () => {
@@ -64,12 +77,12 @@ describe('decision-authority lifecycle contract', () => {
 
     expect(decision).not.toBeNull();
     expect(decision.official_status).toBe(AUTHORITY_STATUSES.SLIGHT_EDGE);
-    expect(decision.reason_code).toBe('CANONICAL_DECISION_MISSING');
+    expect(decision.reason_code).toBe('MISSING_DECISION_V2');
     expect(decision.lifecycle).toEqual([
       {
         stage: 'publisher',
         status: 'DOWNGRADED',
-        reason_code: 'CANONICAL_DECISION_MISSING',
+        reason_code: 'MISSING_DECISION_V2',
       },
     ]);
   });
