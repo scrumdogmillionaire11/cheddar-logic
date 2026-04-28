@@ -23,6 +23,7 @@ next-env.d.ts
 .env.production.local
 .env.production
 !web/.env.production
+.env.vercel
 
 # Local config overrides
 team_config.json

@@ -19,6 +19,7 @@ require('dotenv').config();
 const { v4: uuidV4 } = require('uuid');
 const { DateTime } = require('luxon');
 const recoveryFlow = require('./helpers/recovery-flow.js');
+const { ensureCanonicalDecisionV2 } = require('./helpers/ensure-canonical-decision-v2.js');
 
 // Import cheddar-logic data layer
 const {
@@ -721,94 +722,6 @@ function applyDecisionNamespaceMetadata(payload) {
     has_odds: Boolean(hasOdds),
     freshness_tier: freshnessTier,
     execution_blocked: executionBlocked,
-  };
-}
-
-function ensureCanonicalDecisionV2(payload) {
-  if (!payload || typeof payload !== 'object') return;
-
-  if (!payload.decision_v2 || typeof payload.decision_v2 !== 'object') {
-    payload.decision_v2 = {};
-  }
-
-  const CANONICAL_DECISION_SOURCE = 'decision_authority';
-
-  const normalizeOfficialStatus = (value) => {
-    const token = String(value || '').toUpperCase();
-    if (token === 'PLAY' || token === 'FIRE' || token === 'BASE') return 'PLAY';
-    if (token === 'LEAN' || token === 'WATCH' || token === 'HOLD') return 'LEAN';
-    return 'PASS';
-  };
-
-  const fallbackReasonCode =
-    payload.pass_reason_code ||
-    payload.gate_reason ||
-    payload.blocked_reason_code ||
-    payload.decision_v2.primary_reason_code ||
-    'UNKNOWN_REASON';
-
-  const officialStatus = normalizeOfficialStatus(
-    payload.decision_v2.official_status ||
-      payload.status ||
-      payload.action ||
-      payload.classification,
-  );
-  const isActionable = officialStatus !== 'PASS';
-  const executionStatus = payload.execution_status || (officialStatus === 'PASS' ? 'BLOCKED' : 'EXECUTABLE');
-  const selectionSide = payload?.selection?.side || payload?.prediction || null;
-  const selectionTeam = payload?.selection?.team || null;
-  const reasonCodes = uniqueReasonCodes([
-    payload.decision_v2.primary_reason_code,
-    payload.pass_reason_code,
-    ...(Array.isArray(payload.reason_codes) ? payload.reason_codes : []),
-    ...(Array.isArray(payload.decision_v2.price_reason_codes)
-      ? payload.decision_v2.price_reason_codes
-      : []),
-    ...(Array.isArray(payload.decision_v2.watchdog_reason_codes)
-      ? payload.decision_v2.watchdog_reason_codes
-      : []),
-  ]);
-
-  payload.canonical_decision = {
-    official_status: officialStatus,
-    is_actionable: isActionable,
-    tier: officialStatus,
-    reason_code: fallbackReasonCode,
-    source: CANONICAL_DECISION_SOURCE,
-    lifecycle: [
-      {
-        stage: 'publisher',
-        status: officialStatus,
-        reason_code: fallbackReasonCode,
-      },
-    ],
-  };
-  payload.decision_v2.official_status = officialStatus;
-  payload.decision_v2.primary_reason_code =
-    payload.decision_v2.primary_reason_code || fallbackReasonCode;
-  payload.decision_v2.source = CANONICAL_DECISION_SOURCE;
-  payload.decision_v2.canonical_envelope_v2 = {
-    official_status: officialStatus,
-    authority_status: officialStatus,
-    primary_reason_code:
-      payload.decision_v2.primary_reason_code || fallbackReasonCode,
-    reason_codes: reasonCodes,
-    is_actionable: isActionable,
-    execution_status: executionStatus,
-    direction: selectionSide,
-    selection_side: selectionSide,
-    selection_team: selectionTeam,
-    source: CANONICAL_DECISION_SOURCE,
-    lifecycle: [
-      {
-        stage: 'publisher',
-        status: officialStatus,
-        reason_code: payload.decision_v2.primary_reason_code || fallbackReasonCode,
-      },
-    ],
-    publish_ready:
-      payload.publish_ready === true ||
-      (isActionable && executionStatus === 'EXECUTABLE'),
   };
 }
 
