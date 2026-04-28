@@ -886,6 +886,79 @@ describe('runPotdEngine', () => {
     expect(playRow.discord_posted).toBe(0);
   });
 
+  test('write-path rejects INVALID decision outcomes before scoring even if candidate bypasses model-output reader', async () => {
+    const { runPotdEngine } = require('../run_potd_engine');
+
+    insertGameRow({
+      gameId: 'nhl-invalid-bypass-001',
+      sport: 'nhl',
+      homeTeam: 'Boston Bruins',
+      awayTeam: 'Toronto Maple Leafs',
+      gameTimeUtc: '2026-04-10T00:00:00.000Z',
+    });
+
+    insertCardPayloadRow({
+      id: 'nhl-invalid-bypass-card',
+      gameId: 'nhl-invalid-bypass-001',
+      sport: 'nhl',
+      cardType: 'nhl-model-output',
+      cardTitle: 'NHL Model Output',
+      createdAt: '2026-04-09T18:00:00.000Z',
+      payloadData: {
+        decision_v2: { official_status: 'INVALID' },
+        goalie_home_save_pct: 0.918,
+        goalie_home_gsax: 7.4,
+        goalie_away_save_pct: 0.905,
+        goalie_away_gsax: -1.2,
+      },
+    });
+
+    const scoreCandidateFn = jest.fn((value) => value);
+    const bypassCandidate = buildSelectedCandidate({
+      gameId: 'nhl-invalid-bypass-001',
+      sport: 'NHL',
+      marketType: 'MONEYLINE',
+      selection: 'HOME',
+      selectionLabel: 'Boston Bruins',
+      line: null,
+      price: -135,
+    });
+
+    const result = await runPotdEngine({
+      jobKey: 'potd|invalid-decision-write-path-gate',
+      force: true,
+      fetchOddsFn: async ({ sport }) =>
+        sport === 'NHL'
+          ? {
+              games: [
+                {
+                  gameId: 'nhl-invalid-bypass-001',
+                  sport: 'NHL',
+                  homeTeam: 'Boston Bruins',
+                  awayTeam: 'Toronto Maple Leafs',
+                  gameTimeUtc: '2026-04-10T00:00:00.000Z',
+                  market: { spreads: [], totals: [], h2h: [] },
+                },
+              ],
+              errors: [],
+            }
+          : { games: [], errors: [] },
+      buildCandidatesFn: () => [bypassCandidate],
+      scoreCandidateFn,
+      selectTopPlaysFn: (values) => values,
+      kellySizeFn: () => 2,
+      sendDiscordMessagesFn: async () => 1,
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.noPlay).toBe(true);
+    expect(scoreCandidateFn).not.toHaveBeenCalled();
+
+    expect(readRows('SELECT * FROM potd_plays')).toEqual([]);
+    expect(readRows('SELECT * FROM potd_nominees')).toEqual([]);
+    expect(readRows('SELECT * FROM potd_shadow_candidates')).toEqual([]);
+  });
+
   test('hydrates MLB games from persisted model-output card payloads before candidate construction', async () => {
     // MLB has active:false in production config, but this test exercises the engine's
     // MLB-specific odds-hydration code path. Mock MLB as active so it enters the pipeline.

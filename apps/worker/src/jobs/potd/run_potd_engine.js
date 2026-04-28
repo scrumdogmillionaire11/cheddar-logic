@@ -1046,6 +1046,40 @@ function hasModelPayloadForGame(db, gameId, cardType) {
   }
 }
 
+function readLatestModelPayloadDecisionStatus(db, gameId, cardType) {
+  if (!db || !gameId || !cardType) return null;
+  try {
+    const row = db
+      .prepare(
+        `SELECT payload_data
+         FROM card_payloads
+         WHERE game_id = ? AND card_type = ?
+         ORDER BY created_at DESC
+         LIMIT 1`,
+      )
+      .get(gameId, cardType);
+    if (!row?.payload_data) return null;
+    const payload = JSON.parse(row.payload_data);
+    const status = String(
+      payload?.canonical_decision?.official_status ??
+      payload?.decision_v2?.official_status ??
+      payload?.status ??
+      '',
+    )
+      .trim()
+      .toUpperCase();
+    return status || null;
+  } catch (_) {
+    return null;
+  }
+}
+
+function shouldRejectInvalidDecisionOutcomeCandidate({ sport, marketType, gameInvalidStatus }) {
+  const contractExpected = resolveEdgeSourceContract(sport, marketType);
+  if (contractExpected !== 'MODEL') return false;
+  return gameInvalidStatus === 'INVALID';
+}
+
 async function gatherBestCandidate({
   fetchOddsFn,
   buildCandidatesFn,
@@ -1069,14 +1103,26 @@ async function gatherBestCandidate({
         sport === 'MLB' && gameId
           ? hasModelPayloadForGame(db, gameId, 'mlb-full-game')
           : false;
+      const mlbModelPayloadDecisionStatus =
+        sport === 'MLB' && gameId
+          ? readLatestModelPayloadDecisionStatus(db, gameId, 'mlb-full-game')
+          : null;
       const nhlModelPayloadPresent =
         sport === 'NHL' && gameId
           ? hasModelPayloadForGame(db, gameId, 'nhl-model-output')
           : false;
+      const nhlModelPayloadDecisionStatus =
+        sport === 'NHL' && gameId
+          ? readLatestModelPayloadDecisionStatus(db, gameId, 'nhl-model-output')
+          : null;
       const nbaModelPayloadPresent =
         sport === 'NBA' && gameId
           ? hasModelPayloadForGame(db, gameId, 'nba-totals-call')
           : false;
+      const nbaModelPayloadDecisionStatus =
+        sport === 'NBA' && gameId
+          ? readLatestModelPayloadDecisionStatus(db, gameId, 'nba-totals-call')
+          : null;
 
       const candidateGame =
         sport === 'MLB' && game?.gameId
@@ -1100,6 +1146,39 @@ async function gatherBestCandidate({
           : game;
       const candidates = buildCandidatesFn(candidateGame);
       for (const candidate of candidates) {
+        const gameInvalidStatus =
+          sport === 'MLB'
+            ? mlbModelPayloadDecisionStatus
+            : sport === 'NHL'
+            ? nhlModelPayloadDecisionStatus
+            : sport === 'NBA'
+            ? nbaModelPayloadDecisionStatus
+            : null;
+
+        if (
+          shouldRejectInvalidDecisionOutcomeCandidate({
+            sport: candidate?.sport,
+            marketType: candidate?.marketType,
+            gameInvalidStatus,
+          })
+        ) {
+          if (POTD_AUDIT_LOG_ENABLED) {
+            console.log(
+              JSON.stringify({
+                type: 'POTD_INVALID_DECISION_OUTCOME_REJECTION',
+                rejectionCode: 'INVALID_DECISION_OUTCOME',
+                sport: candidate?.sport ?? null,
+                marketType: candidate?.marketType ?? null,
+                gameId: candidate?.gameId ?? null,
+                selectionLabel: candidate?.selectionLabel ?? null,
+                status: gameInvalidStatus,
+                note: 'Candidate rejected during assembly before scoring due to INVALID decision outcome',
+              }),
+            );
+          }
+          continue;
+        }
+
         const scored = scoreCandidateFn(candidate);
         if (scored) scoredCandidates.push(scored);
       }
