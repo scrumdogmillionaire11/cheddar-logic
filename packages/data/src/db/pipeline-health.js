@@ -8,11 +8,32 @@ const { getDatabase } = require('./connection');
 const DEGRADED_STATUSES = new Set(['failed', 'warning']);
 
 function slugifyToken(value, fallback) {
-  const token = String(value || '')
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '_')
-    .replace(/^_+|_+$/g, '');
+  const raw = String(value || '').trim().toLowerCase();
+  let token = '';
+  let lastWasSeparator = false;
+
+  for (let i = 0; i < raw.length; i += 1) {
+    const ch = raw[i];
+    const code = raw.charCodeAt(i);
+    const isDigit = code >= 48 && code <= 57;
+    const isLowerAlpha = code >= 97 && code <= 122;
+
+    if (isDigit || isLowerAlpha) {
+      token += ch;
+      lastWasSeparator = false;
+      continue;
+    }
+
+    if (!lastWasSeparator && token.length > 0) {
+      token += '_';
+      lastWasSeparator = true;
+    }
+  }
+
+  if (token.endsWith('_')) {
+    token = token.slice(0, -1);
+  }
+
   return token || fallback;
 }
 
