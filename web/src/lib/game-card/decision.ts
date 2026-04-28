@@ -126,6 +126,12 @@ export function resolvePlayDisplayDecision(
         cardType?: string;
         market_type?: string;
         final_market_decision?: Play['final_market_decision'];
+        decision_outcome?: {
+          status?: 'PLAY' | 'SLIGHT_EDGE' | 'PASS';
+          reasons?: {
+            blockers?: string[];
+          };
+        } | null;
         decision_v2?: {
           official_status?: 'PLAY' | 'LEAN' | 'PASS';
           canonical_envelope_v2?: {
@@ -135,6 +141,25 @@ export function resolvePlayDisplayDecision(
       }
     | null,
 ): ResolvedPlayDisplayDecision {
+  const decisionOutcomeStatus = play?.decision_outcome?.status;
+  if (
+    decisionOutcomeStatus === 'PLAY' ||
+    decisionOutcomeStatus === 'SLIGHT_EDGE' ||
+    decisionOutcomeStatus === 'PASS'
+  ) {
+    const action =
+      decisionOutcomeStatus === 'PLAY'
+        ? 'FIRE'
+        : decisionOutcomeStatus === 'SLIGHT_EDGE'
+          ? 'HOLD'
+          : 'PASS';
+    return {
+      action,
+      status: expressionStatusFromAction(action),
+      classification: classificationFromAction(action),
+    };
+  }
+
   // Only MLB full-game legacy rows bypass canonical read.
   // All other rows remain fail-closed on missing canonical decision_v2.
   // All cards must use canonical decision_v2.

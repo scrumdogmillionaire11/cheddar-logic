@@ -64,9 +64,11 @@ const {
 // scheduleCount: returned for COUNT(*) FROM games queries (schedule freshness, model freshness)
 // backlogCount:  returned for settlement backlog query
 // pipelineRows:  returned for pipeline_health SELECT queries (used by shouldSendAlert)
+// activePipelineRow: returned for active unresolved state query in shouldSendAlert
 // ---------------------------------------------------------------------------
 function makeDb({
   pipelineRows = [],
+  activePipelineRow = null,
   scheduleCount = 5,
   backlogCount = 0,
   upcomingGames = [],
@@ -84,6 +86,11 @@ function makeDb({
       // writePipelineHealth INSERT
       if (s.includes('INSERT INTO pipeline_health')) {
         return { run: jest.fn() };
+      }
+
+      // shouldSendAlert active unresolved row query
+      if (s.includes('FROM pipeline_health') && s.includes('resolved_at IS NULL')) {
+        return { get: jest.fn(() => activePipelineRow) };
       }
 
       // shouldSendAlert SELECT from pipeline_health
@@ -218,6 +225,28 @@ describe('shouldSendAlert (unit)', () => {
     ];
     getDatabase.mockReturnValue(makeDb({ pipelineRows: rows }));
     expect(shouldSendAlert('schedule', 'freshness', 3, 30)).toBe(false);
+  });
+  test('active unresolved failed row does not page before consecutive threshold window', () => {
+    const firstSeen = DateTime.utc().minus({ minutes: 5 }).toISO();
+    const lastSeen = DateTime.utc().minus({ seconds: 10 }).toISO();
+    getDatabase.mockReturnValue(makeDb({
+      activePipelineRow: { status: 'failed', first_seen_at: firstSeen, last_seen_at: lastSeen },
+      pipelineRows: freshFailedRows(3),
+    }));
+
+    // default interval=5m and consecutive=3 => need about 10m streak age
+    expect(shouldSendAlert('schedule', 'freshness', 3, 30)).toBe(false);
+  });
+
+  test('active unresolved failed row pages when consecutive threshold window is reached', () => {
+    const firstSeen = DateTime.utc().minus({ minutes: 10 }).toISO();
+    const lastSeen = DateTime.utc().minus({ seconds: 10 }).toISO();
+    getDatabase.mockReturnValue(makeDb({
+      activePipelineRow: { status: 'failed', first_seen_at: firstSeen, last_seen_at: lastSeen },
+      pipelineRows: freshFailedRows(3),
+    }));
+
+    expect(shouldSendAlert('schedule', 'freshness', 3, 30)).toBe(true);
   });
 });
 

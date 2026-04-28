@@ -1,5 +1,14 @@
 import cheddarData from '@cheddar-logic/data';
 
+const buildDecisionOutcomeFromDecisionV2 = (
+  cheddarData as {
+    buildDecisionOutcomeFromDecisionV2: (decisionV2: unknown) => {
+      status: 'PLAY' | 'SLIGHT_EDGE' | 'PASS';
+      reasons?: { blockers?: string[] };
+    };
+  }
+).buildDecisionOutcomeFromDecisionV2;
+
 export type ProjectionMetricInputRow = {
   sport: string | null;
   cardType: string | null;
@@ -179,6 +188,39 @@ function getPayloadValue(
     current = (current as Record<string, unknown>)[segment];
   }
   return current === undefined ? null : current;
+}
+
+function readProjectionDecisionV2(
+  payload: Record<string, unknown> | null,
+): Record<string, unknown> | null {
+  const play =
+    payload?.play && typeof payload.play === 'object'
+      ? (payload.play as Record<string, unknown>)
+      : null;
+  const decisionV2 = payload?.decision_v2 ?? play?.decision_v2;
+  return decisionV2 && typeof decisionV2 === 'object'
+    ? (decisionV2 as Record<string, unknown>)
+    : null;
+}
+
+function buildRowDecisionOutcome(
+  row: ProjectionMetricInputRow,
+) {
+  const decisionV2 = readProjectionDecisionV2(row.payload);
+  if (decisionV2) {
+    return buildDecisionOutcomeFromDecisionV2(decisionV2);
+  }
+
+  const fallbackStatus = toUpperToken(row.officialStatus ?? row.fallbackStatus);
+  if (!fallbackStatus) return null;
+
+  return buildDecisionOutcomeFromDecisionV2({
+    official_status: fallbackStatus,
+    selection: {
+      market: row.canonicalMarketKey ?? row.cardType ?? 'UNKNOWN',
+      side: row.directionToken ?? 'UNKNOWN',
+    },
+  });
 }
 
 function normalizePlayerName(value: unknown): string {
@@ -395,48 +437,24 @@ function resolveProjectionDirection(
 function hasActionableProjectionCallForRow(
   row: ProjectionMetricInputRow,
 ): boolean {
-  const canonicalEnvelopeOfficial = toUpperToken(
-    getPayloadValue(row.payload, ['play', 'decision_v2', 'canonical_envelope_v2', 'official_status']) ??
-      getPayloadValue(row.payload, ['decision_v2', 'canonical_envelope_v2', 'official_status']),
+  const decisionOutcome = buildRowDecisionOutcome(row);
+  if (!decisionOutcome) return false;
+  return (
+    decisionOutcome.status === 'PLAY' ||
+    decisionOutcome.status === 'SLIGHT_EDGE'
   );
-  if (canonicalEnvelopeOfficial === 'PASS') return false;
-  if (canonicalEnvelopeOfficial === 'PLAY' || canonicalEnvelopeOfficial === 'LEAN') {
-    return true;
-  }
-
-  const officialStatus = toUpperToken(
-    row.officialStatus ??
-      getPayloadValue(row.payload, ['play', 'decision_v2', 'official_status']) ??
-      getPayloadValue(row.payload, ['decision_v2', 'official_status']),
-  );
-  if (officialStatus === 'PASS') return false;
-  if (officialStatus === 'PLAY' || officialStatus === 'LEAN') return true;
-
-  // Fail closed: no implicit legacy/action fallback for active projection metrics.
-  return false;
 }
 
 export function hasActionableProjectionCall(
   payload: Record<string, unknown> | null,
 ): boolean {
-  const canonicalEnvelopeOfficial = toUpperToken(
-    getPayloadValue(payload, ['play', 'decision_v2', 'canonical_envelope_v2', 'official_status']) ||
-      getPayloadValue(payload, ['decision_v2', 'canonical_envelope_v2', 'official_status']),
+  const decisionV2 = readProjectionDecisionV2(payload);
+  if (!decisionV2) return false;
+  const decisionOutcome = buildDecisionOutcomeFromDecisionV2(decisionV2);
+  return (
+    decisionOutcome.status === 'PLAY' ||
+    decisionOutcome.status === 'SLIGHT_EDGE'
   );
-  if (canonicalEnvelopeOfficial === 'PASS') return false;
-  if (canonicalEnvelopeOfficial === 'PLAY' || canonicalEnvelopeOfficial === 'LEAN') {
-    return true;
-  }
-
-  const officialStatus = toUpperToken(
-    getPayloadValue(payload, ['play', 'decision_v2', 'official_status']) ||
-      getPayloadValue(payload, ['decision_v2', 'official_status']),
-  );
-  if (officialStatus === 'PASS') return false;
-  if (officialStatus === 'PLAY' || officialStatus === 'LEAN') return true;
-
-  // Fail closed: no implicit legacy/action fallback when canonical status is absent.
-  return false;
 }
 
 function resolveFirstPeriodTotal(

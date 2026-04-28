@@ -3,6 +3,7 @@ import {
   formatMarketSelectionLabel,
 } from '@cheddar-logic/data';
 import {
+  hasActionableProjectionCall,
   buildProjectionSummaries,
   deriveCardFamily,
   deriveModelFamily,
@@ -16,7 +17,6 @@ import type {
   ResultsQueryData,
   ResultsRequestFilters,
 } from './query-layer';
-import { readRuntimeCanonicalDecision } from '@/lib/runtime-decision-authority';
 
 export type DecisionSegmentId = 'play' | 'slight_edge';
 type DecisionTierStatus = 'PLAY' | 'LEAN' | 'PASS';
@@ -68,19 +68,25 @@ function normalizeStatusToken(value: string | null): string | null {
 export function resolveDecisionTier(
   payload: Record<string, unknown> | null,
 ): DecisionTierStatus {
-  // Results payloads store decision_v2 under payload.play.decision_v2
-  // (card_payload envelope) or directly at payload.decision_v2.
-  // Normalise to top-level before passing to the authority.
+  if (!payload || !hasActionableProjectionCall(payload)) {
+    return 'PASS';
+  }
+
   const play =
-    payload?.play && typeof payload.play === 'object'
+    payload.play && typeof payload.play === 'object'
       ? (payload.play as Record<string, unknown>)
       : null;
-  const normalizedPayload: Record<string, unknown> = {
-    ...payload,
-    decision_v2: payload?.decision_v2 ?? play?.decision_v2 ?? null,
-  };
-  const decision = readRuntimeCanonicalDecision(normalizedPayload, { stage: 'read_api' });
-  return decision.officialStatus;
+  const decisionV2 =
+    payload.decision_v2 && typeof payload.decision_v2 === 'object'
+      ? (payload.decision_v2 as Record<string, unknown>)
+      : play?.decision_v2 && typeof play.decision_v2 === 'object'
+        ? (play.decision_v2 as Record<string, unknown>)
+        : null;
+
+  const officialStatus = String(decisionV2?.official_status || '')
+    .trim()
+    .toUpperCase();
+  return officialStatus === 'PLAY' ? 'PLAY' : 'LEAN';
 }
 
 export function deriveDecisionSegment(

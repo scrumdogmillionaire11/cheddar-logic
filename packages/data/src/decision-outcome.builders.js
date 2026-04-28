@@ -46,6 +46,11 @@ function toReasonCodeList() {
   const values = [];
   for (let i = 0; i < arguments.length; i += 1) {
     const source = arguments[i];
+    if (typeof source === 'string') {
+      const code = toUpperToken(source);
+      if (code) values.push(code);
+      continue;
+    }
     if (!Array.isArray(source)) continue;
     for (let j = 0; j < source.length; j += 1) {
       const code = toUpperToken(source[j]);
@@ -59,6 +64,7 @@ function toReasonCodeList() {
 function mapReasonsToOutcome(decisionV2) {
   const source = decisionV2 && typeof decisionV2 === 'object' ? decisionV2 : {};
   const rawCodes = toReasonCodeList(
+    source.primary_reason_code,
     source.reason_codes,
     source.blocking_reason_codes,
     source.watchdog_reason_codes,

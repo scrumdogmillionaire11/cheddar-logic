@@ -123,4 +123,38 @@ describe('checkCalibrationKillSwitches', () => {
     // No pipeline_health write when no rows
     expect(pipelineWrites).toHaveLength(0);
   });
+
+  test('returns ok=false and writes failed state for non-table calibration query errors', () => {
+    jest.resetModules();
+    pipelineWrites = [];
+    const db = {
+      prepare: jest.fn((sql) => {
+        if (sql.includes('INSERT INTO pipeline_health')) {
+          return { run: (...args) => { pipelineWrites.push(args); } };
+        }
+        if (sql.includes('FROM calibration_reports')) {
+          throw new Error('database is locked');
+        }
+        throw new Error();
+      }),
+    };
+    jest.doMock('@cheddar-logic/data', () => ({
+      getDatabase: jest.fn(() => db),
+      insertJobRun: jest.fn(),
+      markJobRunSuccess: jest.fn(),
+      markJobRunFailure: jest.fn(),
+      createJob: jest.fn(),
+      wasJobRecentlySuccessful: jest.fn(() => false),
+    }));
+    jest.doMock('../jobs/run_mlb_model', () => ({ buildMlbMarketAvailability: jest.fn() }));
+    jest.doMock('../schedulers/quota', () => ({ getCurrentQuotaTier: jest.fn(() => 'FULL') }));
+    jest.doMock('../jobs/post_discord_cards', () => ({ sendDiscordMessages: jest.fn() }));
+
+    ({ checkCalibrationKillSwitches } = require('../jobs/check_pipeline_health'));
+
+    const result = checkCalibrationKillSwitches();
+
+    expect(result.ok).toBe(false);
+    expect(result.reason).toMatch(/calibration_reports check failed/i);
+  });
 });

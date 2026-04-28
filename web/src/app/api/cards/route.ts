@@ -42,10 +42,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import {
-  getDatabaseReadOnly,
-  closeReadOnlyInstance,
-} from '@cheddar-logic/data';
+import cheddarData from '@cheddar-logic/data';
 import { ensureDbReady } from '@/lib/db-init';
 import {
   performSecurityChecks,
@@ -81,6 +78,19 @@ import {
   type ShadowCompareRow,
   type ShadowCompareTelemetry,
 } from '@/lib/cards/payload-classifier';
+
+const {
+  getDatabaseReadOnly,
+  closeReadOnlyInstance,
+  buildDecisionOutcomeFromDecisionV2,
+} = cheddarData as {
+  getDatabaseReadOnly: typeof import('@cheddar-logic/data').getDatabaseReadOnly;
+  closeReadOnlyInstance: typeof import('@cheddar-logic/data').closeReadOnlyInstance;
+  buildDecisionOutcomeFromDecisionV2: (decisionV2: unknown) => {
+    status: 'PLAY' | 'SLIGHT_EDGE' | 'PASS';
+    reasons?: { blockers?: string[] };
+  };
+};
 
 const ENABLE_WELCOME_HOME =
   process.env.ENABLE_WELCOME_HOME === 'true' ||
@@ -182,71 +192,63 @@ function normalizeSqlDateTime(value: string | null): number | null {
   return Number.isNaN(timestamp) ? null : timestamp;
 }
 
-function toUpperToken(value: unknown): string | null {
-  if (value === null || value === undefined) return null;
-  const normalized = String(value).trim().toUpperCase();
-  return normalized.length > 0 ? normalized : null;
-}
-
-function normalizeLegacyProjectionStatus(value: string | null): string | null {
-  switch (value) {
-    case 'FIRE':
-      return 'PLAY';
-    case 'WATCH':
-    case 'HOLD':
-    case 'SLIGHT EDGE':
-      return 'LEAN';
-    case 'PASS':
-    case 'PLAY':
-    case 'LEAN':
-      return value;
-    default:
-      return null;
-  }
-}
-
-function readProjectionOfficialStatus(payload: Record<string, unknown> | null): string | null {
+function readPayloadDecisionV2(
+  payload: Record<string, unknown> | null,
+): Record<string, unknown> | null {
   if (!payload) return null;
   const play =
     payload.play && typeof payload.play === 'object'
       ? (payload.play as Record<string, unknown>)
       : null;
-  const playDecisionV2 =
-    play?.decision_v2 && typeof play.decision_v2 === 'object'
-      ? (play.decision_v2 as Record<string, unknown>)
-      : null;
-  const topDecisionV2 =
-    payload.decision_v2 && typeof payload.decision_v2 === 'object'
-      ? (payload.decision_v2 as Record<string, unknown>)
+  const decisionV2 = payload.decision_v2 ?? play?.decision_v2;
+  return decisionV2 && typeof decisionV2 === 'object'
+    ? (decisionV2 as Record<string, unknown>)
+    : null;
+}
+
+function buildPayloadDecisionOutcome(
+  payload: Record<string, unknown> | null,
+) {
+  const decisionV2 = readPayloadDecisionV2(payload);
+  if (!decisionV2) return null;
+  return buildDecisionOutcomeFromDecisionV2(decisionV2);
+}
+
+function attachDecisionOutcome(
+  payload: Record<string, unknown> | null,
+): Record<string, unknown> | null {
+  if (!payload) return payload;
+  const decisionOutcome = buildPayloadDecisionOutcome(payload);
+  if (!decisionOutcome) return payload;
+
+  const play =
+    payload.play && typeof payload.play === 'object'
+      ? (payload.play as Record<string, unknown>)
       : null;
 
-  const playCanonicalEnvelope =
-    playDecisionV2?.canonical_envelope_v2 &&
-    typeof playDecisionV2.canonical_envelope_v2 === 'object'
-      ? (playDecisionV2.canonical_envelope_v2 as Record<string, unknown>)
-      : null;
-  const topCanonicalEnvelope =
-    topDecisionV2?.canonical_envelope_v2 &&
-    typeof topDecisionV2.canonical_envelope_v2 === 'object'
-      ? (topDecisionV2.canonical_envelope_v2 as Record<string, unknown>)
-      : null;
-
-  return (
-    toUpperToken(playCanonicalEnvelope?.official_status) ||
-    toUpperToken(topCanonicalEnvelope?.official_status) ||
-    toUpperToken(playDecisionV2?.official_status) ||
-    toUpperToken(topDecisionV2?.official_status) ||
-    normalizeLegacyProjectionStatus(toUpperToken(play?.status)) ||
-    normalizeLegacyProjectionStatus(toUpperToken(payload.status))
-  );
+  return {
+    ...payload,
+    decision_outcome: decisionOutcome,
+    ...(play
+      ? {
+          play: {
+            ...play,
+            decision_outcome: decisionOutcome,
+          },
+        }
+      : null),
+  };
 }
 
 function hasActionableProjectionCall(
   payload: Record<string, unknown> | null,
 ): boolean {
-  const officialStatus = readProjectionOfficialStatus(payload);
-  if (officialStatus === 'PASS') return false;
-  return officialStatus === 'PLAY' || officialStatus === 'LEAN';
+  const decisionOutcome = buildPayloadDecisionOutcome(payload);
+  if (!decisionOutcome) return false;
+  return (
+    decisionOutcome.status === 'PLAY' ||
+    decisionOutcome.status === 'SLIGHT_EDGE'
+  );
 }
 
 function addDropReason(
@@ -664,7 +666,9 @@ export async function GET(request: NextRequest) {
 
     const response = rows.flatMap((card) => {
       const parsed = safeJsonParse(card.payload_data);
-      const normalizedPayload = normalizePayloadMeta(parsed.data);
+      const normalizedPayload = attachDecisionOutcome(
+        normalizePayloadMeta(parsed.data),
+      );
       const isProjectionSurfaceType =
         isProjectionSurfaceCardType(card.card_type);
       if (

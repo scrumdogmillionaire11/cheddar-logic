@@ -44,71 +44,118 @@ const { SPORTS_CONFIG: ODDS_SPORTS_CONFIG } = require('@cheddar-logic/odds/src/c
 const { isFeatureEnabled } = require('@cheddar-logic/data/src/feature-flags');
 const { refreshStaleOdds } = require('./refresh_stale_odds');
 
+function parseEnvNumber(name, fallback, { min = null, max = null } = {}) {
+  const raw = process.env[name];
+  if (raw === undefined || raw === null || String(raw).trim() === '') return fallback;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed)) return fallback;
+  if (min !== null && parsed < min) return fallback;
+  if (max !== null && parsed > max) return fallback;
+  return parsed;
+}
+
+
 // Align freshness threshold with the fetch slot size so alerts don't fire
 // continuously during the normal gap between pulls. When ODDS_FETCH_SLOT_MINUTES
 // is 180 (April 2026 budget mode) a hardcoded 15-min threshold fires on every
 // check. Default: slot + 15 min buffer, minimum 15 min.
-const ODDS_FETCH_SLOT_MINUTES = Number(process.env.ODDS_FETCH_SLOT_MINUTES || 60);
+const ODDS_FETCH_SLOT_MINUTES = parseEnvNumber('ODDS_FETCH_SLOT_MINUTES', 60, { min: 1 });
 // Intentionally NOT derived from execution-gate hardMaxMinutes (120 min).
 // This is a live watchdog threshold for current odds pipeline health, not a
 // per-card execution gate. Default: slot + 15 min buffer (≈75 min at 60-min cadence).
 // card_payload.freshness_tier records what was true at card-generation time and
 // must not be read here — it is historical metadata, not a live health signal.
-const LIVE_ODDS_HEALTH_MAX_AGE_MINUTES = Number(
-  process.env.LIVE_ODDS_HEALTH_MAX_AGE_MINUTES ||
-  process.env.ODDS_FRESHNESS_MAX_AGE_MINUTES ||
+const LEGACY_ODDS_FRESHNESS_MAX_AGE_MINUTES = parseEnvNumber(
+  'ODDS_FRESHNESS_MAX_AGE_MINUTES',
   Math.max(15, ODDS_FETCH_SLOT_MINUTES + 15),
+  { min: 1 },
 );
-const ODDS_FRESHNESS_ALERT_WINDOW_HOURS = Number(
-  process.env.ODDS_FRESHNESS_ALERT_WINDOW_HOURS || Math.max(2, Math.ceil(ODDS_FETCH_SLOT_MINUTES / 60)),
+const LIVE_ODDS_HEALTH_MAX_AGE_MINUTES = parseEnvNumber(
+  'LIVE_ODDS_HEALTH_MAX_AGE_MINUTES',
+  LEGACY_ODDS_FRESHNESS_MAX_AGE_MINUTES,
+  { min: 1 },
 );
-const SEED_FRESHNESS_MAX_AGE_MINUTES = Number(
-  process.env.SEED_FRESHNESS_MAX_AGE_MINUTES || Math.max(15, ODDS_FETCH_SLOT_MINUTES + 15),
+const ODDS_FRESHNESS_ALERT_WINDOW_HOURS = parseEnvNumber(
+  'ODDS_FRESHNESS_ALERT_WINDOW_HOURS',
+  Math.max(2, Math.ceil(ODDS_FETCH_SLOT_MINUTES / 60)),
+  { min: 1 },
 );
-const CARDS_FRESHNESS_MAX_AGE_MINUTES = Number(
-  process.env.CARDS_FRESHNESS_MAX_AGE_MINUTES || 30,
+const SEED_FRESHNESS_MAX_AGE_MINUTES = parseEnvNumber(
+  'SEED_FRESHNESS_MAX_AGE_MINUTES',
+  Math.max(15, ODDS_FETCH_SLOT_MINUTES + 15),
+  { min: 1 },
+);
+const CARDS_FRESHNESS_MAX_AGE_MINUTES = parseEnvNumber(
+  'CARDS_FRESHNESS_MAX_AGE_MINUTES',
+  30,
+  { min: 1 },
 );
 // Per-sport model freshness threshold (WI-0950).
 // Imported from execution-gate-freshness-contract; health check uses 4x the moneyline hardMax
 // per operational policy (health check is stricter to catch issues earlier).
 // Default: 120m hardMax * 4 = 480m, but env var can override.
 function getModelFreshnessMaxAgeMinutes() {
-  const envOverride = Number(process.env.MODEL_FRESHNESS_MAX_AGE_MINUTES || 0);
+  const envOverride = parseEnvNumber('MODEL_FRESHNESS_MAX_AGE_MINUTES', 0, { min: 0 });
   if (envOverride > 0) return envOverride;
   // Use contract hardMax * 4 for health check window (typically 120m * 4 = 480m)
   const contract = getContractForSport('mlb');
   return contract.hardMaxMinutes * 4;
 }
 // Alert timing windows for checks that depend on T-minus execution, not schedule ingestion.
-const MODEL_FRESHNESS_ALERT_WINDOW_HOURS = Number(
-  process.env.MODEL_FRESHNESS_ALERT_WINDOW_HOURS || 2,
+const MODEL_FRESHNESS_ALERT_WINDOW_HOURS = parseEnvNumber(
+  'MODEL_FRESHNESS_ALERT_WINDOW_HOURS',
+  2,
+  { min: 1 },
 );
-const MLB_F5_ALERT_WINDOW_HOURS = Number(
-  process.env.MLB_F5_ALERT_WINDOW_HOURS || 2,
+const MLB_F5_ALERT_WINDOW_HOURS = parseEnvNumber(
+  'MLB_F5_ALERT_WINDOW_HOURS',
+  2,
+  { min: 1 },
 );
-const PIPELINE_HEALTH_ALERT_CONSECUTIVE = Number(
-  process.env.PIPELINE_HEALTH_ALERT_CONSECUTIVE || 3,
+const PIPELINE_HEALTH_INTERVAL_MINUTES = parseEnvNumber(
+  'PIPELINE_HEALTH_INTERVAL_MINUTES',
+  5,
+  { min: 1 },
 );
-const PIPELINE_HEALTH_COOLDOWN_MINUTES = Number(
-  process.env.PIPELINE_HEALTH_COOLDOWN_MINUTES || 30,
+const PIPELINE_HEALTH_ALERT_CONSECUTIVE = parseEnvNumber(
+  'PIPELINE_HEALTH_ALERT_CONSECUTIVE',
+  3,
+  { min: 1 },
 );
-const CARD_OUTPUT_INTEGRITY_LOOKBACK_HOURS = Number(
-  process.env.CARD_OUTPUT_INTEGRITY_LOOKBACK_HOURS || 6,
+const PIPELINE_HEALTH_COOLDOWN_MINUTES = parseEnvNumber(
+  'PIPELINE_HEALTH_COOLDOWN_MINUTES',
+  30,
+  { min: 1 },
 );
-const CARD_OUTPUT_INTEGRITY_MIN_SAMPLE = Number(
-  process.env.CARD_OUTPUT_INTEGRITY_MIN_SAMPLE || 20,
+const CARD_OUTPUT_INTEGRITY_LOOKBACK_HOURS = parseEnvNumber(
+  'CARD_OUTPUT_INTEGRITY_LOOKBACK_HOURS',
+  6,
+  { min: 1 },
 );
-const CARD_OUTPUT_PASS_RATE_MAX = Number(
-  process.env.CARD_OUTPUT_PASS_RATE_MAX || 0.92,
+const CARD_OUTPUT_INTEGRITY_MIN_SAMPLE = parseEnvNumber(
+  'CARD_OUTPUT_INTEGRITY_MIN_SAMPLE',
+  20,
+  { min: 1 },
 );
-const CARD_OUTPUT_MISSING_ODDS_RATE_MAX = Number(
-  process.env.CARD_OUTPUT_MISSING_ODDS_RATE_MAX || 0.35,
+const CARD_OUTPUT_PASS_RATE_MAX = parseEnvNumber(
+  'CARD_OUTPUT_PASS_RATE_MAX',
+  0.92,
+  { min: 0, max: 1 },
 );
-const CARD_OUTPUT_DEGRADED_RATE_MAX = Number(
-  process.env.CARD_OUTPUT_DEGRADED_RATE_MAX || 0.45,
+const CARD_OUTPUT_MISSING_ODDS_RATE_MAX = parseEnvNumber(
+  'CARD_OUTPUT_MISSING_ODDS_RATE_MAX',
+  0.35,
+  { min: 0, max: 1 },
 );
-const DEFAULT_MODEL_JOB_EXPECTED_INTERVAL_MINUTES = Number(
-  process.env.MODEL_JOB_EXPECTED_INTERVAL_MINUTES || 120,
+const CARD_OUTPUT_DEGRADED_RATE_MAX = parseEnvNumber(
+  'CARD_OUTPUT_DEGRADED_RATE_MAX',
+  0.45,
+  { min: 0, max: 1 },
+);
+const DEFAULT_MODEL_JOB_EXPECTED_INTERVAL_MINUTES = parseEnvNumber(
+  'MODEL_JOB_EXPECTED_INTERVAL_MINUTES',
+  120,
+  { min: 1 },
 );
 
 function buildCheckId(domain, name, scope) {
@@ -753,11 +800,15 @@ const MLB_GAME_LINE_REASON_BUCKETS = Object.freeze([
   'stale_or_unverifiable_snapshot',
 ]);
 const MLB_GAME_LINE_SAMPLE_LIMIT = 5;
-const MLB_GAME_LINE_FALLBACK_MAX_AGE_MINUTES = Number(
-  process.env.API_GAMES_MLB_FALLBACK_MAX_AGE_MINUTES || 90,
+const MLB_GAME_LINE_FALLBACK_MAX_AGE_MINUTES = parseEnvNumber(
+  'API_GAMES_MLB_FALLBACK_MAX_AGE_MINUTES',
+  90,
+  { min: 1 },
 );
-const MLB_GAME_LINE_ODDS_TOLERANCE_MINUTES = Number(
-  process.env.API_GAMES_MLB_FALLBACK_ODDS_TOLERANCE_MINUTES || 10,
+const MLB_GAME_LINE_ODDS_TOLERANCE_MINUTES = parseEnvNumber(
+  'API_GAMES_MLB_FALLBACK_ODDS_TOLERANCE_MINUTES',
+  10,
+  { min: 0 },
 );
 
 function mapMlbCardTypeToRejectMarket(cardType) {
@@ -1956,13 +2007,18 @@ function checkSportModelFreshness(sport, jobName, checkName, maxAgeMinutes, thre
 function checkCalibrationKillSwitches() {
   try {
     const db = getDatabase();
-    // Latest row per market
+    // Latest row per market (deterministic for tied timestamps).
     const rows = db
       .prepare(
         `SELECT market, kill_switch_active, ece, n_samples, computed_at
-         FROM calibration_reports
-         GROUP BY market
-         HAVING computed_at = MAX(computed_at)
+         FROM calibration_reports cr
+         WHERE cr.id = (
+           SELECT cr2.id
+           FROM calibration_reports cr2
+           WHERE cr2.market = cr.market
+           ORDER BY cr2.computed_at DESC, cr2.id DESC
+           LIMIT 1
+         )
          ORDER BY market`,
       )
       .all();
@@ -2001,11 +2057,23 @@ function checkCalibrationKillSwitches() {
       writePipelineHealth('calibration', 'kill_switch', 'ok', reason);
     }
     return { ok: true, reason, calibrationKillSwitches: [], calibrationRows };
-  } catch (_err) {
-    // Table may not exist in dev — skip gracefully
+  } catch (err) {
+    const message = String(err?.message || '').toLowerCase();
+    if (message.includes('no such table') && message.includes('calibration_reports')) {
+      // Table may not exist in dev — skip gracefully
+      return {
+        ok: true,
+        reason: 'calibration_reports table absent — skipped',
+        calibrationKillSwitches: [],
+        calibrationRows: [],
+      };
+    }
+
+    const reason = `calibration_reports check failed: ${summarizeErrorMessage(err?.message)}`;
+    writePipelineHealth('calibration', 'kill_switch', 'failed', reason);
     return {
-      ok: true,
-      reason: 'calibration_reports table absent — skipped',
+      ok: false,
+      reason,
       calibrationKillSwitches: [],
       calibrationRows: [],
     };
@@ -2019,6 +2087,10 @@ function checkCalibrationKillSwitches() {
  */
 function shouldSendAlert(phase, checkName, _consecutiveRequired, cooldownMinutes) {
   const db = getDatabase();
+  const nowUtc = DateTime.utc();
+  const consecutiveRequired = Math.max(Number(_consecutiveRequired) || 1, 1);
+  const requiredStreakMinutes = Math.max(consecutiveRequired - 1, 0) * PIPELINE_HEALTH_INTERVAL_MINUTES;
+
   try {
     const activeRow = db
       .prepare(
@@ -2034,19 +2106,26 @@ function shouldSendAlert(phase, checkName, _consecutiveRequired, cooldownMinutes
 
     if (activeRow) {
       if (activeRow.status !== 'failed') return false;
-      if (String(activeRow.first_seen_at || '') !== String(activeRow.last_seen_at || '')) {
-        return false;
-      }
 
-      const firstSeenAt = DateTime.fromISO(activeRow.first_seen_at, { zone: 'utc' });
-      const ageMinutes = DateTime.utc().diff(firstSeenAt, 'minutes').minutes;
-      return ageMinutes <= cooldownMinutes;
+      const firstSeenAt = DateTime.fromISO(activeRow.first_seen_at || '', { zone: 'utc' });
+      const lastSeenAt = DateTime.fromISO(activeRow.last_seen_at || '', { zone: 'utc' });
+      if (!firstSeenAt.isValid || !lastSeenAt.isValid) return false;
+
+      const streakAgeMinutes = nowUtc.diff(firstSeenAt, 'minutes').minutes;
+      const sinceLastSeenMinutes = nowUtc.diff(lastSeenAt, 'minutes').minutes;
+      const crossingWindowMinutes = PIPELINE_HEALTH_INTERVAL_MINUTES * 1.5;
+
+      if (!Number.isFinite(streakAgeMinutes) || !Number.isFinite(sinceLastSeenMinutes)) return false;
+      if (streakAgeMinutes < requiredStreakMinutes) return false;
+      if (streakAgeMinutes > cooldownMinutes) return false;
+      if (sinceLastSeenMinutes > PIPELINE_HEALTH_INTERVAL_MINUTES * 2) return false;
+
+      return streakAgeMinutes <= (requiredStreakMinutes + crossingWindowMinutes);
     }
   } catch (_error) {
     // Pre-migration fallback handled below.
   }
 
-  const consecutiveRequired = Math.max(Number(_consecutiveRequired) || 1, 1);
   const rows = db
     .prepare(
       `SELECT status, created_at
@@ -2066,7 +2145,7 @@ function shouldSendAlert(phase, checkName, _consecutiveRequired, cooldownMinutes
 
   const oldestRow = currentStreak[consecutiveRequired - 1];
   const oldestAt = DateTime.fromISO(oldestRow.created_at, { zone: 'utc' });
-  const ageMinutes = DateTime.utc().diff(oldestAt, 'minutes').minutes;
+  const ageMinutes = nowUtc.diff(oldestAt, 'minutes').minutes;
   return ageMinutes <= cooldownMinutes;
 }
 

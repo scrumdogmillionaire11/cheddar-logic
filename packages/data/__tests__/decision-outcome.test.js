@@ -106,6 +106,16 @@ describe('WI-1199 DecisionOutcome contract', () => {
     expect(reasons.blockers).toEqual(['BLOCK_INJURY_RISK', 'WATCHDOG_CONSISTENCY_MISSING']);
   });
 
+  test('maps primary_reason_code blocker when no reason arrays are populated', () => {
+    const reasons = mapReasonsToOutcome({
+      primary_reason_code: 'BLOCK_MISSING_INPUTS',
+    });
+
+    expect(reasons).toEqual({
+      blockers: ['BLOCK_MISSING_INPUTS'],
+    });
+  });
+
   test('validator accepts valid DecisionOutcome', () => {
     const candidate = buildDecisionOutcomeFromDecisionV2(sampleDecisionV2(), {
       model: 'canon-model',
