@@ -779,6 +779,41 @@ describe('telemetry calibration report', () => {
     expect(text).toContain('Overall status: NO_GO');
   });
 
+  test('ignores UNKNOWN decision_basis rows in CLV ledger metrics', async () => {
+    const db = getDatabase();
+    clearTelemetryTables(db);
+    seedBreachFixture(db);
+
+    const now = new Date().toISOString();
+    for (let index = 0; index < 50; index += 1) {
+      runInsert(
+        db,
+        `
+        INSERT INTO clv_ledger (
+          id, card_id, game_id, sport, market_type, clv_pct,
+          recorded_at, closed_at, decision_basis
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `,
+        `clv-unknown-${index}`,
+        `card-clv-unknown-${index}`,
+        `game-clv-unknown-${index}`,
+        'NHL',
+        'MONEYLINE',
+        0.25,
+        now,
+        now,
+        'UNKNOWN',
+      );
+    }
+
+    const report = await generateTelemetryCalibrationReport({ db, days: 14 });
+
+    // Unknown-basis rows must be excluded from CLV sample and threshold math.
+    expect(report.ledgers.clv.sampleSize).toBe(150);
+    expect(report.ledgers.clv.checks.meanClv.status).toBe('FAIL');
+    expect(report.ledgers.clv.checks.tailRisk.status).toBe('FAIL');
+  });
+
   test('emits NHL ML calibration schema and JUSTIFIED verdict when selected mapping outperforms baseline', async () => {
     const db = getDatabase();
     clearTelemetryTables(db);

@@ -66,12 +66,23 @@ describe('checkWatchdogHeartbeat', () => {
 
     await checkWatchdogHeartbeat();
 
-    expect(pipelineWrites).toHaveLength(1);
-    const [phase, checkName, status, reason] = pipelineWrites[0];
+    expect(pipelineWrites).toHaveLength(2);
+    const heartbeatWrites = pipelineWrites.filter(
+      ([phase, checkName]) => phase === 'watchdog' && checkName === 'heartbeat',
+    );
+    expect(heartbeatWrites).toHaveLength(1);
+
+    const [phase, checkName, status, reason] = heartbeatWrites[0];
     expect(phase).toBe('watchdog');
     expect(checkName).toBe('heartbeat');
     expect(status).toBe('warning');
     expect(reason).toMatch(/3\.0h ago/);
+
+    const alertDeliveryWrites = pipelineWrites.filter(
+      ([phase, checkName]) => phase === 'watchdog' && checkName === 'alert_delivery',
+    );
+    expect(alertDeliveryWrites).toHaveLength(1);
+    expect(alertDeliveryWrites[0][2]).toBe('ok');
 
     expect(sendDiscordMessages).toHaveBeenCalledTimes(1);
     const call = sendDiscordMessages.mock.calls[0][0];
@@ -546,6 +557,6 @@ describe('WI-1193: degraded-state persistence', () => {
     expect(degradedRows).toHaveLength(1);
     expect(degradedRows[0][2]).toBe('failed');
     expect(degradedRows[0][3]).toContain('Pipeline degraded');
-    expect(degradedRows[0][3]).toContain('schedule_freshness');
+    expect(degradedRows[0][3]).toContain('schedule:freshness:global');
   });
 });

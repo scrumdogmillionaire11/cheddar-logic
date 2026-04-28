@@ -50,6 +50,11 @@ interface PotdHealth {
   signals: string[];
 }
 
+interface AdminPipelineHealthRow extends PipelineHealthRow {
+  time_degraded_minutes?: number | null;
+  freshness_tier?: 'Fresh' | 'Aging' | 'Stale' | 'Expired';
+}
+
 const POTD_RUN_STALE_MS = 36 * 60 * 60 * 1000;
 const POTD_NEAR_MISS_STALE_MS = 48 * 60 * 60 * 1000;
 const ET_DATE_FORMATTER = new Intl.DateTimeFormat('en-CA', {
@@ -76,12 +81,54 @@ export async function GET(request: NextRequest) {
 
     const rows = db
       .prepare(
-        `SELECT id, phase, check_name, status, reason, created_at
-         FROM pipeline_health
-         ORDER BY created_at DESC
+        `WITH normalized AS (
+           SELECT
+             id,
+             phase,
+             check_name,
+             status,
+             reason,
+             created_at,
+             check_id,
+             dedupe_key,
+             first_seen_at,
+             last_seen_at,
+             resolved_at,
+             CAST((julianday('now') - julianday(COALESCE(first_seen_at, created_at))) * 24 * 60 AS INTEGER) AS age_minutes
+           FROM pipeline_health
+         )
+         SELECT
+           id,
+           phase,
+           check_name,
+           status,
+           reason,
+           created_at,
+           check_id,
+           dedupe_key,
+           first_seen_at,
+           last_seen_at,
+           resolved_at,
+           CASE
+             WHEN resolved_at IS NULL AND LOWER(COALESCE(status, '')) NOT IN ('ok', 'healthy')
+               THEN MAX(age_minutes, 0)
+             ELSE NULL
+           END AS time_degraded_minutes,
+           CASE
+             WHEN LOWER(COALESCE(status, '')) IN ('ok', 'healthy') THEN 'Fresh'
+             WHEN resolved_at IS NOT NULL THEN 'Fresh'
+             WHEN age_minutes < 30 THEN 'Aging'
+             WHEN age_minutes < 120 THEN 'Stale'
+             ELSE 'Expired'
+           END AS freshness_tier
+         FROM normalized
+         ORDER BY
+           CASE WHEN resolved_at IS NULL THEN 0 ELSE 1 END,
+           COALESCE(last_seen_at, created_at) DESC,
+           id DESC
          LIMIT 100`,
       )
-      .all() as PipelineHealthRow[];
+      .all() as AdminPipelineHealthRow[];
 
     const potdHealth = buildPotdHealth(db);
     const response = NextResponse.json({

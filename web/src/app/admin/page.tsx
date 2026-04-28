@@ -10,6 +10,13 @@ interface PipelineHealthRow {
   status: string;
   reason: string | null;
   created_at: string;
+  check_id?: string | null;
+  dedupe_key?: string | null;
+  first_seen_at?: string | null;
+  last_seen_at?: string | null;
+  resolved_at?: string | null;
+  time_degraded_minutes?: number | null;
+  freshness_tier?: 'Fresh' | 'Aging' | 'Stale' | 'Expired';
 }
 
 interface ModelOutputRow {
@@ -120,6 +127,10 @@ function formatTs(ts: string) {
   }
 }
 
+function lifecycleLabel(row: PipelineHealthRow): 'active' | 'resolved' {
+  return row.resolved_at ? 'resolved' : 'active';
+}
+
 function formatPct(value: number | null) {
   if (value == null) return 'N/A';
   return `${(value * 100).toFixed(1)}%`;
@@ -143,16 +154,38 @@ function formatAge(ts: string) {
   }
 }
 
+function formatDegradedDuration(minutes: number | null | undefined): string {
+  if (minutes == null || !Number.isFinite(minutes) || minutes < 0) return 'n/a';
+  if (minutes < 60) return `${Math.floor(minutes)} minutes`;
+  const hours = Math.floor(minutes / 60);
+  const remMins = Math.floor(minutes % 60);
+  if (hours < 24) return `${hours}h ${remMins}m`;
+  const days = Math.floor(hours / 24);
+  return `${days}d ${hours % 24}h`;
+}
+
+function normalizeFreshnessTier(row: PipelineHealthRow): 'Fresh' | 'Aging' | 'Stale' | 'Expired' {
+  if (row.freshness_tier) return row.freshness_tier;
+  if (row.resolved_at || ['ok', 'healthy'].includes(row.status.toLowerCase())) return 'Fresh';
+  const degraded = row.time_degraded_minutes;
+  if (degraded == null || degraded < 30) return 'Aging';
+  if (degraded < 120) return 'Stale';
+  return 'Expired';
+}
+
 const STALE_THRESHOLD_MS = 35 * 60 * 1000;
+
+function healthIdentity(row: Pick<PipelineHealthRow, 'phase' | 'check_name' | 'check_id'>): string {
+  return row.check_id && row.check_id.length > 0
+    ? row.check_id
+    : `${row.phase}:${row.check_name}`;
+}
 
 function computeStreak(
   rows: PipelineHealthRow[],
-  phase: string,
-  checkName: string,
+  identity: string,
 ): number {
-  const filtered = rows.filter(
-    (r) => r.phase === phase && r.check_name === checkName,
-  );
+  const filtered = rows.filter((r) => healthIdentity(r) === identity);
   if (filtered.length === 0) return 0;
   const currentStatus = filtered[0].status.toLowerCase();
   let streak = 1;
@@ -195,14 +228,14 @@ function StreakBadge({ status, streak }: { status: string; streak: number }) {
 }
 
 /**
- * Derive the single latest row per (phase, check_name) combination.
+ * Derive the single latest row per logical health identity.
  * Since rows are already ordered newest-first from the API, first-seen wins.
  */
 function buildSnapshot(rows: PipelineHealthRow[]): PipelineHealthRow[] {
   const seen = new Set<string>();
   const snapshot: PipelineHealthRow[] = [];
   for (const row of rows) {
-    const key = `${row.phase}:${row.check_name}`;
+    const key = healthIdentity(row);
     if (!seen.has(key)) {
       seen.add(key);
       snapshot.push(row);
@@ -594,11 +627,14 @@ export default function AdminPage() {
               >
                 <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
                   {snapshot.map((row) => {
-                    const streak = computeStreak(health, row.phase, row.check_name);
+                    const streak = computeStreak(health, healthIdentity(row));
                     const stale = isStale(row.created_at);
+                    const lifecycle = lifecycleLabel(row);
+                    const freshnessTier = normalizeFreshnessTier(row);
+                    const showDegraded = lifecycle === 'active' && !['ok', 'healthy'].includes(row.status.toLowerCase());
                     return (
                       <div
-                        key={`${row.phase}:${row.check_name}`}
+                        key={healthIdentity(row)}
                         className={`flex flex-col gap-1 rounded-lg border border-white/8 bg-surface/60 px-3 py-2 ${stale ? 'opacity-50' : ''}`}
                         title={row.reason ?? ''}
                       >
@@ -616,9 +652,18 @@ export default function AdminPage() {
                               check dormant
                             </span>
                           ) : (
-                            <span className="text-xs text-cloud/30">{formatAge(row.created_at)}</span>
+                            <span className="text-xs text-cloud/30">{formatAge(row.last_seen_at || row.created_at)}</span>
                           )}
                         </div>
+                        <span className="text-xs text-cloud/35">
+                          {lifecycle === 'active' ? 'active condition' : 'resolved condition'}
+                        </span>
+                        <span className="text-xs text-cloud/35">Freshness: {freshnessTier}</span>
+                        {showDegraded && (
+                          <span className="text-xs text-cloud/35">
+                            Degraded for: {formatDegradedDuration(row.time_degraded_minutes)}
+                          </span>
+                        )}
                         <StreakBadge status={row.status} streak={streak} />
                       </div>
                     );
@@ -644,9 +689,12 @@ export default function AdminPage() {
                       <tr className="border-b border-white/10 text-left text-xs uppercase tracking-wide text-cloud/50">
                         <th className="px-4 py-3">Phase</th>
                         <th className="px-4 py-3">Check</th>
+                        <th className="px-4 py-3">State</th>
                         <th className="px-4 py-3">Status</th>
+                        <th className="px-4 py-3">Freshness</th>
+                        <th className="px-4 py-3">Time Degraded</th>
                         <th className="px-4 py-3">Reason</th>
-                        <th className="px-4 py-3">Timestamp</th>
+                        <th className="px-4 py-3">Seen</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -662,13 +710,28 @@ export default function AdminPage() {
                             {row.check_name}
                           </td>
                           <td className="px-4 py-3">
+                            <span className="text-xs text-cloud/60">
+                              {lifecycleLabel(row)}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3">
                             <StatusBadge status={row.status} />
+                          </td>
+                          <td className="px-4 py-3 text-xs text-cloud/60">
+                            {normalizeFreshnessTier(row)}
+                          </td>
+                          <td className="px-4 py-3 text-xs text-cloud/60">
+                            {lifecycleLabel(row) === 'active' && !['ok', 'healthy'].includes(row.status.toLowerCase())
+                              ? formatDegradedDuration(row.time_degraded_minutes)
+                              : '—'}
                           </td>
                           <td className="max-w-xs truncate px-4 py-3 text-cloud/60">
                             {row.reason ?? '—'}
                           </td>
                           <td className="whitespace-nowrap px-4 py-3 text-xs text-cloud/50">
-                            {formatTs(row.created_at)}
+                            {row.first_seen_at && row.last_seen_at
+                              ? `${formatTs(row.first_seen_at)} -> ${formatTs(row.last_seen_at)}`
+                              : formatTs(row.created_at)}
                           </td>
                         </tr>
                       ))}

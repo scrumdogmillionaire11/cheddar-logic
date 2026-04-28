@@ -202,6 +202,7 @@ function buildClvLedgerReport(db, windowDays) {
         FROM clv_ledger
         WHERE closed_at IS NOT NULL
           AND clv_pct IS NOT NULL
+          AND decision_basis = 'ODDS_BACKED'
           AND datetime(closed_at) >= datetime('now', ?)
       ), ranked AS (
         SELECT
@@ -272,6 +273,7 @@ function buildFetchDiagnostics(db, windowDays, clv) {
               COUNT(*) AS unresolved_count
             FROM clv_ledger
             WHERE closed_at IS NULL
+              AND decision_basis = 'ODDS_BACKED'
               AND datetime(recorded_at) >= datetime('now', ?)
             GROUP BY sport, market_type
             ORDER BY unresolved_count DESC, sport ASC, market_type ASC
@@ -535,6 +537,7 @@ function buildNhlShotsBreakoutCalibrationReport(db, windowDays, generatedAtIso) 
         FROM clv_ledger
         WHERE closed_at IS NOT NULL
           AND clv_pct IS NOT NULL
+          AND decision_basis = 'ODDS_BACKED'
         GROUP BY card_id
       )
     `

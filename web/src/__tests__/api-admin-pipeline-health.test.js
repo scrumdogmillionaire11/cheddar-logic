@@ -24,8 +24,27 @@ async function run() {
     client
       .prepare(
         `INSERT INTO pipeline_health
-         (phase, check_name, status, reason, created_at)
-         VALUES (?, ?, ?, ?, ?)`,
+         (phase, check_name, status, reason, created_at, check_id, dedupe_key, first_seen_at, last_seen_at, resolved_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        'cards',
+        'freshness',
+        'warning',
+        'cards are stale',
+        '2026-04-21T12:05:00.000Z',
+        'cards:freshness:tminus_2h',
+        'warning:cards are stale',
+        '2026-04-21T12:05:00.000Z',
+        '2026-04-21T12:05:00.000Z',
+        null,
+      );
+
+    client
+      .prepare(
+        `INSERT INTO pipeline_health
+         (phase, check_name, status, reason, created_at, check_id, dedupe_key, first_seen_at, last_seen_at, resolved_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         'cards',
@@ -33,6 +52,11 @@ async function run() {
         'ok',
         'fresh cards available',
         '2026-04-21T12:00:00.000Z',
+        'cards:freshness:tminus_2h',
+        null,
+        '2026-04-21T12:00:00.000Z',
+        '2026-04-21T12:00:00.000Z',
+        '2026-04-21T12:01:00.000Z',
       );
 
     const beforeCounts = {
@@ -64,9 +88,27 @@ async function run() {
     const payload = await response.json();
     assert.equal(payload.success, true, 'pipeline-health success=false');
     assert.ok(Array.isArray(payload.data), 'pipeline-health data must remain an array');
-    assert.equal(payload.data.length, 1, 'existing pipeline_health rows should still be returned');
+    assert.equal(payload.data.length, 2, 'existing pipeline_health rows should still be returned');
+    assert.equal(payload.data[0].status, 'warning', 'active unresolved rows should sort first');
+    assert.equal(payload.data[0].resolved_at, null, 'active row should have resolved_at=null');
     assert.equal(payload.data[0].phase, 'cards');
     assert.equal(payload.data[0].check_name, 'freshness');
+    assert.equal(payload.data[0].check_id, 'cards:freshness:tminus_2h');
+    assert.equal(payload.data[0].dedupe_key, 'warning:cards are stale');
+    assert.equal(payload.data[0].freshness_tier, 'Expired', 'active stale row should expose normalized freshness tier');
+    assert.equal(
+      typeof payload.data[0].time_degraded_minutes,
+      'number',
+      'active degraded row should expose numeric degraded duration',
+    );
+    assert.equal(payload.data[1].status, 'ok', 'resolved historical row should still be present');
+    assert.equal(payload.data[1].freshness_tier, 'Fresh', 'resolved healthy row should map to Fresh tier');
+    assert.equal(payload.data[1].time_degraded_minutes, null, 'resolved row should not expose degraded duration');
+    assert.equal(
+      payload.data[1].resolved_at,
+      '2026-04-21T12:01:00.000Z',
+      'resolved row should expose resolved_at timestamp',
+    );
 
     assert.ok(
       Array.isArray(payload.potd_lanes),
