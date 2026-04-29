@@ -1689,6 +1689,8 @@ function applyExecutionGateToNbaCard(card, { oddsSnapshot, nowMs = Date.now() } 
       payload.decision_v2.official_status = 'PASS';
       payload.decision_v2.primary_reason_code = passReasonCode;
     }
+    // Keep this early envelope sync so gate-demoted cards carry PASS semantics
+    // through downstream in-memory transforms before atomic write.
     syncCanonicalDecisionEnvelope(payload, {
       official_status: 'PASS',
       primary_reason_code: passReasonCode,
@@ -3092,6 +3094,8 @@ async function runNBAModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
                   card.payloadData.decision_v2.primary_reason_code = 'NBA_NO_ODDS_MODE_LEAN';
                 }
               }
+              // Keep this without-odds LEAN override to preserve explicit reasoning
+              // for totals call cards prior to write.
               syncCanonicalDecisionEnvelope(card.payloadData, {
                 official_status: 'LEAN',
                 primary_reason_code:
@@ -3249,6 +3253,7 @@ async function runNBAModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
                 entry.strictDecisionSnapshot,
                 { label: `${entry.card.cardType}:before_insert` },
               );
+              // Final canonical authority immediately before DB write.
               ensureCanonicalDecisionV2(entry.card.payloadData); // WI-1205: guarantee decision_v2 before write
               insertCardPayload(entry.card);
             }

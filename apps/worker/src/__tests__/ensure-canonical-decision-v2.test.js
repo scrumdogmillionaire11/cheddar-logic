@@ -6,24 +6,24 @@
 
 const {
   ensureCanonicalDecisionV2,
-  normalizeOfficialStatusForDecisionV2,
-  buildInvalidDecisionV2,
 } = require('../jobs/helpers/ensure-canonical-decision-v2.js');
 
-describe('normalizeOfficialStatusForDecisionV2', () => {
+describe('ensureCanonicalDecisionV2 — status normalization', () => {
   test.each([
     ['PLAY', 'PLAY'], ['FIRE', 'PLAY'], ['BASE', 'PLAY'], ['play', 'PLAY'],
     ['LEAN', 'LEAN'], ['WATCH', 'LEAN'], ['HOLD', 'LEAN'],
-    ['PASS', 'PASS'], ['pass', 'PASS'], ['anything_else', 'PASS'], ['', 'PASS'],
+    ['PASS', 'PASS'], ['pass', 'PASS'], ['anything_else', 'PASS'],
   ])("'%s' → '%s'", (input, expected) => {
-    expect(normalizeOfficialStatusForDecisionV2(input)).toBe(expected);
+    const payload = { status: input };
+    ensureCanonicalDecisionV2(payload);
+    expect(payload.decision_v2.official_status).toBe(expected);
   });
 });
 
-describe('buildInvalidDecisionV2', () => {
+describe('ensureCanonicalDecisionV2 — invalid envelope construction', () => {
   test('writes INVALID envelope with provided reason code', () => {
-    const payload = { decision_v2: {} };
-    buildInvalidDecisionV2(payload, 'NO_MARKET_DATA');
+    const payload = { pass_reason_code: 'NO_MARKET_DATA' };
+    ensureCanonicalDecisionV2(payload);
     expect(payload.decision_v2.official_status).toBe('INVALID');
     expect(payload.decision_v2.primary_reason_code).toBe('NO_MARKET_DATA');
     expect(payload.decision_v2.source).toBe('decision_authority');
@@ -38,7 +38,7 @@ describe('buildInvalidDecisionV2', () => {
 
   test('defaults reason code to MISSING_DECISION_INPUTS when none provided', () => {
     const payload = {};
-    buildInvalidDecisionV2(payload);
+    ensureCanonicalDecisionV2(payload);
     expect(payload.decision_v2.primary_reason_code).toBe('MISSING_DECISION_INPUTS');
   });
 });

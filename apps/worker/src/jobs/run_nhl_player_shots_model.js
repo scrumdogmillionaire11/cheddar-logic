@@ -33,6 +33,7 @@ const {
 } = require('../models/nhl-player-shots');
 const { fetchMoneyPuckSnapshot } = require('../moneypuck');
 const { applyNhlDecisionBasisMeta } = require('../utils/nhl-shots-patch');
+const { ensureCanonicalDecisionV2 } = require('./helpers/ensure-canonical-decision-v2.js');
 const {
   deriveLegacyDecisionEnvelope,
   edgeCalculator,
@@ -3220,6 +3221,7 @@ async function runNHLPlayerShotsModel() {
               attachRunId(card, jobRunId);
 
                 try {
+                  ensureCanonicalDecisionV2(card.payloadData);
                   insertCardPayload(card);
                 cardsCreated++;
                 console.log(
@@ -3462,6 +3464,7 @@ async function runNHLPlayerShotsModel() {
                 attachRunId(card1p, jobRunId);
 
                 try {
+                  ensureCanonicalDecisionV2(card1p.payloadData);
                   insertCardPayload(card1p);
                   cardsCreated++;
                   console.log(
@@ -3818,6 +3821,7 @@ async function runNHLPlayerShotsModel() {
                 attachRunId(blkCard, jobRunId);
 
                 try {
+                  ensureCanonicalDecisionV2(blkCard.payloadData);
                   insertCardPayload(blkCard);
                   cardsCreated++;
                   console.log(
@@ -3971,6 +3975,7 @@ async function runNHLPlayerShotsModel() {
                     };
                     attachRunId(extraCard, jobRunId);
                     try {
+                      ensureCanonicalDecisionV2(extraCard.payloadData);
                       insertCardPayload(extraCard);
                       cardsCreated++;
                       console.log(
