@@ -25,6 +25,8 @@ export function buildResultsCacheKey(filters: ResultsRequestFilters): string {
     filters.market,
     filters.dedupe,
     filters.limit,
+    filters.includeProjectionSummaries,
+    filters.includeLedger,
   ].join('|');
 }
 

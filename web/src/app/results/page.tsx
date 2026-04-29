@@ -194,6 +194,7 @@ export default function ResultsPage() {
   const [segments, setSegments] = useState<SegmentRow[]>([]);
   const [ledger, setLedger] = useState<LedgerRow[]>([]);
   const [loading, setLoading] = useState(true);
+  const [ledgerLoading, setLedgerLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [withoutOddsMode, setWithoutOddsMode] = useState(false);
 
@@ -204,12 +205,12 @@ export default function ResultsPage() {
   const [filterMarket, setFilterMarket] = useState<string>('');
   const [mobileFiltersOpen, setMobileFiltersOpen] = useState<boolean>(false);
   const [dataMeta, setDataMeta] = useState<ResultsMeta | null>(null);
+  const [ledgerLimit, setLedgerLimit] = useState<number>(25);
   const includeOrphanedValue = '0';
   const dedupeValue = '1';
 
   const loadResults = useCallback(async () => {
-    try {
-      setLoading(true);
+    const buildParams = (options: { includeLedger: boolean; limit?: number }) => {
       const params = new URLSearchParams();
       if (filterSport) params.set('sport', filterSport);
       if (filterCategory) params.set('card_category', filterCategory);
@@ -218,41 +219,86 @@ export default function ResultsPage() {
       if (includeOrphanedValue !== null)
         params.set('include_orphaned', includeOrphanedValue);
       if (dedupeValue !== null) params.set('dedupe', dedupeValue);
-      const response = await fetch(`/api/results?${params.toString()}`);
+      params.set('include_projection_summaries', '0');
+      params.set('include_ledger', options.includeLedger ? '1' : '0');
+      if (options.includeLedger && options.limit) {
+        params.set('limit', String(options.limit));
+      }
+      return params;
+    };
 
-      if (!response.ok) {
-        setError(`API error: ${response.status} ${response.statusText}`);
+    try {
+      setLoading(true);
+      setLedgerLoading(true);
+      setError(null);
+      setLedger([]);
+
+      const summaryResponse = await fetch(
+        `/api/results?${buildParams({ includeLedger: false }).toString()}`,
+      );
+
+      if (!summaryResponse.ok) {
+        setError(`API error: ${summaryResponse.status} ${summaryResponse.statusText}`);
         return;
       }
 
-      let payload: ResultsResponse;
+      let summaryPayload: ResultsResponse;
       try {
-        payload = await response.json();
+        summaryPayload = await summaryResponse.json();
       } catch {
         setError('Failed to parse API response');
         return;
       }
 
-      if (payload.withoutOddsMode) {
+      if (summaryPayload.withoutOddsMode) {
         setWithoutOddsMode(true);
         setError(null);
         return;
       }
 
-      if (!payload.success || !payload.data) {
-        setError(payload.error || 'Failed to load results');
+      if (!summaryPayload.success || !summaryPayload.data) {
+        setError(summaryPayload.error || 'Failed to load results');
         return;
       }
 
-      setSummary(payload.data.summary);
-      setSegments(payload.data.segments);
-      setLedger(payload.data.ledger);
-      setDataMeta(payload.data.meta || null);
+      setWithoutOddsMode(false);
+      setSummary(summaryPayload.data.summary);
+      setSegments(summaryPayload.data.segments);
+      setDataMeta(summaryPayload.data.meta || null);
+      setLoading(false);
+
+      const ledgerResponse = await fetch(
+        `/api/results?${buildParams({
+          includeLedger: true,
+          limit: ledgerLimit,
+        }).toString()}`,
+      );
+
+      if (!ledgerResponse.ok) {
+        setError(`Ledger API error: ${ledgerResponse.status} ${ledgerResponse.statusText}`);
+        return;
+      }
+
+      let ledgerPayload: ResultsResponse;
+      try {
+        ledgerPayload = await ledgerResponse.json();
+      } catch {
+        setError('Failed to parse ledger response');
+        return;
+      }
+
+      if (!ledgerPayload.success || !ledgerPayload.data) {
+        setError(ledgerPayload.error || 'Failed to load betting ledger');
+        return;
+      }
+
+      setLedger(ledgerPayload.data.ledger);
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unknown error');
     } finally {
       setLoading(false);
+      setLedgerLoading(false);
     }
   }, [
     filterSport,
@@ -261,6 +307,7 @@ export default function ResultsPage() {
     filterMarket,
     includeOrphanedValue,
     dedupeValue,
+    ledgerLimit,
   ]);
 
   useEffect(() => {
@@ -303,11 +350,61 @@ export default function ResultsPage() {
     setFilterCategory('');
     setFilterHighConf(false);
     setFilterMarket('');
+    setLedgerLimit(25);
   };
   const mobileRecord = summary
     ? `${summary.wins}-${summary.losses}${summary.pushes > 0 ? `-${summary.pushes}` : ''}`
     : '--';
   const visibleLedger = ledger;
+  const exportLedgerCsv = useCallback(() => {
+    if (visibleLedger.length === 0) return;
+
+    const escapeCsv = (value: string | number | null | undefined) => {
+      const text = value == null ? '' : String(value);
+      if (text.includes(',') || text.includes('"') || text.includes('\n')) {
+        return `"${text.replace(/"/g, '""')}"`;
+      }
+      return text;
+    };
+
+    const rows = [
+      [
+        'date',
+        'sport',
+        'matchup',
+        'market',
+        'pick',
+        'price',
+        'confidence_pct',
+        'result',
+        'pnl_units',
+      ],
+      ...visibleLedger.map((row) => [
+        row.gameTimeUtc || row.createdAt || row.settledAt || '',
+        row.sport || '',
+        row.homeTeam && row.awayTeam ? `${row.awayTeam} @ ${row.homeTeam}` : '',
+        formatMarketSelectionLabel(row),
+        row.prediction || '',
+        row.price ?? '',
+        row.confidencePct ?? '',
+        normalizeResult(row.result),
+        row.pnlUnits ?? '',
+      ]),
+    ];
+
+    const csv = rows
+      .map((row) => row.map((value) => escapeCsv(value)).join(','))
+      .join('\n');
+
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download =
+      ledgerLimit > 25 ? 'results-ledger-full.csv' : 'results-ledger-latest-25.csv';
+    anchor.click();
+    URL.revokeObjectURL(url);
+  }, [ledgerLimit, visibleLedger]);
   const segmentFamilies = useMemo(() => {
     if (!summary) return SEGMENT_DEFINITIONS;
     const counts = new Map<DecisionSegmentId, number>();
@@ -725,17 +822,35 @@ export default function ResultsPage() {
             <div>
               <h2 className="text-2xl font-semibold">Betting Ledger</h2>
               <p className="mt-2 text-sm text-cloud/70">
-                A full audit trail of odds-backed calls only. Projection-only
-                model accuracy is tracked on the projection accuracy page.
+                Latest 25 odds-backed results load first. Open the full ledger
+                only when you need the larger audit slice.
               </p>
             </div>
-            <button
-              type="button"
-              className="rounded-full border border-white/20 bg-night/70 px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-cloud/60"
-            >
-              Export CSV
-            </button>
+            <div className="flex flex-wrap items-center gap-3">
+              <button
+                type="button"
+                onClick={() =>
+                  setLedgerLimit((current) => (current > 25 ? 25 : 200))
+                }
+                className="rounded-full border border-cyan-400/25 bg-cyan-400/10 px-4 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-cyan-100 transition-colors hover:border-cyan-300/60 hover:bg-cyan-400/20"
+              >
+                {ledgerLimit > 25 ? 'Show Latest 25' : 'View Full Ledger'}
+              </button>
+              <button
+                type="button"
+                onClick={exportLedgerCsv}
+                disabled={visibleLedger.length === 0}
+                className="rounded-full border border-white/20 bg-night/70 px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-cloud/60 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Export CSV
+              </button>
+            </div>
           </div>
+
+          <p className="mt-3 text-xs text-cloud/50">
+            Showing {visibleLedger.length} rows
+            {ledgerLimit > 25 ? ' (full in-app view capped at 200).' : ' from the latest 25.'}
+          </p>
 
           <div className="mt-6 hidden overflow-hidden rounded-xl border border-white/10 md:block">
             <div className="grid grid-cols-8 gap-4 bg-night/70 px-4 py-3 text-xs font-semibold uppercase tracking-[0.2em] text-cloud/60">
@@ -748,7 +863,11 @@ export default function ResultsPage() {
               <span>Confidence</span>
               <span>Result</span>
             </div>
-            {visibleLedger.length === 0 ? (
+            {ledgerLoading ? (
+              <div className="px-4 py-6 text-sm text-cloud/60">
+                Loading betting ledger...
+              </div>
+            ) : visibleLedger.length === 0 ? (
               <div className="px-4 py-6 text-sm text-cloud/60">
                 No plays logged yet. Once the board fires, every call will
                 appear here.
@@ -801,7 +920,11 @@ export default function ResultsPage() {
           </div>
 
           <div className="mt-6 space-y-3 md:hidden">
-            {visibleLedger.length === 0 ? (
+            {ledgerLoading ? (
+              <div className="rounded-xl border border-white/10 bg-night/30 px-4 py-6 text-sm text-cloud/60">
+                Loading betting ledger...
+              </div>
+            ) : visibleLedger.length === 0 ? (
               <div className="rounded-xl border border-white/10 bg-night/30 px-4 py-6 text-sm text-cloud/60">
                 No plays logged yet. Once the board fires, every call will
                 appear here.

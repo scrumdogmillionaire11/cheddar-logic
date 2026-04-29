@@ -11,6 +11,8 @@ export type ResultsRequestFilters = {
   includeOrphaned: false;
   dedupe: boolean;
   diagnosticsEnabled: boolean;
+  includeProjectionSummaries: boolean;
+  includeLedger: boolean;
 };
 
 type SqlFilter = { sql: string; params: string[] };
@@ -239,6 +241,14 @@ export function parseResultsRequestFilters(
     includeOrphaned: false,
     dedupe: parseBooleanLikeParam(searchParams.get('dedupe'), true),
     diagnosticsEnabled: searchParams.has('_diag'),
+    includeProjectionSummaries: parseBooleanLikeParam(
+      searchParams.get('include_projection_summaries'),
+      true,
+    ),
+    includeLedger: parseBooleanLikeParam(
+      searchParams.get('include_ledger'),
+      true,
+    ),
   };
 }
 
@@ -369,34 +379,7 @@ function buildFilteredResultsCte(
 
   return {
     sql: `
-      WITH display_log_ranked AS (
-        SELECT
-          cdl.id,
-          cdl.pick_id,
-          cdl.game_id,
-          cdl.sport,
-          cdl.displayed_at,
-          cdl.api_endpoint,
-          ROW_NUMBER() OVER (
-            PARTITION BY cdl.pick_id
-            ORDER BY
-              datetime(COALESCE(cdl.displayed_at, '1970-01-01T00:00:00Z')) DESC,
-              cdl.id DESC
-          ) AS rn
-        FROM card_display_log cdl
-      ),
-      display_log_latest AS (
-        SELECT
-          id,
-          pick_id,
-          game_id,
-          sport,
-          displayed_at,
-          api_endpoint
-        FROM display_log_ranked
-        WHERE rn = 1
-      ),
-      filtered AS (
+      WITH filtered AS (
         SELECT
           cr.id,
           cr.game_id,
@@ -429,7 +412,7 @@ function buildFilteredResultsCte(
           cr.settled_at,
           ${confidenceExpr} AS confidence_pct
         FROM card_results cr
-        INNER JOIN display_log_latest cdl ON cr.card_id = cdl.pick_id
+        INNER JOIN card_display_log cdl ON cr.card_id = cdl.pick_id
         LEFT JOIN card_payloads cp ON cr.card_id = cp.id
         WHERE cr.status = 'settled'
           ${sportFilter.sql}
@@ -807,24 +790,7 @@ export function queryLedgerRowsForIds(
         ${schema.clvRecordedAtSelect},
         ${schema.clvClosedAtSelect}
       FROM card_results cr
-      INNER JOIN (
-        SELECT id, pick_id, displayed_at, api_endpoint
-        FROM (
-          SELECT
-            id,
-            pick_id,
-            displayed_at,
-            api_endpoint,
-            ROW_NUMBER() OVER (
-              PARTITION BY pick_id
-              ORDER BY
-                datetime(COALESCE(displayed_at, '1970-01-01T00:00:00Z')) DESC,
-                id DESC
-            ) AS rn
-          FROM card_display_log
-        ) ranked_display
-        WHERE rn = 1
-      ) cdl ON cr.card_id = cdl.pick_id
+      INNER JOIN card_display_log cdl ON cr.card_id = cdl.pick_id
       LEFT JOIN card_payloads cp ON cr.card_id = cp.id
       LEFT JOIN games g ON g.game_id = cr.game_id
       ${schema.clvJoin}
@@ -861,7 +827,7 @@ export function queryResultsReportingData(
     dedupedIds,
     actionableRows: queryActionableRows(db, dedupedIds, schema),
     projectionTrackingRows:
-      dedupedIds.length > 0
+      filters.includeProjectionSummaries && dedupedIds.length > 0
         ? queryProjectionTrackingRows(db, filters, projectionTrackingCardTypes)
         : [],
     meta: {

@@ -656,6 +656,8 @@ function responseFilters(filters: ResultsRequestFilters) {
     market: filters.market,
     includeOrphaned: filters.includeOrphaned,
     dedupe: filters.dedupe,
+    includeProjectionSummaries: filters.includeProjectionSummaries,
+    includeLedger: filters.includeLedger,
   };
 }
 

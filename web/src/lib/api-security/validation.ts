@@ -44,6 +44,8 @@ const ALLOWED_QUERY_PARAMS: Record<string, Set<string>> = {
     'market',
     'include_orphaned',
     'dedupe',
+    'include_projection_summaries',
+    'include_ledger',
     '_diag',
   ]),
   '/api/results/projection-settled': new Set([]),
