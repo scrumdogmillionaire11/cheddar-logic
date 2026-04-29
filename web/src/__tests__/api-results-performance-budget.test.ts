@@ -1,5 +1,5 @@
 /*
- * /api/results performance harness (WI-1210 Phase 1)
+ * /api/results performance budget (WI-1210)
  *
  * This test bypasses the HTTP route on purpose. The route includes a cache layer and
  * diagnostics path that make in-process timing and heap measurements non-repeatable.
@@ -13,8 +13,13 @@
  * - Report the max of the remaining 4 runs
  * - Capture heap delta only for the limit=200 dedupe=false variant
  *
- * Phase 1 is log-only. Budget assertions are added only after local + CI baselines
- * are recorded in WI-1210.
+ * Budget derivation:
+ * - WI-1210 recorded branch baselines on 2026-04-29 after the full 5-run/discard-1 method
+ * - Default: local max 15 ms -> 15 x 1.5 = 22.5 -> rounded up to 25 ms
+ * - limit=200 dedupe=true: local max 16 ms -> 16 x 1.5 = 24 -> rounded up to 25 ms
+ * - limit=200 dedupe=false: local max 18 ms -> 18 x 1.5 = 27 -> rounded up to 30 ms
+ * - sport=NBA: local max 8 ms -> 8 x 1.5 = 12 -> rounded up to 15 ms
+ * - Heap delta (limit=200 dedupe=false only): 6.6 MB -> 6.6 x 1.5 = 9.9 -> rounded up to 10 MB
  *
  * Run: npm --prefix web run test:api:results:performance-budget
  */
@@ -63,6 +68,12 @@ type VariantMeasurement = {
   name: VariantConfig['name'];
   maxMs: number;
   heapDeltaMb: number | null;
+};
+
+type VariantBudget = {
+  maxMs: number;
+  heapDeltaMb: number | null;
+  assertionLabel: string;
 };
 
 const TEST_PREFIX = 'perf-fixture';
@@ -161,6 +172,29 @@ const VARIANTS: readonly VariantConfig[] = [
     heapMeasured: false,
   },
 ] as const;
+
+const VARIANT_BUDGETS: Record<VariantConfig['name'], VariantBudget> = {
+  default: {
+    maxMs: 25,
+    heapDeltaMb: null,
+    assertionLabel: 'limit=50 dedupe=true sport=all',
+  },
+  limit200: {
+    maxMs: 25,
+    heapDeltaMb: null,
+    assertionLabel: 'limit=200 dedupe=true',
+  },
+  limit200_nodupe: {
+    maxMs: 30,
+    heapDeltaMb: 10,
+    assertionLabel: 'limit=200 dedupe=false',
+  },
+  sport_filter: {
+    maxMs: 15,
+    heapDeltaMb: null,
+    assertionLabel: 'limit=50 dedupe=true sport=NBA',
+  },
+};
 
 function padCardIndex(index: number): string {
   return String(index).padStart(3, '0');
@@ -584,6 +618,27 @@ async function run() {
           `discard=${DISCARD_RUNS} max_ms=${Math.round(measurement.maxMs)} ` +
           `heap_delta_mb=${heapToken}`,
       );
+    }
+
+    for (const measurement of measurements) {
+      const budget = VARIANT_BUDGETS[measurement.name];
+      const roundedMs = Math.round(measurement.maxMs);
+      assert.ok(
+        roundedMs <= budget.maxMs,
+        `query+agg took ${roundedMs} ms, budget is ${budget.maxMs} ms (variant: ${budget.assertionLabel})`,
+      );
+
+      if (budget.heapDeltaMb !== null) {
+        assert.notEqual(
+          measurement.heapDeltaMb,
+          null,
+          `heap delta measurement missing for variant: ${budget.assertionLabel}`,
+        );
+        assert.ok(
+          (measurement.heapDeltaMb as number) <= budget.heapDeltaMb,
+          `heap delta was ${(measurement.heapDeltaMb as number).toFixed(1)} MB, budget is ${budget.heapDeltaMb.toFixed(1)} MB (variant: ${budget.assertionLabel})`,
+        );
+      }
     }
   } finally {
     try {
