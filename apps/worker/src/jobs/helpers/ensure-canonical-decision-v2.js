@@ -181,6 +181,4 @@ function ensureCanonicalDecisionV2(payload) {
 
 module.exports = {
   ensureCanonicalDecisionV2,
-  normalizeOfficialStatusForDecisionV2,
-  buildInvalidDecisionV2,
 };
