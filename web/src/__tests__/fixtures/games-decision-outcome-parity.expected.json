@@ -1,0 +1,210 @@
+{
+  "corpusSize": 50,
+  "counts": {
+    "PLAY": 20,
+    "LEAN": 18,
+    "PASS": 12
+  },
+  "fixtures": [
+    {
+      "id": "fixture-1",
+      "status": "PLAY"
+    },
+    {
+      "id": "fixture-2",
+      "status": "PLAY"
+    },
+    {
+      "id": "fixture-3",
+      "status": "PLAY"
+    },
+    {
+      "id": "fixture-4",
+      "status": "PLAY"
+    },
+    {
+      "id": "fixture-5",
+      "status": "PLAY"
+    },
+    {
+      "id": "fixture-6",
+      "status": "PLAY"
+    },
+    {
+      "id": "fixture-7",
+      "status": "PLAY"
+    },
+    {
+      "id": "fixture-8",
+      "status": "PLAY"
+    },
+    {
+      "id": "fixture-9",
+      "status": "PLAY"
+    },
+    {
+      "id": "fixture-10",
+      "status": "PLAY"
+    },
+    {
+      "id": "fixture-11",
+      "status": "PLAY"
+    },
+    {
+      "id": "fixture-12",
+      "status": "PLAY"
+    },
+    {
+      "id": "fixture-13",
+      "status": "PLAY"
+    },
+    {
+      "id": "fixture-14",
+      "status": "PLAY"
+    },
+    {
+      "id": "fixture-15",
+      "status": "PLAY"
+    },
+    {
+      "id": "fixture-16",
+      "status": "PLAY"
+    },
+    {
+      "id": "fixture-17",
+      "status": "PLAY"
+    },
+    {
+      "id": "fixture-18",
+      "status": "PLAY"
+    },
+    {
+      "id": "fixture-19",
+      "status": "PLAY"
+    },
+    {
+      "id": "fixture-20",
+      "status": "PLAY"
+    },
+    {
+      "id": "fixture-21",
+      "status": "LEAN"
+    },
+    {
+      "id": "fixture-22",
+      "status": "LEAN"
+    },
+    {
+      "id": "fixture-23",
+      "status": "LEAN"
+    },
+    {
+      "id": "fixture-24",
+      "status": "LEAN"
+    },
+    {
+      "id": "fixture-25",
+      "status": "LEAN"
+    },
+    {
+      "id": "fixture-26",
+      "status": "LEAN"
+    },
+    {
+      "id": "fixture-27",
+      "status": "LEAN"
+    },
+    {
+      "id": "fixture-28",
+      "status": "LEAN"
+    },
+    {
+      "id": "fixture-29",
+      "status": "LEAN"
+    },
+    {
+      "id": "fixture-30",
+      "status": "LEAN"
+    },
+    {
+      "id": "fixture-31",
+      "status": "LEAN"
+    },
+    {
+      "id": "fixture-32",
+      "status": "LEAN"
+    },
+    {
+      "id": "fixture-33",
+      "status": "LEAN"
+    },
+    {
+      "id": "fixture-34",
+      "status": "LEAN"
+    },
+    {
+      "id": "fixture-35",
+      "status": "LEAN"
+    },
+    {
+      "id": "fixture-36",
+      "status": "LEAN"
+    },
+    {
+      "id": "fixture-37",
+      "status": "LEAN"
+    },
+    {
+      "id": "fixture-38",
+      "status": "LEAN"
+    },
+    {
+      "id": "fixture-39",
+      "status": "PASS"
+    },
+    {
+      "id": "fixture-40",
+      "status": "PASS"
+    },
+    {
+      "id": "fixture-41",
+      "status": "PASS"
+    },
+    {
+      "id": "fixture-42",
+      "status": "PASS"
+    },
+    {
+      "id": "fixture-43",
+      "status": "PASS"
+    },
+    {
+      "id": "fixture-44",
+      "status": "PASS"
+    },
+    {
+      "id": "fixture-45",
+      "status": "PASS"
+    },
+    {
+      "id": "fixture-46",
+      "status": "PASS"
+    },
+    {
+      "id": "fixture-47",
+      "status": "PASS"
+    },
+    {
+      "id": "fixture-48",
+      "status": "PASS"
+    },
+    {
+      "id": "fixture-49",
+      "status": "PASS"
+    },
+    {
+      "id": "fixture-50",
+      "status": "PASS"
+    }
+  ]
+}

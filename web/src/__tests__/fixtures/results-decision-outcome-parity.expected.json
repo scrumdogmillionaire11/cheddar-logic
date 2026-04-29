@@ -1,0 +1,264 @@
+{
+  "corpusSize": 50,
+  "tierCounts": {
+    "PLAY": 20,
+    "LEAN": 18,
+    "PASS": 12
+  },
+  "actionableCounts": {
+    "true": 38,
+    "false": 12
+  },
+  "fixtures": [
+    {
+      "id": "fixture-1",
+      "tier": "PLAY",
+      "actionable": true
+    },
+    {
+      "id": "fixture-2",
+      "tier": "PLAY",
+      "actionable": true
+    },
+    {
+      "id": "fixture-3",
+      "tier": "PLAY",
+      "actionable": true
+    },
+    {
+      "id": "fixture-4",
+      "tier": "PLAY",
+      "actionable": true
+    },
+    {
+      "id": "fixture-5",
+      "tier": "PLAY",
+      "actionable": true
+    },
+    {
+      "id": "fixture-6",
+      "tier": "PLAY",
+      "actionable": true
+    },
+    {
+      "id": "fixture-7",
+      "tier": "PLAY",
+      "actionable": true
+    },
+    {
+      "id": "fixture-8",
+      "tier": "PLAY",
+      "actionable": true
+    },
+    {
+      "id": "fixture-9",
+      "tier": "PLAY",
+      "actionable": true
+    },
+    {
+      "id": "fixture-10",
+      "tier": "PLAY",
+      "actionable": true
+    },
+    {
+      "id": "fixture-11",
+      "tier": "PLAY",
+      "actionable": true
+    },
+    {
+      "id": "fixture-12",
+      "tier": "PLAY",
+      "actionable": true
+    },
+    {
+      "id": "fixture-13",
+      "tier": "PLAY",
+      "actionable": true
+    },
+    {
+      "id": "fixture-14",
+      "tier": "PLAY",
+      "actionable": true
+    },
+    {
+      "id": "fixture-15",
+      "tier": "PLAY",
+      "actionable": true
+    },
+    {
+      "id": "fixture-16",
+      "tier": "PLAY",
+      "actionable": true
+    },
+    {
+      "id": "fixture-17",
+      "tier": "PLAY",
+      "actionable": true
+    },
+    {
+      "id": "fixture-18",
+      "tier": "PLAY",
+      "actionable": true
+    },
+    {
+      "id": "fixture-19",
+      "tier": "PLAY",
+      "actionable": true
+    },
+    {
+      "id": "fixture-20",
+      "tier": "PLAY",
+      "actionable": true
+    },
+    {
+      "id": "fixture-21",
+      "tier": "LEAN",
+      "actionable": true
+    },
+    {
+      "id": "fixture-22",
+      "tier": "LEAN",
+      "actionable": true
+    },
+    {
+      "id": "fixture-23",
+      "tier": "LEAN",
+      "actionable": true
+    },
+    {
+      "id": "fixture-24",
+      "tier": "LEAN",
+      "actionable": true
+    },
+    {
+      "id": "fixture-25",
+      "tier": "LEAN",
+      "actionable": true
+    },
+    {
+      "id": "fixture-26",
+      "tier": "LEAN",
+      "actionable": true
+    },
+    {
+      "id": "fixture-27",
+      "tier": "LEAN",
+      "actionable": true
+    },
+    {
+      "id": "fixture-28",
+      "tier": "LEAN",
+      "actionable": true
+    },
+    {
+      "id": "fixture-29",
+      "tier": "LEAN",
+      "actionable": true
+    },
+    {
+      "id": "fixture-30",
+      "tier": "LEAN",
+      "actionable": true
+    },
+    {
+      "id": "fixture-31",
+      "tier": "LEAN",
+      "actionable": true
+    },
+    {
+      "id": "fixture-32",
+      "tier": "LEAN",
+      "actionable": true
+    },
+    {
+      "id": "fixture-33",
+      "tier": "LEAN",
+      "actionable": true
+    },
+    {
+      "id": "fixture-34",
+      "tier": "LEAN",
+      "actionable": true
+    },
+    {
+      "id": "fixture-35",
+      "tier": "LEAN",
+      "actionable": true
+    },
+    {
+      "id": "fixture-36",
+      "tier": "LEAN",
+      "actionable": true
+    },
+    {
+      "id": "fixture-37",
+      "tier": "LEAN",
+      "actionable": true
+    },
+    {
+      "id": "fixture-38",
+      "tier": "LEAN",
+      "actionable": true
+    },
+    {
+      "id": "fixture-39",
+      "tier": "PASS",
+      "actionable": false
+    },
+    {
+      "id": "fixture-40",
+      "tier": "PASS",
+      "actionable": false
+    },
+    {
+      "id": "fixture-41",
+      "tier": "PASS",
+      "actionable": false
+    },
+    {
+      "id": "fixture-42",
+      "tier": "PASS",
+      "actionable": false
+    },
+    {
+      "id": "fixture-43",
+      "tier": "PASS",
+      "actionable": false
+    },
+    {
+      "id": "fixture-44",
+      "tier": "PASS",
+      "actionable": false
+    },
+    {
+      "id": "fixture-45",
+      "tier": "PASS",
+      "actionable": false
+    },
+    {
+      "id": "fixture-46",
+      "tier": "PASS",
+      "actionable": false
+    },
+    {
+      "id": "fixture-47",
+      "tier": "PASS",
+      "actionable": false
+    },
+    {
+      "id": "fixture-48",
+      "tier": "PASS",
+      "actionable": false
+    },
+    {
+      "id": "fixture-49",
+      "tier": "PASS",
+      "actionable": false
+    },
+    {
+      "id": "fixture-50",
+      "tier": "PASS",
+      "actionable": false
+    }
+  ]
+}

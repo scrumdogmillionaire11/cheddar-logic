@@ -181,6 +181,41 @@ function resolveDecisionOutcome(card) {
   }
 }
 
+function precomputeDecisionOutcomes(cards) {
+  const cardList = Array.isArray(cards) ? cards : [];
+  const decisionV2List = cardList.map((card) => card?.payloadData?.decision_v2 ?? null);
+
+  return decisionV2List.map((decisionV2, index) => {
+    const card = cardList[index];
+    if (!card || typeof card !== 'object') return null;
+
+    if (!decisionV2 || typeof decisionV2 !== 'object') {
+      card[DECISION_OUTCOME_CACHE] = null;
+      return null;
+    }
+
+    if (normalizeToken(decisionV2.source) === 'LEGACY_REPAIR') {
+      card[DECISION_OUTCOME_CACHE] = null;
+      return null;
+    }
+
+    try {
+      const outcome = buildDecisionOutcomeFromDecisionV2(
+        decisionV2,
+        buildDecisionOutcomeMetadata(card),
+      );
+      card[DECISION_OUTCOME_CACHE] = outcome;
+      return outcome;
+    } catch (error) {
+      console.warn(
+        `[post_discord_cards] invalid DecisionOutcome input for ${card?.id || card?.sourceCardId || 'unknown'}: ${error.message}`,
+      );
+      card[DECISION_OUTCOME_CACHE] = null;
+      return null;
+    }
+  });
+}
+
 function resolveOutcomeBucket(card) {
   const outcome = resolveDecisionOutcome(card);
   if (!outcome) return '';
@@ -1726,6 +1761,7 @@ async function postDiscordCards({
 
     const includePotd = process.env.DISCORD_INCLUDE_POTD_IN_SNAPSHOT === 'true';
     const cards = fetchCardsForSnapshot({ maxRows, now, includePotd });
+    precomputeDecisionOutcomes(cards);
     const snapshot = buildDiscordSnapshot({ cards, now, filters, includePotd });
 
     // Group chunks by sport so each sport can route to its own webhook channel.

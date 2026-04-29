@@ -17,6 +17,7 @@ const {
   insertCardPayload,
   upsertGame,
   createJob,
+  buildDecisionOutcomeFromDecisionV2,
 } = require('@cheddar-logic/data');
 const { fetchOdds } = require('@cheddar-logic/odds');
 const { SPORTS_CONFIG: ODDS_SPORTS_CONFIG } = require('@cheddar-logic/odds/src/config');
@@ -41,6 +42,30 @@ const { formatPotdDiscordMessage } = require('./format-discord');
 const { sendDiscordMessages } = require('../post_discord_cards');
 
 function isFiniteNumber(v) { return typeof v === 'number' && Number.isFinite(v); }
+
+function toUpperToken(value) {
+  if (value === null || value === undefined) return '';
+  return String(value).trim().toUpperCase();
+}
+
+function pickFirstString() {
+  for (let i = 0; i < arguments.length; i += 1) {
+    const candidate = arguments[i];
+    if (typeof candidate === 'string' && candidate.trim().length > 0) {
+      return candidate.trim();
+    }
+  }
+  return '';
+}
+
+function pickFirstDefined() {
+  for (let i = 0; i < arguments.length; i += 1) {
+    if (arguments[i] !== undefined && arguments[i] !== null) {
+      return arguments[i];
+    }
+  }
+  return undefined;
+}
 
 function hasEdgeFormulaMismatch(candidate) {
   if (!hasRequiredEdgeInputs(candidate)) return true;
@@ -1028,56 +1053,152 @@ function buildPotdCard(candidate, row, { cardId, nowIso }) {
   };
 }
 
-function hasModelPayloadForGame(db, gameId, cardType) {
-  if (!db || !gameId || !cardType) return false;
+function normalizePotdSportKey(sport) {
+  return String(sport || '')
+    .toUpperCase()
+    .replace('BASEBALL_', '')
+    .replace('ICEHOCKEY_', '')
+    .replace('BASKETBALL_', '')
+    .replace('AMERICANFOOTBALL_', '');
+}
+
+function resolveModelContractPayloadCardType(sport, marketType) {
+  if (resolveEdgeSourceContract(sport, marketType) !== 'MODEL') return null;
+
+  const sportKey = normalizePotdSportKey(sport);
+  const marketKey = toUpperToken(marketType);
+
+  if (sportKey === 'MLB' && marketKey === 'MONEYLINE') return 'mlb-full-game';
+  if (sportKey === 'NHL' && marketKey === 'MONEYLINE') return 'nhl-model-output';
+  if (sportKey === 'NBA' && marketKey === 'TOTAL') return 'nba-totals-call';
+
+  return null;
+}
+
+function buildDecisionOutcomeMetadataFromPayload(payload, row, fallbackMetadata = {}) {
+  const selection = payload?.selection && typeof payload.selection === 'object'
+    ? payload.selection
+    : {};
+
+  return {
+    market: pickFirstString(
+      selection.market,
+      selection.market_type,
+      payload?.market_type,
+      payload?.recommended_bet_type,
+      fallbackMetadata.market,
+    ),
+    side: pickFirstString(
+      selection.side,
+      selection.team,
+      selection.player,
+      payload?.prediction,
+      payload?.selection_side,
+      fallbackMetadata.side,
+    ),
+    line: pickFirstDefined(
+      selection.line,
+      payload?.line,
+      payload?.total,
+      payload?.market_line,
+      fallbackMetadata.line,
+    ),
+    price: pickFirstDefined(
+      selection.price,
+      payload?.price,
+      payload?.market_price_over,
+      payload?.market_price_under,
+      fallbackMetadata.price,
+    ),
+    line_verified: pickFirstDefined(
+      payload?.line_verified,
+      payload?.market_verified,
+      fallbackMetadata.line_verified,
+    ),
+    data_fresh: pickFirstDefined(
+      payload?.data_fresh,
+      payload?.snapshot_fresh,
+      fallbackMetadata.data_fresh,
+    ),
+    inputs_complete: pickFirstDefined(
+      payload?.inputs_complete,
+      payload?.projection_inputs_complete,
+      fallbackMetadata.inputs_complete,
+    ),
+    model: pickFirstString(
+      payload?.model,
+      payload?.model_name,
+      row?.card_type,
+      fallbackMetadata.model,
+    ),
+    timestamp: pickFirstString(
+      payload?.generated_at,
+      payload?.created_at,
+      row?.created_at,
+      fallbackMetadata.timestamp,
+    ),
+  };
+}
+
+function readLatestModelPayloadRecord(db, gameId, cardType) {
+  if (!db || !gameId || !cardType) {
+    return { present: false, payload: null, row: null };
+  }
+
   try {
     const row = db
       .prepare(
-        `SELECT 1 AS present
+        `SELECT payload_data, card_type, created_at
          FROM card_payloads
          WHERE game_id = ? AND card_type = ?
          ORDER BY created_at DESC
          LIMIT 1`,
       )
       .get(gameId, cardType);
-    return Boolean(row);
-  } catch (_) {
-    return false;
+
+    if (!row) {
+      return { present: false, payload: null, row: null };
+    }
+
+    if (!row.payload_data) {
+      return { present: true, payload: null, row };
+    }
+
+    const payload = JSON.parse(row.payload_data);
+    return { present: true, payload, row };
+  } catch (error) {
+    console.warn(`[POTD] invalid model payload for ${gameId}/${cardType}: ${error.message}`);
+    return { present: true, payload: null, row: null };
   }
 }
 
-function readLatestModelPayloadDecisionStatus(db, gameId, cardType) {
-  if (!db || !gameId || !cardType) return null;
+function buildDecisionOutcomeFromPayloadRecord(modelPayloadRecord, fallbackMetadata = {}) {
+  const payload = modelPayloadRecord?.payload;
+  const row = modelPayloadRecord?.row;
+  const decisionV2 = payload?.decision_v2;
+
+  if (!decisionV2 || typeof decisionV2 !== 'object') {
+    return null;
+  }
+
   try {
-    const row = db
-      .prepare(
-        `SELECT payload_data
-         FROM card_payloads
-         WHERE game_id = ? AND card_type = ?
-         ORDER BY created_at DESC
-         LIMIT 1`,
-      )
-      .get(gameId, cardType);
-    if (!row?.payload_data) return null;
-    const payload = JSON.parse(row.payload_data);
-    const status = String(
-      payload?.canonical_decision?.official_status ??
-      payload?.decision_v2?.official_status ??
-      payload?.status ??
-      '',
-    )
-      .trim()
-      .toUpperCase();
-    return status || null;
-  } catch (_) {
+    return buildDecisionOutcomeFromDecisionV2(
+      decisionV2,
+      buildDecisionOutcomeMetadataFromPayload(payload, row, fallbackMetadata),
+    );
+  } catch (error) {
+    console.warn(
+      `[POTD] invalid DecisionOutcome input for ${fallbackMetadata?.gameId || 'unknown'}/${row?.card_type || 'unknown'}: ${error.message}`,
+    );
     return null;
   }
 }
 
-function shouldRejectInvalidDecisionOutcomeCandidate({ sport, marketType, gameInvalidStatus }) {
-  const contractExpected = resolveEdgeSourceContract(sport, marketType);
-  if (contractExpected !== 'MODEL') return false;
-  return gameInvalidStatus === 'INVALID';
+function shouldRejectNonPlayDecisionOutcomeCandidate(candidate, decisionOutcome) {
+  if (!candidate || typeof candidate !== 'object') return false;
+  if (resolveEdgeSourceContract(candidate.sport, candidate.marketType) !== 'MODEL') return false;
+  if (!resolveModelContractPayloadCardType(candidate.sport, candidate.marketType)) return true;
+  return decisionOutcome?.status !== 'PLAY';
 }
 
 async function gatherBestCandidate({
@@ -1099,80 +1220,70 @@ async function gatherBestCandidate({
     }
     for (const game of result?.games || []) {
       const gameId = game?.gameId;
-      const mlbModelPayloadPresent =
+      const mlbModelPayload =
         sport === 'MLB' && gameId
-          ? hasModelPayloadForGame(db, gameId, 'mlb-full-game')
-          : false;
-      const mlbModelPayloadDecisionStatus =
-        sport === 'MLB' && gameId
-          ? readLatestModelPayloadDecisionStatus(db, gameId, 'mlb-full-game')
-          : null;
-      const nhlModelPayloadPresent =
+          ? readLatestModelPayloadRecord(db, gameId, 'mlb-full-game')
+          : { present: false, payload: null, row: null };
+      const nhlModelPayload =
         sport === 'NHL' && gameId
-          ? hasModelPayloadForGame(db, gameId, 'nhl-model-output')
-          : false;
-      const nhlModelPayloadDecisionStatus =
-        sport === 'NHL' && gameId
-          ? readLatestModelPayloadDecisionStatus(db, gameId, 'nhl-model-output')
-          : null;
-      const nbaModelPayloadPresent =
+          ? readLatestModelPayloadRecord(db, gameId, 'nhl-model-output')
+          : { present: false, payload: null, row: null };
+      const nbaModelPayload =
         sport === 'NBA' && gameId
-          ? hasModelPayloadForGame(db, gameId, 'nba-totals-call')
-          : false;
-      const nbaModelPayloadDecisionStatus =
-        sport === 'NBA' && gameId
-          ? readLatestModelPayloadDecisionStatus(db, gameId, 'nba-totals-call')
-          : null;
+          ? readLatestModelPayloadRecord(db, gameId, 'nba-totals-call')
+          : { present: false, payload: null, row: null };
 
       const candidateGame =
         sport === 'MLB' && game?.gameId
           ? {
               ...game,
               mlbSnapshot: getLatestMlbModelOutput(game.gameId) || null,
-              mlbModelPayloadPresent,
+              mlbModelPayloadPresent: mlbModelPayload.present,
             }
           : sport === 'NHL' && game?.gameId
           ? {
               ...game,
               nhlSnapshot: getLatestNhlModelOutput(game.gameId) || null,
-              nhlModelPayloadPresent,
+              nhlModelPayloadPresent: nhlModelPayload.present,
             }
           : sport === 'NBA' && game?.gameId
           ? {
               ...game,
               nbaSnapshot: getLatestNbaModelOutput(game.gameId) || null,
-              nbaModelPayloadPresent,
+              nbaModelPayloadPresent: nbaModelPayload.present,
             }
           : game;
       const candidates = buildCandidatesFn(candidateGame);
       for (const candidate of candidates) {
-        const gameInvalidStatus =
+        const modelPayloadRecord =
           sport === 'MLB'
-            ? mlbModelPayloadDecisionStatus
+            ? mlbModelPayload
             : sport === 'NHL'
-            ? nhlModelPayloadDecisionStatus
+            ? nhlModelPayload
             : sport === 'NBA'
-            ? nbaModelPayloadDecisionStatus
+            ? nbaModelPayload
             : null;
+        const gameDecisionOutcome = buildDecisionOutcomeFromPayloadRecord(modelPayloadRecord, {
+          gameId: candidate?.gameId,
+          market: candidate?.marketType,
+          side: candidate?.selection,
+          line: candidate?.line,
+          price: candidate?.price,
+          model: resolveModelContractPayloadCardType(candidate?.sport, candidate?.marketType),
+        });
 
-        if (
-          shouldRejectInvalidDecisionOutcomeCandidate({
-            sport: candidate?.sport,
-            marketType: candidate?.marketType,
-            gameInvalidStatus,
-          })
-        ) {
+        if (shouldRejectNonPlayDecisionOutcomeCandidate(candidate, gameDecisionOutcome)) {
           if (POTD_AUDIT_LOG_ENABLED) {
             console.log(
               JSON.stringify({
-                type: 'POTD_INVALID_DECISION_OUTCOME_REJECTION',
-                rejectionCode: 'INVALID_DECISION_OUTCOME',
+                type: 'POTD_NON_PLAY_DECISION_OUTCOME_REJECTION',
+                rejectionCode: 'NON_PLAY_DECISION_OUTCOME',
                 sport: candidate?.sport ?? null,
                 marketType: candidate?.marketType ?? null,
                 gameId: candidate?.gameId ?? null,
                 selectionLabel: candidate?.selectionLabel ?? null,
-                status: gameInvalidStatus,
-                note: 'Candidate rejected during assembly before scoring due to INVALID decision outcome',
+                status: gameDecisionOutcome?.status ?? 'MISSING',
+                note: 'Candidate rejected during assembly before scoring because model-contract DecisionOutcome status is not PLAY',
               }),
             );
           }

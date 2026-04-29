@@ -1,0 +1,210 @@
+{
+  "corpusSize": 50,
+  "counts": {
+    "FIRE": 20,
+    "HOLD": 18,
+    "PASS": 12
+  },
+  "fixtures": [
+    {
+      "id": "fixture-1",
+      "action": "FIRE"
+    },
+    {
+      "id": "fixture-2",
+      "action": "FIRE"
+    },
+    {
+      "id": "fixture-3",
+      "action": "FIRE"
+    },
+    {
+      "id": "fixture-4",
+      "action": "FIRE"
+    },
+    {
+      "id": "fixture-5",
+      "action": "FIRE"
+    },
+    {
+      "id": "fixture-6",
+      "action": "FIRE"
+    },
+    {
+      "id": "fixture-7",
+      "action": "FIRE"
+    },
+    {
+      "id": "fixture-8",
+      "action": "FIRE"
+    },
+    {
+      "id": "fixture-9",
+      "action": "FIRE"
+    },
+    {
+      "id": "fixture-10",
+      "action": "FIRE"
+    },
+    {
+      "id": "fixture-11",
+      "action": "FIRE"
+    },
+    {
+      "id": "fixture-12",
+      "action": "FIRE"
+    },
+    {
+      "id": "fixture-13",
+      "action": "FIRE"
+    },
+    {
+      "id": "fixture-14",
+      "action": "FIRE"
+    },
+    {
+      "id": "fixture-15",
+      "action": "FIRE"
+    },
+    {
+      "id": "fixture-16",
+      "action": "FIRE"
+    },
+    {
+      "id": "fixture-17",
+      "action": "FIRE"
+    },
+    {
+      "id": "fixture-18",
+      "action": "FIRE"
+    },
+    {
+      "id": "fixture-19",
+      "action": "FIRE"
+    },
+    {
+      "id": "fixture-20",
+      "action": "FIRE"
+    },
+    {
+      "id": "fixture-21",
+      "action": "HOLD"
+    },
+    {
+      "id": "fixture-22",
+      "action": "HOLD"
+    },
+    {
+      "id": "fixture-23",
+      "action": "HOLD"
+    },
+    {
+      "id": "fixture-24",
+      "action": "HOLD"
+    },
+    {
+      "id": "fixture-25",
+      "action": "HOLD"
+    },
+    {
+      "id": "fixture-26",
+      "action": "HOLD"
+    },
+    {
+      "id": "fixture-27",
+      "action": "HOLD"
+    },
+    {
+      "id": "fixture-28",
+      "action": "HOLD"
+    },
+    {
+      "id": "fixture-29",
+      "action": "HOLD"
+    },
+    {
+      "id": "fixture-30",
+      "action": "HOLD"
+    },
+    {
+      "id": "fixture-31",
+      "action": "HOLD"
+    },
+    {
+      "id": "fixture-32",
+      "action": "HOLD"
+    },
+    {
+      "id": "fixture-33",
+      "action": "HOLD"
+    },
+    {
+      "id": "fixture-34",
+      "action": "HOLD"
+    },
+    {
+      "id": "fixture-35",
+      "action": "HOLD"
+    },
+    {
+      "id": "fixture-36",
+      "action": "HOLD"
+    },
+    {
+      "id": "fixture-37",
+      "action": "HOLD"
+    },
+    {
+      "id": "fixture-38",
+      "action": "HOLD"
+    },
+    {
+      "id": "fixture-39",
+      "action": "PASS"
+    },
+    {
+      "id": "fixture-40",
+      "action": "PASS"
+    },
+    {
+      "id": "fixture-41",
+      "action": "PASS"
+    },
+    {
+      "id": "fixture-42",
+      "action": "PASS"
+    },
+    {
+      "id": "fixture-43",
+      "action": "PASS"
+    },
+    {
+      "id": "fixture-44",
+      "action": "PASS"
+    },
+    {
+      "id": "fixture-45",
+      "action": "PASS"
+    },
+    {
+      "id": "fixture-46",
+      "action": "PASS"
+    },
+    {
+      "id": "fixture-47",
+      "action": "PASS"
+    },
+    {
+      "id": "fixture-48",
+      "action": "PASS"
+    },
+    {
+      "id": "fixture-49",
+      "action": "PASS"
+    },
+    {
+      "id": "fixture-50",
+      "action": "PASS"
+    }
+  ]
+}

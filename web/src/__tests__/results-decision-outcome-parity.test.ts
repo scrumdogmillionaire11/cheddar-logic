@@ -1,17 +1,22 @@
 import assert from 'node:assert';
+import { createRequire } from 'node:module';
 import cheddarData from '@cheddar-logic/data';
 import { hasActionableProjectionCall } from '../app/api/results/projection-metrics';
 
-type OfficialStatus = 'PLAY' | 'LEAN' | 'PASS';
+const require = createRequire(import.meta.url);
 
-function buildPayload(status: OfficialStatus) {
+const sharedCorpus = require('@cheddar-logic/data/fixtures/decision-outcome-parity-shared-corpus.json') as Array<unknown>;
+const expected = require('./fixtures/results-decision-outcome-parity.expected.json') as {
+  corpusSize: number;
+  tierCounts: { PLAY: number; LEAN: number; PASS: number };
+  actionableCounts: { true: number; false: number };
+  fixtures: Array<{ id: string; tier: 'PLAY' | 'LEAN' | 'PASS'; actionable: boolean }>;
+};
+
+function buildPayload(decision: unknown) {
   return {
     play: {
-      decision_v2: {
-        official_status: status,
-        selection: { market: 'NHL_1P_TOTAL', side: status === 'PASS' ? 'UNKNOWN' : 'OVER' },
-        blocking_reason_codes: status === 'PASS' ? ['BLOCK_INPUTS_MISSING'] : [],
-      },
+      decision_v2: decision,
     },
   } as Record<string, unknown>;
 }
@@ -32,39 +37,31 @@ function resolveTierFromOutcomeStatus(
   return 'PASS';
 }
 
-const fixtures = Array.from({ length: 60 }, (_, idx) => {
-  const status: OfficialStatus = idx % 3 === 0 ? 'PLAY' : idx % 3 === 1 ? 'LEAN' : 'PASS';
-  return {
-    id: `fixture-${idx + 1}`,
-    payload: buildPayload(status),
-    expectedTier: status === 'PLAY' ? 'PLAY' : status === 'LEAN' ? 'LEAN' : 'PASS',
-    expectedActionable: status !== 'PASS',
-  };
-});
+assert.strictEqual(sharedCorpus.length, expected.corpusSize, 'shared corpus size drifted from expected baseline');
 
 const tierCounts = { PLAY: 0, LEAN: 0, PASS: 0 };
 const actionableCounts = { true: 0, false: 0 };
 
-for (const fixture of fixtures) {
-  const decisionV2 =
-    fixture.payload.play &&
-    typeof fixture.payload.play === 'object' &&
-    (fixture.payload.play as Record<string, unknown>).decision_v2;
+for (let index = 0; index < expected.fixtures.length; index += 1) {
+  const fixture = expected.fixtures[index];
+  const decisionV2 = sharedCorpus[index];
+  const payload = buildPayload(decisionV2);
+
   const outcome = buildDecisionOutcomeFromDecisionV2(decisionV2);
   const tier = resolveTierFromOutcomeStatus(outcome.status);
-  const actionable = hasActionableProjectionCall(fixture.payload);
+  const actionable = hasActionableProjectionCall(payload);
 
   tierCounts[tier] += 1;
   actionableCounts[String(actionable) as 'true' | 'false'] += 1;
 
-  assert.strictEqual(tier, fixture.expectedTier, `${fixture.id}: results tier parity mismatch`);
+  assert.strictEqual(tier, fixture.tier, `${fixture.id}: results tier parity mismatch`);
   assert.strictEqual(
     actionable,
-    fixture.expectedActionable,
+    fixture.actionable,
     `${fixture.id}: results actionable parity mismatch`,
   );
 }
 
-assert.deepStrictEqual(tierCounts, { PLAY: 20, LEAN: 20, PASS: 20 });
-assert.deepStrictEqual(actionableCounts, { true: 40, false: 20 });
-console.log('results-decision-outcome parity passed (60 fixtures)');
+assert.deepStrictEqual(tierCounts, expected.tierCounts);
+assert.deepStrictEqual(actionableCounts, expected.actionableCounts);
+console.log(`results-decision-outcome parity passed (${expected.corpusSize} fixtures)`);
