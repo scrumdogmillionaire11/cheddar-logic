@@ -7,6 +7,7 @@ const { makeEtDateTime } = require('../../../../tests/helpers/discord-timing');
 const TEST_DB_PATH = '/tmp/cheddar-test-run-potd-engine.db';
 const LOCK_PATH = `${TEST_DB_PATH}.lock`;
 const TEST_SYSTEM_NOW = new Date('2026-04-09T13:00:00.000-04:00');
+let payloadInsertCounter = 0;
 
 beforeAll(() => {
   jest.useFakeTimers().setSystemTime(TEST_SYSTEM_NOW);
@@ -108,6 +109,23 @@ function insertGameRow({
   db.close();
 }
 
+function ensureGameRow({
+  gameId,
+  sport = 'NHL',
+  homeTeam = 'Test Home',
+  awayTeam = 'Test Away',
+  gameTimeUtc = '2026-04-10T00:00:00.000Z',
+  status = 'scheduled',
+}) {
+  const normalizedSport = String(sport || '').toLowerCase();
+  const db = new Database(TEST_DB_PATH);
+  db.prepare(`
+    INSERT OR IGNORE INTO games (game_id, sport, home_team, away_team, game_time_utc, status)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `).run(gameId, normalizedSport, homeTeam, awayTeam, gameTimeUtc, status);
+  db.close();
+}
+
 function insertCardPayloadRow({
   id,
   gameId,
@@ -124,6 +142,82 @@ function insertCardPayloadRow({
     ) VALUES (?, ?, ?, ?, ?, ?, ?)
   `).run(id, gameId, sport, cardType, cardTitle, createdAt, JSON.stringify(payloadData));
   db.close();
+}
+
+function insertModelDecisionPayloadRow({
+  gameId,
+  sport = 'NHL',
+  cardType = 'nhl-model-output',
+  createdAt = null,
+  decisionV2,
+  payloadData = {},
+  homeTeam,
+  awayTeam,
+  gameTimeUtc,
+}) {
+  const normalizedSport = String(sport || '').toLowerCase();
+  const effectiveCreatedAt = createdAt || new Date(
+    Date.parse('2026-04-09T18:00:00.000Z') + payloadInsertCounter,
+  ).toISOString();
+  payloadInsertCounter += 1;
+  ensureGameRow({
+    gameId,
+    sport: normalizedSport,
+    homeTeam,
+    awayTeam,
+    gameTimeUtc,
+  });
+  const db = new Database(TEST_DB_PATH);
+  db.prepare(`DELETE FROM card_payloads WHERE game_id = ? AND card_type = ?`).run(gameId, cardType);
+  db.close();
+  insertCardPayloadRow({
+    id: `${gameId}-${cardType}-${payloadInsertCounter}`,
+    gameId,
+    sport: normalizedSport,
+    cardType,
+    cardTitle: `${cardType} test payload`,
+    createdAt: effectiveCreatedAt,
+    payloadData: {
+      decision_v2: decisionV2,
+      market_type: decisionV2?.market_type,
+      prediction: decisionV2?.prediction,
+      line: decisionV2?.line,
+      price: decisionV2?.price,
+      generated_at: effectiveCreatedAt,
+      ...payloadData,
+    },
+  });
+}
+
+function insertPlayableDecisionPayloadForCandidate(candidate, status = 'PLAY') {
+  const sport = String(candidate?.sport || '').toUpperCase();
+  const marketType = String(candidate?.marketType || '').toUpperCase();
+  let cardType = 'nhl-model-output';
+
+  if (sport === 'NBA' && marketType === 'TOTAL') {
+    cardType = 'nba-totals-call';
+  } else if (sport === 'MLB' && marketType === 'MONEYLINE') {
+    cardType = 'mlb-full-game';
+  } else if (sport === 'NHL' && marketType === 'MONEYLINE') {
+    cardType = 'nhl-model-output';
+  }
+
+  insertModelDecisionPayloadRow({
+    gameId: candidate.gameId,
+    sport,
+    cardType,
+    homeTeam: candidate.home_team,
+    awayTeam: candidate.away_team,
+    gameTimeUtc: candidate.commence_time,
+    decisionV2: {
+      official_status: status,
+      market_type: candidate.marketType,
+      prediction: candidate.selection,
+      line: candidate.line,
+      price: candidate.price,
+      confidence: candidate.totalScore,
+    },
+  });
 }
 
 describe('runPotdEngine', () => {
@@ -149,6 +243,7 @@ describe('runPotdEngine', () => {
   beforeEach(() => {
     dataModule.closeDatabase();
     resetTables();
+    payloadInsertCounter = 0;
   });
 
   afterAll(() => {
@@ -381,6 +476,7 @@ describe('runPotdEngine', () => {
       edgePct: 0.031,
     });
     const candidates = [winner, miss1, miss2, miss3, miss4];
+    candidates.forEach((candidate) => insertPlayableDecisionPayloadForCandidate(candidate));
 
     const result = await runPotdEngine({
       jobKey: 'potd|same-sport-shadow-pool',
@@ -834,6 +930,9 @@ describe('runPotdEngine', () => {
     ],
   ])('writes market contract fields for %s plays', async (_label, candidate, expected) => {
     const { runPotdEngine } = require('../run_potd_engine');
+    if (candidate.marketType === 'MONEYLINE') {
+      insertPlayableDecisionPayloadForCandidate(candidate);
+    }
 
     const result = await runPotdEngine({
       jobKey: `potd|${candidate.marketType}`,
@@ -959,6 +1058,439 @@ describe('runPotdEngine', () => {
     expect(readRows('SELECT * FROM potd_shadow_candidates')).toEqual([]);
   });
 
+  test("filters for status='PLAY' only", async () => {
+    const { runPotdEngine } = require('../run_potd_engine');
+
+    const playCandidate = buildSelectedCandidate({
+      gameId: 'nhl-play-only-001',
+      sport: 'NHL',
+      marketType: 'MONEYLINE',
+      selection: 'HOME',
+      selectionLabel: 'Boston Bruins',
+      line: null,
+      price: -135,
+      totalScore: 0.81,
+      edgePct: 0.04,
+    });
+    const passCandidate = buildSelectedCandidate({
+      gameId: 'nhl-play-only-002',
+      sport: 'NHL',
+      marketType: 'MONEYLINE',
+      selection: 'AWAY',
+      selectionLabel: 'Toronto Maple Leafs',
+      line: null,
+      price: 125,
+      totalScore: 0.95,
+      edgePct: 0.07,
+    });
+
+    insertModelDecisionPayloadRow({
+      gameId: playCandidate.gameId,
+      sport: 'NHL',
+      homeTeam: playCandidate.home_team,
+      awayTeam: playCandidate.away_team,
+      gameTimeUtc: playCandidate.commence_time,
+      decisionV2: {
+        official_status: 'PLAY',
+        market_type: 'MONEYLINE',
+        prediction: 'HOME',
+        price: -135,
+        confidence: 0.81,
+      },
+    });
+    insertModelDecisionPayloadRow({
+      gameId: passCandidate.gameId,
+      sport: 'NHL',
+      homeTeam: passCandidate.home_team,
+      awayTeam: passCandidate.away_team,
+      gameTimeUtc: passCandidate.commence_time,
+      decisionV2: {
+        official_status: 'PASS',
+        market_type: 'MONEYLINE',
+        prediction: 'AWAY',
+        price: 125,
+        confidence: 0.95,
+      },
+    });
+
+    const scoreCandidateFn = jest.fn((value) => value);
+
+    const result = await runPotdEngine({
+      jobKey: 'potd|play-only-filter',
+      force: true,
+      fetchOddsFn: async ({ sport }) =>
+        sport === 'NHL'
+          ? {
+              games: [
+                { gameId: playCandidate.gameId, sport: 'NHL', homeTeam: playCandidate.home_team, awayTeam: playCandidate.away_team, gameTimeUtc: playCandidate.commence_time, market: { spreads: [], totals: [], h2h: [] } },
+                { gameId: passCandidate.gameId, sport: 'NHL', homeTeam: passCandidate.home_team, awayTeam: passCandidate.away_team, gameTimeUtc: passCandidate.commence_time, market: { spreads: [], totals: [], h2h: [] } },
+              ],
+              errors: [],
+            }
+          : { games: [], errors: [] },
+      buildCandidatesFn: (game) =>
+        [playCandidate, passCandidate].filter((candidate) => candidate.gameId === game.gameId),
+      scoreCandidateFn,
+      selectTopPlaysFn: (values) => values,
+      kellySizeFn: () => 2.0,
+      sendDiscordMessagesFn: async () => 1,
+    });
+
+    expect(result.success).toBe(true);
+    expect(scoreCandidateFn).toHaveBeenCalledTimes(1);
+    expect(scoreCandidateFn).toHaveBeenCalledWith(expect.objectContaining({ gameId: playCandidate.gameId }));
+
+    const playRows = readRows('SELECT game_id FROM potd_plays');
+    expect(playRows).toEqual([{ game_id: playCandidate.gameId }]);
+  });
+
+  test('rejects SLIGHT_EDGE and PASS outcomes', async () => {
+    const { runPotdEngine } = require('../run_potd_engine');
+
+    const slightEdgeCandidate = buildSelectedCandidate({
+      gameId: 'nhl-non-play-001',
+      sport: 'NHL',
+      marketType: 'MONEYLINE',
+      selection: 'HOME',
+      selectionLabel: 'Boston Bruins',
+      line: null,
+      price: -135,
+      totalScore: 0.9,
+      edgePct: 0.06,
+    });
+    const passCandidate = buildSelectedCandidate({
+      gameId: 'nhl-non-play-002',
+      sport: 'NHL',
+      marketType: 'MONEYLINE',
+      selection: 'AWAY',
+      selectionLabel: 'Toronto Maple Leafs',
+      line: null,
+      price: 125,
+      totalScore: 0.88,
+      edgePct: 0.05,
+    });
+
+    insertModelDecisionPayloadRow({
+      gameId: slightEdgeCandidate.gameId,
+      sport: 'NHL',
+      homeTeam: slightEdgeCandidate.home_team,
+      awayTeam: slightEdgeCandidate.away_team,
+      gameTimeUtc: slightEdgeCandidate.commence_time,
+      decisionV2: {
+        official_status: 'SLIGHT_EDGE',
+        market_type: 'MONEYLINE',
+        prediction: 'HOME',
+        price: -135,
+        confidence: 0.9,
+      },
+    });
+    insertModelDecisionPayloadRow({
+      gameId: passCandidate.gameId,
+      sport: 'NHL',
+      homeTeam: passCandidate.home_team,
+      awayTeam: passCandidate.away_team,
+      gameTimeUtc: passCandidate.commence_time,
+      decisionV2: {
+        official_status: 'PASS',
+        market_type: 'MONEYLINE',
+        prediction: 'AWAY',
+        price: 125,
+        confidence: 0.88,
+      },
+    });
+
+    const scoreCandidateFn = jest.fn((value) => value);
+
+    const result = await runPotdEngine({
+      jobKey: 'potd|reject-non-play-statuses',
+      force: true,
+      fetchOddsFn: async ({ sport }) =>
+        sport === 'NHL'
+          ? {
+              games: [
+                { gameId: slightEdgeCandidate.gameId, sport: 'NHL', homeTeam: slightEdgeCandidate.home_team, awayTeam: slightEdgeCandidate.away_team, gameTimeUtc: slightEdgeCandidate.commence_time, market: { spreads: [], totals: [], h2h: [] } },
+                { gameId: passCandidate.gameId, sport: 'NHL', homeTeam: passCandidate.home_team, awayTeam: passCandidate.away_team, gameTimeUtc: passCandidate.commence_time, market: { spreads: [], totals: [], h2h: [] } },
+              ],
+              errors: [],
+            }
+          : { games: [], errors: [] },
+      buildCandidatesFn: (game) =>
+        [slightEdgeCandidate, passCandidate].filter((candidate) => candidate.gameId === game.gameId),
+      scoreCandidateFn,
+      selectTopPlaysFn: (values) => values,
+      kellySizeFn: () => 2.0,
+      sendDiscordMessagesFn: async () => 1,
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.noPlay).toBe(true);
+    expect(scoreCandidateFn).not.toHaveBeenCalled();
+    expect(readRows('SELECT * FROM potd_plays')).toEqual([]);
+  });
+
+  test('anti-ghost: no POTD on 0 PLAY outcomes', async () => {
+    const { runPotdEngine } = require('../run_potd_engine');
+
+    const ghostCandidate = buildSelectedCandidate({
+      gameId: 'nhl-ghost-001',
+      sport: 'NHL',
+      marketType: 'MONEYLINE',
+      selection: 'HOME',
+      selectionLabel: 'Boston Bruins',
+      line: null,
+      price: -140,
+      totalScore: 0.99,
+      edgePct: 0.12,
+    });
+
+    insertModelDecisionPayloadRow({
+      gameId: ghostCandidate.gameId,
+      sport: 'NHL',
+      homeTeam: ghostCandidate.home_team,
+      awayTeam: ghostCandidate.away_team,
+      gameTimeUtc: ghostCandidate.commence_time,
+      decisionV2: {
+        official_status: 'SLIGHT_EDGE',
+        market_type: 'MONEYLINE',
+        prediction: 'HOME',
+        price: -140,
+        confidence: 0.99,
+      },
+    });
+
+    const result = await runPotdEngine({
+      jobKey: 'potd|anti-ghost-no-play',
+      force: true,
+      fetchOddsFn: async ({ sport }) =>
+        sport === 'NHL'
+          ? {
+              games: [
+                { gameId: ghostCandidate.gameId, sport: 'NHL', homeTeam: ghostCandidate.home_team, awayTeam: ghostCandidate.away_team, gameTimeUtc: ghostCandidate.commence_time, market: { spreads: [], totals: [], h2h: [] } },
+              ],
+              errors: [],
+            }
+          : { games: [], errors: [] },
+      buildCandidatesFn: () => [ghostCandidate],
+      scoreCandidateFn: (value) => value,
+      selectTopPlaysFn: (values) => values,
+      kellySizeFn: () => 2.0,
+      sendDiscordMessagesFn: async () => 1,
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.noPlay).toBe(true);
+    expect(readRows('SELECT * FROM potd_plays')).toEqual([]);
+    expect(readRows('SELECT * FROM potd_nominees')).toEqual([]);
+  });
+
+  test('tiebreak: multiple PLAY outcomes selects highest confidence or deterministic first', async () => {
+    const { runPotdEngine } = require('../run_potd_engine');
+
+    const alphaCandidate = buildSelectedCandidate({
+      gameId: 'alpha-game',
+      sport: 'NHL',
+      marketType: 'MONEYLINE',
+      selection: 'HOME',
+      selectionLabel: 'Boston Bruins',
+      line: null,
+      price: -130,
+      totalScore: 0.8,
+      edgePct: 0.04,
+    });
+    const betaCandidate = buildSelectedCandidate({
+      gameId: 'beta-game',
+      sport: 'NHL',
+      marketType: 'MONEYLINE',
+      selection: 'HOME',
+      selectionLabel: 'Boston Bruins',
+      line: null,
+      price: -130,
+      totalScore: 0.8,
+      edgePct: 0.04,
+    });
+
+    insertModelDecisionPayloadRow({
+      gameId: alphaCandidate.gameId,
+      sport: 'NHL',
+      homeTeam: alphaCandidate.home_team,
+      awayTeam: alphaCandidate.away_team,
+      gameTimeUtc: alphaCandidate.commence_time,
+      decisionV2: {
+        official_status: 'PLAY',
+        market_type: 'MONEYLINE',
+        prediction: 'HOME',
+        price: -130,
+        confidence: 0.8,
+      },
+    });
+    insertModelDecisionPayloadRow({
+      gameId: betaCandidate.gameId,
+      sport: 'NHL',
+      homeTeam: betaCandidate.home_team,
+      awayTeam: betaCandidate.away_team,
+      gameTimeUtc: betaCandidate.commence_time,
+      decisionV2: {
+        official_status: 'PLAY',
+        market_type: 'MONEYLINE',
+        prediction: 'HOME',
+        price: -130,
+        confidence: 0.8,
+      },
+    });
+
+    const result = await runPotdEngine({
+      jobKey: 'potd|play-tiebreak-deterministic',
+      force: true,
+      fetchOddsFn: async ({ sport }) =>
+        sport === 'NHL'
+          ? {
+              games: [
+                { gameId: betaCandidate.gameId, sport: 'NHL', homeTeam: betaCandidate.home_team, awayTeam: betaCandidate.away_team, gameTimeUtc: betaCandidate.commence_time, market: { spreads: [], totals: [], h2h: [] } },
+                { gameId: alphaCandidate.gameId, sport: 'NHL', homeTeam: alphaCandidate.home_team, awayTeam: alphaCandidate.away_team, gameTimeUtc: alphaCandidate.commence_time, market: { spreads: [], totals: [], h2h: [] } },
+              ],
+              errors: [],
+            }
+          : { games: [], errors: [] },
+      buildCandidatesFn: (game) =>
+        [alphaCandidate, betaCandidate].filter((candidate) => candidate.gameId === game.gameId),
+      scoreCandidateFn: (value) => value,
+      kellySizeFn: () => 2.0,
+      sendDiscordMessagesFn: async () => 1,
+    });
+
+    expect(result.success).toBe(true);
+    const playRows = readRows('SELECT game_id FROM potd_plays');
+    expect(playRows).toEqual([{ game_id: alphaCandidate.gameId }]);
+  });
+
+  test('invariant: POTD count never exceeds web PLAY count', async () => {
+    const { buildDecisionOutcomeFromDecisionV2 } = require('@cheddar-logic/data');
+    const { runPotdEngine } = require('../run_potd_engine');
+
+    const playDecision = {
+      official_status: 'PLAY',
+      market_type: 'MONEYLINE',
+      prediction: 'HOME',
+      price: -135,
+      confidence: 0.81,
+    };
+    const leanDecision = {
+      official_status: 'SLIGHT_EDGE',
+      market_type: 'MONEYLINE',
+      prediction: 'AWAY',
+      price: 125,
+      confidence: 0.7,
+    };
+    const passDecision = {
+      official_status: 'PASS',
+      market_type: 'MONEYLINE',
+      prediction: 'HOME',
+      price: -120,
+      confidence: 0.5,
+    };
+
+    const decisions = [playDecision, leanDecision, passDecision];
+    const webPlayCount = decisions
+      .map((decision) =>
+        buildDecisionOutcomeFromDecisionV2(decision, {
+          market: decision.market_type,
+          side: decision.prediction,
+          price: decision.price,
+        }),
+      )
+      .filter((outcome) => outcome.status === 'PLAY').length;
+
+    const candidates = [
+      buildSelectedCandidate({
+        gameId: 'nhl-invariant-001',
+        sport: 'NHL',
+        marketType: 'MONEYLINE',
+        selection: 'HOME',
+        selectionLabel: 'Boston Bruins',
+        line: null,
+        price: -135,
+        totalScore: 0.81,
+        edgePct: 0.04,
+      }),
+      buildSelectedCandidate({
+        gameId: 'nhl-invariant-002',
+        sport: 'NHL',
+        marketType: 'MONEYLINE',
+        selection: 'AWAY',
+        selectionLabel: 'Toronto Maple Leafs',
+        line: null,
+        price: 125,
+        totalScore: 0.9,
+        edgePct: 0.06,
+      }),
+      buildSelectedCandidate({
+        gameId: 'nhl-invariant-003',
+        sport: 'NHL',
+        marketType: 'MONEYLINE',
+        selection: 'HOME',
+        selectionLabel: 'Boston Bruins',
+        line: null,
+        price: -120,
+        totalScore: 0.85,
+        edgePct: 0.05,
+      }),
+    ];
+
+    insertModelDecisionPayloadRow({
+      gameId: candidates[0].gameId,
+      sport: 'NHL',
+      homeTeam: candidates[0].home_team,
+      awayTeam: candidates[0].away_team,
+      gameTimeUtc: candidates[0].commence_time,
+      decisionV2: playDecision,
+    });
+    insertModelDecisionPayloadRow({
+      gameId: candidates[1].gameId,
+      sport: 'NHL',
+      homeTeam: candidates[1].home_team,
+      awayTeam: candidates[1].away_team,
+      gameTimeUtc: candidates[1].commence_time,
+      decisionV2: leanDecision,
+    });
+    insertModelDecisionPayloadRow({
+      gameId: candidates[2].gameId,
+      sport: 'NHL',
+      homeTeam: candidates[2].home_team,
+      awayTeam: candidates[2].away_team,
+      gameTimeUtc: candidates[2].commence_time,
+      decisionV2: passDecision,
+    });
+
+    const result = await runPotdEngine({
+      jobKey: 'potd|play-count-invariant',
+      force: true,
+      fetchOddsFn: async ({ sport }) =>
+        sport === 'NHL'
+          ? {
+              games: candidates.map((candidate) => ({
+                gameId: candidate.gameId,
+                sport: 'NHL',
+                homeTeam: candidate.home_team,
+                awayTeam: candidate.away_team,
+                gameTimeUtc: candidate.commence_time,
+                market: { spreads: [], totals: [], h2h: [] },
+              })),
+              errors: [],
+            }
+          : { games: [], errors: [] },
+      buildCandidatesFn: (game) =>
+        candidates.filter((candidate) => candidate.gameId === game.gameId),
+      scoreCandidateFn: (value) => value,
+      selectTopPlaysFn: (values) => values,
+      kellySizeFn: () => 2.0,
+      sendDiscordMessagesFn: async () => 1,
+    });
+
+    expect(result.success).toBe(true);
+    expect(readRows('SELECT * FROM potd_plays')).toHaveLength(1);
+    expect(readRows('SELECT * FROM potd_plays').length).toBeLessThanOrEqual(webPlayCount);
+  });
+
   test('hydrates MLB games from persisted model-output card payloads before candidate construction', async () => {
     // MLB has active:false in production config, but this test exercises the engine's
     // MLB-specific odds-hydration code path. Mock MLB as active so it enters the pipeline.
@@ -989,6 +1521,13 @@ describe('runPotdEngine', () => {
       cardTitle: 'MLB Full Game',
       createdAt: '2026-04-11T18:00:00.000Z',
       payloadData: {
+        decision_v2: {
+          official_status: 'PLAY',
+          market_type: 'MONEYLINE',
+          prediction: 'HOME',
+          price: -160,
+          confidence: 0.8,
+        },
         projection_source: 'MLB_FULL_GAME_MODEL',
         drivers: [{ win_prob_home: 0.665385, edge: 0.05, side: 'HOME' }],
       },
@@ -2044,6 +2583,7 @@ describe('WI-1175: same-game near-miss suppression', () => {
       totalScore: 0.72,
     });
     const candidates = [winner, sameGameDifferentLine, otherGame];
+    candidates.forEach((candidate) => insertPlayableDecisionPayloadForCandidate(candidate));
 
     const result = await runPotdEngine({
       jobKey: 'potd|wi1175-diff-line-suppress',
@@ -2320,6 +2860,7 @@ describe('WI-1175: same-game near-miss suppression', () => {
       kellySizeFn: () => 0,
       sendDiscordMessagesFn: async () => 1,
     };
+    insertPlayableDecisionPayloadForCandidate(firstCandidate);
 
     await runPotdEngine({
       ...baseOptions,
@@ -2332,6 +2873,7 @@ describe('WI-1175: same-game near-miss suppression', () => {
     expect(rows).toHaveLength(1);
     expect(rows[0].line).toBe(219.5);
 
+    insertPlayableDecisionPayloadForCandidate(updatedCandidate);
     await runPotdEngine({
       ...baseOptions,
       jobKey: 'potd|wi1175-line-shift-pass-2',

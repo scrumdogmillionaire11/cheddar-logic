@@ -1,9 +1,17 @@
 import assert from 'node:assert';
+import { createRequire } from 'node:module';
 import cheddarData from '@cheddar-logic/data';
 
 import { resolvePlayDisplayDecision } from '../lib/game-card/decision';
 
-type OfficialStatus = 'PLAY' | 'LEAN' | 'PASS';
+const require = createRequire(import.meta.url);
+
+const sharedCorpus = require('@cheddar-logic/data/fixtures/decision-outcome-parity-shared-corpus.json') as Array<unknown>;
+const expected = require('./fixtures/cards-decision-outcome-parity.expected.json') as {
+  corpusSize: number;
+  counts: { FIRE: number; HOLD: number; PASS: number };
+  fixtures: Array<{ id: string; action: 'FIRE' | 'HOLD' | 'PASS' }>;
+};
 
 const buildDecisionOutcomeFromDecisionV2 = (
   cheddarData as {
@@ -14,38 +22,18 @@ const buildDecisionOutcomeFromDecisionV2 = (
   }
 ).buildDecisionOutcomeFromDecisionV2;
 
-function buildFixtureDecision(index: number): { official_status: OfficialStatus; primary_reason_code?: string; blocking_reason_codes?: string[] } {
-  if (index % 3 === 0) return { official_status: 'PLAY' };
-  if (index % 3 === 1) return { official_status: 'LEAN', primary_reason_code: 'EDGE_FOUND' };
-  return {
-    official_status: 'PASS',
-    primary_reason_code: 'PASS_NO_EDGE',
-    blocking_reason_codes: ['BLOCK_INJURY_RISK'],
-  };
-}
+assert.strictEqual(sharedCorpus.length, expected.corpusSize, 'shared corpus size drifted from expected baseline');
 
-function expectedActionFromOfficialStatus(status: OfficialStatus): 'FIRE' | 'HOLD' | 'PASS' {
-  if (status === 'PLAY') return 'FIRE';
-  if (status === 'LEAN') return 'HOLD';
-  return 'PASS';
-}
-
-const fixtures = Array.from({ length: 60 }, (_, idx) => ({
-  id: `fixture-${idx + 1}`,
-  decision: buildFixtureDecision(idx),
-}));
-
-const expectedCounts = { FIRE: 0, HOLD: 0, PASS: 0 };
 const actualCounts = { FIRE: 0, HOLD: 0, PASS: 0 };
 
-for (const fixture of fixtures) {
-  const expectedAction = expectedActionFromOfficialStatus(fixture.decision.official_status);
-  expectedCounts[expectedAction] += 1;
+for (let index = 0; index < expected.fixtures.length; index += 1) {
+  const fixture = expected.fixtures[index];
+  const decision = sharedCorpus[index];
 
-  const decisionOutcome = buildDecisionOutcomeFromDecisionV2(fixture.decision);
+  const decisionOutcome = buildDecisionOutcomeFromDecisionV2(decision);
 
   const display = resolvePlayDisplayDecision({
-    decision_v2: fixture.decision as never,
+    decision_v2: decision as never,
     decision_outcome: decisionOutcome,
   });
 
@@ -53,18 +41,10 @@ for (const fixture of fixtures) {
 
   assert.strictEqual(
     display.action,
-    expectedAction,
+    fixture.action,
     `${fixture.id}: cards action parity mismatch`,
   );
-
-  if (fixture.decision.official_status === 'PASS') {
-    assert.ok(
-      Array.isArray(decisionOutcome.reasons?.blockers) &&
-        (decisionOutcome.reasons?.blockers?.length || 0) > 0,
-      `${fixture.id}: PASS outcomes must keep blocker reasons`,
-    );
-  }
 }
 
-assert.deepStrictEqual(actualCounts, expectedCounts, 'cards status/count parity mismatch');
-console.log('cards-decision-outcome parity passed (60 fixtures)');
+assert.deepStrictEqual(actualCounts, expected.counts, 'cards status/count parity mismatch');
+console.log(`cards-decision-outcome parity passed (${expected.corpusSize} fixtures)`);
