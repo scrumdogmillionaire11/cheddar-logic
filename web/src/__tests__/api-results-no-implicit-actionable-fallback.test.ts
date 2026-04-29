@@ -15,9 +15,8 @@ import { hasActionableProjectionCall } from '../app/api/results/projection-metri
 {
   const payload = {
     decision_v2: {
-      canonical_envelope_v2: {
-        official_status: 'PLAY',
-      },
+      official_status: 'PLAY',
+      selection: { market: 'NBA_TOTAL', side: 'OVER' },
     },
   } as Record<string, unknown>;
 
@@ -27,9 +26,8 @@ import { hasActionableProjectionCall } from '../app/api/results/projection-metri
 {
   const payload = {
     decision_v2: {
-      canonical_envelope_v2: {
-        official_status: 'PASS',
-      },
+      official_status: 'PASS',
+      selection: { market: 'NBA_TOTAL', side: 'OVER' },
     },
   } as Record<string, unknown>;
 

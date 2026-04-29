@@ -201,9 +201,56 @@ function isNhlSport(sport) {
   return token === 'NHL' || token === 'ICEHOCKEY_NHL';
 }
 
+function toUpperToken(value) {
+  return String(value || '').trim().toUpperCase();
+}
+
+function normalizeModelSignalBlockers(blockers) {
+  if (!Array.isArray(blockers)) return [];
+  return blockers
+    .map((value) => String(value || '').trim().toUpperCase())
+    .filter(Boolean);
+}
+
 function resolveNHLModelSignal(game) {
   const snap = game?.nhlSnapshot;
   if (!snap) return null;
+
+  const requiresModelSignal = game?.nhlModelPayloadPresent === true;
+  const modelSignal =
+    snap.model_signal && typeof snap.model_signal === "object"
+      ? snap.model_signal
+      : null;
+
+  // For payload-backed NHL candidates, consume model_signal directly and fail
+  // closed if it is absent/ineligible/incomplete.
+  if (requiresModelSignal) {
+    if (!modelSignal) return null;
+    if (modelSignal.eligible_for_potd !== true) return null;
+    if (toUpperToken(modelSignal.market_type) !== "MONEYLINE") return null;
+
+    const side = toUpperToken(modelSignal.selection_side);
+    if (side !== "HOME" && side !== "AWAY") return null;
+
+    const modelProb = Number(modelSignal.model_prob);
+    const impliedProb = Number(modelSignal.implied_prob);
+    const edgePct = Number(modelSignal.edge_pct);
+    const bookPrice = Number(modelSignal.book_price);
+    if (!Number.isFinite(modelProb)) return null;
+    if (!Number.isFinite(impliedProb)) return null;
+    if (!Number.isFinite(edgePct)) return null;
+    if (!Number.isFinite(bookPrice)) return null;
+
+    const homeModelWinProb = side === "HOME" ? modelProb : round(1 - modelProb, 6);
+    if (!Number.isFinite(homeModelWinProb)) return null;
+
+    return {
+      homeModelWinProb: round(clamp(homeModelWinProb, 0.05, 0.95), 6),
+      projection_source: modelSignal.source || "NHL_MODEL_SIGNAL",
+      signal_type: "NHL_MODEL_SIGNAL",
+    };
+  }
+
   const home = snap.homeGoalie ?? {};
   const away = snap.awayGoalie ?? {};
   const homeHasData = home.savePct != null || home.gsax != null;
@@ -653,8 +700,23 @@ function buildCandidates(game) {
     // NHL model signal block
     if (isNhlSport(game.sport) && game.nhlSnapshot) {
       const nhlSignal = resolveNHLModelSignal(game);
+      const nhlSignalBlockers = normalizeModelSignalBlockers(
+        game.nhlSnapshot?.model_signal?.blockers,
+      );
       if (nhlSignal) {
-        return candidates.map((candidate) => ({ ...candidate, nhlSignal }));
+        return candidates.map((candidate) => ({
+          ...candidate,
+          nhlSignal,
+          ...(nhlSignalBlockers.length > 0
+            ? { modelSignalBlockers: nhlSignalBlockers }
+            : {}),
+        }));
+      }
+      if (nhlSignalBlockers.length > 0) {
+        return candidates.map((candidate) => ({
+          ...candidate,
+          modelSignalBlockers: nhlSignalBlockers,
+        }));
       }
     }
     // NBA model signal block: inject nbaSnapshot onto TOTAL candidates only
@@ -993,6 +1055,9 @@ function scoreCandidate(candidate) {
           contractExpected,
           marketType: candidate.marketType,
           sport: candidate.sport,
+          blockers: Array.isArray(candidate.modelSignalBlockers)
+            ? candidate.modelSignalBlockers
+            : [],
         },
       ],
       confidenceLabel: 'LOW',

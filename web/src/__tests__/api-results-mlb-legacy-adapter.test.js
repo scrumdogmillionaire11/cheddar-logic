@@ -120,7 +120,7 @@ async function run() {
   try {
     const client = db.getDatabase();
 
-    // 1) MLB totals legacy PLAY without decision_v2 should be tracked.
+    // 1) MLB totals legacy PLAY without decision_v2 must remain fail-closed.
     insertResultFixture(client, {
       id: 'mlb-total-legacy-play',
       sport: 'MLB',
@@ -135,7 +135,7 @@ async function run() {
       },
     });
 
-    // 2) MLB moneyline legacy SLIGHT_EDGE without decision_v2 should be tracked.
+    // 2) MLB moneyline legacy SLIGHT_EDGE without decision_v2 must remain fail-closed.
     insertResultFixture(client, {
       id: 'mlb-ml-legacy-slight-edge',
       sport: 'MLB',
@@ -226,15 +226,17 @@ async function run() {
       );
 
     const mlbPlayTotal = findSegment('play', 'MLB_TOTAL', 'total', 'MLB');
-    assert.ok(
+    assert.equal(
       mlbPlayTotal,
-      'MLB full-game total legacy PLAY should contribute to PLAY segment',
+      undefined,
+      'MLB legacy-only PLAY rows must remain fail-closed and untracked',
     );
 
     const mlbLeanMl = findSegment('slight_edge', 'MLB_ML', 'moneyline', 'MLB');
-    assert.ok(
+    assert.equal(
       mlbLeanMl,
-      'MLB full-game moneyline legacy SLIGHT_EDGE should contribute to SLIGHT EDGE segment',
+      undefined,
+      'MLB legacy-only SLIGHT_EDGE rows must remain fail-closed and untracked',
     );
 
     const mlbLeanTotal = findSegment('slight_edge', 'MLB_TOTAL', 'total', 'MLB');
@@ -243,9 +245,9 @@ async function run() {
       'MLB row with decision_v2=LEAN should contribute to SLIGHT EDGE segment',
     );
     assert.equal(
-      mlbPlayTotal.settledCards,
+      mlbLeanTotal.settledCards,
       1,
-      'decision_v2 row must not be counted as PLAY via legacy status fallback',
+      'only canonical decision_v2 MLB row should be tracked in this fixture',
     );
 
     const nhlAnySegment = segments.find(
@@ -260,7 +262,7 @@ async function run() {
     const unsettledLeaked = segments.find(
       (row) =>
         String(row.sport || '').toUpperCase() === 'MLB' &&
-        row.settledCards > 2 &&
+        row.settledCards > 1 &&
         row.cardFamily === 'MLB_TOTAL',
     );
     assert.equal(
@@ -269,7 +271,7 @@ async function run() {
       'unsettled MLB legacy rows must not leak into settled tracked segments',
     );
 
-    console.log('✅ API results MLB legacy adapter regression tests passed');
+    console.log('✅ API results MLB legacy fail-closed tests passed');
   } finally {
     if (server) {
       await server.stop();
@@ -279,7 +281,7 @@ async function run() {
 }
 
 run().catch((error) => {
-  console.error('❌ API results MLB legacy adapter regression tests failed');
+  console.error('❌ API results MLB legacy fail-closed tests failed');
   console.error(error);
   process.exitCode = 1;
 });

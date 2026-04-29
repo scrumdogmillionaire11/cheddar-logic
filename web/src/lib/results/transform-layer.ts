@@ -60,7 +60,6 @@ export type DecisionSegmentId = 'play' | 'slight_edge';
 type DecisionTierStatus = 'PLAY' | 'LEAN' | 'PASS' | 'INVALID';
 export type DecisionTierSource =
   | 'DECISION_V2'
-  | 'LEGACY_MLB_RESULTS_ADAPTER'
   | 'FAIL_CLOSED';
 
 type DecisionTierResolution = {
@@ -89,11 +88,6 @@ const CALL_SUFFIXES = ['%-totals-call', '%-spread-call'].map((pattern) =>
   pattern.replace('%', '').toLowerCase(),
 );
 
-const LEGACY_MLB_RESULTS_CARD_TYPES = new Set([
-  'mlb-full-game',
-  'mlb-full-game-ml',
-]);
-
 function safeJsonParse(payload: string | null) {
   if (!payload) return { data: null, error: false, missing: true };
   try {
@@ -101,74 +95,6 @@ function safeJsonParse(payload: string | null) {
   } catch {
     return { data: null, error: true, missing: false };
   }
-}
-
-function getNestedString(
-  payload: Record<string, unknown> | null,
-  path: string[],
-): string | null {
-  let current: unknown = payload;
-  for (const key of path) {
-    if (!current || typeof current !== 'object' || !(key in current)) {
-      return null;
-    }
-    current = (current as Record<string, unknown>)[key];
-  }
-  return typeof current === 'string' ? current : null;
-}
-
-function normalizeStatusToken(value: string | null): string | null {
-  if (!value) return null;
-  const normalized = value.trim().toUpperCase();
-  return normalized.length > 0 ? normalized : null;
-}
-
-function hasDecisionV2(
-  payload: Record<string, unknown> | null,
-): boolean {
-  if (!payload || typeof payload !== 'object') return false;
-  if (payload.decision_v2 && typeof payload.decision_v2 === 'object') {
-    return true;
-  }
-  const play =
-    payload.play && typeof payload.play === 'object'
-      ? (payload.play as Record<string, unknown>)
-      : null;
-  return Boolean(play?.decision_v2 && typeof play.decision_v2 === 'object');
-}
-
-function isSettledHistoricalResultToken(result: string | null): boolean {
-  const normalized = String(result || '').trim().toLowerCase();
-  return (
-    normalized === 'win' ||
-    normalized === 'loss' ||
-    normalized === 'push' ||
-    normalized === 'no_bet'
-  );
-}
-
-function resolveLegacyMlbResultsTier(
-  payload: Record<string, unknown> | null,
-): 'PLAY' | 'LEAN' | null {
-  if (!payload) return null;
-  const legacyStatus = normalizeStatusToken(
-    getNestedString(payload, ['status']) ||
-      getNestedString(payload, ['decision', 'status']) ||
-      getNestedString(payload, ['play', 'status']),
-  );
-  if (legacyStatus === 'PLAY') return 'PLAY';
-  if (legacyStatus === 'LEAN' || legacyStatus === 'SLIGHT_EDGE') return 'LEAN';
-  return null;
-}
-
-function canUseLegacyMlbResultsAdapter(context: DecisionTierContext): boolean {
-  const sportToken = String(context.sport || '').trim().toUpperCase();
-  const cardTypeToken = String(context.cardType || '').trim().toLowerCase();
-  return (
-    sportToken === 'MLB' &&
-    LEGACY_MLB_RESULTS_CARD_TYPES.has(cardTypeToken) &&
-    isSettledHistoricalResultToken(context.result)
-  );
 }
 
 export function resolveDecisionTierResolution(

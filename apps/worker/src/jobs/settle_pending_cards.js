@@ -618,6 +618,30 @@ function hasTableColumn(db, tableName, columnName) {
   }
 }
 
+const SETTLEMENT_DISPLAY_EXEMPT_CARD_TYPES = Object.freeze([]);
+
+function isDisplayExemptSettlementCardType(cardType) {
+  if (!cardType) return false;
+  const normalized = String(cardType).trim().toLowerCase();
+  return SETTLEMENT_DISPLAY_EXEMPT_CARD_TYPES.includes(normalized);
+}
+
+function hasSettlementGradingContract(row, payloadData = null) {
+  if (row?.market_key !== null && row?.market_key !== undefined) {
+    return true;
+  }
+
+  if (isNhlShotsOnGoalCard(row, payloadData)) {
+    return true;
+  }
+
+  if (isMlbPitcherKRow(row, payloadData)) {
+    return true;
+  }
+
+  return false;
+}
+
 function isMlbPitcherKRow(row, payloadData = null) {
   const cardType = String(row?.card_type || '').trim().toLowerCase();
   if (cardType === 'mlb-pitcher-k') return true;
@@ -2360,23 +2384,8 @@ async function settlePendingCards({
         LEFT JOIN card_payloads cp ON cr.card_id = cp.id
         WHERE cr.status = 'pending'
           AND (
-            (
-              cdl.pick_id IS NOT NULL
-              AND (
-                cr.market_key IS NOT NULL
-                OR (
-                  UPPER(COALESCE(cr.sport, cp.sport, '')) = 'NHL'
-                  AND LOWER(
-                    COALESCE(
-                      json_extract(cp.payload_data, '$.play.prop_type'),
-                      json_extract(cp.payload_data, '$.prop_type'),
-                      ''
-                    )
-                  ) = 'shots_on_goal'
-                )
-              )
-            )
-            OR LOWER(COALESCE(cr.card_type, cp.card_type, '')) = 'mlb-pitcher-k'
+            cdl.pick_id IS NOT NULL
+            OR isDisplayExemptSettlementCardType(COALESCE(cr.card_type, cp.card_type, NULL))
           )
           AND gr.status = 'final'
       `);
@@ -2494,6 +2503,14 @@ async function settlePendingCards({
         const firstPeriodScores = readFirstPeriodScores(gameResultMetadata);
         const isNhlShotsCard = isNhlShotsOnGoalCard(pendingCard, payloadData);
         const isMlbPitcherK = isMlbPitcherKRow(pendingCard, payloadData);
+
+        if (!hasSettlementGradingContract(pendingCard, payloadData)) {
+          cardsSkipped++;
+          console.log(
+            '[SettleCards] Skipping row without settlement grading contract ' + pendingCard.card_id + ' (' + pendingCard.result_id + ')',
+          );
+          continue;
+        }
 
         if (isProjectionAuditOnlyBlkRow(pendingCard)) {
           // Auto-close with explicit market-specific reason — grading not supported for nhl-player-blk
@@ -3040,6 +3057,9 @@ module.exports = {
     isProjectionOnlyF5Row,
     isProjectionAuditOnlyBlkRow,
     isProjectionOnlyNoMarketKeyRow,
+    SETTLEMENT_DISPLAY_EXEMPT_CARD_TYPES,
+    isDisplayExemptSettlementCardType,
+    hasSettlementGradingContract,
     shouldEnableDisplayBackfill,
   },
 };
