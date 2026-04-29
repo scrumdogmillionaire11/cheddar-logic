@@ -12,6 +12,7 @@ const {
   withDb,
   getDatabase,
   createJob,
+  buildDecisionOutcomeFromDecisionV2,
   normalizeMarketType: normalizeCanonicalMarketType,
 } = require('@cheddar-logic/data');
 const {
@@ -23,7 +24,6 @@ const {
   deriveWebhookWouldBecomePlay,
   deriveWebhookDropToPass,
   describeEdgeMagnitude,
-  resolveCanonicalDecision,
 } = require('@cheddar-logic/models');
 const { getReasonCodeLabel } = require('@cheddar-logic/data');
 
@@ -55,6 +55,12 @@ const NHL_TOTAL_CONVICTION_LABELS = {
   SLIGHT_EDGE: 'Slight Edge',
   NO_EDGE: 'Slight Edge',
 };
+const DECISION_OUTCOME_BUCKETS = Object.freeze({
+  PLAY: 'official',
+  SLIGHT_EDGE: 'lean',
+  PASS: 'pass_blocked',
+});
+const DECISION_OUTCOME_CACHE = Symbol('decisionOutcome');
 const ET_TIME_FORMATTER = new Intl.DateTimeFormat('en-US', {
   timeZone: 'America/New_York',
   hour: 'numeric',
@@ -126,17 +132,67 @@ function webhookPublishBucket(card) {
   return 'pass_blocked';
 }
 
-function resolveCanonicalBucket(payload) {
-  const canonicalDecision = resolveCanonicalDecision(payload, {
-    stage: 'read_api',
-    fallbackToLegacy: false,
-    strictSource: true,
-  });
-  if (!canonicalDecision) return '';
-  if (canonicalDecision.official_status === 'INVALID') return 'invalid';
-  if (canonicalDecision.official_status === 'PLAY') return 'official';
-  if (canonicalDecision.official_status === 'SLIGHT_EDGE') return 'lean';
-  return 'pass_blocked';
+function buildDecisionOutcomeMetadata(card) {
+  const payload = card?.payloadData || {};
+  return {
+    market: payload?.market_type || payload?.recommended_bet_type,
+    side:
+      payload?.selection?.side ||
+      payload?.selection?.team ||
+      payload?.selection?.player ||
+      payload?.prediction,
+    line: payload?.line ?? payload?.total ?? payload?.market_line,
+    price: payload?.price ?? payload?.market_price_over ?? payload?.market_price_under,
+    line_verified: payload?.line_verified ?? payload?.market_verified,
+    data_fresh: payload?.data_fresh ?? payload?.snapshot_fresh,
+    inputs_complete: payload?.inputs_complete ?? payload?.projection_inputs_complete,
+    model: payload?.model ?? payload?.model_name ?? card?.cardType,
+    timestamp: payload?.generated_at ?? payload?.created_at ?? card?.createdAt,
+  };
+}
+
+function resolveDecisionOutcome(card) {
+  if (!card || typeof card !== 'object') return null;
+  if (Object.prototype.hasOwnProperty.call(card, DECISION_OUTCOME_CACHE)) {
+    return card[DECISION_OUTCOME_CACHE];
+  }
+  const decisionV2 = card?.payloadData?.decision_v2;
+  if (!decisionV2 || typeof decisionV2 !== 'object') {
+    card[DECISION_OUTCOME_CACHE] = null;
+    return null;
+  }
+  if (normalizeToken(decisionV2.source) === 'LEGACY_REPAIR') {
+    card[DECISION_OUTCOME_CACHE] = null;
+    return null;
+  }
+  try {
+    const outcome = buildDecisionOutcomeFromDecisionV2(
+      decisionV2,
+      buildDecisionOutcomeMetadata(card),
+    );
+    card[DECISION_OUTCOME_CACHE] = outcome;
+    return outcome;
+  } catch (error) {
+    console.warn(
+      `[post_discord_cards] invalid DecisionOutcome input for ${card?.id || card?.sourceCardId || 'unknown'}: ${error.message}`,
+    );
+    card[DECISION_OUTCOME_CACHE] = null;
+    return null;
+  }
+}
+
+function resolveOutcomeBucket(card) {
+  const outcome = resolveDecisionOutcome(card);
+  if (!outcome) return '';
+  return DECISION_OUTCOME_BUCKETS[outcome.status] || 'pass_blocked';
+}
+
+function resolveOutcomeBlockers(card) {
+  const blockers = resolveDecisionOutcome(card)?.reasons?.blockers;
+  if (!Array.isArray(blockers) || blockers.length === 0) return [];
+  return Array.from(new Set(blockers
+    .map((blocker) => compactToken(blocker))
+    .filter(Boolean)));
 }
 
 // Prevents [object Object] leaking into Discord output
@@ -427,9 +483,13 @@ function sportLabel(sport) {
 }
 
 function isNonPassCard(card) {
+  const outcomeBucket = resolveOutcomeBucket(card);
+  if (outcomeBucket) return outcomeBucket !== 'pass_blocked';
+
+  const publishBucket = webhookPublishBucket(card);
+  if (publishBucket) return publishBucket !== 'pass_blocked';
+
   const payload = card?.payloadData || null;
-  const canonicalBucket = resolveCanonicalBucket(payload);
-  if (canonicalBucket) return canonicalBucket !== 'pass_blocked';
 
   const statusCandidates = [
     payload?.action,
@@ -463,6 +523,10 @@ function isDisplayableWebhookCard(card) {
   if (normalizeToken(card?.payloadData?.kind) === 'EVIDENCE' && !isFirstPeriodCard(card)) {
     return isDisplayableWebhookCardLegacy(card);
   }
+  if (card?.payloadData?.projection_only === true) return false;
+  const outcomeBucket = resolveOutcomeBucket(card);
+  if (outcomeBucket === 'official' || outcomeBucket === 'lean') return true;
+  if (outcomeBucket === 'pass_blocked') return isBlockedWatchCard(card);
   const publishBucket = webhookPublishBucket(card);
   if (publishBucket) return publishBucket === 'official' || publishBucket === 'lean';
   const eligible = card?.payloadData?.webhook_eligible;
@@ -627,16 +691,10 @@ function classifyDecisionBucket(card) {
   // EVIDENCE cards are context drivers — never standalone bet rows.
   // Override any pre-stamped webhook_bucket that may have been set when action=FIRE.
   if (normalizeToken(card?.payloadData?.kind) === 'EVIDENCE' && !isFirstPeriodCard(card)) return 'pass_blocked';
+  const outcomeBucket = resolveOutcomeBucket(card);
+  if (outcomeBucket) return outcomeBucket;
   const publishBucket = webhookPublishBucket(card);
   if (publishBucket) return publishBucket;
-  const canonicalBucket = resolveCanonicalBucket(card?.payloadData || {});
-  if (canonicalBucket === 'invalid') {
-    console.warn(
-      `[post_discord_cards] skipping INVALID decision card ${card?.id || card?.sourceCardId || 'unknown'}`,
-    );
-    return 'invalid';
-  }
-  if (canonicalBucket) return canonicalBucket;
   const bucket = normalizeWebhookBucketToken(card?.payloadData?.webhook_bucket);
   if (bucket === 'official' || bucket === 'lean' || bucket === 'pass_blocked') return bucket;
   return classifyDecisionBucketLegacy(card);
@@ -1009,6 +1067,7 @@ function metricSummary(card) {
 
 function renderDecisionLine(card, bucket) {
   const payload = card?.payloadData || {};
+  const blockers = resolveOutcomeBlockers(card);
 
   // PASS lines are never rendered individually — collapsed upstream
   if (bucket === 'pass_blocked') return null;
@@ -1042,6 +1101,7 @@ function renderDecisionLine(card, bucket) {
     const lines = [`PROP | ${priced}`];
     if (propMetricsLine) lines.push(propMetricsLine);
     if (why)     lines.push(`Why: ${why}`);
+    if (blockers.length > 0) lines.push(`Blockers: ${blockers.join(', ')}`);
     const wProp = payload?.price_staleness_warning;
     if (wProp) lines.push(`⚠️ Hard-locked at ${wProp.locked_price} — current may be ${wProp.current_candidate_price} (${wProp.delta_american} pts drift, T-${wProp.minutes_to_start}min)`);
     return lines.join('\n');
@@ -1094,6 +1154,7 @@ function renderDecisionLine(card, bucket) {
     if (reason && reason !== 'No edge') lines.push(`Why: ${reason}`);
   }
   if (why)     lines.push(`Why: ${why}`);
+  if (blockers.length > 0) lines.push(`Blockers: ${blockers.join(', ')}`);
   const w = payload?.price_staleness_warning;
   if (w) lines.push(`⚠️ Hard-locked at ${w.locked_price} — current may be ${w.current_candidate_price} (${w.delta_american} pts drift, T-${w.minutes_to_start}min)`);
   return lines.join('\n');
@@ -1803,7 +1864,6 @@ module.exports = {
   chunkDiscordContent,
   sendDiscordMessages,
   classifyDecisionBucket,
-  classifyDecisionBucketLegacy,
   selectionSummary,
   passesLeanThreshold,
   decisionReason,

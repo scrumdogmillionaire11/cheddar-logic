@@ -1,0 +1,17 @@
+{
+  "corpusSize": 50,
+  "bucketCounts": {
+    "official": 20,
+    "lean": 18,
+    "pass_blocked": 12
+  },
+  "snapshotCounts": {
+    "totalCards": 38,
+    "totalGames": 38,
+    "sectionCounts": {
+      "official": 20,
+      "lean": 18,
+      "passBlocked": 0
+    }
+  }
+}

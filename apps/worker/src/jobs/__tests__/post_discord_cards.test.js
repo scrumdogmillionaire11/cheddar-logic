@@ -3,7 +3,6 @@ const {
   isDisplayableWebhookCard,
   isDisplayableWebhookCardLegacy,
   classifyDecisionBucket,
-  classifyDecisionBucketLegacy,
   selectionSummary,
   passesLeanThreshold,
   buildDiscordSnapshot,
@@ -26,6 +25,8 @@ const { classifyNhlTotalsStatus } = require('../../models/nhl-totals-status');
 const { computeWebhookFields } = require('../../utils/decision-publisher');
 const fs = require('fs');
 const Database = require('better-sqlite3');
+const parityCorpus = require('@cheddar-logic/data/fixtures/decision-outcome-parity-shared-corpus.json');
+const parityExpected = require('./fixtures/discord-decision-outcome-parity.expected.json');
 
 /**
  * Simulate model-runner + publisher behaviour for NHL total card fixtures:
@@ -103,7 +104,7 @@ function makeCard(overrides = {}) {
 
       payloadData.decision_v2 = {
         official_status: status,
-        source: 'decision_authority',
+        source: 'legacy_repair',
         primary_reason_code: status === 'PASS' ? 'PASS_NO_EDGE' : 'EDGE_CLEAR',
       };
     }
@@ -117,6 +118,56 @@ function makeCard(overrides = {}) {
     payloadData,
     ...cardOverrides,
   };
+}
+
+function makeDecisionOutcomeCard(decisionV2, overrides = {}) {
+  const {
+    payloadData: payloadOverrides = {},
+    cardType = decisionV2.market_type === 'SHOTS' ? 'nhl_player_shots_props' : 'nhl-model-output',
+    ...cardOverrides
+  } = overrides;
+  const marketType = decisionV2.market_type || decisionV2.selection?.market || 'MONEYLINE';
+  const selectionValue = decisionV2.selection?.side || decisionV2.prediction || 'HOME';
+  const selection =
+    marketType === 'SHOTS'
+      ? { player: selectionValue }
+      : marketType === 'MONEYLINE' || marketType === 'TSOA' || marketType === 'ANYTIME'
+        ? { team: selectionValue }
+        : { side: selectionValue };
+  const action =
+    decisionV2.official_status === 'PLAY'
+      ? 'FIRE'
+      : decisionV2.official_status === 'SLIGHT_EDGE'
+        ? 'LEAN'
+        : 'PASS';
+
+  return makeCard({
+    cardType,
+    payloadData: {
+      action,
+      kind: 'PLAY',
+      market_type: marketType,
+      selection,
+      prediction: decisionV2.prediction || selectionValue,
+      line: decisionV2.line ?? null,
+      price: decisionV2.price ?? null,
+      edge: decisionV2.edge ?? null,
+      confidence: decisionV2.confidence ?? null,
+      decision_v2: decisionV2,
+      ...payloadOverrides,
+    },
+    ...cardOverrides,
+  });
+}
+
+function makeParityCorpusCards() {
+  return parityCorpus.map((decision, index) =>
+    makeDecisionOutcomeCard(decision, {
+      id: `parity-${index + 1}`,
+      matchup: `Away ${index + 1} @ Home ${index + 1}`,
+      gameTimeUtc: `2035-05-${String((index % 28) + 1).padStart(2, '0')}T20:00:00.000Z`,
+    })
+  );
 }
 
 describe('post_discord_cards helpers', () => {
@@ -1590,6 +1641,183 @@ describe('canonical webhook fields path', () => {
   it('selectionSummary returns webhook_display_side when present', () => {
     const card = makeCard({ payloadData: { webhook_display_side: 'OVER' } });
     expect(selectionSummary(card)).toBe('OVER');
+  });
+});
+
+describe('DecisionOutcome parity', () => {
+  test('DecisionOutcome parity shared corpus matches locked Discord counts', () => {
+    const cards = makeParityCorpusCards();
+    const bucketCounts = cards.reduce(
+      (acc, card) => {
+        acc[classifyDecisionBucket(card)] += 1;
+        return acc;
+      },
+      { official: 0, lean: 0, pass_blocked: 0 },
+    );
+    const snapshot = buildDiscordSnapshot({
+      cards,
+      now: new Date('2035-05-01T13:00:00.000Z'),
+    });
+
+    expect(cards).toHaveLength(parityExpected.corpusSize);
+    expect(bucketCounts).toEqual(parityExpected.bucketCounts);
+    expect({
+      totalCards: snapshot.totalCards,
+      totalGames: snapshot.totalGames,
+      sectionCounts: snapshot.sectionCounts,
+    }).toEqual(parityExpected.snapshotCounts);
+  });
+
+  test('status is never reinterpreted', () => {
+    const playCard = makeDecisionOutcomeCard(
+      {
+        official_status: 'PLAY',
+        primary_reason_code: 'EDGE_CLEAR',
+        reason_codes: ['EDGE_CLEAR'],
+        market_type: 'TOTAL',
+        selection: { market: 'TOTAL', side: 'OVER' },
+        prediction: 'OVER',
+        line: 5.5,
+        price: 110,
+        edge: 1.2,
+      },
+      {
+        id: 'status-play',
+        matchup: 'Boston Bruins @ New York Rangers',
+        payloadData: {
+          webhook_publish_status: 'PASS_BLOCKED',
+          webhook_bucket: 'pass_blocked',
+          webhook_eligible: false,
+        },
+      },
+    );
+    const leanCard = makeDecisionOutcomeCard(
+      {
+        official_status: 'SLIGHT_EDGE',
+        primary_reason_code: 'EDGE_CLEAR',
+        reason_codes: ['EDGE_CLEAR'],
+        market_type: 'MONEYLINE',
+        selection: { market: 'MONEYLINE', side: 'Boston Bruins' },
+        prediction: 'Boston Bruins',
+        price: -110,
+        edge: 0.28,
+      },
+      {
+        id: 'status-lean',
+        matchup: 'Toronto Maple Leafs @ Florida Panthers',
+        payloadData: {
+          webhook_publish_status: 'PASS_BLOCKED',
+          webhook_bucket: 'pass_blocked',
+          webhook_eligible: false,
+        },
+      },
+    );
+    const passCard = makeDecisionOutcomeCard(
+      {
+        official_status: 'PASS',
+        primary_reason_code: 'PASS_REASON_1',
+        reason_codes: ['PASS_REASON_1'],
+        market_type: 'SPREAD',
+        selection: { market: 'SPREAD', side: 'OVER' },
+        prediction: 'OVER',
+        line: 1.5,
+        price: -115,
+        edge: 0.01,
+      },
+      {
+        id: 'status-pass',
+        matchup: 'Edmonton Oilers @ Dallas Stars',
+        payloadData: {
+          webhook_publish_status: 'PLAY',
+          webhook_bucket: 'official',
+          webhook_eligible: true,
+        },
+      },
+    );
+
+    expect(classifyDecisionBucket(playCard)).toBe('official');
+    expect(classifyDecisionBucket(leanCard)).toBe('lean');
+    expect(classifyDecisionBucket(passCard)).toBe('pass_blocked');
+    expect(isDisplayableWebhookCard(playCard)).toBe(true);
+    expect(isDisplayableWebhookCard(leanCard)).toBe(true);
+    expect(isDisplayableWebhookCard(passCard)).toBe(false);
+
+    const snapshot = buildDiscordSnapshot({
+      cards: [playCard, leanCard, passCard],
+      now: new Date('2035-05-01T13:00:00.000Z'),
+    });
+
+    expect(snapshot.sectionCounts).toEqual({
+      official: 1,
+      lean: 1,
+      passBlocked: 0,
+    });
+  });
+
+  test('blockers are included without status reclassification', () => {
+    const card = makeDecisionOutcomeCard(
+      {
+        official_status: 'PLAY',
+        primary_reason_code: 'EDGE_CLEAR',
+        reason_codes: ['EDGE_CLEAR', 'BLOCK_INJURY_RISK', 'PROXY_EDGE_BLOCKED'],
+        market_type: 'TOTAL',
+        selection: { market: 'TOTAL', side: 'OVER' },
+        prediction: 'OVER',
+        line: 5.5,
+        price: 110,
+        edge: 1.2,
+      },
+      {
+        id: 'blocker-play',
+        matchup: 'Boston Bruins @ New York Rangers',
+      },
+    );
+
+    const snapshot = buildDiscordSnapshot({
+      cards: [card],
+      now: new Date('2035-05-01T13:00:00.000Z'),
+    });
+
+    expect(snapshot.sectionCounts).toEqual({
+      official: 1,
+      lean: 0,
+      passBlocked: 0,
+    });
+    expect(snapshot.messages[0]).toContain('🟢 PLAY');
+    expect(snapshot.messages[0]).toContain('Blockers: BLOCK_INJURY_RISK, PROXY_EDGE_BLOCKED');
+  });
+
+  test('snapshot counts stay stable for shared corpus', () => {
+    const snapshot = buildDiscordSnapshot({
+      cards: makeParityCorpusCards(),
+      now: new Date('2035-05-01T13:00:00.000Z'),
+    });
+
+    expect({
+      totalCards: snapshot.totalCards,
+      totalGames: snapshot.totalGames,
+      sectionCounts: snapshot.sectionCounts,
+    }).toMatchInlineSnapshot(`
+      {
+        "sectionCounts": {
+          "lean": 18,
+          "official": 20,
+          "passBlocked": 0,
+        },
+        "totalCards": 38,
+        "totalGames": 38,
+      }
+    `);
+  });
+
+  test('mapper code audit uses canonical DecisionOutcome builder for decision_v2 routing', () => {
+    const source = fs.readFileSync(require.resolve('../post_discord_cards'), 'utf8');
+    const jobModule = require('../post_discord_cards');
+
+    expect(source).toContain('buildDecisionOutcomeFromDecisionV2');
+    expect(source).not.toContain('resolveCanonicalDecision');
+    expect(source).not.toContain('function resolveCanonicalBucket');
+    expect(jobModule.classifyDecisionBucketLegacy).toBeUndefined();
   });
 });
 
