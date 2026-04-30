@@ -20,30 +20,8 @@ const {
   gradeProjectionAccuracyEval,
 } = require('./projection-accuracy');
 
-function ensureCardPayloadRunIdColumn(db) {
-  const columns = db.prepare(`PRAGMA table_info(card_payloads)`).all();
-  const hasRunId = columns.some(
-    (column) => String(column.name || '').toLowerCase() === 'run_id',
-  );
-  if (!hasRunId) {
-    db.exec(`ALTER TABLE card_payloads ADD COLUMN run_id TEXT`);
-  }
-  db.exec(
-    `CREATE INDEX IF NOT EXISTS idx_card_payloads_run_id ON card_payloads(run_id)`,
-  );
-}
-
-function ensureActualResultColumn(db) {
-  const columns = db.prepare(`PRAGMA table_info(card_payloads)`).all();
-  const has = columns.some(c => String(c.name).toLowerCase() === 'actual_result');
-  if (!has) {
-    db.exec(`ALTER TABLE card_payloads ADD COLUMN actual_result TEXT`);
-  }
-}
-
 function setProjectionActualResult(cardId, actualResult) {
   const db = getDatabase();
-  ensureActualResultColumn(db);
   db.prepare(`
     UPDATE card_payloads SET actual_result = ? WHERE id = ?
   `).run(JSON.stringify(actualResult), cardId);
@@ -59,7 +37,6 @@ function setProjectionActualResult(cardId, actualResult) {
 
 function getUnsettledProjectionCards(options = {}) {
   const db = getDatabase();
-  ensureActualResultColumn(db);
   const cutoff = new Date(Date.now() - 4 * 60 * 60 * 1000).toISOString();
 
   if (options.includeMissingProxyEvals === true) {
@@ -796,10 +773,8 @@ function insertCardPayload(card) {
     });
   }
   
-  ensureCardPayloadRunIdColumn(db);
-
-    // Normalize sport to lowercase for consistency with odds_snapshots and games table
-    const normalizedSport = card.sport ? card.sport.toLowerCase() : card.sport;
+  // Normalize sport to lowercase for consistency with odds_snapshots and games table
+  const normalizedSport = card.sport ? card.sport.toLowerCase() : card.sport;
 
   const stmtInsert = db.prepare(`
     INSERT OR IGNORE INTO card_payloads (

@@ -51,6 +51,13 @@ jobs:
             echo "link-integrity.sh not found, skipping validation"
           fi
 
+      - name: Forbid inline DB DDL in data db modules
+        run: |
+          if grep -R -nE "db\.exec.*(ALTER TABLE|CREATE TABLE)" packages/data/src/db --include="*.js"; then
+            echo "Inline DDL via db.exec is forbidden in packages/data/src/db"
+            exit 1
+          fi
+
       - name: Install scoped web test dependencies
         run: |
           npm --prefix packages/data ci
