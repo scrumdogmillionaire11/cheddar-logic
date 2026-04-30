@@ -309,9 +309,10 @@ function resolveNhlGamecenterId(db, gameId) {
     // game_id_map may not exist — fall through
   }
 
-  // Fall back: pure-numeric game_id is the native NHL ID
+  // Fall back: 10-digit NHL Gamecenter IDs start with "20" (e.g. 2024021234).
+  // Reject shorter ESPN-format IDs (9 digits like 401869775).
   const raw = String(gameId || '').trim();
-  if (/^\d{6,}$/.test(raw)) return raw;
+  if (/^20\d{8}$/.test(raw)) return raw;
 
   return null;
 }
