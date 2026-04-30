@@ -145,13 +145,18 @@ function insertProjectionProxyRows(db, card, payload, actualResult) {
   if (card.card_type === 'nhl-pace-1p') {
     const goals1p = toFiniteNumberOrNull(actualResult?.goals_1p);
     if (goals1p === null) return 0;
+    const nhlProjection =
+      payload?.projected_total ??
+      payload?.projection?.total ??
+      payload?.drivers?.[0]?.projected ??
+      null;
     proxyRows = buildProjectionProxyMarketRows({
       card_id: card.card_id,
       game_id: card.game_id,
       game_date: card.game_time_utc?.slice(0, 10),
       sport: card.sport,
       card_family: CARD_TYPE_TO_FAMILY[card.card_type],
-      model_projection: payload?.projected_total ?? null,
+      model_projection: nhlProjection,
       actual_result: JSON.stringify({ goals_1p: goals1p }),
     });
   }
@@ -165,7 +170,10 @@ function insertProjectionProxyRows(db, card, payload, actualResult) {
       game_date: card.game_time_utc?.slice(0, 10),
       sport: card.sport,
       card_family: CARD_TYPE_TO_FAMILY[card.card_type],
-      model_projection: payload?.projected_total ?? null,
+      model_projection:
+        payload?.projection?.projected_total ??
+        payload?.projected_total ??
+        null,
       actual_result: JSON.stringify({ runs_f5: runsF5 }),
     });
   }
