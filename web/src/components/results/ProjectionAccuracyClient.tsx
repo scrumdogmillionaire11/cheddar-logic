@@ -141,6 +141,9 @@ export function ProjectionAccuracyClient() {
     useState<ProjectionConfidenceFilter>('ALL');
   const [expandedConfidenceBand, setExpandedConfidenceBand] =
     useState<ConfidenceTier | null>(null);
+  const [expandedRangeFamilies, setExpandedRangeFamilies] = useState<Set<string>>(
+    () => new Set(),
+  );
 
   const loadProjectionResults = useCallback(async () => {
     try {
@@ -756,69 +759,99 @@ export function ProjectionAccuracyClient() {
                 Win-loss record segmented by model projection value (0.5-unit buckets).
               </p>
             </div>
-            <div className="grid gap-8 lg:grid-cols-2">
-              {projectionRangeBreakdown.map(({ family, label, buckets }) => (
-                <div key={family}>
-                  <p className="mb-3 text-xs font-semibold uppercase tracking-[0.18em] text-cloud/50">
-                    {label}
-                  </p>
-                  <div className="overflow-hidden rounded-xl border border-white/10">
-                    <div className="grid grid-cols-[1fr_80px_64px_48px] gap-3 bg-night/70 px-4 py-2.5 text-[11px] font-semibold uppercase tracking-[0.16em] text-cloud/50">
-                      <span>Range</span>
-                      <span>Record</span>
-                      <span>Hit %</span>
-                      <span className="text-right">n</span>
-                    </div>
-                    <div className="divide-y divide-white/5">
-                      {buckets.map((b) => {
-                        const pct = b.hitRate;
-                        const barWidth = Math.round(pct * 100);
-                        const barColor =
-                          pct >= 0.60
-                            ? 'bg-emerald-400/50'
-                            : pct >= 0.50
-                              ? 'bg-cyan-400/40'
-                              : pct >= 0.40
-                                ? 'bg-amber-400/40'
-                                : 'bg-rose-400/40';
-                        const textColor =
-                          pct >= 0.60
-                            ? 'text-emerald-200'
-                            : pct >= 0.50
-                              ? 'text-cyan-200'
-                              : pct >= 0.40
-                                ? 'text-amber-200'
-                                : 'text-rose-200';
-                        return (
-                          <div
-                            key={b.min}
-                            className="grid grid-cols-[1fr_80px_64px_48px] items-center gap-3 px-4 py-2.5 text-sm"
-                          >
-                            <div className="relative">
+            <div className="grid gap-4 lg:grid-cols-2">
+              {projectionRangeBreakdown.map(({ family, label, buckets }) => {
+                const isExpanded = expandedRangeFamilies.has(family);
+                const totalGraded = buckets.reduce((s, b) => s + b.total, 0);
+                const totalWins = buckets.reduce((s, b) => s + b.wins, 0);
+                const totalLosses = buckets.reduce((s, b) => s + b.losses, 0);
+                const overallHitRate = totalGraded > 0 ? totalWins / totalGraded : null;
+                return (
+                  <div key={family} className="overflow-hidden rounded-xl border border-white/10">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setExpandedRangeFamilies((prev) => {
+                          const next = new Set(prev);
+                          if (next.has(family)) next.delete(family);
+                          else next.add(family);
+                          return next;
+                        });
+                      }}
+                      className="flex w-full items-center justify-between bg-night/70 px-4 py-3 text-left transition-colors hover:bg-night/90"
+                    >
+                      <div className="flex items-center gap-3">
+                        <span className="text-xs font-semibold uppercase tracking-[0.18em] text-cloud/60">
+                          {label}
+                        </span>
+                        {overallHitRate !== null && (
+                          <span className="font-mono text-xs text-cloud/40">
+                            {totalWins}-{totalLosses} · {(overallHitRate * 100).toFixed(1)}%
+                          </span>
+                        )}
+                      </div>
+                      <span className="text-[11px] text-cloud/40">{isExpanded ? '▲' : '▼'}</span>
+                    </button>
+                    {isExpanded && (
+                      <>
+                        <div className="grid grid-cols-[1fr_80px_64px_48px] gap-3 border-t border-white/5 bg-night/40 px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-cloud/40">
+                          <span>Range</span>
+                          <span>Record</span>
+                          <span>Hit %</span>
+                          <span className="text-right">n</span>
+                        </div>
+                        <div className="divide-y divide-white/5">
+                          {buckets.map((b) => {
+                            const pct = b.hitRate;
+                            const barWidth = Math.round(pct * 100);
+                            const barColor =
+                              pct >= 0.60
+                                ? 'bg-emerald-400/50'
+                                : pct >= 0.50
+                                  ? 'bg-cyan-400/40'
+                                  : pct >= 0.40
+                                    ? 'bg-amber-400/40'
+                                    : 'bg-rose-400/40';
+                            const textColor =
+                              pct >= 0.60
+                                ? 'text-emerald-200'
+                                : pct >= 0.50
+                                  ? 'text-cyan-200'
+                                  : pct >= 0.40
+                                    ? 'text-amber-200'
+                                    : 'text-rose-200';
+                            return (
                               <div
-                                className={`absolute inset-y-0 left-0 rounded-sm ${barColor}`}
-                                style={{ width: `${barWidth}%`, opacity: 0.35 }}
-                              />
-                              <span className="relative font-mono text-[12px] text-cloud/70">
-                                {b.min.toFixed(1)}–{b.max.toFixed(1)}
-                              </span>
-                            </div>
-                            <span className="font-mono text-[12px] text-cloud/80">
-                              {b.wins}-{b.losses}
-                            </span>
-                            <span className={`font-mono text-[12px] font-semibold ${textColor}`}>
-                              {(pct * 100).toFixed(1)}%
-                            </span>
-                            <span className="text-right font-mono text-[12px] text-cloud/50">
-                              {b.total}
-                            </span>
-                          </div>
-                        );
-                      })}
-                    </div>
+                                key={b.min}
+                                className="grid grid-cols-[1fr_80px_64px_48px] items-center gap-3 px-4 py-2.5 text-sm"
+                              >
+                                <div className="relative">
+                                  <div
+                                    className={`absolute inset-y-0 left-0 rounded-sm ${barColor}`}
+                                    style={{ width: `${barWidth}%`, opacity: 0.35 }}
+                                  />
+                                  <span className="relative font-mono text-[12px] text-cloud/70">
+                                    {b.min.toFixed(1)}–{b.max.toFixed(1)}
+                                  </span>
+                                </div>
+                                <span className="font-mono text-[12px] text-cloud/80">
+                                  {b.wins}-{b.losses}
+                                </span>
+                                <span className={`font-mono text-[12px] font-semibold ${textColor}`}>
+                                  {(pct * 100).toFixed(1)}%
+                                </span>
+                                <span className="text-right font-mono text-[12px] text-cloud/50">
+                                  {b.total}
+                                </span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </>
+                    )}
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </section>
         )}
