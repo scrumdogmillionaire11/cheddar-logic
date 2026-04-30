@@ -31,6 +31,20 @@ const NHL_SCHEDULE_BASE = 'https://api-web.nhle.com/v1/schedule';
 // same sport token used by pull_schedule_nhl / settle_projections
 const SPORT = 'nhl';
 
+// Maps 3-letter NHL abbreviations to a unique fragment of the canonical full
+// team name stored in our games table (upper-cased full city or nickname).
+const NHL_ABBREV_TO_NAME_FRAGMENT = {
+  ANA: 'ANAHEIM', ARI: 'ARIZONA', BOS: 'BOSTON', BUF: 'BUFFALO',
+  CAR: 'CAROLINA', CBJ: 'COLUMBUS', CGY: 'CALGARY', CHI: 'CHICAGO',
+  COL: 'COLORADO', DAL: 'DALLAS', DET: 'DETROIT', EDM: 'EDMONTON',
+  FLA: 'FLORIDA', LAK: 'KINGS', MIN: 'MINNESOTA', MTL: 'MONTREAL',
+  NJD: 'NEW JERSEY', NSH: 'NASHVILLE', NYI: 'ISLANDERS', NYR: 'RANGERS',
+  OTT: 'OTTAWA', PHI: 'PHILADELPHIA', PIT: 'PITTSBURGH', SEA: 'KRAKEN',
+  SJS: 'SAN JOSE', STL: 'LOUIS', TBL: 'TAMPA', TOR: 'TORONTO',
+  UTA: 'UTAH', VAN: 'VANCOUVER', VGK: 'GOLDEN KNIGHTS', WSH: 'WASHINGTON',
+  WPG: 'WINNIPEG',
+};
+
 /**
  * Fetch the NHL API schedule for a single date.
  * @param {string} dateStr - YYYY-MM-DD
@@ -77,24 +91,50 @@ function extractGamesFromSchedule(scheduleJson) {
 function resolveCanonicalGameId(db, { gameDate, homeAbbrev, awayAbbrev }) {
   if (!gameDate || !homeAbbrev || !awayAbbrev) return null;
 
-  // Cross-reference: find ESPN-mapped canonical game_id where the game date
-  // matches AND both team abbreviations appear in the full-name fields (stored
-  // as upper-case full names like "SAN JOSE SHARKS").
-  const row = db
+  // Resolve abbreviations to name fragments for LIKE matching against full
+  // team names stored in the games table (e.g. "TBL" → "TAMPA").
+  const homeFragment =
+    NHL_ABBREV_TO_NAME_FRAGMENT[homeAbbrev.toUpperCase()] || homeAbbrev.toUpperCase();
+  const awayFragment =
+    NHL_ABBREV_TO_NAME_FRAGMENT[awayAbbrev.toUpperCase()] || awayAbbrev.toUpperCase();
+
+  // Return ALL matching canonical game_ids so that duplicate game entries
+  // (e.g. one ESPN-format ID and one UUID hash for the same physical game)
+  // all get the gamecenter mapping written.
+  //
+  // NHL API returns local game dates; evening NA games often have a game_time_utc
+  // that falls on the next UTC calendar day, so we check both the given date and
+  // date+1 to avoid false misses.
+  const ids = new Set();
+  const dateExprs = `(DATE(g.game_time_utc) = ? OR DATE(g.game_time_utc) = DATE(?, '+1 day'))`;
+
+  const espnRows = db
     .prepare(
-      `SELECT gim.game_id
+      `SELECT DISTINCT gim.game_id
        FROM game_id_map gim
        JOIN games g ON g.game_id = gim.game_id
        WHERE LOWER(gim.sport) = 'nhl'
          AND gim.provider = 'espn'
-         AND DATE(g.game_time_utc) = ?
+         AND ${dateExprs}
          AND UPPER(g.home_team) LIKE '%' || ? || '%'
-         AND UPPER(g.away_team) LIKE '%' || ? || '%'
-       LIMIT 1`,
+         AND UPPER(g.away_team) LIKE '%' || ? || '%'`,
     )
-    .get(gameDate, homeAbbrev.toUpperCase(), awayAbbrev.toUpperCase());
+    .all(gameDate, gameDate, homeFragment, awayFragment);
+  for (const r of espnRows) if (r.game_id) ids.add(r.game_id);
 
-  return row?.game_id ?? null;
+  const directRows = db
+    .prepare(
+      `SELECT DISTINCT g.game_id
+       FROM games g
+       WHERE LOWER(g.sport) = 'nhl'
+         AND ${dateExprs}
+         AND UPPER(g.home_team) LIKE '%' || ? || '%'
+         AND UPPER(g.away_team) LIKE '%' || ? || '%'`,
+    )
+    .all(gameDate, gameDate, homeFragment, awayFragment);
+  for (const r of directRows) if (r.game_id) ids.add(r.game_id);
+
+  return ids.size > 0 ? [...ids] : null;
 }
 
 /**
@@ -169,9 +209,9 @@ async function pullNhlGameIds({ jobKey = null, dryRun = false, dateRange = 7 } =
         fetched += games.length;
 
         for (const game of games) {
-          const canonicalGameId = resolveCanonicalGameId(db, game);
+          const canonicalGameIds = resolveCanonicalGameId(db, game);
 
-          if (!canonicalGameId) {
+          if (!canonicalGameIds) {
             unmatched += 1;
             console.debug(
               `[${JOB_NAME}] unmatched nhlId=${game.nhlGameId} date=${game.gameDate} home=${game.homeAbbrev} away=${game.awayAbbrev}`,
@@ -181,32 +221,46 @@ async function pullNhlGameIds({ jobKey = null, dryRun = false, dateRange = 7 } =
 
           matched += 1;
 
-          const isNew = !seen.has(canonicalGameId);
-          if (isNew) seen.add(canonicalGameId);
+          for (const canonicalGameId of canonicalGameIds) {
+            if (seen.has(canonicalGameId)) continue;
+            seen.add(canonicalGameId);
 
-          // Check whether an nhl_gamecenter row already exists for this game_id
-          const existing = db
-            .prepare(
-              `SELECT external_game_id FROM game_id_map
-               WHERE sport = ? AND provider = 'nhl_gamecenter' AND game_id = ?
-               LIMIT 1`,
-            )
-            .get(SPORT, canonicalGameId);
+            // Check whether an nhl_gamecenter row already exists for this game_id
+            const existing = db
+              .prepare(
+                `SELECT external_game_id FROM game_id_map
+                 WHERE sport = ? AND provider = 'nhl_gamecenter' AND game_id = ?
+                 LIMIT 1`,
+              )
+              .get(SPORT, canonicalGameId);
 
-          upsertGameIdMap({
-            sport: SPORT,
-            provider: 'nhl_gamecenter',
-            externalGameId: game.nhlGameId,
-            gameId: canonicalGameId,
-            matchMethod: 'schedule_date_teams',
-            matchConfidence: 1.0,
-            matchedAt: new Date().toISOString(),
-          });
-
-          if (existing) {
-            updated += 1;
-          } else {
-            inserted += 1;
+            if (existing) {
+              updated += 1;
+              // Don't re-upsert if we'd just overwrite with a different external ID —
+              // the constraint on (sport, provider, game_id) would fire.
+              if (existing.external_game_id === game.nhlGameId) {
+                upsertGameIdMap({
+                  sport: SPORT,
+                  provider: 'nhl_gamecenter',
+                  externalGameId: game.nhlGameId,
+                  gameId: canonicalGameId,
+                  matchMethod: 'schedule_date_teams',
+                  matchConfidence: 1.0,
+                  matchedAt: new Date().toISOString(),
+                });
+              }
+            } else {
+              inserted += 1;
+              upsertGameIdMap({
+                sport: SPORT,
+                provider: 'nhl_gamecenter',
+                externalGameId: game.nhlGameId,
+                gameId: canonicalGameId,
+                matchMethod: 'schedule_date_teams',
+                matchConfidence: 1.0,
+                matchedAt: new Date().toISOString(),
+              });
+            }
           }
         }
       }
@@ -242,7 +296,9 @@ async function pullNhlGameIds({ jobKey = null, dryRun = false, dateRange = 7 } =
 
 if (require.main === module) {
   const dryRun = process.argv.includes('--dry-run');
-  pullNhlGameIds({ dryRun }).then((r) => {
+  const dateRangeArg = process.argv.find((a) => a.startsWith('--date-range='));
+  const dateRange = dateRangeArg ? Math.max(1, parseInt(dateRangeArg.split('=')[1], 10)) : 7;
+  pullNhlGameIds({ dryRun, dateRange }).then((r) => {
     if (r.success === false) process.exitCode = 1;
   });
 }
