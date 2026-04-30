@@ -35,7 +35,25 @@ function parsePeriodScoresFromLanding(landingPayload) {
   const candidates = [];
 
   if (Array.isArray(landingPayload?.summary?.scoring)) {
-    candidates.push(...landingPayload.summary.scoring);
+    const homeAbbrev = String(
+      landingPayload?.homeTeam?.abbrev || landingPayload?.homeTeam?.teamAbbrev || '',
+    ).toUpperCase();
+    const awayAbbrev = String(
+      landingPayload?.awayTeam?.abbrev || landingPayload?.awayTeam?.teamAbbrev || '',
+    ).toUpperCase();
+    for (const item of landingPayload.summary.scoring) {
+      const goals = Array.isArray(item.goals) ? item.goals : [];
+      let homeScore = 0;
+      let awayScore = 0;
+      for (const goal of goals) {
+        const abbrev = String(
+          goal?.teamAbbrev?.default || goal?.teamAbbrev || '',
+        ).toUpperCase();
+        if (homeAbbrev && abbrev === homeAbbrev) homeScore++;
+        else if (awayAbbrev && abbrev === awayAbbrev) awayScore++;
+      }
+      candidates.push({ ...item, homeScore, awayScore });
+    }
   }
 
   if (Array.isArray(landingPayload?.summary?.scoringByPeriod)) {
