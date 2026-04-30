@@ -1472,3 +1472,139 @@ describe('WI-1178: sigma-based NBA TOTAL edge + edge-weighted totalScore + noise
     if (original !== undefined) process.env.POTD_NOISE_FLOOR_NBA_TOTAL = original;
   });
 });
+
+describe('NHL model_signal POTD consumption contract', () => {
+  function buildNhlGameForModelSignal(overrides = {}) {
+    return buildGame({
+      sport: 'NHL',
+      nhlModelPayloadPresent: true,
+      nhlSnapshot: {
+        model_signal: {
+          eligible_for_potd: true,
+          market_type: 'MONEYLINE',
+          selection_side: 'HOME',
+          model_prob: 0.58,
+          book_price: -120,
+          implied_prob: 0.545455,
+          edge_pct: 0.034545,
+          blockers: [],
+          source: 'NHL_MODEL_OUTPUT_MONEYLINE',
+        },
+        homeGoalie: { savePct: null, gsax: null },
+        awayGoalie: { savePct: null, gsax: null },
+      },
+      ...overrides,
+    });
+  }
+
+  test('rejects NHL payload when actionable=true but model_signal.eligible_for_potd=false', () => {
+    const game = buildNhlGameForModelSignal({
+      nhlSnapshot: {
+        model_signal: {
+          eligible_for_potd: false,
+          actionable: true,
+          market_type: 'MONEYLINE',
+          selection_side: 'HOME',
+          model_prob: 0.58,
+          book_price: -120,
+          implied_prob: 0.545455,
+          edge_pct: 0.034545,
+          blockers: ['MODEL_PROB_MISSING'],
+          source: 'NHL_MODEL_OUTPUT_MONEYLINE',
+        },
+        homeGoalie: { savePct: 0.95, gsax: 10 },
+        awayGoalie: { savePct: 0.88, gsax: -10 },
+      },
+    });
+
+    const moneyline = buildCandidates(game).filter((candidate) => candidate.marketType === 'MONEYLINE');
+    expect(moneyline).toHaveLength(2);
+
+    const scored = moneyline.map(scoreCandidate);
+    expect(scored.every(Boolean)).toBe(true);
+    for (const row of scored) {
+      expect(row.edgeSourceTag).toBe('MODEL');
+      expect(row.edgePct).toBeNull();
+      expect(row.rejectionDiagnostics).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ code: 'MODEL_SIGNAL_INCOMPLETE' }),
+        ]),
+      );
+    }
+  });
+
+  test('rejection diagnostics include model_signal blockers when eligible_for_potd=false', () => {
+    const game = buildNhlGameForModelSignal({
+      nhlSnapshot: {
+        model_signal: {
+          eligible_for_potd: false,
+          market_type: 'MONEYLINE',
+          selection_side: 'HOME',
+          model_prob: null,
+          book_price: -120,
+          implied_prob: 0.545455,
+          edge_pct: null,
+          blockers: ['MODEL_PROB_MISSING', 'EDGE_UNAVAILABLE'],
+          source: 'NHL_MODEL_OUTPUT_MONEYLINE',
+        },
+      },
+    });
+
+    const scored = buildCandidates(game)
+      .filter((candidate) => candidate.marketType === 'MONEYLINE')
+      .map(scoreCandidate)
+      .filter(Boolean);
+
+    expect(scored).toHaveLength(2);
+    for (const row of scored) {
+      expect(row.rejectionDiagnostics).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            code: 'MODEL_SIGNAL_INCOMPLETE',
+            blockers: ['MODEL_PROB_MISSING', 'EDGE_UNAVAILABLE'],
+          }),
+        ]),
+      );
+    }
+  });
+
+  test('accepts NHL payload when eligible_for_potd=true with finite model fields', () => {
+    const game = buildNhlGameForModelSignal();
+    const homeCandidate = buildCandidates(game).find(
+      (candidate) => candidate.marketType === 'MONEYLINE' && candidate.selection === 'HOME',
+    );
+
+    expect(homeCandidate).toBeDefined();
+    const scored = scoreCandidate(homeCandidate);
+    expect(scored).not.toBeNull();
+    expect(scored.edgeSourceTag).toBe('MODEL');
+    expect(scored.edgePct).not.toBeNull();
+    expect(scored.modelWinProb).toBeCloseTo(0.58, 6);
+    expect(scored.rejectionDiagnostics).toBeUndefined();
+  });
+
+  test('fails closed when nhlModelPayloadPresent=true but model_signal is missing', () => {
+    const game = buildNhlGameForModelSignal({
+      nhlSnapshot: {
+        homeGoalie: { savePct: 0.95, gsax: 9 },
+        awayGoalie: { savePct: 0.88, gsax: -8 },
+      },
+    });
+
+    const scored = buildCandidates(game)
+      .filter((candidate) => candidate.marketType === 'MONEYLINE')
+      .map(scoreCandidate)
+      .filter(Boolean);
+
+    expect(scored).toHaveLength(2);
+    for (const row of scored) {
+      expect(row.edgeSourceTag).toBe('MODEL');
+      expect(row.edgePct).toBeNull();
+      expect(row.rejectionDiagnostics).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ code: 'MODEL_SIGNAL_INCOMPLETE' }),
+        ]),
+      );
+    }
+  });
+});

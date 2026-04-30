@@ -11,6 +11,12 @@ import {
   type ProjectionAccuracyRecord,
   type ProjectionAccuracyResponse,
 } from '@/lib/types/projection-accuracy';
+import {
+  PROJECTION_RESULTS_FAMILY_OPTIONS as FAMILY_OPTIONS,
+  PROJECTION_RESULTS_FAMILY_TOKEN_ALIASES as FAMILY_TOKEN_ALIASES,
+  PROJECTION_RESULTS_SUPPORTED_FAMILY_SET as SUPPORTED_FAMILY_SET,
+  type FamilyOption,
+} from '@/lib/results/projection-results-contract';
 
 type ProjectionConfidenceFilter = 'ALL' | ConfidenceTier;
 
@@ -22,36 +28,6 @@ type ProjectionSettledResponse = {
     actualsReady: boolean;
   };
   error?: string;
-};
-
-type FamilyOption = {
-  id: string;
-  label: string;
-  families: string[];
-};
-
-const FAMILY_OPTIONS: FamilyOption[] = [
-  { id: 'ALL', label: 'All', families: [] },
-  {
-    id: 'NHL_1P',
-    label: 'NHL 1P O/U',
-    families: ['NHL_1P_TOTAL', 'NHL_1P_OU', 'NHL_1P_O/U'],
-  },
-  { id: 'MLB_F5_TOTAL', label: 'MLB F5 Total', families: ['MLB_F5_TOTAL'] },
-  {
-    id: 'MLB_F5_MONEYLINE',
-    label: 'MLB F5 Moneyline',
-    families: ['MLB_F5_ML', 'MLB_F5_MONEYLINE'],
-  },
-];
-
-const SUPPORTED_FAMILY_SET = new Set(
-  FAMILY_OPTIONS.flatMap((option) => option.families),
-);
-
-const FAMILY_TOKEN_ALIASES: Record<string, string> = {
-  NHL_1P_OU: 'NHL_1P_TOTAL',
-  'NHL_1P_O/U': 'NHL_1P_TOTAL',
 };
 
 function normalizeFamily(value: string | null | undefined) {
@@ -165,6 +141,9 @@ export function ProjectionAccuracyClient() {
     useState<ProjectionConfidenceFilter>('ALL');
   const [expandedConfidenceBand, setExpandedConfidenceBand] =
     useState<ConfidenceTier | null>(null);
+  const [expandedRangeFamilies, setExpandedRangeFamilies] = useState<Set<string>>(
+    () => new Set(['NHL_1P_TOTAL', 'MLB_F5_TOTAL']),
+  );
 
   const loadProjectionResults = useCallback(async () => {
     try {
@@ -352,7 +331,7 @@ export function ProjectionAccuracyClient() {
       return {
         family,
         label: familyLabel(family),
-        rows: rows.length,
+        rows: wins + losses,
         wins,
         losses,
         hitRate: wins + losses > 0 ? wins / (wins + losses) : null,
@@ -360,6 +339,44 @@ export function ProjectionAccuracyClient() {
         bias,
       };
     });
+  }, [filteredSettledRows]);
+
+  const projectionRangeBreakdown = useMemo(() => {
+    const BUCKET = 0.5;
+    const familyBuckets = new Map<
+      string,
+      Map<string, { min: number; max: number; wins: number; losses: number }>
+    >();
+
+    for (const row of filteredSettledRows) {
+      const family = normalizeFamily(row.cardFamily);
+      if (family !== 'NHL_1P_TOTAL' && family !== 'MLB_F5_TOTAL') continue;
+      if (row.gradedResult !== 'WIN' && row.gradedResult !== 'LOSS') continue;
+      if (typeof row.projValue !== 'number' || !Number.isFinite(row.projValue)) continue;
+
+      if (!familyBuckets.has(family)) familyBuckets.set(family, new Map());
+      const buckets = familyBuckets.get(family)!;
+      const bucketMin = Math.floor(row.projValue / BUCKET) * BUCKET;
+      const key = bucketMin.toFixed(1);
+      if (!buckets.has(key)) {
+        buckets.set(key, { min: bucketMin, max: bucketMin + BUCKET, wins: 0, losses: 0 });
+      }
+      const b = buckets.get(key)!;
+      if (row.gradedResult === 'WIN') b.wins++;
+      else b.losses++;
+    }
+
+    return Array.from(familyBuckets.entries()).map(([family, buckets]) => ({
+      family,
+      label: familyLabel(family),
+      buckets: Array.from(buckets.values())
+        .sort((a, b) => a.min - b.min)
+        .map((b) => ({
+          ...b,
+          total: b.wins + b.losses,
+          hitRate: b.wins / (b.wins + b.losses),
+        })),
+    }));
   }, [filteredSettledRows]);
 
   const marketTrustStatus = useMemo(() => {
@@ -733,6 +750,111 @@ export function ProjectionAccuracyClient() {
             </div>
           </div>
         </section>
+
+        {projectionRangeBreakdown.length > 0 && (
+          <section className="mt-6 rounded-2xl border border-white/10 bg-surface/80 p-5 sm:p-8">
+            <div className="mb-5">
+              <h2 className="text-2xl font-semibold">Projection Range Breakdown</h2>
+              <p className="mt-2 text-sm text-cloud/70">
+                Win-loss record segmented by model projection value (0.5-unit buckets).
+              </p>
+            </div>
+            <div className="grid gap-4 lg:grid-cols-2">
+              {projectionRangeBreakdown.map(({ family, label, buckets }) => {
+                const isExpanded = expandedRangeFamilies.has(family);
+                const totalGraded = buckets.reduce((s, b) => s + b.total, 0);
+                const totalWins = buckets.reduce((s, b) => s + b.wins, 0);
+                const totalLosses = buckets.reduce((s, b) => s + b.losses, 0);
+                const overallHitRate = totalGraded > 0 ? totalWins / totalGraded : null;
+                return (
+                  <div key={family} className="overflow-hidden rounded-xl border border-white/10">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setExpandedRangeFamilies((prev) => {
+                          const next = new Set(prev);
+                          if (next.has(family)) next.delete(family);
+                          else next.add(family);
+                          return next;
+                        });
+                      }}
+                      className="flex w-full items-center justify-between bg-night/70 px-4 py-3 text-left transition-colors hover:bg-night/90"
+                    >
+                      <div className="flex items-center gap-3">
+                        <span className="text-xs font-semibold uppercase tracking-[0.18em] text-cloud/60">
+                          {label}
+                        </span>
+                        {overallHitRate !== null && (
+                          <span className="font-mono text-xs text-cloud/40">
+                            {totalWins}-{totalLosses} · {(overallHitRate * 100).toFixed(1)}%
+                          </span>
+                        )}
+                      </div>
+                      <span className="text-[11px] text-cloud/40">{isExpanded ? '▲' : '▼'}</span>
+                    </button>
+                    {isExpanded && (
+                      <>
+                        <div className="grid grid-cols-[1fr_80px_64px_48px] gap-3 border-t border-white/5 bg-night/40 px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-cloud/40">
+                          <span>Range</span>
+                          <span>Record</span>
+                          <span>Hit %</span>
+                          <span className="text-right">n</span>
+                        </div>
+                        <div className="divide-y divide-white/5">
+                          {buckets.map((b) => {
+                            const pct = b.hitRate;
+                            const barWidth = Math.round(pct * 100);
+                            const barColor =
+                              pct >= 0.60
+                                ? 'bg-emerald-400/50'
+                                : pct >= 0.50
+                                  ? 'bg-cyan-400/40'
+                                  : pct >= 0.40
+                                    ? 'bg-amber-400/40'
+                                    : 'bg-rose-400/40';
+                            const textColor =
+                              pct >= 0.60
+                                ? 'text-emerald-200'
+                                : pct >= 0.50
+                                  ? 'text-cyan-200'
+                                  : pct >= 0.40
+                                    ? 'text-amber-200'
+                                    : 'text-rose-200';
+                            return (
+                              <div
+                                key={b.min}
+                                className="grid grid-cols-[1fr_80px_64px_48px] items-center gap-3 px-4 py-2.5 text-sm"
+                              >
+                                <div className="relative">
+                                  <div
+                                    className={`absolute inset-y-0 left-0 rounded-sm ${barColor}`}
+                                    style={{ width: `${barWidth}%`, opacity: 0.35 }}
+                                  />
+                                  <span className="relative font-mono text-[12px] text-cloud/70">
+                                    {b.min.toFixed(1)}–{b.max.toFixed(1)}
+                                  </span>
+                                </div>
+                                <span className="font-mono text-[12px] text-cloud/80">
+                                  {b.wins}-{b.losses}
+                                </span>
+                                <span className={`font-mono text-[12px] font-semibold ${textColor}`}>
+                                  {(pct * 100).toFixed(1)}%
+                                </span>
+                                <span className="text-right font-mono text-[12px] text-cloud/50">
+                                  {b.total}
+                                </span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </section>
+        )}
       </div>
     </div>
   );

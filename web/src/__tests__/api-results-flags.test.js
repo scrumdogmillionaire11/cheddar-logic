@@ -32,15 +32,23 @@ async function run() {
   const assert = assertModule.default || assertModule;
 
   const baseUrl = process.env.CARDS_API_BASE_URL || DEFAULT_BASE_URL;
-  const base = `${baseUrl}/api/results?limit=200`;
+  const base = `${baseUrl}/api/results`;
   let payloadDefault;
   let payloadIncludeOrphaned;
   let payloadNoDedupe;
+  let payloadSummaryOnly;
+  let payloadCompactLedger;
 
   try {
-    payloadDefault = await getJson(base);
-    payloadIncludeOrphaned = await getJson(`${base}&include_orphaned=1`);
-    payloadNoDedupe = await getJson(`${base}&include_orphaned=1&dedupe=0`);
+    payloadDefault = await getJson(`${base}?limit=200`);
+    payloadIncludeOrphaned = await getJson(`${base}?limit=200&include_orphaned=1`);
+    payloadNoDedupe = await getJson(`${base}?limit=200&include_orphaned=1&dedupe=0`);
+    payloadSummaryOnly = await getJson(
+      `${base}?limit=200&include_ledger=0&include_projection_summaries=0`,
+    );
+    payloadCompactLedger = await getJson(
+      `${base}?limit=25&include_projection_summaries=0`,
+    );
   } catch (error) {
     if (!isConnectionIssue(error)) throw error;
     console.warn(
@@ -66,10 +74,22 @@ async function run() {
     true,
     'dedupe=0 response success=false',
   );
+  assert.strictEqual(
+    payloadSummaryOnly.success,
+    true,
+    'summary-only response success=false',
+  );
+  assert.strictEqual(
+    payloadCompactLedger.success,
+    true,
+    'compact-ledger response success=false',
+  );
 
   const defaultCount = payloadDefault.data?.ledger?.length ?? 0;
   const includeOrphanedCount = payloadIncludeOrphaned.data?.ledger?.length ?? 0;
   const noDedupeCount = payloadNoDedupe.data?.ledger?.length ?? 0;
+  const summaryOnlyCount = payloadSummaryOnly.data?.ledger?.length ?? 0;
+  const compactLedgerCount = payloadCompactLedger.data?.ledger?.length ?? 0;
 
   // include_orphaned is intentionally forced off; it should not widen results.
   assert.strictEqual(
@@ -83,15 +103,26 @@ async function run() {
     noDedupeCount >= includeOrphanedCount,
     `dedupe=0 reduced rows: include_orphaned=${includeOrphanedCount}, dedupe=0=${noDedupeCount}`,
   );
+  assert.strictEqual(
+    summaryOnlyCount,
+    0,
+    `include_ledger=0 should suppress ledger rows, got ${summaryOnlyCount}`,
+  );
+  assert.ok(
+    compactLedgerCount <= 25,
+    `compact ledger should cap returned rows at 25, got ${compactLedgerCount}`,
+  );
 
   const defaultMeta = payloadDefault.data?.meta;
   const includeMeta = payloadIncludeOrphaned.data?.meta;
   const noDedupeMeta = payloadNoDedupe.data?.meta;
+  const summaryOnlyMeta = payloadSummaryOnly.data?.meta;
   const defaultSegmentFamilies = payloadDefault.data?.segmentFamilies;
 
   assert.ok(defaultMeta, 'default response missing meta');
   assert.ok(includeMeta, 'include_orphaned response missing meta');
   assert.ok(noDedupeMeta, 'dedupe=0 response missing meta');
+  assert.ok(summaryOnlyMeta, 'summary-only response missing meta');
 
   assert.strictEqual(
     defaultMeta.includeOrphaned,
@@ -117,6 +148,26 @@ async function run() {
     noDedupeMeta.dedupe,
     false,
     'no-dedupe meta should be false',
+  );
+  assert.strictEqual(
+    payloadSummaryOnly.data?.filters?.includeLedger,
+    false,
+    'summary-only filters.includeLedger should be false',
+  );
+  assert.strictEqual(
+    payloadSummaryOnly.data?.filters?.includeProjectionSummaries,
+    false,
+    'summary-only filters.includeProjectionSummaries should be false',
+  );
+  assert.deepStrictEqual(
+    payloadSummaryOnly.data?.projectionSummaries ?? [],
+    [],
+    'summary-only response should omit projection summaries',
+  );
+  assert.deepStrictEqual(
+    payloadCompactLedger.data?.projectionSummaries ?? [],
+    [],
+    'compact ledger response should omit projection summaries when requested',
   );
 
   assert.ok(

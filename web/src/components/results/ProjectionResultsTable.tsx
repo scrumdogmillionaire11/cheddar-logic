@@ -396,6 +396,7 @@ function CardFamilySection({
   rows,
   attributionByCardId,
 }: CardFamilySectionProps) {
+  const [collapsed, setCollapsed] = useState(true);
   const [expandedRowKeys, setExpandedRowKeys] = useState<Set<string>>(new Set());
 
   function toggleRow(rowKey: string) {
@@ -411,66 +412,75 @@ function CardFamilySection({
   }
 
   return (
-    <div>
-      <div className="mb-3 flex items-center justify-between gap-3">
+    <div className="overflow-hidden rounded-xl border border-white/10 bg-night/20">
+      <button
+        type="button"
+        onClick={() => setCollapsed((c) => !c)}
+        className="flex w-full items-center justify-between px-4 py-3 text-left transition-colors hover:bg-white/5"
+      >
         <h3 className="text-lg font-semibold text-cloud">{familyLabel(cardFamily)}</h3>
-        <span className="text-xs uppercase tracking-[0.2em] text-cloud/50">
-          {rows.length} settled
-        </span>
-      </div>
-
-      <div className="overflow-hidden rounded-xl border border-white/10 bg-night/20">
-        <div className="hidden overflow-x-auto md:block">
-          <table className="min-w-full table-fixed border-collapse">
-            <thead className="bg-night/70 text-xs font-semibold uppercase tracking-[0.2em] text-cloud/60">
-              <tr>
-                <th className="w-[8rem] px-4 py-3 text-left">Date</th>
-                <th className="px-4 py-3 text-left">Matchup</th>
-                <th className="w-[9rem] px-4 py-3 text-right">Projected</th>
-                <th className="w-[9rem] px-4 py-3 text-center">Direction</th>
-                <th className="w-[8rem] px-4 py-3 text-center">Confidence</th>
-                <th className="w-[8rem] px-4 py-3 text-right">Edge</th>
-                <th className="w-[8rem] px-4 py-3 text-right">Actual</th>
-                <th className="w-[8rem] px-4 py-3 text-right">Outcome</th>
-                <th className="w-[8rem] px-4 py-3 text-right">Detail</th>
-              </tr>
-            </thead>
-            {rows.length > 0 && (
-              <tbody>
-                {rows.map((row, index) => {
-                  const rowKey = projectionRowKey(row, index);
-                  return (
-                    <ProjectionDesktopRow
-                      key={rowKey}
-                      row={row}
-                      attribution={attributionByCardId.get(String(row.cardId || ''))}
-                      expanded={expandedRowKeys.has(rowKey)}
-                      onToggle={() => toggleRow(rowKey)}
-                    />
-                  );
-                })}
-              </tbody>
-            )}
-          </table>
+        <div className="flex items-center gap-3">
+          <span className="text-xs uppercase tracking-[0.2em] text-cloud/50">
+            {rows.length} settled
+          </span>
+          <span className="text-[11px] text-cloud/40">{collapsed ? '▼' : '▲'}</span>
         </div>
+      </button>
 
-        {rows.length === 0 ? (
-          <div className="px-4 py-6 text-sm text-cloud/60">
-            No settled projection records yet. Records appear here after games
-            complete and actuals are ingested.
+      {!collapsed && (
+        <>
+          <div className="hidden overflow-x-auto border-t border-white/10 md:block">
+            <table className="min-w-full table-fixed border-collapse">
+              <thead className="bg-night/70 text-xs font-semibold uppercase tracking-[0.2em] text-cloud/60">
+                <tr>
+                  <th className="w-[8rem] px-4 py-3 text-left">Date</th>
+                  <th className="px-4 py-3 text-left">Matchup</th>
+                  <th className="w-[9rem] px-4 py-3 text-right">Projected</th>
+                  <th className="w-[9rem] px-4 py-3 text-center">Direction</th>
+                  <th className="w-[8rem] px-4 py-3 text-center">Confidence</th>
+                  <th className="w-[8rem] px-4 py-3 text-right">Edge</th>
+                  <th className="w-[8rem] px-4 py-3 text-right">Actual</th>
+                  <th className="w-[8rem] px-4 py-3 text-right">Outcome</th>
+                  <th className="w-[8rem] px-4 py-3 text-right">Detail</th>
+                </tr>
+              </thead>
+              {rows.length > 0 && (
+                <tbody>
+                  {rows.map((row, index) => {
+                    const rowKey = projectionRowKey(row, index);
+                    return (
+                      <ProjectionDesktopRow
+                        key={rowKey}
+                        row={row}
+                        attribution={attributionByCardId.get(String(row.cardId || ''))}
+                        expanded={expandedRowKeys.has(rowKey)}
+                        onToggle={() => toggleRow(rowKey)}
+                      />
+                    );
+                  })}
+                </tbody>
+              )}
+            </table>
           </div>
-        ) : (
-          <div className="divide-y divide-white/10 md:hidden">
-            {rows.map((row, index) => (
-              <ProjectionRow
-                key={projectionRowKey(row, index)}
-                row={row}
-                attribution={attributionByCardId.get(String(row.cardId || ''))}
-              />
-            ))}
-          </div>
-        )}
-      </div>
+
+          {rows.length === 0 ? (
+            <div className="border-t border-white/10 px-4 py-6 text-sm text-cloud/60">
+              No settled projection records yet. Records appear here after games
+              complete and actuals are ingested.
+            </div>
+          ) : (
+            <div className="divide-y divide-white/10 border-t border-white/10 md:hidden">
+              {rows.map((row, index) => (
+                <ProjectionRow
+                  key={projectionRowKey(row, index)}
+                  row={row}
+                  attribution={attributionByCardId.get(String(row.cardId || ''))}
+                />
+              ))}
+            </div>
+          )}
+        </>
+      )}
     </div>
   );
 }

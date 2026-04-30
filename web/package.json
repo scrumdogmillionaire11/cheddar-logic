@@ -41,6 +41,7 @@
     "test:api:results:projection-split": "node --import tsx/esm src/__tests__/api-results-projection-split.test.js",
     "test:api:results:projection-settled-contract": "node --import tsx/esm src/__tests__/api-results-projection-settled-contract.test.js",
     "test:api:results:sport-filter": "node --import tsx/esm src/__tests__/api-results-sport-filter.test.js",
+    "test:api:results:performance-budget": "node --import tsx/esm src/__tests__/api-results-performance-budget.test.ts",
     "test:results:settlement-parity": "node --import tsx/esm src/__tests__/integration/settlement-parity.test.ts",
     "test:results:behavioral-contract": "node --import tsx/esm src/__tests__/integration/results-behavioral-contract.test.ts",
     "test:decision:canonical": "node src/__tests__/canonical-play-decision.test.js",

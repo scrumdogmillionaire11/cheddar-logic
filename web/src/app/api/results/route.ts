@@ -111,12 +111,14 @@ export async function GET(request: NextRequest) {
       queryData.actionableRows,
       queryData.projectionTrackingRows,
     );
-    const ledgerRows = queryLedgerRowsForIds(
-      db,
-      aggregation.oddsBackedLedgerIds,
-      queryData.schema,
-      filters.limit,
-    );
+    const ledgerRows = filters.includeLedger
+      ? queryLedgerRowsForIds(
+          db,
+          aggregation.oddsBackedLedgerIds,
+          queryData.schema,
+          filters.limit,
+        )
+      : [];
     const responseBody = buildResultsResponseBody(
       aggregation,
       ledgerRows,

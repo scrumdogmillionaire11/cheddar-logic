@@ -9,11 +9,14 @@ import {
   type ConfidenceTier,
   normalizeToConfidenceTier,
 } from '@/lib/types/projection-accuracy';
+import {
+  PROJECTION_RESULTS_PAGE_FAMILIES,
+  PROJECTION_RESULTS_FAMILY_TOKEN_ALIASES,
+} from '@/lib/results/projection-results-contract';
 
 const {
   getDatabaseReadOnly,
   closeReadOnlyInstance,
-  PROJECTION_ANALYTICS_CONTRACT_BY_MARKET_FAMILY,
 } = data;
 
 // WI-0967: Query projection_proxy_evals table for graded projection results.
@@ -144,8 +147,14 @@ const ACCURACY_LATEST_CTE_SQL = `WITH accuracy_latest AS (
   FROM projection_accuracy_evals pae
 )`;
 
-const SUPPORTED_CARD_FAMILIES = Object.keys(PROJECTION_ANALYTICS_CONTRACT_BY_MARKET_FAMILY);
+const SUPPORTED_CARD_FAMILIES: string[] = Array.from(PROJECTION_RESULTS_PAGE_FAMILIES);
 const SUPPORTED_CARD_FAMILY_SQL = SUPPORTED_CARD_FAMILIES.map(() => '?').join(', ');
+
+function resolveRequestedFamily(param: string | null): string | null {
+  if (!param) return null;
+  const token = param.trim().toUpperCase();
+  return PROJECTION_RESULTS_FAMILY_TOKEN_ALIASES[token] ?? token;
+}
 
 function parsePayload(value: string | null): Record<string, unknown> | null {
   if (!value) return null;
@@ -341,6 +350,15 @@ export async function GET(
     return securityCheck.error as NextResponse<ProjectionSettledResponse>;
   }
 
+  const requestedFamily = resolveRequestedFamily(
+    request.nextUrl.searchParams.get('family'),
+  );
+  const queryFamilies =
+    requestedFamily !== null && SUPPORTED_CARD_FAMILIES.includes(requestedFamily)
+      ? [requestedFamily]
+      : SUPPORTED_CARD_FAMILIES;
+  const queryFamilySql = queryFamilies.map(() => '?').join(', ');
+
   let db: ReturnType<typeof getDatabaseReadOnly> | null = null;
 
   try {
@@ -351,26 +369,35 @@ export async function GET(
 
     const proxyRows = db
       .prepare(
-        `${ACCURACY_LATEST_CTE_SQL}
+        `${ACCURACY_LATEST_CTE_SQL},
+         ranked_evals AS (
+           SELECT ppe.*,
+                  ROW_NUMBER() OVER (
+                    PARTITION BY ppe.card_family
+                    ORDER BY ppe.game_date DESC, ppe.id DESC
+                  ) AS family_rank
+           FROM projection_proxy_evals ppe
+           WHERE ppe.card_family IN (${queryFamilySql})
+         )
          SELECT
-           ppe.id,
-           ppe.card_id,
-           ppe.game_id,
-           ppe.game_date,
-           ppe.sport,
-           ppe.card_family,
-           ppe.proj_value,
-           ppe.actual_value,
-           ppe.proxy_line,
-           ppe.edge_vs_line,
-           ppe.recommended_side,
-           ppe.tier,
-           ppe.confidence_bucket,
-           ppe.agreement_group,
-           ppe.graded_result,
-           ppe.hit_flag,
-           ppe.tier_score,
-           ppe.consensus_bonus,
+           re.id,
+           re.card_id,
+           re.game_id,
+           re.game_date,
+           re.sport,
+           re.card_family,
+           re.proj_value,
+           re.actual_value,
+           re.proxy_line,
+           re.edge_vs_line,
+           re.recommended_side,
+           re.tier,
+           re.confidence_bucket,
+           re.agreement_group,
+           re.graded_result,
+           re.hit_flag,
+           re.tier_score,
+           re.consensus_bonus,
            al.projection_value AS win_probability,
            al.edge_pp,
            al.confidence_score,
@@ -382,15 +409,14 @@ export async function GET(
            cp.card_title,
            g.home_team,
            g.away_team
-         FROM projection_proxy_evals ppe
-         LEFT JOIN card_payloads cp ON cp.id = ppe.card_id
-         LEFT JOIN accuracy_latest al ON al.card_id = ppe.card_id AND al.rn = 1
-         LEFT JOIN games g ON g.game_id = ppe.game_id
-        WHERE ppe.card_family IN (${SUPPORTED_CARD_FAMILY_SQL})
-         ORDER BY ppe.game_date DESC, ppe.id DESC
-         LIMIT 200`,
+         FROM ranked_evals re
+         LEFT JOIN card_payloads cp ON cp.id = re.card_id
+         LEFT JOIN accuracy_latest al ON al.card_id = re.card_id AND al.rn = 1
+         LEFT JOIN games g ON g.game_id = re.game_id
+         WHERE re.family_rank <= 100
+         ORDER BY re.game_date DESC, re.id DESC`,
       )
-      .all(...SUPPORTED_CARD_FAMILIES) as DbProxyEvalRow[];
+      .all(...queryFamilies) as DbProxyEvalRow[];
 
     const enrichedRows: ProjectionProxyInternalRow[] = proxyRows.map((row) => {
       return {
@@ -448,9 +474,10 @@ export async function GET(
         .map((row) => row.cardId),
     );
 
-    const f5MoneylineRows = db
-      .prepare(
-        `${ACCURACY_LATEST_CTE_SQL}
+    const f5MoneylineRows: DbF5MoneylineRow[] = queryFamilies.includes('MLB_F5_ML')
+      ? (db
+          .prepare(
+            `${ACCURACY_LATEST_CTE_SQL}
          SELECT
            cr.id,
            cr.card_id,
@@ -481,8 +508,9 @@ export async function GET(
            AND LOWER(cr.status) = 'settled'
          ORDER BY COALESCE(cr.settled_at, g.game_time_utc) DESC, cr.id DESC
          LIMIT 200`,
-      )
-      .all() as DbF5MoneylineRow[];
+          )
+          .all() as DbF5MoneylineRow[])
+      : [];
 
     const mappedF5MoneylineRows: ProjectionProxyInternalRow[] = f5MoneylineRows.map((row) => {
       const payload = parsePayload(row.payload_data);

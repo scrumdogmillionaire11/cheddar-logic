@@ -317,6 +317,40 @@ async function run() {
     assert.equal(payload.data.filters.sport, null);
     assert.equal(payload.data.filters.dedupe, true);
 
+    const { payload: compactPayload } = await fetchJson(
+      server.baseUrl,
+      '/api/results?limit=25&include_projection_summaries=0',
+    );
+    assert.equal(
+      compactPayload.data.filters.includeProjectionSummaries,
+      false,
+      'compact results response should reflect projection-summary suppression',
+    );
+    assert.deepEqual(
+      compactPayload.data.projectionSummaries,
+      [],
+      'compact results response should omit projection summaries when requested',
+    );
+    assert.ok(
+      compactPayload.data.ledger.length <= 25,
+      `compact results response should cap ledger length at 25, got ${compactPayload.data.ledger.length}`,
+    );
+
+    const { payload: summaryOnlyPayload } = await fetchJson(
+      server.baseUrl,
+      '/api/results?include_ledger=0&include_projection_summaries=0',
+    );
+    assert.equal(
+      summaryOnlyPayload.data.filters.includeLedger,
+      false,
+      'summary-only results response should reflect ledger suppression',
+    );
+    assert.deepEqual(
+      summaryOnlyPayload.data.ledger,
+      [],
+      'summary-only results response should omit ledger rows when requested',
+    );
+
     const { payload: ncaamPayload } = await fetchJson(
       server.baseUrl,
       '/api/results?limit=5&sport=NCAAM',
