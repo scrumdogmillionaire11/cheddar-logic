@@ -142,7 +142,7 @@ export function ProjectionAccuracyClient() {
   const [expandedConfidenceBand, setExpandedConfidenceBand] =
     useState<ConfidenceTier | null>(null);
   const [expandedRangeFamilies, setExpandedRangeFamilies] = useState<Set<string>>(
-    () => new Set(),
+    () => new Set(['NHL_1P_TOTAL', 'MLB_F5_TOTAL']),
   );
 
   const loadProjectionResults = useCallback(async () => {
