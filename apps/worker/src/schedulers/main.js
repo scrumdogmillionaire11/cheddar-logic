@@ -68,6 +68,7 @@ const { runDailyPerformanceReport } = require('../jobs/run_daily_performance_rep
 const { runCalibrationReport } = require('../jobs/run_calibration_report');
 const { run: runFitCalibrationModels } = require('../jobs/fit_calibration_models');
 const { run: runResidualValidation } = require('../jobs/run_residual_validation');
+const { nightlyDbBackup } = require('../jobs/nightly_db_backup');
 
 const { computeFplDueJobs } = require('./fpl');
 const { computeNflDueJobs } = require('./nfl');
@@ -394,6 +395,18 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
   }
 
   // ========== NIGHTLY REPORTING: CLV SNAPSHOT + DAILY PERFORMANCE (4.9) ==========
+  // nightly_db_backup: standalone daily backup independent of settlement jobs (02:00 ET).
+  // Timer path (02:47 ET via cheddar-db-backup.timer) covers worker-down incidents.
+  if (isFixedDue(nowEt, '02:00')) {
+    const nightlyDbBackupKey = `nightly_db_backup|${nowEt.toISODate()}`;
+    jobs.push({
+      jobName: 'nightly_db_backup',
+      jobKey: nightlyDbBackupKey,
+      execute: () => nightlyDbBackup({ jobKey: nightlyDbBackupKey, dryRun }),
+      args: {},
+      reason: `nightly DB backup ${nowEt.toISODate()}`,
+    });
+  }
   // run_clv_snapshot: converts settled clv_ledger rows into clv_entries (03:00 ET)
   if (process.env.ENABLE_SETTLEMENT !== 'false' && isFixedDue(nowEt, '03:00')) {
     const clvSnapshotKey = `clv_snapshot|${nowEt.toISODate()}`;
