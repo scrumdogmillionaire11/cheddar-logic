@@ -24,6 +24,10 @@ const PITCHER_K_PROJECTION_SETTLEMENT_CODES = Object.freeze({
   NO_PLAYER_MATCH: 'PROJECTION_SETTLEMENT_NO_PLAYER_MATCH',
 });
 const PROXY_EVAL_BACKFILL_CARD_TYPES = new Set(['nhl-pace-1p', 'mlb-f5', 'mlb-f5-ml']);
+const MLB_F5_PROXY_CLEAR_ZONE = Object.freeze({
+  UNDER_LINE: 3.5,
+  OVER_LINE: 4.5,
+});
 
 function parseJsonObject(value) {
   if (!value) return {};
@@ -97,6 +101,76 @@ function resolveF5MlActualForSelectedSide(winner, selectedSide) {
   return normalizedWinner === normalizedSide ? 1 : 0;
 }
 
+function classifyMlbF5ProxySettlementWindow(projectionValue) {
+  const projection = toFiniteNumberOrNull(projectionValue);
+  if (projection === null) {
+    return { gradingMode: 'INVALID', proxyLine: null, recommendedSide: null };
+  }
+  if (projection < MLB_F5_PROXY_CLEAR_ZONE.UNDER_LINE) {
+    return {
+      gradingMode: 'OFFICIAL',
+      proxyLine: MLB_F5_PROXY_CLEAR_ZONE.UNDER_LINE,
+      recommendedSide: 'UNDER',
+    };
+  }
+  if (projection > MLB_F5_PROXY_CLEAR_ZONE.OVER_LINE) {
+    return {
+      gradingMode: 'OFFICIAL',
+      proxyLine: MLB_F5_PROXY_CLEAR_ZONE.OVER_LINE,
+      recommendedSide: 'OVER',
+    };
+  }
+  return { gradingMode: 'TRACK_ONLY', proxyLine: null, recommendedSide: null };
+}
+
+function buildOfficialMlbF5ProxyRow(card, projectionValue, actualF5) {
+  const projection = toFiniteNumberOrNull(projectionValue);
+  const actualValue = toFiniteNumberOrNull(actualF5);
+  const classification = classifyMlbF5ProxySettlementWindow(projection);
+  if (projection === null || actualValue === null || classification.gradingMode !== 'OFFICIAL') {
+    return null;
+  }
+
+  const edgeVsLine = Math.round((projection - classification.proxyLine) * 10_000) / 10_000;
+  const absEdge = Math.abs(edgeVsLine);
+  let tier = 'STRONG';
+  let confidenceBucket = 'LARGE';
+  if (absEdge < 0.5) {
+    tier = 'LEAN';
+    confidenceBucket = 'SMALL';
+  } else if (absEdge < 0.75) {
+    tier = 'PLAY';
+    confidenceBucket = 'MEDIUM';
+  }
+
+  const isWin =
+    classification.recommendedSide === 'OVER'
+      ? actualValue > classification.proxyLine
+      : actualValue < classification.proxyLine;
+  const hitFlag = isWin ? 1 : 0;
+  const tierScoreWeight = tier === 'LEAN' ? 1 : tier === 'PLAY' ? 1.5 : 2;
+
+  return {
+    card_id: card.card_id,
+    game_id: card.game_id,
+    game_date: card.game_time_utc?.slice(0, 10),
+    sport: card.sport,
+    card_family: CARD_TYPE_TO_FAMILY[card.card_type],
+    proj_value: projection,
+    actual_value: actualValue,
+    proxy_line: classification.proxyLine,
+    edge_vs_line: edgeVsLine,
+    recommended_side: classification.recommendedSide,
+    tier,
+    confidence_bucket: confidenceBucket,
+    agreement_group: 'DIRECT_SELECTION',
+    graded_result: isWin ? 'WIN' : 'LOSS',
+    hit_flag: hitFlag,
+    tier_score: isWin ? tierScoreWeight : -tierScoreWeight,
+    consensus_bonus: 0,
+  };
+}
+
 function setProjectionSettlementMetadata(db, cardId, { code, message }) {
   const row = db
     .prepare(
@@ -164,18 +238,12 @@ function insertProjectionProxyRows(db, card, payload, actualResult) {
   if (card.card_type === 'mlb-f5') {
     const runsF5 = toFiniteNumberOrNull(actualResult?.runs_f5);
     if (runsF5 === null) return 0;
-    proxyRows = buildProjectionProxyMarketRows({
-      card_id: card.card_id,
-      game_id: card.game_id,
-      game_date: card.game_time_utc?.slice(0, 10),
-      sport: card.sport,
-      card_family: CARD_TYPE_TO_FAMILY[card.card_type],
-      model_projection:
-        payload?.projection?.projected_total ??
-        payload?.projected_total ??
-        null,
-      actual_result: JSON.stringify({ runs_f5: runsF5 }),
-    });
+    const projectionValue =
+      payload?.projection?.projected_total ??
+      payload?.projected_total ??
+      null;
+    const officialRow = buildOfficialMlbF5ProxyRow(card, projectionValue, runsF5);
+    proxyRows = officialRow ? [officialRow] : [];
   }
 
   if (card.card_type === 'mlb-f5-ml') {
@@ -769,4 +837,11 @@ if (require.main === module) {
     });
 }
 
-module.exports = { JOB_NAME, settleProjections, parseCliArgs, fetchMlbPitcherKs };
+module.exports = {
+  JOB_NAME,
+  settleProjections,
+  parseCliArgs,
+  fetchMlbPitcherKs,
+  classifyMlbF5ProxySettlementWindow,
+  buildOfficialMlbF5ProxyRow,
+};

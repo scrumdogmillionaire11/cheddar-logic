@@ -43,7 +43,11 @@ const {
 
 const { fetchNhlSettlementSnapshot } = require('../nhl-settlement-source');
 
-const { settleProjections, fetchMlbPitcherKs } = require('../settle_projections');
+const {
+  settleProjections,
+  fetchMlbPitcherKs,
+  classifyMlbF5ProxySettlementWindow,
+} = require('../settle_projections');
 
 // ─────────────────────────────────────────────────────────────────────────────
 // fetchMlbPitcherKs — mocked global.fetch
@@ -610,7 +614,7 @@ describe('settleProjections — proxy eval integration', () => {
     resolveMlbGamePkFn.mockReturnValue('745340');
   });
 
-  test('Case 1: mlb-f5 card triggers batchInsertProjectionProxyEvals with 2 rows', async () => {
+  test('Case 1: mlb-f5 clear over zone writes one official O4.5 proxy row', async () => {
     getUnsettledProjectionCards.mockReturnValue([makeProjectionCard('mlb-f5', 4.82)]);
     fetchF5Total.mockResolvedValue(5);
 
@@ -619,10 +623,27 @@ describe('settleProjections — proxy eval integration', () => {
     expect(result.settled).toBe(1);
     expect(batchInsertProjectionProxyEvals).toHaveBeenCalledTimes(1);
     const [, rows] = batchInsertProjectionProxyEvals.mock.calls[0];
-    expect(rows).toHaveLength(2);  // lines 3.5 and 4.5
-    expect(rows.every((r) => r.card_family === 'MLB_F5_TOTAL')).toBe(true);
-    expect(rows.every((r) => r.actual_value === 5)).toBe(true);
-    expect(rows.every((r) => r.game_id === 'mlb-proj-game')).toBe(true);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      card_family: 'MLB_F5_TOTAL',
+      actual_value: 5,
+      game_id: 'mlb-proj-game',
+      proxy_line: 4.5,
+      recommended_side: 'OVER',
+      graded_result: 'WIN',
+      agreement_group: 'DIRECT_SELECTION',
+    });
+  });
+
+  test('Case 1b: mlb-f5 gray zone settles actual_result but writes no proxy rows', async () => {
+    getUnsettledProjectionCards.mockReturnValue([makeProjectionCard('mlb-f5', 4.1)]);
+    fetchF5Total.mockResolvedValue(4);
+
+    const result = await settleProjections({ dryRun: false });
+
+    expect(result.settled).toBe(1);
+    expect(setProjectionActualResult).toHaveBeenCalledWith('card-mlb-f5-proj', { runs_f5: 4 });
+    expect(batchInsertProjectionProxyEvals).not.toHaveBeenCalled();
   });
 
   test('Case 2: nhl-pace-1p card triggers batchInsertProjectionProxyEvals with 1 row', async () => {
@@ -750,6 +771,31 @@ describe('settleProjections — proxy eval integration', () => {
       actual_value: 2,
       proxy_line: 1.5,
       graded_result: 'NO_BET',
+    });
+  });
+});
+
+describe('classifyMlbF5ProxySettlementWindow', () => {
+  test('treats only outer zones as official', () => {
+    expect(classifyMlbF5ProxySettlementWindow(3.49)).toMatchObject({
+      gradingMode: 'OFFICIAL',
+      proxyLine: 3.5,
+      recommendedSide: 'UNDER',
+    });
+    expect(classifyMlbF5ProxySettlementWindow(3.5)).toMatchObject({
+      gradingMode: 'TRACK_ONLY',
+      proxyLine: null,
+      recommendedSide: null,
+    });
+    expect(classifyMlbF5ProxySettlementWindow(4.5)).toMatchObject({
+      gradingMode: 'TRACK_ONLY',
+      proxyLine: null,
+      recommendedSide: null,
+    });
+    expect(classifyMlbF5ProxySettlementWindow(4.51)).toMatchObject({
+      gradingMode: 'OFFICIAL',
+      proxyLine: 4.5,
+      recommendedSide: 'OVER',
     });
   });
 });
