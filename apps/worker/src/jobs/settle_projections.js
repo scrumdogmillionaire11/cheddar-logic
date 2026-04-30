@@ -292,9 +292,9 @@ function insertProjectionProxyRows(db, card, payload, actualResult) {
  * @returns {string|null}
  */
 function resolveNhlGamecenterId(db, gameId) {
-  // Try explicit mapping first
   try {
-    const row = db
+    // Direct gamecenter mapping.
+    const direct = db
       .prepare(
         `SELECT external_game_id
          FROM game_id_map
@@ -304,7 +304,27 @@ function resolveNhlGamecenterId(db, gameId) {
          LIMIT 1`,
       )
       .get(gameId);
-    if (row?.external_game_id) return String(row.external_game_id);
+    if (direct?.external_game_id) return String(direct.external_game_id);
+
+    // Sibling lookup: some games have duplicate entries — one with a hash game_id
+    // (referenced by card_payloads) and one with the ESPN event ID as the game_id
+    // (which holds the nhl_gamecenter mapping). Cross-walk via the ESPN external_id
+    // stored for this game_id.
+    const sibling = db
+      .prepare(
+        `SELECT gc.external_game_id
+         FROM game_id_map espn_map
+         JOIN game_id_map gc
+           ON gc.game_id = espn_map.external_game_id
+           AND gc.sport = 'nhl'
+           AND gc.provider IN ('nhl', 'nhl_api', 'nhl_gamecenter')
+         WHERE espn_map.sport = 'nhl'
+           AND espn_map.provider = 'espn'
+           AND espn_map.game_id = ?
+         LIMIT 1`,
+      )
+      .get(gameId);
+    if (sibling?.external_game_id) return String(sibling.external_game_id);
   } catch {
     // game_id_map may not exist — fall through
   }

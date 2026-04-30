@@ -761,7 +761,7 @@ function applyEventUseDedupRule(eventId, gameSignature, eventUseById, errors) {
 function resolveNhlGamecenterId(dbGameId, mappedNhlGameId) {
   if (mappedNhlGameId) return String(mappedNhlGameId);
   const raw = String(dbGameId || '').trim();
-  if (/^\d{6,}$/.test(raw)) return raw;
+  if (/^20\d{8}$/.test(raw)) return raw;
   return null;
 }
 

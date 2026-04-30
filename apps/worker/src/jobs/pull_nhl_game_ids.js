@@ -31,6 +31,20 @@ const NHL_SCHEDULE_BASE = 'https://api-web.nhle.com/v1/schedule';
 // same sport token used by pull_schedule_nhl / settle_projections
 const SPORT = 'nhl';
 
+// Maps 3-letter NHL abbreviations to a unique fragment of the canonical full
+// team name stored in our games table (upper-cased full city or nickname).
+const NHL_ABBREV_TO_NAME_FRAGMENT = {
+  ANA: 'ANAHEIM', ARI: 'ARIZONA', BOS: 'BOSTON', BUF: 'BUFFALO',
+  CAR: 'CAROLINA', CBJ: 'COLUMBUS', CGY: 'CALGARY', CHI: 'CHICAGO',
+  COL: 'COLORADO', DAL: 'DALLAS', DET: 'DETROIT', EDM: 'EDMONTON',
+  FLA: 'FLORIDA', LAK: 'KINGS', MIN: 'MINNESOTA', MTL: 'MONTREAL',
+  NJD: 'NEW JERSEY', NSH: 'NASHVILLE', NYI: 'ISLANDERS', NYR: 'RANGERS',
+  OTT: 'OTTAWA', PHI: 'PHILADELPHIA', PIT: 'PITTSBURGH', SEA: 'KRAKEN',
+  SJS: 'SAN JOSE', STL: 'LOUIS', TBL: 'TAMPA', TOR: 'TORONTO',
+  UTA: 'UTAH', VAN: 'VANCOUVER', VGK: 'GOLDEN KNIGHTS', WSH: 'WASHINGTON',
+  WPG: 'WINNIPEG',
+};
+
 /**
  * Fetch the NHL API schedule for a single date.
  * @param {string} dateStr - YYYY-MM-DD
@@ -77,24 +91,47 @@ function extractGamesFromSchedule(scheduleJson) {
 function resolveCanonicalGameId(db, { gameDate, homeAbbrev, awayAbbrev }) {
   if (!gameDate || !homeAbbrev || !awayAbbrev) return null;
 
-  // Cross-reference: find ESPN-mapped canonical game_id where the game date
-  // matches AND both team abbreviations appear in the full-name fields (stored
-  // as upper-case full names like "SAN JOSE SHARKS").
-  const row = db
+  // Map 3-letter NHL abbreviations to full-name fragments for LIKE matching
+  // against full team names stored in the games table (e.g. "TBL" → "TAMPA").
+  const homeFragment =
+    NHL_ABBREV_TO_NAME_FRAGMENT[homeAbbrev.toUpperCase()] || homeAbbrev.toUpperCase();
+  const awayFragment =
+    NHL_ABBREV_TO_NAME_FRAGMENT[awayAbbrev.toUpperCase()] || awayAbbrev.toUpperCase();
+
+  // NHL API returns local game dates; evening NA games often have a game_time_utc
+  // that falls on the next UTC calendar day, so we check both the given date and
+  // date+1 to avoid false misses.
+  const dateClause = `(DATE(g.game_time_utc) = ? OR DATE(g.game_time_utc) = DATE(?, '+1 day'))`;
+  const teamClause = `UPPER(g.home_team) LIKE '%' || ? || '%' AND UPPER(g.away_team) LIKE '%' || ? || '%'`;
+
+  // Prefer ESPN-mapped entry (most reliable cross-reference).
+  const espnRow = db
     .prepare(
       `SELECT gim.game_id
        FROM game_id_map gim
        JOIN games g ON g.game_id = gim.game_id
        WHERE LOWER(gim.sport) = 'nhl'
          AND gim.provider = 'espn'
-         AND DATE(g.game_time_utc) = ?
-         AND UPPER(g.home_team) LIKE '%' || ? || '%'
-         AND UPPER(g.away_team) LIKE '%' || ? || '%'
+         AND ${dateClause}
+         AND ${teamClause}
        LIMIT 1`,
     )
-    .get(gameDate, homeAbbrev.toUpperCase(), awayAbbrev.toUpperCase());
+    .get(gameDate, gameDate, homeFragment, awayFragment);
+  if (espnRow?.game_id) return espnRow.game_id;
 
-  return row?.game_id ?? null;
+  // Fallback: match directly in the games table when no ESPN mapping exists yet.
+  const directRow = db
+    .prepare(
+      `SELECT g.game_id
+       FROM games g
+       WHERE LOWER(g.sport) = 'nhl'
+         AND ${dateClause}
+         AND ${teamClause}
+       LIMIT 1`,
+    )
+    .get(gameDate, gameDate, homeFragment, awayFragment);
+
+  return directRow?.game_id ?? null;
 }
 
 /**
@@ -242,7 +279,9 @@ async function pullNhlGameIds({ jobKey = null, dryRun = false, dateRange = 7 } =
 
 if (require.main === module) {
   const dryRun = process.argv.includes('--dry-run');
-  pullNhlGameIds({ dryRun }).then((r) => {
+  const dateRangeArg = process.argv.find((a) => a.startsWith('--date-range='));
+  const dateRange = dateRangeArg ? Math.max(1, parseInt(dateRangeArg.split('=')[1], 10)) : 7;
+  pullNhlGameIds({ dryRun, dateRange }).then((r) => {
     if (r.success === false) process.exitCode = 1;
   });
 }
