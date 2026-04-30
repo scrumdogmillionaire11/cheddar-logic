@@ -2383,10 +2383,7 @@ async function settlePendingCards({
         INNER JOIN game_results gr ON cr.game_id = gr.game_id
         LEFT JOIN card_payloads cp ON cr.card_id = cp.id
         WHERE cr.status = 'pending'
-          AND (
-            cdl.pick_id IS NOT NULL
-            OR isDisplayExemptSettlementCardType(COALESCE(cr.card_type, cp.card_type, NULL))
-          )
+          AND cdl.pick_id IS NOT NULL
           AND gr.status = 'final'
       `);
 

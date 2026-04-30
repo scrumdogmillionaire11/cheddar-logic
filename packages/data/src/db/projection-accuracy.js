@@ -154,6 +154,9 @@ const PROJECTION_ACCURACY_MARKET_FAMILIES = Object.freeze([
 ]);
 
 // Canonical analytics contract for downstream reporting consumers.
+// `materialized` means rows exist in projection_accuracy_evals for this family —
+// not whether rows exist in projection_proxy_evals. The settle_projections worker
+// writes proxy_eval rows for all families including NHL_1P_TOTAL.
 // Non-moneyline families use projection_raw as the preferred numeric value because it
 // represents the model's projected stat/total before line comparison. Moneyline
 // families use projection_value because it is materialized as selected-side win
@@ -180,6 +183,8 @@ const PROJECTION_ANALYTICS_CONTRACT_BY_MARKET_FAMILY = Object.freeze({
     numericSemantics: 'projected_stat_value',
   }),
   NHL_1P_TOTAL: Object.freeze({
+    // proxy_eval rows are written by settle_projections; false here means
+    // projection_accuracy_evals has no NHL 1P entries yet.
     materialized: false,
     preferredNumericField: 'projection_raw',
     numericSemantics: 'projected_stat_value',
