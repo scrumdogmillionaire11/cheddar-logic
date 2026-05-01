@@ -123,6 +123,7 @@ WORK_QUEUE/VERIFICATIONS/
 # Duplicate/temporary files
 *copy.*
 *backup.*
+!apps/worker/src/jobs/nightly_db_backup.js
 
 # Test/debug scripts (loose)
 test_*.js
