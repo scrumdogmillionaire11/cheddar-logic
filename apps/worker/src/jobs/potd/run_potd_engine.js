@@ -1211,6 +1211,7 @@ async function gatherBestCandidate({
 }) {
   const sports = getActivePotdSports();
   const scoredCandidates = [];
+  const slightEdgeScoredCandidates = [];
   const fetchErrors = [];
 
   for (const sport of sports) {
@@ -1286,6 +1287,10 @@ async function gatherBestCandidate({
                 note: 'Candidate rejected during assembly before scoring because model-contract DecisionOutcome status is not PLAY',
               }),
             );
+          }
+          if (gameDecisionOutcome?.status === 'SLIGHT_EDGE') {
+            const scoredSlightEdge = scoreCandidateFn(candidate);
+            if (scoredSlightEdge) slightEdgeScoredCandidates.push(scoredSlightEdge);
           }
           continue;
         }
@@ -1381,7 +1386,41 @@ async function gatherBestCandidate({
       c.totalScore >= POTD_MIN_TOTAL_SCORE
     );
   });
-  const bestEdgeSelectorPool = selectBestEdgeByShadowGroup(fireableSelectorPool);
+  // Fallback: if no PLAY candidates are fireable, attempt SLIGHT_EDGE pool.
+  // Candidates are scored and date-scoped, then subject to the same noise/score gates.
+  let usedFallbackTier = null;
+  let effectiveSelectorPool = fireableSelectorPool;
+  if (fireableSelectorPool.length === 0 && slightEdgeScoredCandidates.length > 0) {
+    const slightEdgeDateScoped = slightEdgeScoredCandidates.filter((candidate) => {
+      const startUtc = candidate?.commence_time;
+      if (!startUtc || !playDate) return false;
+      const startEt = DateTime.fromISO(startUtc, { zone: 'utc' }).setZone(DEFAULT_TIMEZONE);
+      return startEt.isValid && startEt.toISODate() === playDate;
+    });
+    const slightEdgeFireable = slightEdgeDateScoped.filter((c) => {
+      if (!isModelBackedCandidate(c)) return false;
+      if (isSportModelGated(c)) return false;
+      if (hasEmptySelectionRejectionCode(c)) return false;
+      const noiseFloor = resolveNoiseFloor(c.sport, c.marketType, POTD_MIN_EDGE);
+      return (
+        isFiniteNumber(c.edgePct) &&
+        c.edgePct > noiseFloor &&
+        isFiniteNumber(c.totalScore) &&
+        c.totalScore >= POTD_MIN_TOTAL_SCORE
+      );
+    });
+    if (slightEdgeFireable.length > 0) {
+      effectiveSelectorPool = slightEdgeFireable;
+      usedFallbackTier = 'SLIGHT_EDGE';
+      console.log(JSON.stringify({
+        type: 'POTD_SLIGHT_EDGE_FALLBACK_ACTIVATED',
+        note: 'No PLAY candidates passed gates — falling back to SLIGHT_EDGE pool',
+        slightEdgeCount: slightEdgeFireable.length,
+      }));
+    }
+  }
+
+  const bestEdgeSelectorPool = selectBestEdgeByShadowGroup(effectiveSelectorPool);
   const shadowCandidatePool = bestEdgeSelectorPool;
   const fireableNominees = selectTopPlaysFn(bestEdgeSelectorPool, {
     minConfidence: POTD_MIN_TOTAL_SCORE,
@@ -1410,7 +1449,8 @@ async function gatherBestCandidate({
     fetchErrors,
     activeSports: sports,
     candidatesCount: playDateScopedCandidates.length,
-    viableCount: fireableSelectorPool.length,
+    viableCount: effectiveSelectorPool.length,
+    usedFallbackTier,
   };
 }
 
@@ -1489,6 +1529,7 @@ async function runPotdEngine({
         activeSports,
         candidatesCount,
         viableCount,
+        usedFallbackTier,
       } = await gatherBestCandidate({
         fetchOddsFn,
         buildCandidatesFn,
@@ -1899,6 +1940,9 @@ async function runPotdEngine({
         discord_posted: discordPosted,
       });
 
+      if (usedFallbackTier) {
+        console.log(JSON.stringify({ type: 'POTD_FIRED_ON_FALLBACK_TIER', tier: usedFallbackTier, selectionLabel: bestCandidate.selectionLabel }));
+      }
       emitPotdHeartbeat(jobRunId, nowEt, candidatesCount, viableCount, POTD_TIMING_STATES.OFFICIAL_PLAY, bestCandidate.selectionLabel || cardId);
 
       return {
