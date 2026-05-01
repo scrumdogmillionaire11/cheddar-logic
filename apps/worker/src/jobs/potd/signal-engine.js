@@ -248,6 +248,7 @@ function resolveNHLModelSignal(game) {
       homeModelWinProb: round(clamp(homeModelWinProb, 0.05, 0.95), 6),
       projection_source: modelSignal.source || "NHL_MODEL_SIGNAL",
       signal_type: "NHL_MODEL_SIGNAL",
+      selection_side: side,
     };
   }
 
@@ -790,6 +791,52 @@ function buildReasoningString({
   return `Model likes ${selectionLabel} at ${priceStr}: ${stats}.`;
 }
 
+function buildModelSignalIncompleteResult(candidate, {
+  lineValue,
+  marketConsensus,
+  impliedProb,
+  blockers = [],
+  reason,
+}) {
+  const rejectionCode = 'MODEL_SIGNAL_INCOMPLETE';
+  const contractExpected = resolveEdgeSourceContract(candidate.sport, candidate.marketType);
+  return {
+    ...candidate,
+    lineValue,
+    marketConsensus,
+    totalScore: null,
+    modelWinProb: null,
+    impliedProb,
+    edgePct: null,
+    edgeSourceTag: 'MODEL',
+    edgeSource: normalizeEdgeSource('MODEL'),
+    edgeSourceMeta: {
+      projection_source: null,
+      model_win_prob: null,
+      signal_type: rejectionCode,
+    },
+    rejectionDiagnostics: [
+      {
+        code: rejectionCode,
+        contractExpected,
+        marketType: candidate.marketType,
+        sport: candidate.sport,
+        blockers,
+      },
+    ],
+    confidenceLabel: 'LOW',
+    scoreBreakdown: {
+      lineValue,
+      marketConsensus,
+      edgeComponent: 0,
+      rejection_code: rejectionCode,
+    },
+    reasoning:
+      reason ??
+      `Model signal incomplete for ${candidate.selectionLabel}: payload present but actionable model inputs are missing.`,
+  };
+}
+
 function scoreCandidate(candidate) {
   if (!candidate || !isFiniteNumber(candidate.price)) {
     return null;
@@ -917,6 +964,26 @@ function scoreCandidate(candidate) {
     candidate.marketType === 'MONEYLINE' &&
     Number.isFinite(nhlSignal?.homeModelWinProb);
   if (useNhlModelSignal) {
+    const selectedSide = toUpperToken(nhlSignal.selection_side);
+    const candidateSide = toUpperToken(candidate.selection);
+    if (candidate.modelPayloadPresent === true && selectedSide !== candidateSide) {
+      const blockers = Array.from(
+        new Set([
+          ...(Array.isArray(candidate.modelSignalBlockers) ? candidate.modelSignalBlockers : []),
+          'SELECTION_SIDE_MISMATCH',
+        ]),
+      );
+      return buildModelSignalIncompleteResult(candidate, {
+        lineValue,
+        marketConsensus,
+        impliedProb,
+        blockers,
+        reason:
+          `Model signal incomplete for ${candidate.selectionLabel}: selection side ${selectedSide}` +
+          ` does not match candidate side ${candidateSide}.`,
+      });
+    }
+
     const modelWinProb =
       candidate.selection === 'HOME'
         ? nhlSignal.homeModelWinProb
@@ -1033,42 +1100,14 @@ function scoreCandidate(candidate) {
   // should not silently downgrade to consensus fallback scoring.
   const contractExpected = resolveEdgeSourceContract(candidate.sport, candidate.marketType);
   if (contractExpected === 'MODEL' && candidate.modelPayloadPresent === true) {
-    const rejectionCode = 'MODEL_SIGNAL_INCOMPLETE';
-    return {
-      ...candidate,
+    return buildModelSignalIncompleteResult(candidate, {
       lineValue,
       marketConsensus,
-      totalScore: null,
-      modelWinProb: null,
       impliedProb,
-      edgePct: null,
-      edgeSourceTag: 'MODEL',
-      edgeSource: normalizeEdgeSource('MODEL'),
-      edgeSourceMeta: {
-        projection_source: null,
-        model_win_prob: null,
-        signal_type: rejectionCode,
-      },
-      rejectionDiagnostics: [
-        {
-          code: rejectionCode,
-          contractExpected,
-          marketType: candidate.marketType,
-          sport: candidate.sport,
-          blockers: Array.isArray(candidate.modelSignalBlockers)
-            ? candidate.modelSignalBlockers
-            : [],
-        },
-      ],
-      confidenceLabel: 'LOW',
-      scoreBreakdown: {
-        lineValue,
-        marketConsensus,
-        edgeComponent: 0,
-        rejection_code: rejectionCode,
-      },
-      reasoning: `Model signal incomplete for ${candidate.selectionLabel}: payload present but actionable model inputs are missing.`,
-    };
+      blockers: Array.isArray(candidate.modelSignalBlockers)
+        ? candidate.modelSignalBlockers
+        : [],
+    });
   }
 
   const edgePct = round(modelFairProbability - impliedProb, 6);
