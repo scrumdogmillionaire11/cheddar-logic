@@ -2010,8 +2010,14 @@ function applyNhlVerificationContract(card, options = {}) {
     payload.status = 'WATCH';
     payload.classification = 'LEAN';
     if (payload.decision_v2 && typeof payload.decision_v2 === 'object') {
-      payload.decision_v2.official_status = 'LEAN';
+      // Do NOT overwrite official_status here. The model already stamped the correct
+      // signal status (PLAY/LEAN/PASS) via publishDecisionForCard → finalizeDecisionFields
+      // → buildDecisionV2. Overwriting to 'LEAN' causes the POTD DecisionOutcome check
+      // (shouldRejectNonPlayDecisionOutcomeCandidate) to reject every candidate even when
+      // the underlying model signal is PLAY — verification_state='PENDING' and
+      // execution_status='BLOCKED' already prevent this card from being actioned.
       payload.decision_v2.watchdog_status = 'CAUTION';
+      payload.decision_v2.verification_state = 'PENDING';
       if (!payload.decision_v2.primary_reason_code && firstBlockerCode) {
         payload.decision_v2.primary_reason_code = firstBlockerCode;
       }

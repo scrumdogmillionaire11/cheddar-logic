@@ -446,8 +446,14 @@ function applyMlbVerificationContract(card, options = {}) {
     payload.classification = 'LEAN';
     payload.execution_status = 'BLOCKED';
     if (payload.decision_v2 && typeof payload.decision_v2 === 'object') {
-      payload.decision_v2.official_status = 'LEAN';
+      // Do NOT overwrite official_status here. The model already stamped the correct
+      // signal status (PLAY/LEAN/PASS) via ensureCanonicalDecisionV2 / the legacy
+      // status fields. Overwriting to 'LEAN' causes the POTD DecisionOutcome check
+      // (shouldRejectNonPlayDecisionOutcomeCandidate) to reject every candidate even
+      // when the underlying model signal qualifies as PLAY — execution_status='BLOCKED'
+      // already prevents this card from being actioned.
       payload.decision_v2.watchdog_status = 'CAUTION';
+      payload.decision_v2.verification_state = 'PENDING';
       if (!payload.decision_v2.primary_reason_code && firstBlockerCode) {
         payload.decision_v2.primary_reason_code = firstBlockerCode;
       }

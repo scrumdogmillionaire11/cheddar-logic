@@ -1274,7 +1274,7 @@ function getLatestNhlModelOutput(gameId) {
   `).get(gameId);
   if (!row) return null;
   const rd = JSON.parse(row.payload_data);
-  
+
   const statusToken = String(
     rd.canonical_decision?.official_status ?? rd.status ?? rd.decision_v2?.official_status ?? ''
   ).toUpperCase();
@@ -1284,16 +1284,26 @@ function getLatestNhlModelOutput(gameId) {
   if (statusToken === 'PASS' || statusToken === 'INVALID' || typeToken === 'evidence') {
     return null;
   }
-  
+
   // Extract save_pct values from modern and legacy paths
   const homeGoalieSavePct = rd.goalie_home_save_pct ?? rd.goalie?.home?.save_pct ?? null;
   const awayGoalieSavePct = rd.goalie_away_save_pct ?? rd.goalie?.away?.save_pct ?? null;
-  
-  // If any required model probability is null/non-finite, payload is non-actionable
-  if (!Number.isFinite(homeGoalieSavePct) || !Number.isFinite(awayGoalieSavePct)) {
+
+  // Extract model_signal written by applyNhlModelSignalToCard — this is the primary
+  // path used by resolveNHLModelSignal when nhlModelPayloadPresent=true. Without
+  // forwarding this field the signal engine always receives snap.model_signal=undefined
+  // and emits MODEL_SIGNAL_INCOMPLETE regardless of goalie-composite availability.
+  const modelSignal =
+    rd.model_signal && typeof rd.model_signal === 'object' ? rd.model_signal : null;
+
+  // Return the snapshot when either model_signal or goalie stats are present.
+  // Requiring goalie savePct to be finite blocked all playoff payloads where
+  // starting goalies are announced late — model_signal provides the complete
+  // moneyline signal independently of goalie save-percentage availability.
+  if (!modelSignal && (!Number.isFinite(homeGoalieSavePct) || !Number.isFinite(awayGoalieSavePct))) {
     return null;
   }
-  
+
   return {
     homeGoalie: {
       savePct: homeGoalieSavePct,
@@ -1303,6 +1313,7 @@ function getLatestNhlModelOutput(gameId) {
       savePct: awayGoalieSavePct,
       gsax:    rd.goalie_away_gsax    ?? rd.goalie?.away?.gsax    ?? null,
     },
+    model_signal: modelSignal,
   };
 }
 

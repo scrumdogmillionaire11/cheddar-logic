@@ -282,6 +282,7 @@ describe('card payload/card_results sport normalization', () => {
     expect(dbModule.getLatestNhlModelOutput(gameId)).toEqual({
       homeGoalie: { savePct: 0.918, gsax: 7.4 },
       awayGoalie: { savePct: 0.905, gsax: -1.2 },
+      model_signal: null,
     });
     expect(dbModule.getLatestNhlModelOutput('missing-nhl-model-output')).toBeNull();
   });
@@ -846,7 +847,7 @@ describe('card payload/card_results sport normalization', () => {
     expect(dbModule.getLatestNhlModelOutput(gameId)).toBeNull();
   });
 
-  test('getLatestNhlModelOutput filters out payloads with null model probabilities', () => {
+  test('getLatestNhlModelOutput filters out payloads with null goalie savePct AND no model_signal', () => {
     const db = dbModule.getDatabase();
     const now = new Date();
     const gameTimeUtc = new Date(now.getTime() + 60 * 60 * 1000).toISOString();
@@ -886,6 +887,7 @@ describe('card payload/card_results sport normalization', () => {
         goalie_home_gsax: 7.4,
         goalie_away_save_pct: 0.905,
         goalie_away_gsax: -1.2,
+        // no model_signal field
       }),
       null,
       null,
@@ -893,7 +895,140 @@ describe('card payload/card_results sport normalization', () => {
       now.toISOString()
     );
 
+    // Returns null when BOTH model_signal is absent AND goalie savePct is incomplete.
     expect(dbModule.getLatestNhlModelOutput(gameId)).toBeNull();
+  });
+
+  test('getLatestNhlModelOutput returns snapshot when model_signal present even with null goalie savePct', () => {
+    const db = dbModule.getDatabase();
+    const now = new Date();
+    const gameTimeUtc = new Date(now.getTime() + 60 * 60 * 1000).toISOString();
+    const gameId = 'test-nhl-model-signal-no-goalie';
+    ensureSettlementTables(db);
+
+    db.prepare(
+      `INSERT INTO games (
+        id, sport, game_id, home_team, away_team, game_time_utc, status
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      'game-nhl-model-signal-no-goalie',
+      'nhl',
+      gameId,
+      'Home Team',
+      'Away Team',
+      gameTimeUtc,
+      'scheduled'
+    );
+
+    const modelSignal = {
+      eligible_for_potd: true,
+      market_type: 'MONEYLINE',
+      selection_side: 'HOME',
+      model_prob: 0.55,
+      implied_prob: 0.48,
+      edge_pct: 0.07,
+      book_price: -110,
+      source: 'NHL_MODEL_OUTPUT_MONEYLINE',
+    };
+
+    db.prepare(`
+      INSERT INTO card_payloads (
+        id, game_id, sport, card_type, card_title, created_at, expires_at,
+        payload_data, model_output_ids, metadata, run_id, updated_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      'card-nhl-model-signal-no-goalie',
+      gameId,
+      'nhl',
+      'nhl-model-output',
+      'NHL Model Output',
+      now.toISOString(),
+      null,
+      JSON.stringify({
+        // Goalies not yet announced (playoffs scenario)
+        goalie_home_save_pct: null,
+        goalie_away_save_pct: null,
+        model_signal: modelSignal,
+      }),
+      null,
+      null,
+      'run-nhl-model-signal-no-goalie',
+      now.toISOString()
+    );
+
+    // Should return snapshot with model_signal even though goalie savePct is null.
+    expect(dbModule.getLatestNhlModelOutput(gameId)).toEqual({
+      homeGoalie: { savePct: null, gsax: null },
+      awayGoalie: { savePct: null, gsax: null },
+      model_signal: modelSignal,
+    });
+  });
+
+  test('getLatestNhlModelOutput includes model_signal when present alongside goalie data', () => {
+    const db = dbModule.getDatabase();
+    const now = new Date();
+    const gameTimeUtc = new Date(now.getTime() + 60 * 60 * 1000).toISOString();
+    const gameId = 'test-nhl-model-signal-with-goalie';
+    ensureSettlementTables(db);
+
+    db.prepare(
+      `INSERT INTO games (
+        id, sport, game_id, home_team, away_team, game_time_utc, status
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      'game-nhl-model-signal-with-goalie',
+      'nhl',
+      gameId,
+      'Home Team',
+      'Away Team',
+      gameTimeUtc,
+      'scheduled'
+    );
+
+    const modelSignal = {
+      eligible_for_potd: true,
+      market_type: 'MONEYLINE',
+      selection_side: 'AWAY',
+      model_prob: 0.52,
+      implied_prob: 0.45,
+      edge_pct: 0.07,
+      book_price: -105,
+      source: 'NHL_MODEL_OUTPUT_MONEYLINE',
+    };
+
+    db.prepare(`
+      INSERT INTO card_payloads (
+        id, game_id, sport, card_type, card_title, created_at, expires_at,
+        payload_data, model_output_ids, metadata, run_id, updated_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      'card-nhl-model-signal-with-goalie',
+      gameId,
+      'nhl',
+      'nhl-model-output',
+      'NHL Model Output',
+      now.toISOString(),
+      null,
+      JSON.stringify({
+        goalie_home_save_pct: 0.920,
+        goalie_home_gsax: 3.1,
+        goalie_away_save_pct: 0.910,
+        goalie_away_gsax: -0.5,
+        model_signal: modelSignal,
+      }),
+      null,
+      null,
+      'run-nhl-model-signal-with-goalie',
+      now.toISOString()
+    );
+
+    expect(dbModule.getLatestNhlModelOutput(gameId)).toEqual({
+      homeGoalie: { savePct: 0.920, gsax: 3.1 },
+      awayGoalie: { savePct: 0.910, gsax: -0.5 },
+      model_signal: modelSignal,
+    });
   });
 
   test('getLatestNhlModelOutput returns data for valid actionable payloads with legacy nested fields', () => {
@@ -946,6 +1081,7 @@ describe('card payload/card_results sport normalization', () => {
     expect(dbModule.getLatestNhlModelOutput(gameId)).toEqual({
       homeGoalie: { savePct: 0.925, gsax: 5.1 },
       awayGoalie: { savePct: 0.912, gsax: 2.3 },
+      model_signal: null,
     });
   });
 
