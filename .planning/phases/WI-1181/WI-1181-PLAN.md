@@ -6,6 +6,7 @@ wave: 1
 depends_on: ["WI-1179-01", "WI-1180-01"]
 files_modified:
   - apps/worker/src/jobs/run_nhl_model.js
+  - apps/worker/src/jobs/potd/signal-engine.js
   - apps/worker/src/models/nhl-pace-model.js
   - apps/worker/src/jobs/__tests__/run_nhl_model*.test.js
   - apps/worker/src/jobs/potd/__tests__/signal-engine.test.js
@@ -20,10 +21,13 @@ must_haves:
     - "Actionable NHL moneyline producer rows emit normalized model_signal payload fields required by POTD"
     - "Non-actionable NHL rows explicitly encode ineligibility and blockers instead of null-only ambiguity"
     - "PASS/evidence semantics remain operator-visible while actionable rows provide complete POTD model context"
+    - "POTD consumes payload-backed NHL MODEL candidates using model_signal.eligible_for_potd and side-binding to model_signal.selection_side"
     - "Producer and consumer contract tests validate both actionable and non-actionable variants"
   artifacts:
     - path: "apps/worker/src/jobs/run_nhl_model.js"
       provides: "Normalized NHL model_signal payload assembly for actionable and non-actionable rows"
+    - path: "apps/worker/src/jobs/potd/signal-engine.js"
+      provides: "Consumer-side fail-closed enforcement for eligible_for_potd and selection_side contract"
     - path: "apps/worker/src/models/nhl-pace-model.js"
       provides: "Support helpers for producer payload assembly when required"
     - path: "apps/worker/src/jobs/__tests__/run_nhl_model*.test.js"
@@ -36,9 +40,13 @@ must_haves:
       via: "Actionable and non-actionable model_signal payload assertions"
       pattern: "model_signal|eligible_for_potd|blockers|edge_available"
     - from: "apps/worker/src/jobs/run_nhl_model.js"
+      to: "apps/worker/src/jobs/potd/signal-engine.js"
+      via: "Producer model_signal eligibility and selection_side consumed as hard contract gates"
+      pattern: "eligible_for_potd|selection_side|MODEL_SIGNAL_INCOMPLETE"
+    - from: "apps/worker/src/jobs/potd/signal-engine.js"
       to: "apps/worker/src/jobs/potd/__tests__/signal-engine.test.js"
-      via: "Producer-consumer fixture alignment for POTD model-backed NHL path"
-      pattern: "model_signal|market_type|selection_side|model_prob"
+      via: "Consumer fail-closed behavior for side-mismatch and incomplete signal diagnostics"
+      pattern: "MODEL_SIGNAL_INCOMPLETE|SELECTION_SIDE_MISMATCH|eligible_for_potd"
 ---
 
 <objective>
@@ -51,6 +59,7 @@ Output: NHL producer writes normalized model_signal for actionable rows and dete
 @.planning/ROADMAP.md
 @WORK_QUEUE/WI-1181.md
 @apps/worker/src/jobs/run_nhl_model.js
+@apps/worker/src/jobs/potd/signal-engine.js
 @apps/worker/src/models/nhl-pace-model.js
 @apps/worker/src/jobs/__tests__/run_nhl_model*.test.js
 @apps/worker/src/jobs/potd/__tests__/signal-engine.test.js
@@ -69,13 +78,13 @@ Output: NHL producer writes normalized model_signal for actionable rows and dete
 </task>
 
 <task type="auto">
-  <name>Task 2: Encode explicit non-actionable blockers for ineligible NHL rows</name>
-  <files>apps/worker/src/jobs/run_nhl_model.js, apps/worker/src/jobs/__tests__/run_nhl_model*.test.js, apps/worker/src/jobs/potd/__tests__/signal-engine.test.js</files>
-  <action>For non-actionable rows emit eligible_for_potd=false, edge_available=false, and explicit blockers (for example NO_MARKET_LINE or GOALIE_CONTEXT_MISSING) rather than null-only payloads. Keep PASS/evidence visibility for operators while ensuring POTD consumer fixtures interpret non-actionable rows deterministically.</action>
+  <name>Task 2: Enforce fail-closed NHL consumer gates for eligibility and side-binding</name>
+  <files>apps/worker/src/jobs/run_nhl_model.js, apps/worker/src/jobs/potd/signal-engine.js, apps/worker/src/jobs/__tests__/run_nhl_model*.test.js, apps/worker/src/jobs/potd/__tests__/signal-engine.test.js</files>
+  <action>For non-actionable rows emit eligible_for_potd=false, edge_available=false, and explicit blockers (for example NO_MARKET_LINE or GOALIE_CONTEXT_MISSING) rather than null-only payloads. In POTD consumer scoring for payload-backed NHL MODEL candidates, enforce model_signal.eligible_for_potd as the acceptance gate and bind candidate direction to model_signal.selection_side. If model_signal is missing, ineligible, incomplete, or side-mismatched, fail closed with MODEL_SIGNAL_INCOMPLETE diagnostics including blockers (and SELECTION_SIDE_MISMATCH when applicable).</action>
   <verify>
-    <automated>npm --prefix apps/worker run test -- src/jobs/potd/__tests__/signal-engine.test.js --runInBand -t "NHL|model_signal"</automated>
+    <automated>npm --prefix apps/worker run test -- src/jobs/potd/__tests__/signal-engine.test.js --runInBand -t "NHL model_signal POTD consumption contract"</automated>
   </verify>
-  <done>Non-actionable NHL rows carry explicit blockers and deterministic ineligibility semantics without breaking POTD fixture consumption.</done>
+  <done>Non-actionable NHL rows carry explicit blockers and POTD rejects payload-backed NHL MODEL candidates unless eligible_for_potd is true and candidate side matches selection_side.</done>
 </task>
 
 <task type="auto">
@@ -93,6 +102,7 @@ Output: NHL producer writes normalized model_signal for actionable rows and dete
 <success_criteria>
 - Actionable NHL rows emit normalized model_signal fields required by POTD.
 - Non-actionable rows emit explicit blockers with eligible_for_potd=false and edge_available=false.
+- POTD rejects payload-backed NHL candidates when model_signal is missing/incomplete or when candidate side does not match model_signal.selection_side.
 - PASS/evidence operator semantics remain available.
-- Producer and POTD tests verify both actionable and non-actionable variants.
+- Producer and POTD tests verify both actionable and non-actionable variants, including side-mismatch fail-closed behavior.
 </success_criteria>

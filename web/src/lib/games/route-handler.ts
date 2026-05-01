@@ -359,6 +359,13 @@ interface CardPayloadRow {
   created_at: string;
 }
 
+type ProjectionSettlementPolicy = {
+  market_family: 'MLB_F5_TOTAL';
+  grading_mode: 'OFFICIAL' | 'TRACK_ONLY';
+  official_call: 'UNDER_3_5' | 'OVER_4_5' | null;
+  reason_code: 'CLEAR_UNDER' | 'CLEAR_OVER' | 'GRAY_ZONE_NO_CALL';
+};
+
 export interface Play {
   source_card_id?: string;
   cardType: string;
@@ -579,6 +586,7 @@ export interface Play {
     [key: string]: unknown;
   } | null;
   prop_display_state?: 'PLAY' | 'WATCH' | 'PROJECTION_ONLY';
+  projection_settlement_policy?: ProjectionSettlementPolicy | null;
   prop_decision?: {
     verdict: 'PLAY' | 'WATCH' | 'NO_PLAY' | 'PROJECTION';
     lean_side: 'OVER' | 'UNDER' | null;
@@ -624,6 +632,51 @@ function normalizeApiMarketStatus(value: unknown): {
       typeof raw.execution_blocked === 'boolean'
         ? raw.execution_blocked
         : null,
+  };
+}
+
+function normalizeProjectionSettlementPolicy(
+  value: unknown,
+): ProjectionSettlementPolicy | null {
+  if (!value || typeof value !== 'object') return null;
+  const raw = value as Record<string, unknown>;
+  const marketFamily = firstString(raw.market_family);
+  const gradingMode = firstString(raw.grading_mode);
+  const officialCallValue = raw.official_call;
+  const officialCall =
+    officialCallValue === null ? null : firstString(officialCallValue);
+  const reasonCode = firstString(raw.reason_code);
+
+  if (marketFamily !== 'MLB_F5_TOTAL') return null;
+  if (gradingMode !== 'OFFICIAL' && gradingMode !== 'TRACK_ONLY') return null;
+  if (
+    officialCall !== null &&
+    officialCall !== 'UNDER_3_5' &&
+    officialCall !== 'OVER_4_5'
+  ) {
+    return null;
+  }
+  if (
+    reasonCode !== 'CLEAR_UNDER' &&
+    reasonCode !== 'CLEAR_OVER' &&
+    reasonCode !== 'GRAY_ZONE_NO_CALL'
+  ) {
+    return null;
+  }
+  if (gradingMode === 'OFFICIAL' && officialCall === null) return null;
+  if (gradingMode === 'TRACK_ONLY' && officialCall !== null) return null;
+  if (gradingMode === 'OFFICIAL' && reasonCode === 'GRAY_ZONE_NO_CALL') {
+    return null;
+  }
+  if (gradingMode === 'TRACK_ONLY' && reasonCode !== 'GRAY_ZONE_NO_CALL') {
+    return null;
+  }
+
+  return {
+    market_family: marketFamily,
+    grading_mode: gradingMode,
+    official_call: officialCall,
+    reason_code: reasonCode,
   };
 }
 
@@ -3096,6 +3149,11 @@ export async function GET(request: NextRequest) {
               ),
             }
           : undefined;
+        const normalizedProjectionSettlementPolicy =
+          normalizeProjectionSettlementPolicy(
+            (payload as Record<string, unknown>).projection_settlement_policy ??
+              payloadPlayObj?.projection_settlement_policy,
+          );
         const decimalToAmerican = (dec: number | null | undefined): number | null => {
           if (dec == null || dec <= 1) return null;
           return dec >= 2 ? Math.round((dec - 1) * 100) : Math.round(-100 / (dec - 1));
@@ -3792,6 +3850,7 @@ export async function GET(request: NextRequest) {
           market_bookmaker: normalizedMarketBookmaker,
           basis: normalizedDecisionBasis,
           execution_status: normalizedExecutionStatus,
+          projection_settlement_policy: normalizedProjectionSettlementPolicy,
           projection_source:
             firstString(
               payload.projection_source,

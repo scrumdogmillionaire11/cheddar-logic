@@ -828,8 +828,6 @@ describe('settle_projections backfill mode', () => {
     let db = getDatabase();
     const now = new Date(Date.now() - 5 * 60 * 60 * 1000).toISOString();
 
-    db.exec('ALTER TABLE card_payloads ADD COLUMN actual_result TEXT');
-
     db.prepare(`
       INSERT INTO games (id, sport, game_id, home_team, away_team, game_time_utc, status)
       VALUES (?, ?, ?, ?, ?, ?, ?)

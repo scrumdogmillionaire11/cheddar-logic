@@ -546,4 +546,48 @@ describe('extractPlayoffRegimeFeatures (WI-0970)', () => {
 
     expect(result.playoff_rest_compression).toBe(false);
   });
+
+  // WI-1220: confirmed path fixtures (PROVISIONAL — no live playoff snapshot available at confirmation)
+  test('playoff game: seriesStatus present at raw_data.seriesStatus returns positive game num and boolean pressure', () => {
+    const result = extractPlayoffRegimeFeatures({
+      isPlayoff: true,
+      oddsSnapshot: buildPlayoffSnapshot({ seriesGameNumber: 4, homeWins: 2, awayWins: 1 }),
+      gameId: 'test-game-wc-1220',
+      restDaysHome: 2,
+      restDaysAway: 2,
+    });
+
+    expect(typeof result.playoff_series_game_num).toBe('number');
+    expect(result.playoff_series_game_num).toBeGreaterThan(0);
+    expect(typeof result.playoff_elimination_pressure).toBe('boolean');
+  });
+
+  test('playoff game: absent seriesStatus returns playoff_series_game_num null without throwing', () => {
+    const result = extractPlayoffRegimeFeatures({
+      isPlayoff: true,
+      oddsSnapshot: buildPlayoffSnapshot(null),
+      gameId: 'test-game-wc-1220-absent',
+      restDaysHome: 2,
+      restDaysAway: 2,
+    });
+
+    expect(result.playoff_series_game_num).toBeNull();
+  });
+
+  test('playoff game: missing seriesStatus emits console.warn', () => {
+    const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    extractPlayoffRegimeFeatures({
+      isPlayoff: true,
+      oddsSnapshot: buildPlayoffSnapshot(null),
+      gameId: 'test-game-warn-1220',
+      restDaysHome: 2,
+      restDaysAway: 2,
+    });
+
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('[NHL-playoff] seriesStatus missing from ESPN snapshot for game %s'),
+      'test-game-warn-1220',
+    );
+    warnSpy.mockRestore();
+  });
 });

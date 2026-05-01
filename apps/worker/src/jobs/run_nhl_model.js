@@ -3000,6 +3000,8 @@ function generateNHLMarketCallCards(
       hasRequiredInputs: hasRequiredInputsTotals,
       forecast: _totalsForecast,
       thresholds: get1pBucketThresholds(line),
+      driverDirection: totalDecision.best_candidate.side ?? null,
+      driverScore: totalDecision.score ?? null,
     });
     const canonicalMapped = mapCanonicalNhlTotalsToInternalStatus(canonicalTotalsStatus.status);
     const status = canonicalMapped.officialStatus;
@@ -4163,6 +4165,7 @@ async function runNHLModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
             const _driverRegimeFeatures = extractPlayoffRegimeFeatures({
               isPlayoff,
               oddsSnapshot,
+              gameId,
               restDaysHome: _homeRestResult.restDays,
               restDaysAway: _awayRestResult.restDays,
               homeAdjustmentTrust: canonicalGoalieState?.home?.adjustment_trust ?? null,
@@ -4312,6 +4315,7 @@ async function runNHLModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
             const _marketRegimeFeatures = extractPlayoffRegimeFeatures({
               isPlayoff,
               oddsSnapshot,
+              gameId,
               restDaysHome: _homeRestResult.restDays,
               restDaysAway: _awayRestResult.restDays,
               homeAdjustmentTrust: canonicalGoalieState?.home?.adjustment_trust ?? null,

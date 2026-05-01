@@ -1,6 +1,14 @@
 'use client';
 
+import React from 'react';
+
 export interface RawProjectionPlay {
+  projection_settlement_policy?: {
+    market_family?: 'MLB_F5_TOTAL';
+    grading_mode?: 'OFFICIAL' | 'TRACK_ONLY';
+    official_call?: 'UNDER_3_5' | 'OVER_4_5' | null;
+    reason_code?: 'CLEAR_UNDER' | 'CLEAR_OVER' | 'GRAY_ZONE_NO_CALL';
+  } | null;
   cardType?: string;
   action?: string;
   classification?: string;
@@ -89,6 +97,26 @@ function hasActionableProjectionCall(play: RawProjectionPlay): boolean {
   return false;
 }
 
+function resolveMlbF5OfficialCall(play: RawProjectionPlay): {
+  badgeLabel: 'UNDER 3.5' | 'OVER 4.5';
+  badgeTone: 'UNDER' | 'OVER';
+} | null {
+  const policy = play.projection_settlement_policy;
+  if (
+    policy?.market_family !== 'MLB_F5_TOTAL' ||
+    policy?.grading_mode !== 'OFFICIAL'
+  ) {
+    return null;
+  }
+  if (policy.official_call === 'UNDER_3_5') {
+    return { badgeLabel: 'UNDER 3.5', badgeTone: 'UNDER' };
+  }
+  if (policy.official_call === 'OVER_4_5') {
+    return { badgeLabel: 'OVER 4.5', badgeTone: 'OVER' };
+  }
+  return null;
+}
+
 export default function ProjectionCard({
   homeTeam,
   awayTeam,
@@ -98,9 +126,13 @@ export default function ProjectionCard({
 }: ProjectionCardProps) {
   const isMlb = sport === 'MLB';
   const isMlbF5Ml = isMlb && play.cardType === 'mlb-f5-ml';
-  // mlb-f5 PROJECTION_ONLY: no market line, MAE-tracked surface only — no direction badge
+  // mlb-f5 PROJECTION_ONLY: no market line; OFFICIAL rows can still show the
+  // persisted U3.5/O4.5 call badge before settlement, TRACK_ONLY rows stay neutral.
   const isMlbF5ProjectionOnly =
     isMlb && !isMlbF5Ml && play.execution_status === 'PROJECTION_ONLY';
+  const mlbF5OfficialCall = isMlbF5ProjectionOnly
+    ? resolveMlbF5OfficialCall(play)
+    : null;
   const side = play.selection?.side ?? 'NONE';
   const projectedTotal =
     typeof play.projectedTotal === 'number' ? play.projectedTotal : null;
@@ -164,6 +196,15 @@ export default function ProjectionCard({
 
   const hasGoalieContext =
     !isMlb && (play.goalie_home_name || play.goalie_away_name || isGoalieUncertain);
+  const projectionOnlyCallBg =
+    mlbF5OfficialCall?.badgeTone === 'OVER'
+      ? 'bg-cyan-700/40 text-cyan-200 border-cyan-600/40'
+      : mlbF5OfficialCall?.badgeTone === 'UNDER'
+        ? 'bg-orange-700/40 text-orange-200 border-orange-600/40'
+        : 'bg-white/5 text-cloud/40 border-white/10';
+  const projectionOnlyCallSubLabel = mlbF5OfficialCall
+    ? `No market line · official ${mlbF5OfficialCall.badgeLabel} call`
+    : 'No official call · MAE tracking';
 
   return (
     <div className="rounded-lg border border-white/10 bg-surface/60 p-4 space-y-3">
@@ -187,7 +228,7 @@ export default function ProjectionCard({
         {awayTeam} @ {homeTeam}
       </div>
 
-      {/* Hero — mlb-f5 PROJECTION_ONLY: no line, no direction badge */}
+      {/* Hero — mlb-f5 PROJECTION_ONLY: no market line; OFFICIAL rows may still show a persisted call badge */}
       {isMlbF5Ml ? (
         <div className="flex items-center gap-5">
           <div className="text-center min-w-[56px]">
@@ -237,8 +278,25 @@ export default function ProjectionCard({
                 )}
               </div>
             )}
+            {mlbF5OfficialCall && (
+              <div className="ml-auto flex flex-col items-end gap-1.5">
+                <span
+                  className={`px-3 py-1 text-sm font-bold rounded border ${projectionOnlyCallBg}`}
+                >
+                  {mlbF5OfficialCall.badgeLabel}
+                </span>
+                {confidence !== null && (
+                  <span className={`text-xs font-mono ${tierColor}`}>
+                    {Math.round(confidence * 100)}%{' '}
+                    <span className="opacity-60">{tier}</span>
+                  </span>
+                )}
+              </div>
+            )}
           </div>
-          <p className="text-xs text-cloud/40 font-mono">No market line &middot; MAE tracking</p>
+          <p className="text-xs text-cloud/40 font-mono">
+            {projectionOnlyCallSubLabel}
+          </p>
         </div>
       ) : (
       <div className="flex items-center gap-5">

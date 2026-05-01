@@ -3589,6 +3589,20 @@ function buildMlbDualRunRecord(gameId, oddsSnapshot, selection) {
   };
 }
 
+// WI-1224: Persist explicit settlement call on mlb-f5 card payloads so downstream
+// settlement never re-derives the call from numeric projected_total comparisons.
+function buildMlbF5SettlementPolicy(projectedTotal) {
+  const value = toFiniteNumber(projectedTotal);
+  if (value === null) return null;
+  if (value < 3.5) {
+    return { market_family: 'MLB_F5_TOTAL', grading_mode: 'OFFICIAL', official_call: 'UNDER_3_5', reason_code: 'CLEAR_UNDER' };
+  }
+  if (value > 4.5) {
+    return { market_family: 'MLB_F5_TOTAL', grading_mode: 'OFFICIAL', official_call: 'OVER_4_5', reason_code: 'CLEAR_OVER' };
+  }
+  return { market_family: 'MLB_F5_TOTAL', grading_mode: 'TRACK_ONLY', official_call: null, reason_code: 'GRAY_ZONE_NO_CALL' };
+}
+
 function buildMlbF5OddsContext(oddsSnapshot) {
   return {
     total_f5: oddsSnapshot?.total_f5 ?? null,
@@ -4910,17 +4924,22 @@ async function runMLBModel({
               ...(driver.without_odds_mode ? { without_odds_mode: true, tags: ['no_odds_mode'] } : {}),
               ...(driver.projection_floor ? { projection_floor: true } : {}),
               ...(isF5
-                ? {
-                    projection:
+                ? (() => {
+                    const f5Projection =
                       driver.projection && typeof driver.projection === 'object'
                         ? driver.projection
-                        : { projected_total: projected },
-                    recommended_bet_type: 'total',
-                    odds_context: buildMlbF5OddsContext(gameOddsSnapshot),
-                    primary_game_market: true,
-                    chosen_market: gameEval.status,
-                    why_this_market: `evaluateMlbGameMarkets: ${gameEval.status}`,
-                  }
+                        : { projected_total: projected };
+                    const f5ProjectedTotal = f5Projection.projected_total ?? projected;
+                    return {
+                      projection: f5Projection,
+                      recommended_bet_type: 'total',
+                      odds_context: buildMlbF5OddsContext(gameOddsSnapshot),
+                      primary_game_market: true,
+                      chosen_market: gameEval.status,
+                      why_this_market: `evaluateMlbGameMarkets: ${gameEval.status}`,
+                      projection_settlement_policy: buildMlbF5SettlementPolicy(f5ProjectedTotal),
+                    };
+                  })()
                 : isF5ML
                   ? {
                       recommended_bet_type: 'moneyline',
@@ -5403,4 +5422,6 @@ module.exports = {
   normalizeReasonCodeSet,
   MLB_FULL_GAME_FUNNEL_WINDOW,
   MLB_FULL_GAME_DIRECTIONAL_FUNNEL_WINDOW,
+  // Exported for WI-1224 unit tests
+  buildMlbF5SettlementPolicy,
 };

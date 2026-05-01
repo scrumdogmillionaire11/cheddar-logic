@@ -47,6 +47,8 @@ const {
   settleProjections,
   fetchMlbPitcherKs,
   classifyMlbF5ProxySettlementWindow,
+  isValidMlbF5SettlementPolicy,
+  buildMlbF5ProxyRowFromPolicy,
 } = require('../settle_projections');
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -614,8 +616,42 @@ describe('settleProjections — proxy eval integration', () => {
     resolveMlbGamePkFn.mockReturnValue('745340');
   });
 
-  test('Case 1: mlb-f5 clear over zone writes one official O4.5 proxy row', async () => {
+  test('Case 1 (legacy): mlb-f5 with no projection_settlement_policy logs LEGACY_PAYLOAD_NO_POLICY and writes no proxy rows', async () => {
+    const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
     getUnsettledProjectionCards.mockReturnValue([makeProjectionCard('mlb-f5', 4.82)]);
+    fetchF5Total.mockResolvedValue(5);
+
+    const result = await settleProjections({ dryRun: false });
+
+    expect(result.settled).toBe(1);
+    expect(setProjectionActualResult).toHaveBeenCalledWith('card-mlb-f5-proj', { runs_f5: 5 });
+    expect(batchInsertProjectionProxyEvals).not.toHaveBeenCalled();
+    const warnMessages = warnSpy.mock.calls.map((args) => String(args[0]));
+    expect(warnMessages.some((m) => m.includes('LEGACY_PAYLOAD_NO_POLICY'))).toBe(true);
+    warnSpy.mockRestore();
+  });
+
+  function makeProjectionCardWithPolicy(cardType, projectedTotal, policy) {
+    const isNhl = cardType.startsWith('nhl');
+    return {
+      card_id: `card-${cardType}-proj`,
+      game_id: isNhl ? '2024020001' : 'mlb-proj-game',
+      sport: isNhl ? 'nhl' : 'baseball_mlb',
+      card_type: cardType,
+      payload_data: JSON.stringify({
+        projected_total: projectedTotal,
+        projection: { projected_total: projectedTotal },
+        projection_settlement_policy: policy,
+      }),
+      game_time_utc: new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString(),
+      home_team: 'BOS',
+      away_team: 'NYY',
+    };
+  }
+
+  test('Policy OFFICIAL/OVER: mlb-f5 writes one O4.5 proxy row with grading_mode=OFFICIAL', async () => {
+    const policy = { market_family: 'MLB_F5_TOTAL', grading_mode: 'OFFICIAL', official_call: 'OVER_4_5', reason_code: 'CLEAR_OVER' };
+    getUnsettledProjectionCards.mockReturnValue([makeProjectionCardWithPolicy('mlb-f5', 4.82, policy)]);
     fetchF5Total.mockResolvedValue(5);
 
     const result = await settleProjections({ dryRun: false });
@@ -632,11 +668,32 @@ describe('settleProjections — proxy eval integration', () => {
       recommended_side: 'OVER',
       graded_result: 'WIN',
       agreement_group: 'DIRECT_SELECTION',
+      grading_mode: 'OFFICIAL',
     });
   });
 
-  test('Case 1b: mlb-f5 gray zone settles actual_result but writes no proxy rows', async () => {
-    getUnsettledProjectionCards.mockReturnValue([makeProjectionCard('mlb-f5', 4.1)]);
+  test('Policy OFFICIAL/UNDER: mlb-f5 writes one U3.5 proxy row with grading_mode=OFFICIAL', async () => {
+    const policy = { market_family: 'MLB_F5_TOTAL', grading_mode: 'OFFICIAL', official_call: 'UNDER_3_5', reason_code: 'CLEAR_UNDER' };
+    getUnsettledProjectionCards.mockReturnValue([makeProjectionCardWithPolicy('mlb-f5', 3.1, policy)]);
+    fetchF5Total.mockResolvedValue(2);
+
+    const result = await settleProjections({ dryRun: false });
+
+    expect(result.settled).toBe(1);
+    expect(batchInsertProjectionProxyEvals).toHaveBeenCalledTimes(1);
+    const [, rows] = batchInsertProjectionProxyEvals.mock.calls[0];
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      proxy_line: 3.5,
+      recommended_side: 'UNDER',
+      graded_result: 'WIN',
+      grading_mode: 'OFFICIAL',
+    });
+  });
+
+  test('Policy TRACK_ONLY: mlb-f5 settles actual_result but writes no proxy rows', async () => {
+    const policy = { market_family: 'MLB_F5_TOTAL', grading_mode: 'TRACK_ONLY', official_call: null, reason_code: 'GRAY_ZONE_NO_CALL' };
+    getUnsettledProjectionCards.mockReturnValue([makeProjectionCardWithPolicy('mlb-f5', 4.1, policy)]);
     fetchF5Total.mockResolvedValue(4);
 
     const result = await settleProjections({ dryRun: false });
@@ -644,6 +701,22 @@ describe('settleProjections — proxy eval integration', () => {
     expect(result.settled).toBe(1);
     expect(setProjectionActualResult).toHaveBeenCalledWith('card-mlb-f5-proj', { runs_f5: 4 });
     expect(batchInsertProjectionProxyEvals).not.toHaveBeenCalled();
+  });
+
+  test('Malformed policy: mlb-f5 logs error and writes no proxy rows', async () => {
+    const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+    const badPolicy = { market_family: 'MLB_F5_TOTAL', grading_mode: 'INVALID_MODE', official_call: null, reason_code: 'CLEAR_OVER' };
+    getUnsettledProjectionCards.mockReturnValue([makeProjectionCardWithPolicy('mlb-f5', 4.82, badPolicy)]);
+    fetchF5Total.mockResolvedValue(5);
+
+    const result = await settleProjections({ dryRun: false });
+
+    expect(result.settled).toBe(1);
+    expect(setProjectionActualResult).toHaveBeenCalledWith('card-mlb-f5-proj', { runs_f5: 5 });
+    expect(batchInsertProjectionProxyEvals).not.toHaveBeenCalled();
+    const errorMessages = errorSpy.mock.calls.map((args) => String(args[0]));
+    expect(errorMessages.some((m) => m.includes('malformed projection_settlement_policy'))).toBe(true);
+    errorSpy.mockRestore();
   });
 
   test('Case 2: nhl-pace-1p card triggers batchInsertProjectionProxyEvals with 1 row', async () => {
@@ -680,7 +753,8 @@ describe('settleProjections — proxy eval integration', () => {
   });
 
   test('Case 4: proxy eval insert failure does NOT abort settlement', async () => {
-    getUnsettledProjectionCards.mockReturnValue([makeProjectionCard('mlb-f5', 4.82)]);
+    const policy = { market_family: 'MLB_F5_TOTAL', grading_mode: 'OFFICIAL', official_call: 'OVER_4_5', reason_code: 'CLEAR_OVER' };
+    getUnsettledProjectionCards.mockReturnValue([makeProjectionCardWithPolicy('mlb-f5', 4.82, policy)]);
     fetchF5Total.mockResolvedValue(5);
     batchInsertProjectionProxyEvals.mockImplementation(() => { throw new Error('DB locked'); });
 
@@ -772,6 +846,61 @@ describe('settleProjections — proxy eval integration', () => {
       proxy_line: 1.5,
       graded_result: 'NO_BET',
     });
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// isValidMlbF5SettlementPolicy (WI-1224)
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('isValidMlbF5SettlementPolicy', () => {
+  test('valid OFFICIAL/UNDER policy returns true', () => {
+    expect(isValidMlbF5SettlementPolicy({
+      market_family: 'MLB_F5_TOTAL',
+      grading_mode: 'OFFICIAL',
+      official_call: 'UNDER_3_5',
+      reason_code: 'CLEAR_UNDER',
+    })).toBe(true);
+  });
+
+  test('valid OFFICIAL/OVER policy returns true', () => {
+    expect(isValidMlbF5SettlementPolicy({
+      market_family: 'MLB_F5_TOTAL',
+      grading_mode: 'OFFICIAL',
+      official_call: 'OVER_4_5',
+      reason_code: 'CLEAR_OVER',
+    })).toBe(true);
+  });
+
+  test('valid TRACK_ONLY policy returns true', () => {
+    expect(isValidMlbF5SettlementPolicy({
+      market_family: 'MLB_F5_TOTAL',
+      grading_mode: 'TRACK_ONLY',
+      official_call: null,
+      reason_code: 'GRAY_ZONE_NO_CALL',
+    })).toBe(true);
+  });
+
+  test('null returns false', () => {
+    expect(isValidMlbF5SettlementPolicy(null)).toBe(false);
+  });
+
+  test('wrong market_family returns false', () => {
+    expect(isValidMlbF5SettlementPolicy({
+      market_family: 'NHL_1P_TOTAL',
+      grading_mode: 'OFFICIAL',
+      official_call: 'UNDER_3_5',
+      reason_code: 'CLEAR_UNDER',
+    })).toBe(false);
+  });
+
+  test('invalid grading_mode returns false', () => {
+    expect(isValidMlbF5SettlementPolicy({
+      market_family: 'MLB_F5_TOTAL',
+      grading_mode: 'INVALID',
+      official_call: null,
+      reason_code: 'GRAY_ZONE_NO_CALL',
+    })).toBe(false);
   });
 });
 

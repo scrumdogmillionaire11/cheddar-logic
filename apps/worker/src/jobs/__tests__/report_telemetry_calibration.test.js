@@ -810,8 +810,11 @@ describe('telemetry calibration report', () => {
 
     // Unknown-basis rows must be excluded from CLV sample and threshold math.
     expect(report.ledgers.clv.sampleSize).toBe(150);
+    expect(report.ledgers.clv.meanClv).toBeCloseTo(-0.0285, 4);
+    expect(report.ledgers.clv.p25Clv).toBeCloseTo(-0.06, 4);
     expect(report.ledgers.clv.checks.meanClv.status).toBe('FAIL');
     expect(report.ledgers.clv.checks.tailRisk.status).toBe('FAIL');
+    expect(report.overallStatus).toBe('NO_GO');
   });
 
   test('emits NHL ML calibration schema and JUSTIFIED verdict when selected mapping outperforms baseline', async () => {

@@ -5,6 +5,12 @@ const DEFAULT_THRESHOLDS = {
   under: { play: 1.0, slightEdge: 0.5 },
 };
 
+const RAW_DELTA_EPSILON       = 0.15;
+const RAW_DELTA_WEAK_EDGE_MAX = 0.35;
+const MIN_DIRECTIONAL_EDGE    = 0.50;
+const STRONG_DRIVER_THRESHOLD = 0.65;
+const DIVERGENCE_PENALTY_ABS  = 0.15;
+
 /**
  * Stage A: pure forecast envelope from model and market totals.
  * Returns { modelTotal, marketTotal, delta, absDelta, forecastValid }.
@@ -46,23 +52,27 @@ function classifyNhlTotalsStatus(input) {
     hasRequiredInputs = true,
     forecast = null,
     thresholds = null,
+    driverDirection = null,
+    driverScore = null,
   } = input || {};
 
   // Stage A: use provided forecast or compute inline for backward compat.
   const forecastEnvelope =
     forecast ?? computeNhl1pForecast({ modelTotal, marketTotal, hasRequiredInputs });
-  const { delta, absDelta } = forecastEnvelope;
+  const { delta, absDelta: rawAbsDelta } = forecastEnvelope;
   const forecastInvalid = forecast
     ? !forecast.forecastValid
-    : !hasRequiredInputs || !Number.isFinite(delta) || !Number.isFinite(absDelta);
+    : !hasRequiredInputs || !Number.isFinite(delta) || !Number.isFinite(rawAbsDelta);
   const reasonCodes = [];
+  const flags = [];
 
   if (forecastInvalid) {
     return {
       status: 'PASS',
       delta,
-      absDelta,
+      absDelta: rawAbsDelta,
       reasonCodes: ['PASS_MISSING_REQUIRED_INPUTS'],
+      flags,
     };
   }
 
@@ -70,18 +80,76 @@ function classifyNhlTotalsStatus(input) {
     return {
       status: 'PASS',
       delta,
-      absDelta,
+      absDelta: rawAbsDelta,
       reasonCodes: ['PASS_INTEGRITY_BLOCK'],
+      flags,
     };
   }
 
-  if ((side === 'OVER' && delta <= 0) || (side === 'UNDER' && delta >= 0)) {
-    return {
-      status: 'PASS',
-      delta,
-      absDelta,
-      reasonCodes: ['PASS_DIRECTION_MISMATCH'],
-    };
+  let absDelta = rawAbsDelta;
+
+  if (process.env.NHL_TOTALS_RAW_DELTA_AUTHORITY === 'true') {
+    // Derive direction from raw delta; 'NONE' when within epsilon neutral zone.
+    const rawSide = delta > RAW_DELTA_EPSILON ? 'OVER' : delta < -RAW_DELTA_EPSILON ? 'UNDER' : 'NONE';
+
+    // Rule 1: delta within epsilon neutral zone — no directional edge.
+    if (rawAbsDelta < RAW_DELTA_EPSILON) {
+      return {
+        status: 'PASS',
+        delta,
+        absDelta: rawAbsDelta,
+        reasonCodes: ['PASS_NO_DIRECTIONAL_EDGE'],
+        flags,
+      };
+    }
+
+    // Rule 2: strong cross-market driver contradicts raw direction on a weak edge.
+    if (
+      driverDirection != null &&
+      driverDirection !== rawSide &&
+      Number(driverScore) >= STRONG_DRIVER_THRESHOLD &&
+      rawAbsDelta <= RAW_DELTA_WEAK_EDGE_MAX
+    ) {
+      return {
+        status: 'PASS',
+        delta,
+        absDelta: rawAbsDelta,
+        reasonCodes: ['PASS_SIGNAL_DIVERGENCE'],
+        flags,
+      };
+    }
+
+    // Rule 3: driver contradicts raw direction and edge is below min threshold.
+    if (
+      driverDirection != null &&
+      driverDirection !== rawSide &&
+      rawAbsDelta < MIN_DIRECTIONAL_EDGE
+    ) {
+      return {
+        status: 'PASS',
+        delta,
+        absDelta: rawAbsDelta,
+        reasonCodes: ['PASS_LOW_CONSENSUS'],
+        flags,
+      };
+    }
+
+    // Rule 4: driver contradicts raw direction but edge clears min threshold — penalize and continue.
+    if (driverDirection != null && driverDirection !== rawSide) {
+      absDelta = rawAbsDelta - DIVERGENCE_PENALTY_ABS;
+      flags.push('SIGNAL_DIVERGENCE');
+    }
+  } else {
+    // Legacy: direction determined by the side input parameter.
+    if ((side === 'OVER' && delta <= 0) || (side === 'UNDER' && delta >= 0)) {
+      return {
+        status: 'PASS',
+        delta,
+        absDelta: rawAbsDelta,
+        reasonCodes: ['PASS_DIRECTION_MISMATCH'],
+        flags,
+      };
+    }
   }
 
   // Stage B: side policy with per-side calibration thresholds.
@@ -171,6 +239,7 @@ function classifyNhlTotalsStatus(input) {
     delta,
     absDelta,
     reasonCodes,
+    flags,
   };
 }
 
@@ -202,4 +271,9 @@ module.exports = {
   classifyNhlTotalsStatus,
   computeNhl1pForecast,
   get1pBucketThresholds,
+  RAW_DELTA_EPSILON,
+  RAW_DELTA_WEAK_EDGE_MAX,
+  MIN_DIRECTIONAL_EDGE,
+  STRONG_DRIVER_THRESHOLD,
+  DIVERGENCE_PENALTY_ABS,
 };
