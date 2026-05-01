@@ -3000,6 +3000,8 @@ function generateNHLMarketCallCards(
       hasRequiredInputs: hasRequiredInputsTotals,
       forecast: _totalsForecast,
       thresholds: get1pBucketThresholds(line),
+      driverDirection: totalDecision.best_candidate.side ?? null,
+      driverScore: totalDecision.score ?? null,
     });
     const canonicalMapped = mapCanonicalNhlTotalsToInternalStatus(canonicalTotalsStatus.status);
     const status = canonicalMapped.officialStatus;

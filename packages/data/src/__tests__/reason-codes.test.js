@@ -8,7 +8,11 @@ const {
 const NHL_TOTALS_STATUS_REASON_CODES = [
   'PASS_MISSING_REQUIRED_INPUTS',
   'PASS_INTEGRITY_BLOCK',
-  'PASS_DIRECTION_MISMATCH',
+  'PASS_DIRECTION_MISMATCH',     // legacy path (flag=false); preserved for existing rows
+  'PASS_NO_DIRECTIONAL_EDGE',    // WI-1183 rule 1
+  'PASS_SIGNAL_DIVERGENCE',      // WI-1183 rule 2
+  'PASS_LOW_CONSENSUS',          // WI-1183 rule 3
+  'SIGNAL_DIVERGENCE',           // WI-1183 rule 4 flag
   'BASE_PLAY_DELTA_GTE_1_0',
   'BASE_SLIGHT_EDGE_DELTA_GTE_0_5',
   'BASE_PASS_DELTA_LT_0_5',
@@ -113,7 +117,7 @@ describe('reason-codes canonical registry', () => {
     }
   });
 
-  test('REASON_CODE_SCHEMA_VERSION is current (5)', () => {
-    expect(REASON_CODE_SCHEMA_VERSION).toBe(5);
+  test('REASON_CODE_SCHEMA_VERSION is current (6)', () => {
+    expect(REASON_CODE_SCHEMA_VERSION).toBe(6);
   });
 });

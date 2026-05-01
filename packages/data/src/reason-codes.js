@@ -14,6 +14,11 @@ const MODEL_REASON_CODES = Object.freeze(new Set([
   'PASS_DRIVER_SUPPORT_WEAK',
   'PASS_CONFLICT_HIGH',
   'PASS_DIRECTION_MISMATCH',
+  // NHL raw delta authority codes (WI-1183)
+  'PASS_NO_DIRECTIONAL_EDGE',
+  'PASS_SIGNAL_DIVERGENCE',
+  'PASS_LOW_CONSENSUS',
+  'SIGNAL_DIVERGENCE',
   'BASE_PLAY_DELTA_GTE_1_0',
   'BASE_SLIGHT_EDGE_DELTA_GTE_0_5',
   'BASE_PASS_DELTA_LT_0_5',
@@ -175,7 +180,7 @@ const ALL_REASON_CODES = Object.freeze([
   ...GATE_REASON_CODES,
 ]);
 
-const REASON_CODE_SCHEMA_VERSION = 5;
+const REASON_CODE_SCHEMA_VERSION = 6;
 
 // ─── Human-readable labels ───────────────────────────────────────────────────
 // Every code in ALL_REASON_CODES must appear here.
@@ -185,6 +190,10 @@ const REASON_CODE_LABELS = Object.freeze({
   PASS_NO_EDGE: 'No edge',
   PASS_MISSING_EDGE: 'Edge unavailable',
   PASS_DIRECTION_MISMATCH: 'Direction mismatches market side',
+  PASS_NO_DIRECTIONAL_EDGE: 'No directional edge — delta below epsilon',
+  PASS_SIGNAL_DIVERGENCE: 'Signal divergence — strong driver conflict',
+  PASS_LOW_CONSENSUS: 'Low consensus — driver and delta conflict',
+  SIGNAL_DIVERGENCE: 'Signal divergence applied — delta penalized',
   BASE_PLAY_DELTA_GTE_1_0: 'Base play threshold met',
   BASE_SLIGHT_EDGE_DELTA_GTE_0_5: 'Base slight-edge threshold met',
   BASE_PASS_DELTA_LT_0_5: 'Base delta below slight-edge threshold',

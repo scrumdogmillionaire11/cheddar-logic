@@ -140,6 +140,133 @@ describe('computeNhl1pForecast', () => {
   });
 });
 
+describe('classifyNhlTotalsStatus — NHL_TOTALS_RAW_DELTA_AUTHORITY policy (WI-1183)', () => {
+  const baseRaw = {
+    side: 'OVER',
+    modelTotal: 6.0,
+    marketTotal: 5.5,
+    integrityOk: true,
+    goaliesConfirmedHome: true,
+    goaliesConfirmedAway: true,
+    majorInjuryUncertainty: false,
+  };
+
+  beforeEach(() => {
+    process.env.NHL_TOTALS_RAW_DELTA_AUTHORITY = 'true';
+  });
+
+  afterEach(() => {
+    delete process.env.NHL_TOTALS_RAW_DELTA_AUTHORITY;
+  });
+
+  test('rule 1: |rawDelta|=0.10 < epsilon => PASS / PASS_NO_DIRECTIONAL_EDGE', () => {
+    // delta = 5.6 - 5.5 = 0.10 (< RAW_DELTA_EPSILON 0.15)
+    const result = classifyNhlTotalsStatus({
+      ...baseRaw,
+      modelTotal: 5.6,
+      marketTotal: 5.5,
+    });
+    expect(result.status).toBe('PASS');
+    expect(result.reasonCodes).toEqual(['PASS_NO_DIRECTIONAL_EDGE']);
+  });
+
+  test('rule 1: fires regardless of side parameter when |rawDelta| < epsilon', () => {
+    const result = classifyNhlTotalsStatus({
+      ...baseRaw,
+      side: 'UNDER',
+      modelTotal: 5.6,
+      marketTotal: 5.5,
+    });
+    expect(result.status).toBe('PASS');
+    expect(result.reasonCodes).toEqual(['PASS_NO_DIRECTIONAL_EDGE']);
+  });
+
+  test('rule 2: |rawDelta|=0.25, opposite driver, driverScore=0.70 => PASS / PASS_SIGNAL_DIVERGENCE', () => {
+    // delta = 5.75 - 5.5 = 0.25 → rawSide=OVER; driverDirection=UNDER (opposite)
+    const result = classifyNhlTotalsStatus({
+      ...baseRaw,
+      side: 'OVER',
+      modelTotal: 5.75,
+      marketTotal: 5.5,
+      driverDirection: 'UNDER',
+      driverScore: 0.70,
+    });
+    expect(result.status).toBe('PASS');
+    expect(result.reasonCodes).toEqual(['PASS_SIGNAL_DIVERGENCE']);
+  });
+
+  test('rule 3: |rawDelta|=0.45, opposite driver, driverScore=0.40 => PASS / PASS_LOW_CONSENSUS', () => {
+    // delta = 5.95 - 5.5 = 0.45 → rawSide=OVER; driverDirection=UNDER (opposite)
+    const result = classifyNhlTotalsStatus({
+      ...baseRaw,
+      side: 'OVER',
+      modelTotal: 5.95,
+      marketTotal: 5.5,
+      driverDirection: 'UNDER',
+      driverScore: 0.40,
+    });
+    expect(result.status).toBe('PASS');
+    expect(result.reasonCodes).toEqual(['PASS_LOW_CONSENSUS']);
+  });
+
+  test('rule 4: |rawDelta|=0.80, opposite driver, driverScore=0.40 => non-PASS with SIGNAL_DIVERGENCE flag and effective absDelta=0.65', () => {
+    // delta = 6.3 - 5.5 = 0.80 → rawSide=OVER; driverDirection=UNDER (opposite)
+    // driverScore 0.40 < STRONG_DRIVER_THRESHOLD so rules 2/3 skip; 0.80 >= MIN_DIRECTIONAL_EDGE so rule 3 skips
+    const result = classifyNhlTotalsStatus({
+      ...baseRaw,
+      side: 'OVER',
+      modelTotal: 6.3,
+      marketTotal: 5.5,
+      driverDirection: 'UNDER',
+      driverScore: 0.40,
+    });
+    expect(result.status).not.toBe('PASS');
+    expect(result.flags).toContain('SIGNAL_DIVERGENCE');
+    expect(result.absDelta).toBeCloseTo(0.65);
+  });
+
+  test('driverDirection=null (applyCanonicalNhlTotalsStatus path): rules 2-4 do not fire', () => {
+    // |rawDelta|=0.45 → rawSide=OVER; no driver → skips rules 2/3/4
+    const result = classifyNhlTotalsStatus({
+      ...baseRaw,
+      side: 'OVER',
+      modelTotal: 5.95,
+      marketTotal: 5.5,
+      driverDirection: null,
+      driverScore: null,
+    });
+    // Falls through to Stage B: 0.45 < slightEdgeThreshold 0.5 → PASS via BASE_PASS_DELTA_LT_0_5
+    expect(result.status).toBe('PASS');
+    expect(result.reasonCodes).toContain('BASE_PASS_DELTA_LT_0_5');
+    expect(result.flags).toEqual([]);
+  });
+
+  test('flag=false restores legacy PASS_DIRECTION_MISMATCH behavior', () => {
+    process.env.NHL_TOTALS_RAW_DELTA_AUTHORITY = 'false';
+    // OVER side with negative delta → old direction mismatch
+    const result = classifyNhlTotalsStatus({
+      ...baseRaw,
+      side: 'OVER',
+      modelTotal: 5.0,
+      marketTotal: 5.5,
+    });
+    expect(result.status).toBe('PASS');
+    expect(result.reasonCodes).toContain('PASS_DIRECTION_MISMATCH');
+    expect(result.reasonCodes).not.toContain('PASS_NO_DIRECTIONAL_EDGE');
+  });
+
+  test('no new payload produces PASS_DIRECTION_MISMATCH when flag is on', () => {
+    // Even a direction mismatch scenario should use new rules, not PASS_DIRECTION_MISMATCH
+    const result = classifyNhlTotalsStatus({
+      ...baseRaw,
+      side: 'OVER',
+      modelTotal: 5.0,
+      marketTotal: 5.5,
+    });
+    expect(result.reasonCodes).not.toContain('PASS_DIRECTION_MISMATCH');
+  });
+});
+
 describe('classifyNhlTotalsStatus — independent thresholds', () => {
   test('OVER: tightened play threshold promotes absDelta=0.8 to PLAY (default would be SLIGHT EDGE)', () => {
     const result = classifyNhlTotalsStatus({
