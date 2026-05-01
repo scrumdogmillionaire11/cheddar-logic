@@ -87,6 +87,7 @@ describe('reason-codes canonical registry', () => {
       'SOFT_DEGRADED_TOTAL_MODEL',
       'SOFT_MARKET_SANITY_FAIL',
       'SOFT_WEAK_DRIVER_SUPPORT',
+      'HIGH_END_SLIGHT_EDGE_PROMOTION',
     ];
     for (const code of MLB_MODEL_REASON_CODES) {
       expect(REASON_CODE_LABELS[code]).toBeDefined();
@@ -117,7 +118,7 @@ describe('reason-codes canonical registry', () => {
     }
   });
 
-  test('REASON_CODE_SCHEMA_VERSION is current (6)', () => {
-    expect(REASON_CODE_SCHEMA_VERSION).toBe(6);
+  test('REASON_CODE_SCHEMA_VERSION is current (7)', () => {
+    expect(REASON_CODE_SCHEMA_VERSION).toBe(7);
   });
 });

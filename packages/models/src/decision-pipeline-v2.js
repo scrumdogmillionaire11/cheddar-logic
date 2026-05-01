@@ -2,7 +2,9 @@ const edgeCalculator = require('./edge-calculator');
 const {
   resolveThresholdProfile,
   resolvePlayCleanlinessProfile,
+  resolvePromotionProfile,
   applyNbaTotalQuarantine,
+  QUARANTINE_REASON,
 } = require('./decision-pipeline-v2-edge-config');
 // Import from package entrypoint to preserve package boundaries.
 const {
@@ -87,6 +89,7 @@ const HOLD_EQUIVALENT_WATCHDOG_REASONS = new Set([
 
 const PRICE_REASONS = {
   EDGE_CLEAR: 'EDGE_CLEAR',
+  HIGH_END_SLIGHT_EDGE_PROMOTION: 'HIGH_END_SLIGHT_EDGE_PROMOTION',
   NO_EDGE_AT_PRICE: 'NO_EDGE_AT_PRICE',
   MARKET_PRICE_MISSING: 'MARKET_PRICE_MISSING',
   MODEL_PROB_MISSING: 'MODEL_PROB_MISSING',
@@ -181,6 +184,12 @@ const HARD_INVALIDATION_PRICE_REASONS = new Set([
 const PLAY_CAPPED_PRICE_REASONS = new Set([
   PRICE_REASONS.PLAY_REQUIRES_FRESH_MARKET,
   PRICE_REASONS.PLAY_CONTRADICTION_CAPPED,
+]);
+const PROMOTION_BLOCKING_PRICE_REASONS = new Set([
+  PRICE_REASONS.PLAY_REQUIRES_FRESH_MARKET,
+  PRICE_REASONS.PLAY_CONTRADICTION_CAPPED,
+  PRICE_REASONS.LINE_MOVE_ADVERSE,
+  PRICE_REASONS.SIGMA_FALLBACK_DEGRADED,
 ]);
 
 const FIELD_SOURCES = {
@@ -1054,6 +1063,75 @@ function applyPlayCleanlinessCap({
   };
 }
 
+function maybePromoteHighEndLean({
+  officialStatus,
+  sport,
+  marketType,
+  sharpPriceStatus,
+  supportScore,
+  edgePct,
+  watchdogStatus,
+  watchdogReasonCodes = [],
+  priceReasonCodes = [],
+  exactWagerValid,
+  proxyUsed = false,
+  proxyCapped = false,
+  sigmaSource = null,
+}) {
+  if (officialStatus !== 'LEAN') {
+    return { officialStatus, priceReasonCodes, promotedFrom: null, promotionReasonCode: null };
+  }
+
+  const promotionProfile = resolvePromotionProfile({ sport, marketType });
+  if (!promotionProfile) {
+    return { officialStatus, priceReasonCodes, promotedFrom: null, promotionReasonCode: null };
+  }
+
+  if (watchdogStatus !== 'OK' || sharpPriceStatus !== 'CHEDDAR') {
+    return { officialStatus, priceReasonCodes, promotedFrom: null, promotionReasonCode: null };
+  }
+
+  if (sigmaSource === 'fallback') {
+    return { officialStatus, priceReasonCodes, promotedFrom: null, promotionReasonCode: null };
+  }
+
+  if (exactWagerValid !== true || proxyUsed === true || proxyCapped === true) {
+    return { officialStatus, priceReasonCodes, promotedFrom: null, promotionReasonCode: null };
+  }
+
+  if (
+    hasHardInvalidationReason({
+      watchdogStatus,
+      watchdogReasonCodes,
+      priceReasonCodes,
+    })
+  ) {
+    return { officialStatus, priceReasonCodes, promotedFrom: null, promotionReasonCode: null };
+  }
+
+  if (priceReasonCodes.some((code) => PROMOTION_BLOCKING_PRICE_REASONS.has(code))) {
+    return { officialStatus, priceReasonCodes, promotedFrom: null, promotionReasonCode: null };
+  }
+
+  if (edgePct === null || edgePct < promotionProfile.edge) {
+    return { officialStatus, priceReasonCodes, promotedFrom: null, promotionReasonCode: null };
+  }
+
+  if (!Number.isFinite(supportScore) || supportScore < promotionProfile.support) {
+    return { officialStatus, priceReasonCodes, promotedFrom: null, promotionReasonCode: null };
+  }
+
+  return {
+    officialStatus: 'PLAY',
+    priceReasonCodes: uniqueReasonCodes(
+      priceReasonCodes,
+      PRICE_REASONS.HIGH_END_SLIGHT_EDGE_PROMOTION,
+    ),
+    promotedFrom: 'LEAN',
+    promotionReasonCode: PRICE_REASONS.HIGH_END_SLIGHT_EDGE_PROMOTION,
+  };
+}
+
 /**
  * WI-0667: Sharp divergence annotation.
  *
@@ -1236,6 +1314,26 @@ function buildCanonicalEnvelopeV2({
     execution_status: executionStatus,
     publish_ready: executionStatus === 'EXECUTABLE',
   };
+}
+
+function resolvePromotionPrimaryReason({
+  promotedFrom,
+  promotionReasonCode,
+  officialStatus,
+  priceReasonCodes = [],
+}) {
+  if (promotedFrom !== 'LEAN' || !promotionReasonCode) {
+    return null;
+  }
+
+  if (officialStatus === 'PLAY') {
+    return promotionReasonCode;
+  }
+
+  return [
+    PRICE_REASONS.HEAVY_FAVORITE_PRICE_CAP,
+    QUARANTINE_REASON,
+  ].find((code) => priceReasonCodes.includes(code)) || null;
 }
 
 function computeWatchdog(payload, context = {}) {
@@ -1688,6 +1786,8 @@ function buildDecisionV2(payload, context = {}) {
       playCleanlinessResult.priceReasonCodes,
       lineMoveReasonCodes,
     );
+    let promotedFrom = null;
+    let promotionReasonCode = null;
 
     // WI-0814: If sigma was fallback and the official status was downgraded from PLAY to LEAN
     // by computeOfficialStatus, inject SIGMA_FALLBACK_DEGRADED reason code so the
@@ -1728,6 +1828,26 @@ function buildDecisionV2(payload, context = {}) {
         );
       }
     }
+
+    const promotionResult = maybePromoteHighEndLean({
+      officialStatus: finalOfficialStatus,
+      sport,
+      marketType: market_type,
+      sharpPriceStatus: priceDecision.sharp_price_status,
+      supportScore: support_score,
+      edgePct: edge_pct,
+      watchdogStatus: watchdog.watchdog_status,
+      watchdogReasonCodes: watchdog.watchdog_reason_codes,
+      priceReasonCodes: finalPriceReasonCodes,
+      exactWagerValid: exact_wager_valid,
+      proxyUsed: proxy_used,
+      proxyCapped: proxy_capped,
+      sigmaSource: jobSigmaSource,
+    });
+    finalOfficialStatus = promotionResult.officialStatus;
+    finalPriceReasonCodes = promotionResult.priceReasonCodes;
+    promotedFrom = promotionResult.promotedFrom;
+    promotionReasonCode = promotionResult.promotionReasonCode;
 
     const play_tier = derivePlayTierWithThresholds(edge_pct, thresholdProfile);
 
@@ -1781,8 +1901,16 @@ function buildDecisionV2(payload, context = {}) {
       marketType: market_type,
       proxyCapped: proxy_capped,
     });
+    const promotionPrimaryReason = resolvePromotionPrimaryReason({
+      promotedFrom,
+      promotionReasonCode,
+      officialStatus: finalOfficialStatus,
+      priceReasonCodes: finalPriceReasonCodes,
+    });
     if (heavyFavoriteGateFailed) {
       primary_reason_code = PRICE_REASONS.HEAVY_FAVORITE_PRICE_CAP;
+    } else if (promotionPrimaryReason) {
+      primary_reason_code = promotionPrimaryReason;
     }
 
     const canonicalEnvelopeV2 = buildCanonicalEnvelopeV2({
@@ -1861,6 +1989,8 @@ function buildDecisionV2(payload, context = {}) {
       official_status: finalOfficialStatus,
       play_tier,
       primary_reason_code,
+      promoted_from: promotedFrom ?? undefined,
+      promotion_reason_code: promotionReasonCode ?? undefined,
       canonical_envelope_v2: canonicalEnvelopeV2,
 
       pipeline_version: PIPELINE_VERSION,
@@ -1940,5 +2070,6 @@ module.exports = {
   buildPipelineState,
   collectDecisionReasonCodes,
   isWave1EligiblePayload,
+  maybePromoteHighEndLean,
   buildDecisionV2,
 };

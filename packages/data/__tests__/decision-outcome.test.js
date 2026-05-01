@@ -69,6 +69,21 @@ describe('WI-1199 DecisionOutcome contract', () => {
     expect(outcome.status).toBe('PLAY');
   });
 
+  test('ignores additive promotion metadata while preserving PLAY outcome semantics', () => {
+    const outcome = buildDecisionOutcomeFromDecisionV2(
+      sampleDecisionV2({
+        official_status: 'PLAY',
+        promoted_from: 'LEAN',
+        promotion_reason_code: 'HIGH_END_SLIGHT_EDGE_PROMOTION',
+        price_reason_codes: ['EDGE_CLEAR', 'HIGH_END_SLIGHT_EDGE_PROMOTION'],
+      }),
+      { model: 'canon-model', timestamp: '2026-04-27T13:00:00.000Z' },
+    );
+
+    expect(outcome.status).toBe('PLAY');
+    expect(outcome.reasons.warnings).toContain('EDGE_FOUND');
+  });
+
   test('builds SLIGHT_EDGE outcome from LEAN threshold status', () => {
     const outcome = buildDecisionOutcomeFromDecisionV2(
       sampleDecisionV2({ official_status: 'LEAN' }),

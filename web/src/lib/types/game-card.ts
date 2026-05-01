@@ -231,6 +231,8 @@ export interface DecisionV2 {
   official_status: 'PLAY' | 'LEAN' | 'PASS';
   play_tier: 'BEST' | 'GOOD' | 'OK' | 'BAD';
   primary_reason_code: string;
+  promoted_from?: 'LEAN';
+  promotion_reason_code?: 'HIGH_END_SLIGHT_EDGE_PROMOTION';
 
   pipeline_version: 'v2';
   decided_at: string;

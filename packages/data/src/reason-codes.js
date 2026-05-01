@@ -48,6 +48,7 @@ const MODEL_REASON_CODES = Object.freeze(new Set([
   'PASS_NO_DISTRIBUTION',
   'PASS_UNKNOWN',
   'SOFT_WEAK_DRIVER_SUPPORT',
+  'HIGH_END_SLIGHT_EDGE_PROMOTION',
 ]));
 
 // DATA: inputs are missing, stale at the snapshot level, or unparseable.
@@ -180,7 +181,7 @@ const ALL_REASON_CODES = Object.freeze([
   ...GATE_REASON_CODES,
 ]);
 
-const REASON_CODE_SCHEMA_VERSION = 6;
+const REASON_CODE_SCHEMA_VERSION = 7;
 
 // ─── Human-readable labels ───────────────────────────────────────────────────
 // Every code in ALL_REASON_CODES must appear here.
@@ -310,6 +311,7 @@ const REASON_CODE_LABELS = Object.freeze({
   PASS_NO_DISTRIBUTION: 'No probability distribution computed',
   PASS_UNKNOWN: 'Pass — reason unknown',
   SOFT_WEAK_DRIVER_SUPPORT: 'Soft advisory — weak driver support',
+  HIGH_END_SLIGHT_EDGE_PROMOTION: 'High-end slight edge promoted to play',
   // MLB model data-quality signals (DATA bucket)
   MARKET_SANITY_FAIL: 'Market sanity check failed',
   MODEL_DEGRADED_INPUTS: 'Model received degraded inputs',
