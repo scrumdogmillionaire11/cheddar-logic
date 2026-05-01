@@ -378,6 +378,7 @@ export async function GET(
                   ) AS family_rank
            FROM projection_proxy_evals ppe
            WHERE ppe.card_family IN (${queryFamilySql})
+             AND (ppe.card_family != 'MLB_F5_TOTAL' OR ppe.grading_mode = 'OFFICIAL')
          )
          SELECT
            re.id,

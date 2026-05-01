@@ -171,6 +171,72 @@ function buildOfficialMlbF5ProxyRow(card, projectionValue, actualF5) {
   };
 }
 
+const VALID_F5_GRADING_MODES = new Set(['OFFICIAL', 'TRACK_ONLY']);
+const VALID_F5_OFFICIAL_CALLS = new Set(['UNDER_3_5', 'OVER_4_5', null]);
+const VALID_F5_REASON_CODES = new Set(['CLEAR_UNDER', 'CLEAR_OVER', 'GRAY_ZONE_NO_CALL']);
+
+function isValidMlbF5SettlementPolicy(policy) {
+  return (
+    policy !== null &&
+    typeof policy === 'object' &&
+    policy.market_family === 'MLB_F5_TOTAL' &&
+    VALID_F5_GRADING_MODES.has(policy.grading_mode) &&
+    VALID_F5_OFFICIAL_CALLS.has(policy.official_call ?? null) &&
+    VALID_F5_REASON_CODES.has(policy.reason_code)
+  );
+}
+
+function buildMlbF5ProxyRowFromPolicy(card, policy, projectionValue, actualF5) {
+  // official_call → proxy geometry
+  const proxyLine = policy.official_call === 'UNDER_3_5' ? 3.5 : 4.5;
+  const recommendedSide = policy.official_call === 'UNDER_3_5' ? 'UNDER' : 'OVER';
+
+  const projection = toFiniteNumberOrNull(projectionValue);
+  const actualValue = toFiniteNumberOrNull(actualF5);
+  if (actualValue === null) return null;
+
+  const edgeVsLine = projection !== null
+    ? Math.round((projection - proxyLine) * 10_000) / 10_000
+    : 0;
+  const absEdge = Math.abs(edgeVsLine);
+  let tier = 'STRONG';
+  let confidenceBucket = 'LARGE';
+  if (absEdge < 0.5) {
+    tier = 'LEAN';
+    confidenceBucket = 'SMALL';
+  } else if (absEdge < 0.75) {
+    tier = 'PLAY';
+    confidenceBucket = 'MEDIUM';
+  }
+
+  const isWin = recommendedSide === 'OVER'
+    ? actualValue > proxyLine
+    : actualValue < proxyLine;
+  const hitFlag = isWin ? 1 : 0;
+  const tierScoreWeight = tier === 'LEAN' ? 1 : tier === 'PLAY' ? 1.5 : 2;
+
+  return {
+    card_id: card.card_id,
+    game_id: card.game_id,
+    game_date: card.game_time_utc?.slice(0, 10),
+    sport: card.sport,
+    card_family: CARD_TYPE_TO_FAMILY[card.card_type],
+    proj_value: projection,
+    actual_value: actualValue,
+    proxy_line: proxyLine,
+    edge_vs_line: edgeVsLine,
+    recommended_side: recommendedSide,
+    tier,
+    confidence_bucket: confidenceBucket,
+    agreement_group: 'DIRECT_SELECTION',
+    graded_result: isWin ? 'WIN' : 'LOSS',
+    hit_flag: hitFlag,
+    tier_score: isWin ? tierScoreWeight : -tierScoreWeight,
+    consensus_bonus: 0,
+    grading_mode: 'OFFICIAL',
+  };
+}
+
 function setProjectionSettlementMetadata(db, cardId, { code, message }) {
   const row = db
     .prepare(
@@ -238,11 +304,31 @@ function insertProjectionProxyRows(db, card, payload, actualResult) {
   if (card.card_type === 'mlb-f5') {
     const runsF5 = toFiniteNumberOrNull(actualResult?.runs_f5);
     if (runsF5 === null) return 0;
+
+    const policy = payload?.projection_settlement_policy ?? null;
+
+    if (policy === null || policy === undefined) {
+      // Legacy payload pre-dating WI-1224 — cannot determine official call.
+      console.warn(`[settle_projections] mlb-f5 card=${card.card_id}: LEGACY_PAYLOAD_NO_POLICY — skipping proxy row write`);
+      return 0;
+    }
+
+    if (!isValidMlbF5SettlementPolicy(policy)) {
+      console.error(`[settle_projections] mlb-f5 card=${card.card_id}: malformed projection_settlement_policy — no proxy row written`);
+      return 0;
+    }
+
+    if (policy.grading_mode === 'TRACK_ONLY') {
+      // Gray-zone card — actual_result is recorded by caller; no official proxy row.
+      return 0;
+    }
+
+    // OFFICIAL path — build proxy row from persisted contract.
     const projectionValue =
       payload?.projection?.projected_total ??
       payload?.projected_total ??
       null;
-    const officialRow = buildOfficialMlbF5ProxyRow(card, projectionValue, runsF5);
+    const officialRow = buildMlbF5ProxyRowFromPolicy(card, policy, projectionValue, runsF5);
     proxyRows = officialRow ? [officialRow] : [];
   }
 
@@ -865,4 +951,6 @@ module.exports = {
   fetchMlbPitcherKs,
   classifyMlbF5ProxySettlementWindow,
   buildOfficialMlbF5ProxyRow,
+  isValidMlbF5SettlementPolicy,
+  buildMlbF5ProxyRowFromPolicy,
 };

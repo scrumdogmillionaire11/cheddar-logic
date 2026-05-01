@@ -573,12 +573,14 @@ function insertProjectionProxyEval(db, row) {
       card_id, game_id, game_date, sport, card_family,
       proj_value, actual_value,
       proxy_line, edge_vs_line, recommended_side, tier, confidence_bucket,
-      agreement_group, graded_result, hit_flag, tier_score, consensus_bonus
+      agreement_group, graded_result, hit_flag, tier_score, consensus_bonus,
+      grading_mode
     ) VALUES (
       ?, ?, ?, ?, ?,
       ?, ?,
       ?, ?, ?, ?, ?,
-      ?, ?, ?, ?, ?
+      ?, ?, ?, ?, ?,
+      ?
     )
   `).run(
     row.card_id,
@@ -598,6 +600,7 @@ function insertProjectionProxyEval(db, row) {
     row.hit_flag,
     row.tier_score ?? 0,
     row.consensus_bonus ?? 0,
+    row.grading_mode ?? null,
   );
 }
 

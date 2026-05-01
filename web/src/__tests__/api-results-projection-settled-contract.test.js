@@ -79,6 +79,12 @@ function run() {
     routeSource.includes('candidate.canonicalAnalyticsPresent !== current.canonicalAnalyticsPresent'),
     'projection-settled dedupe must prefer rows with canonical analytics present',
   );
+  // WI-1224: MLB_F5_TOTAL rows must be filtered to grading_mode = 'OFFICIAL' only,
+  // excluding legacy NULL rows and TRACK_ONLY gray-zone rows.
+  assert.ok(
+    routeSource.includes("ppe.card_family != 'MLB_F5_TOTAL' OR ppe.grading_mode = 'OFFICIAL'"),
+    'projection-settled route must filter MLB_F5_TOTAL rows to grading_mode=OFFICIAL',
+  );
 
   console.log('api-results-projection-settled-contract: all assertions passed');
 }

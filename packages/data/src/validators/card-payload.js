@@ -328,6 +328,53 @@ const mlbPitcherKPayloadSchema = z
     }
   });
 
+// ============================================================================
+// MLB F5 settlement policy schema (WI-1224)
+// ============================================================================
+// Persisted on each mlb-f5 card payload at creation time so downstream
+// settlement never needs to re-derive the call from projected_total ranges.
+//
+// Consistency invariants (enforced by superRefine below):
+//   OFFICIAL + UNDER_3_5 + CLEAR_UNDER   → projection was clearly < 3.5
+//   OFFICIAL + OVER_4_5  + CLEAR_OVER    → projection was clearly > 4.5
+//   TRACK_ONLY + null    + GRAY_ZONE_NO_CALL → 3.5 <= projection <= 4.5
+// ============================================================================
+const projectionSettlementPolicySchema = z.object({
+  market_family: z.literal('MLB_F5_TOTAL'),
+  grading_mode: z.enum(['OFFICIAL', 'TRACK_ONLY']),
+  official_call: z.enum(['UNDER_3_5', 'OVER_4_5']).nullable(),
+  reason_code: z.enum(['CLEAR_UNDER', 'CLEAR_OVER', 'GRAY_ZONE_NO_CALL']),
+}).strict().superRefine((policy, ctx) => {
+  if (policy.grading_mode === 'OFFICIAL' && policy.official_call === null) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['official_call'],
+      message: 'OFFICIAL grading_mode requires official_call to be UNDER_3_5 or OVER_4_5',
+    });
+  }
+  if (policy.grading_mode === 'TRACK_ONLY' && policy.official_call !== null) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['official_call'],
+      message: 'TRACK_ONLY grading_mode requires official_call to be null',
+    });
+  }
+  if (policy.grading_mode === 'OFFICIAL' && policy.reason_code === 'GRAY_ZONE_NO_CALL') {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['reason_code'],
+      message: 'OFFICIAL grading_mode must not use GRAY_ZONE_NO_CALL reason_code',
+    });
+  }
+  if (policy.grading_mode === 'TRACK_ONLY' && policy.reason_code !== 'GRAY_ZONE_NO_CALL') {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['reason_code'],
+      message: 'TRACK_ONLY grading_mode must use GRAY_ZONE_NO_CALL reason_code',
+    });
+  }
+});
+
 const mlbF5PayloadSchema = basePayloadSchema
   .extend({
     game_id: z.string().min(1),
@@ -378,6 +425,7 @@ const mlbF5PayloadSchema = basePayloadSchema
     primary_game_market: z.boolean().optional(),
     chosen_market: z.string().optional(),
     why_this_market: z.string().optional(),
+    projection_settlement_policy: projectionSettlementPolicySchema.optional(),
   })
   .passthrough()
   .superRefine((payload, ctx) => {

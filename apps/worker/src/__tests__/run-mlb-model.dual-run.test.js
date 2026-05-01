@@ -6,6 +6,7 @@ const {
 const {
   buildMlbMarketAvailability,
   buildMlbF5OddsContext,
+  buildMlbF5SettlementPolicy,
   MLB_PIPELINE_REASON_CODES,
   MIN_MLB_GAMES_FOR_RECAL,
 } = require('../jobs/run_mlb_model');
@@ -432,6 +433,135 @@ describe('mlb dual-run helpers', () => {
       MLB_PIPELINE_REASON_CODES.F5_TOTAL_UNAVAILABLE,
     );
   });
+
+  // ─── WI-1224: projection_settlement_policy emission ────────────────────────
+  test('buildMlbF5SettlementPolicy returns OFFICIAL/UNDER_3_5 for projectedTotal < 3.5', () => {
+    expect(buildMlbF5SettlementPolicy(3.1)).toEqual({
+      market_family: 'MLB_F5_TOTAL',
+      grading_mode: 'OFFICIAL',
+      official_call: 'UNDER_3_5',
+      reason_code: 'CLEAR_UNDER',
+    });
+  });
+
+  test('buildMlbF5SettlementPolicy returns OFFICIAL/OVER_4_5 for projectedTotal > 4.5', () => {
+    expect(buildMlbF5SettlementPolicy(4.82)).toEqual({
+      market_family: 'MLB_F5_TOTAL',
+      grading_mode: 'OFFICIAL',
+      official_call: 'OVER_4_5',
+      reason_code: 'CLEAR_OVER',
+    });
+  });
+
+  test('buildMlbF5SettlementPolicy returns TRACK_ONLY for projectedTotal in gray zone (3.5..4.5)', () => {
+    expect(buildMlbF5SettlementPolicy(4.0)).toEqual({
+      market_family: 'MLB_F5_TOTAL',
+      grading_mode: 'TRACK_ONLY',
+      official_call: null,
+      reason_code: 'GRAY_ZONE_NO_CALL',
+    });
+    // boundary inclusive
+    expect(buildMlbF5SettlementPolicy(3.5)).toMatchObject({ grading_mode: 'TRACK_ONLY' });
+    expect(buildMlbF5SettlementPolicy(4.5)).toMatchObject({ grading_mode: 'TRACK_ONLY' });
+  });
+
+  test('buildMlbF5SettlementPolicy returns null for non-numeric projectedTotal', () => {
+    expect(buildMlbF5SettlementPolicy(null)).toBeNull();
+    expect(buildMlbF5SettlementPolicy(undefined)).toBeNull();
+    expect(buildMlbF5SettlementPolicy('abc')).toBeNull();
+  });
+
+  test('mlb-f5 payload with OFFICIAL/OVER policy validates successfully', () => {
+    const snapshot = buildF5Snapshot();
+    const payload = {
+      game_id: snapshot.game_id,
+      sport: 'MLB',
+      model_version: 'mlb-model-v1',
+      home_team: snapshot.home_team,
+      away_team: snapshot.away_team,
+      market_type: 'FIRST_5_INNINGS',
+      prediction: 'OVER',
+      selection: { side: 'OVER' },
+      line: 4.5,
+      confidence: 0.8,
+      ev_passed: true,
+      generated_at: '2026-03-27T18:00:00.000Z',
+      projection: { projected_total: 4.82 },
+      projection_source: 'FULL_MODEL',
+      missing_inputs: [],
+      recommended_bet_type: 'total',
+      odds_context: buildMlbF5OddsContext(snapshot),
+      projection_settlement_policy: {
+        market_family: 'MLB_F5_TOTAL',
+        grading_mode: 'OFFICIAL',
+        official_call: 'OVER_4_5',
+        reason_code: 'CLEAR_OVER',
+      },
+    };
+    expect(validateCardPayload('mlb-f5', payload)).toEqual({ success: true, errors: [] });
+  });
+
+  test('mlb-f5 payload with TRACK_ONLY policy validates successfully', () => {
+    const snapshot = buildF5Snapshot();
+    const payload = {
+      game_id: snapshot.game_id,
+      sport: 'MLB',
+      model_version: 'mlb-model-v1',
+      home_team: snapshot.home_team,
+      away_team: snapshot.away_team,
+      market_type: 'FIRST_5_INNINGS',
+      prediction: 'UNDER',
+      selection: { side: 'UNDER' },
+      line: 4.5,
+      confidence: 0.5,
+      ev_passed: false,
+      generated_at: '2026-03-27T18:00:00.000Z',
+      projection: { projected_total: 4.1 },
+      projection_source: 'FULL_MODEL',
+      missing_inputs: [],
+      recommended_bet_type: 'total',
+      odds_context: buildMlbF5OddsContext(snapshot),
+      projection_settlement_policy: {
+        market_family: 'MLB_F5_TOTAL',
+        grading_mode: 'TRACK_ONLY',
+        official_call: null,
+        reason_code: 'GRAY_ZONE_NO_CALL',
+      },
+    };
+    expect(validateCardPayload('mlb-f5', payload)).toEqual({ success: true, errors: [] });
+  });
+
+  test('mlb-f5 payload with malformed policy (OFFICIAL + null official_call) fails validation', () => {
+    const snapshot = buildF5Snapshot();
+    const payload = {
+      game_id: snapshot.game_id,
+      sport: 'MLB',
+      model_version: 'mlb-model-v1',
+      home_team: snapshot.home_team,
+      away_team: snapshot.away_team,
+      market_type: 'FIRST_5_INNINGS',
+      prediction: 'OVER',
+      selection: { side: 'OVER' },
+      line: 4.5,
+      confidence: 0.8,
+      ev_passed: true,
+      generated_at: '2026-03-27T18:00:00.000Z',
+      projection: { projected_total: 4.82 },
+      projection_source: 'FULL_MODEL',
+      missing_inputs: [],
+      recommended_bet_type: 'total',
+      odds_context: buildMlbF5OddsContext(snapshot),
+      projection_settlement_policy: {
+        market_family: 'MLB_F5_TOTAL',
+        grading_mode: 'OFFICIAL',
+        official_call: null,   // invalid: OFFICIAL must have official_call set
+        reason_code: 'CLEAR_OVER',
+      },
+    };
+    const result = validateCardPayload('mlb-f5', payload);
+    expect(result.success).toBe(false);
+    expect(result.errors.some((e) => e.includes('official_call'))).toBe(true);
+  });
 });
 
 describe('runMLBModel dual-run orchestration', () => {
@@ -647,6 +777,13 @@ describe('runMLBModel dual-run orchestration', () => {
     expect(f5Payload.pipeline_state.blocking_reason_codes).toContain(
       MLB_PIPELINE_REASON_CODES.F5_ML_UNAVAILABLE,
     );
+    // WI-1224: projected_total=5.3 → OFFICIAL/OVER_4_5
+    expect(f5Payload.projection_settlement_policy).toMatchObject({
+      market_family: 'MLB_F5_TOTAL',
+      grading_mode: 'OFFICIAL',
+      official_call: 'OVER_4_5',
+      reason_code: 'CLEAR_OVER',
+    });
   });
 
   test('missing F5 line emits projection-floor mlb-f5 and still calls computePitcherKDriverCards in ODDS_BACKED mode (per-pitcher fallback is PROJECTION_ONLY when no strikeout line)', async () => {
