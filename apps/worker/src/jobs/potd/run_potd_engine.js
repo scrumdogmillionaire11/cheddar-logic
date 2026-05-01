@@ -1956,6 +1956,7 @@ async function runPotdEngine({
         discordPosted,
         discordError,
         fetchErrors,
+        usedFallbackTier: usedFallbackTier || null,
       };
     } catch (error) {
       markJobRunFailure(jobRunId, error.message);

@@ -1144,7 +1144,7 @@ describe('runPotdEngine', () => {
     expect(playRows).toEqual([{ game_id: playCandidate.gameId }]);
   });
 
-  test('rejects SLIGHT_EDGE and PASS outcomes', async () => {
+  test('PASS outcomes are always rejected; SLIGHT_EDGE below noise floor does not fire', async () => {
     const { runPotdEngine } = require('../run_potd_engine');
 
     const slightEdgeCandidate = buildSelectedCandidate({
@@ -1156,7 +1156,7 @@ describe('runPotdEngine', () => {
       line: null,
       price: -135,
       totalScore: 0.9,
-      edgePct: 0.06,
+      edgePct: 0.01, // below NHL ML noise floor (0.02) — fallback pool scores it but gate rejects it
     });
     const passCandidate = buildSelectedCandidate({
       gameId: 'nhl-non-play-002',
@@ -1224,11 +1224,13 @@ describe('runPotdEngine', () => {
 
     expect(result.success).toBe(true);
     expect(result.noPlay).toBe(true);
-    expect(scoreCandidateFn).not.toHaveBeenCalled();
+    // SLIGHT_EDGE is scored for the fallback pool but rejected by noise gate; PASS is never scored
+    expect(scoreCandidateFn).toHaveBeenCalledTimes(1);
+    expect(scoreCandidateFn).toHaveBeenCalledWith(expect.objectContaining({ gameId: slightEdgeCandidate.gameId }));
     expect(readRows('SELECT * FROM potd_plays')).toEqual([]);
   });
 
-  test('anti-ghost: no POTD on 0 PLAY outcomes', async () => {
+  test('SLIGHT_EDGE with strong edge fires as fallback when no PLAY candidates exist', async () => {
     const { runPotdEngine } = require('../run_potd_engine');
 
     const ghostCandidate = buildSelectedCandidate({
@@ -1278,9 +1280,9 @@ describe('runPotdEngine', () => {
     });
 
     expect(result.success).toBe(true);
-    expect(result.noPlay).toBe(true);
-    expect(readRows('SELECT * FROM potd_plays')).toEqual([]);
-    expect(readRows('SELECT * FROM potd_nominees')).toEqual([]);
+    expect(result.noPlay).toBeUndefined();
+    expect(result.usedFallbackTier).toBe('SLIGHT_EDGE');
+    expect(readRows('SELECT game_id FROM potd_plays')).toEqual([{ game_id: ghostCandidate.gameId }]);
   });
 
   test('tiebreak: multiple PLAY outcomes selects highest confidence or deterministic first', async () => {
