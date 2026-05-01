@@ -64,8 +64,10 @@ describe('applyNbaTotalQuarantine (unit)', () => {
   let applyNbaTotalQuarantine;
 
   beforeEach(() => {
+    // Explicitly enable quarantine so unit tests for demotion behaviour work
+    // regardless of the module default (which is OFF so POTD candidates flow).
+    process.env.QUARANTINE_NBA_TOTAL = '1';
     jest.resetModules();
-    delete process.env.QUARANTINE_NBA_TOTAL;
     const patch = require('../decision-pipeline-v2-edge-config');
     applyNbaTotalQuarantine = patch.applyNbaTotalQuarantine;
   });
@@ -148,8 +150,11 @@ describe('NBA TOTAL quarantine — buildDecisionV2 integration', () => {
   let buildDecisionV2;
 
   beforeAll(() => {
-    // Ensure quarantine flag is ON (default) for integration suite.
-    delete process.env.QUARANTINE_NBA_TOTAL;
+    // Explicitly enable quarantine for this integration suite. Do NOT rely on
+    // the default — the default is false (quarantine off) so that NBA TOTAL
+    // cards can be POTD candidates. Tests for quarantine-active behavior must
+    // set the flag explicitly.
+    process.env.QUARANTINE_NBA_TOTAL = '1';
     jest.resetModules();
     buildDecisionV2 = require('../decision-pipeline-v2').buildDecisionV2;
   });
