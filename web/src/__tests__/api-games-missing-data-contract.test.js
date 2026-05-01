@@ -164,6 +164,14 @@ assert(
   '/api/games should default to a higher card row cap to reduce prop starvation under production volume spikes',
 );
 
+assert(
+  gamesRouteHandlerSource.includes('projection_settlement_policy?: ProjectionSettlementPolicy | null') &&
+    gamesRouteHandlerSource.includes('normalizeProjectionSettlementPolicy') &&
+    gamesRouteHandlerSource.includes('projection_settlement_policy ??') &&
+    gamesRouteHandlerSource.includes('projection_settlement_policy: normalizedProjectionSettlementPolicy'),
+  '/api/games should preserve the persisted MLB F5 projection_settlement_policy on projection play rows',
+);
+
 // ── Behavioral: fixture-level authority determinism ──────────────────────────
 
 function makePlay(id, officialStatus, edgeDeltaPct, supportScore = 0.5, createdAt = '2026-04-11T14:00:00.000Z') {

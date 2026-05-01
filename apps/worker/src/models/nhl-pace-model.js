@@ -904,6 +904,7 @@ const NHL_PACE_AUDIT_RULES = Object.freeze({
  * @param {object} params
  * @param {boolean} params.isPlayoff - true if isPlayoffGame() returned true
  * @param {object|null} params.oddsSnapshot - normalized odds snapshot
+ * @param {string|null} params.gameId - used in warning logs only
  * @param {number|null} params.restDaysHome
  * @param {number|null} params.restDaysAway
  * @param {string|null} params.homeAdjustmentTrust - 'FULL'|'DEGRADED'|'NEUTRALIZED'|'BLOCKED'|null
@@ -913,6 +914,7 @@ const NHL_PACE_AUDIT_RULES = Object.freeze({
 function extractPlayoffRegimeFeatures({
   isPlayoff = false,
   oddsSnapshot = null,
+  gameId = null,
   restDaysHome = null,
   restDaysAway = null,
   homeAdjustmentTrust = null,
@@ -932,10 +934,16 @@ function extractPlayoffRegimeFeatures({
     };
   }
 
-  // TODO(WI-0970): seriesStatus field path not confirmed in ESPN payload.
-  // Verify against a live playoff snapshot before relying on these values.
-  // If absent, these fields remain null — add a follow-up WI to resolve.
+  // Path: raw_data.seriesStatus — confirmed PROVISIONAL (WI-1220); no live playoff
+  // snapshot was available at confirmation time. Update once a live sample is captured.
   const seriesStatus = oddsSnapshot?.raw_data?.seriesStatus ?? null;
+  if (seriesStatus === null) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      '[NHL-playoff] seriesStatus missing from ESPN snapshot for game %s - playoff_series_game_num and playoff_elimination_pressure will be null',
+      gameId,
+    );
+  }
   const rawGameNum = seriesStatus?.seriesGameNumber ?? null;
   const seriesGameNum = typeof rawGameNum === 'number' ? rawGameNum : null;
 

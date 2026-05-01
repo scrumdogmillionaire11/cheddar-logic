@@ -141,7 +141,7 @@ function selectBestCandidate(candidates, target) {
  * Returns null if mandatory fields are missing or the game is already completed.
  * @param {object} event - ESPN scoreboard event
  * @param {string} sport - uppercase sport code ('NHL' | 'NBA' | 'MLB')
- * @returns {{ gameId, sport, homeTeam, awayTeam, gameTimeUtc, espnEventId }|null}
+ * @returns {{ gameId, sport, homeTeam, awayTeam, gameTimeUtc, espnEventId, seriesStatus }|null}
  */
 function parseEspnEvent(event, sport) {
   if (!event || !event.id) return null;
@@ -167,7 +167,10 @@ function parseEspnEvent(event, sport) {
   const espnEventId = String(event.id);
   const gameId = `espndirect_${sport.toLowerCase()}_${espnEventId}`;
 
-  return { gameId, sport, homeTeam, awayTeam, gameTimeUtc, espnEventId };
+  // Prefer competition-level seriesStatus (playoff games); fall back to event-level.
+  const seriesStatus = comp.seriesStatus ?? event.seriesStatus ?? null;
+
+  return { gameId, sport, homeTeam, awayTeam, gameTimeUtc, espnEventId, seriesStatus };
 }
 
 // ─── Main job ─────────────────────────────────────────────────────────────────
@@ -329,7 +332,8 @@ async function pullEspnGamesDirect({
             spread_price_away: null,
             moneyline_home: null,
             moneyline_away: null,
-            raw_data: null,
+            // Seed seriesStatus so enrichment spread preserves it; null for regular-season games.
+            raw_data: descriptor.seriesStatus !== null ? { seriesStatus: descriptor.seriesStatus } : null,
           };
 
           // Fetch ESPN team metrics

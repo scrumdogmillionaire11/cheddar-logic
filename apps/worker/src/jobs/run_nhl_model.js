@@ -4163,6 +4163,7 @@ async function runNHLModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
             const _driverRegimeFeatures = extractPlayoffRegimeFeatures({
               isPlayoff,
               oddsSnapshot,
+              gameId,
               restDaysHome: _homeRestResult.restDays,
               restDaysAway: _awayRestResult.restDays,
               homeAdjustmentTrust: canonicalGoalieState?.home?.adjustment_trust ?? null,
@@ -4312,6 +4313,7 @@ async function runNHLModel({ jobKey = null, dryRun = false, withoutOddsMode = pr
             const _marketRegimeFeatures = extractPlayoffRegimeFeatures({
               isPlayoff,
               oddsSnapshot,
+              gameId,
               restDaysHome: _homeRestResult.restDays,
               restDaysAway: _awayRestResult.restDays,
               homeAdjustmentTrust: canonicalGoalieState?.home?.adjustment_trust ?? null,
