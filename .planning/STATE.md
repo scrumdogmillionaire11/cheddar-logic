@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Model Integrity & Betting Execution Hardening
 status: active
-last_updated: "2026-04-25T20:21:57Z"
-last_activity: "2026-04-25 - Completed WI-1181 actionable NHL model_signal payload contract for POTD"
+last_updated: "2026-04-30T23:24:00Z"
+last_activity: "2026-04-30 - Reclaimed WI-1181 to close missing NHL model_signal selection-side enforcement"
 ---
 
 # Project State
@@ -14,6 +14,7 @@ Historical quick-task completions: [COMPLETED_SPRINT_LOG.md](./COMPLETED_SPRINT_
 
 ## Latest Activity
 
+- **2026-04-30 — WI-1181 reclaimed:** Found a remaining consumer-side contract gap where opposite-side NHL moneyline candidates could still score via complement math even when `model_signal.selection_side` chose the other side; patch in progress to fail closed with `MODEL_SIGNAL_INCOMPLETE` + `SELECTION_SIDE_MISMATCH`.
 - **2026-04-25 — WI-1181 completed:** NHL producer now emits normalized MONEYLINE `model_signal` payloads with explicit blocker semantics (`NO_MARKET_LINE`, `GOALIE_CONTEXT_MISSING`, etc.) for non-actionable rows; model_signal wiring now covers both `nhl-model-output` and `nhl-moneyline-call`; verification passed with `npm --prefix apps/worker run test -- 'src/jobs/__tests__/run_nhl_model*.test.js' --runInBand`, `npm --prefix apps/worker run test -- src/jobs/potd/__tests__/signal-engine.test.js --runInBand`, and `npm --prefix apps/worker run test -- src/jobs/potd/ --runInBand` (159 tests).
 - **2026-04-25 — WI-1180 completed:** POTD now emits explicit `MODEL_SIGNAL_INCOMPLETE` diagnostics for contract-`MODEL` markets when model payload rows are present but non-actionable; runner audit now surfaces `MODEL_SIGNAL_INCOMPLETE` as a first-class rejection reason; full POTD suite verification passed (`npm --prefix apps/worker run test -- src/jobs/potd/ --runInBand`, 159 tests).
 - **2026-04-25 — WI-1178 completed:** POTD NBA TOTAL edge now uses sigma-based `computeTotalEdge()` instead of the uncalibrated `/20` shortcut; `totalScore` now includes positive-only normalized edge across all scoring branches; NBA TOTAL noise floor default is `0.03`. Verification: `npm --prefix apps/worker run test -- src/jobs/potd/__tests__/signal-engine.test.js --runInBand` passed with 76 tests, and `npm --prefix apps/worker run test -- src/jobs/potd/ --runInBand --silent` passed with 156 tests.

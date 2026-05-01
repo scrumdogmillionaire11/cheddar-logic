@@ -1583,6 +1583,52 @@ describe('NHL model_signal POTD consumption contract', () => {
     expect(scored.rejectionDiagnostics).toBeUndefined();
   });
 
+  test('rejects opposite-side NHL payload candidate with SELECTION_SIDE_MISMATCH', () => {
+    const game = buildNhlGameForModelSignal({
+      nhlSnapshot: {
+        model_signal: {
+          eligible_for_potd: true,
+          market_type: 'MONEYLINE',
+          selection_side: 'AWAY',
+          model_prob: 0.58,
+          book_price: 105,
+          implied_prob: 0.487805,
+          edge_pct: 0.092195,
+          blockers: [],
+          source: 'NHL_MODEL_OUTPUT_MONEYLINE',
+        },
+      },
+    });
+
+    const candidates = buildCandidates(game).filter(
+      (candidate) => candidate.marketType === 'MONEYLINE',
+    );
+    const homeCandidate = candidates.find((candidate) => candidate.selection === 'HOME');
+    const awayCandidate = candidates.find((candidate) => candidate.selection === 'AWAY');
+
+    expect(homeCandidate).toBeDefined();
+    expect(awayCandidate).toBeDefined();
+
+    const rejected = scoreCandidate(homeCandidate);
+    expect(rejected).not.toBeNull();
+    expect(rejected.edgePct).toBeNull();
+    expect(rejected.rejectionDiagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: 'MODEL_SIGNAL_INCOMPLETE',
+          blockers: expect.arrayContaining(['SELECTION_SIDE_MISMATCH']),
+        }),
+      ]),
+    );
+
+    const accepted = scoreCandidate(awayCandidate);
+    expect(accepted).not.toBeNull();
+    expect(accepted.edgeSourceTag).toBe('MODEL');
+    expect(accepted.edgePct).not.toBeNull();
+    expect(accepted.modelWinProb).toBeCloseTo(0.58, 6);
+    expect(accepted.rejectionDiagnostics).toBeUndefined();
+  });
+
   test('fails closed when nhlModelPayloadPresent=true but model_signal is missing', () => {
     const game = buildNhlGameForModelSignal({
       nhlSnapshot: {
