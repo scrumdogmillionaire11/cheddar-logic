@@ -114,24 +114,6 @@ function normalizeWebhookBucketToken(value) {
   return token.toLowerCase();
 }
 
-function normalizeWebhookPublishStatus(value) {
-  const token = normalizeToken(value);
-  if (!token) return '';
-  if (token === 'PLAY') return 'PLAY';
-  if (token === 'SLIGHT_EDGE') return 'SLIGHT_EDGE';
-  if (token === 'PASS_BLOCKED') return 'PASS_BLOCKED';
-  return 'PASS_BLOCKED';
-}
-
-function webhookPublishBucket(card) {
-  const payload = card?.payloadData || {};
-  if (!Object.prototype.hasOwnProperty.call(payload, 'webhook_publish_status')) return '';
-  const publishStatus = normalizeWebhookPublishStatus(payload.webhook_publish_status);
-  if (publishStatus === 'PLAY') return 'official';
-  if (publishStatus === 'SLIGHT_EDGE') return 'lean';
-  return 'pass_blocked';
-}
-
 function buildDecisionOutcomeMetadata(card) {
   const payload = card?.payloadData || {};
   return {
@@ -279,11 +261,8 @@ function isBlockedWatchCard(card) {
     token === 'PRICE_SYNC_PENDING' ||
     token === 'EDGE_NO_LONGER_CONFIRMED' ||
     token === 'STALE_MARKET' ||
-    token.includes('BLOCK') ||
-    token.includes('GATE') ||
-    token.includes('VERIFICATION') ||
-    token.includes('GOALIE') ||
-    token.includes('LINE_MOVEMENT'),
+    token === 'BLOCKED_BET_VERIFICATION_REQUIRED' ||
+    token === 'GATE_LINE_MOVEMENT',
   );
   if (!blockingReason) return false;
 
@@ -519,120 +498,19 @@ function sportLabel(sport) {
 
 function isNonPassCard(card) {
   const outcomeBucket = resolveOutcomeBucket(card);
-  if (outcomeBucket) return outcomeBucket !== 'pass_blocked';
-
-  const publishBucket = webhookPublishBucket(card);
-  if (publishBucket) return publishBucket !== 'pass_blocked';
-
-  const payload = card?.payloadData || null;
-
-  const statusCandidates = [
-    payload?.action,
-    payload?.status,
-    payload?.classification,
-    payload?.prediction,
-    payload?.play_status,
-    payload?.display_action,
-  ]
-    .map(normalizeToken)
-    .filter(Boolean);
-
-  if (statusCandidates.some((token) => token.includes('PASS'))) return false;
-
-  const passReasonCandidates = [
-    payload?.pass_reason,
-    payload?.pass_reason_code,
-    ...(Array.isArray(payload?.reason_codes) ? payload.reason_codes : []),
-  ]
-    .map(normalizeToken)
-    .filter(Boolean);
-
-  if (passReasonCandidates.some((token) => token.startsWith('PASS'))) return false;
-
-  return true;
+  return outcomeBucket === 'official' || outcomeBucket === 'lean';
 }
 
 function isDisplayableWebhookCard(card) {
-  // EVIDENCE cards (non-1P) are context drivers — bypass the pre-stamped webhook_eligible shortcut
-  // so the legacy kind !== 'PLAY' gate applies instead.
+  // EVIDENCE cards (non-1P) are context drivers, not standalone Discord picks.
   if (normalizeToken(card?.payloadData?.kind) === 'EVIDENCE' && !isFirstPeriodCard(card)) {
-    return isDisplayableWebhookCardLegacy(card);
+    return false;
   }
   if (card?.payloadData?.projection_only === true) return false;
   const outcomeBucket = resolveOutcomeBucket(card);
   if (outcomeBucket === 'official' || outcomeBucket === 'lean') return true;
   if (outcomeBucket === 'pass_blocked') return isBlockedWatchCard(card);
-  const publishBucket = webhookPublishBucket(card);
-  if (publishBucket) return publishBucket === 'official' || publishBucket === 'lean';
-  const eligible = card?.payloadData?.webhook_eligible;
-  if (typeof eligible === 'boolean') return eligible;
-  return isDisplayableWebhookCardLegacy(card);
-}
-
-function isDisplayableWebhookCardLegacy(card) {
-  const payload = card?.payloadData || {};
-
-  // Player prop cards (e.g. nhl-player-shots) don't carry kind='PLAY' at the
-  // root and store their selection under payload.play.selection — handle them
-  // separately before the generic gate logic runs.
-  if (isPlayerPropCard(card)) {
-    const propAction = normalizeToken(payload?.play?.action || payload?.action || payload?.status);
-    const propClassification = normalizeToken(
-      payload?.play?.classification || payload?.classification,
-    );
-    const propSelection = payload?.play?.selection ?? payload?.selection;
-    const propHasExplicitPass =
-      propAction.includes('PASS') || propClassification.includes('PASS');
-    if (propHasExplicitPass) return true; // show in PASS/blocked section
-    const propActionable = ['FIRE', 'WATCH', 'LEAN', 'HOLD'].includes(propAction);
-    return propActionable && propSelection != null;
-  }
-
-  const isOnePeriod = isFirstPeriodCard(card);
-  const kind = normalizeToken(payload?.kind);
-  const action = normalizeToken(payload?.action || payload?.status);
-  const classification = normalizeToken(payload?.classification);
-  const onePeriodModelCall = normalizeToken(payload?.one_p_model_call);
-  const hasSelection = payload?.selection !== null && payload?.selection !== undefined;
-  const actionableByAction = ['FIRE', 'WATCH', 'LEAN', 'HOLD'].includes(action);
-  const actionableByClassification = ['BASE', 'LEAN'].includes(classification);
-
-  const reasonTokens = [
-    normalizeToken(payload?.pass_reason),
-    normalizeToken(payload?.pass_reason_code),
-    ...(Array.isArray(payload?.reason_codes) ? payload.reason_codes.map(normalizeToken) : []),
-  ].filter(Boolean);
-  const hasExplicitPass =
-    action.includes('PASS') ||
-    classification.includes('PASS') ||
-    onePeriodModelCall.includes('PASS') ||
-    reasonTokens.some((token) => token.startsWith('PASS') || token.includes('NO_PLAY'));
-  const hasBlockedState =
-    action.includes('BLOCK') ||
-    action.includes('GATE') ||
-    classification.includes('BLOCK') ||
-    classification.includes('GATE') ||
-    reasonTokens.some((token) => token.includes('BLOCK') || token.includes('GATE'));
-
-  if (hasExplicitPass || hasBlockedState) return true;
-
-  if (isOnePeriod) {
-    const isActionableOnePeriodStatus = ['FIRE', 'WATCH', 'LEAN', 'HOLD'].includes(action);
-    const isActionableOnePeriodCall =
-      !onePeriodModelCall.includes('PASS') &&
-      (onePeriodModelCall.includes('OVER') || onePeriodModelCall.includes('UNDER'));
-    if (isActionableOnePeriodCall || isActionableOnePeriodStatus) {
-      return payload?.projection_only !== true;
-    }
-  }
-
-  if (kind !== 'PLAY') return false;
-  if (!actionableByAction && !actionableByClassification) return false;
-  if (classification === 'PASS') return false;
-  if (onePeriodModelCall.includes('PASS')) return false;
-  if (!hasSelection) return false;
-  if (payload?.projection_only === true) return false;
-  return true;
+  return false;
 }
 
 // Canonical game key: normalised from teams + game date so two cards for the same
@@ -727,65 +605,14 @@ function classifyDecisionBucket(card) {
   // Override any pre-stamped webhook_bucket that may have been set when action=FIRE.
   if (normalizeToken(card?.payloadData?.kind) === 'EVIDENCE' && !isFirstPeriodCard(card)) return 'pass_blocked';
   const outcomeBucket = resolveOutcomeBucket(card);
-  if (outcomeBucket) return outcomeBucket;
-  const publishBucket = webhookPublishBucket(card);
-  if (publishBucket) return publishBucket;
-  const bucket = normalizeWebhookBucketToken(card?.payloadData?.webhook_bucket);
-  if (bucket === 'official' || bucket === 'lean' || bucket === 'pass_blocked') return bucket;
-  return classifyDecisionBucketLegacy(card);
-}
-
-function classifyDecisionBucketLegacy(card) {
-  const payload = card?.payloadData || {};
-  const canonical1PDecision = payload?.nhl_1p_decision;
-  if (normalizeMarketTag(card) === '1P' && canonical1PDecision && typeof canonical1PDecision === 'object') {
-    const surfacedStatus = normalizeToken(canonical1PDecision?.surfaced_status);
-    if (surfacedStatus === 'PLAY') return 'official';
-    if (surfacedStatus === 'SLIGHT EDGE') return 'lean';
-    if (surfacedStatus === 'PASS') return 'pass_blocked';
+  if (
+    outcomeBucket === 'official' ||
+    outcomeBucket === 'lean' ||
+    outcomeBucket === 'pass_blocked'
+  ) {
+    return outcomeBucket;
   }
-
-  const action = normalizeToken(payload?.action || payload?.status);
-  const classification = normalizeToken(payload?.classification);
-  const reasons = [
-    normalizeToken(payload?.pass_reason),
-    normalizeToken(payload?.pass_reason_code),
-    ...(Array.isArray(payload?.reason_codes) ? payload.reason_codes.map(normalizeToken) : []),
-  ].filter(Boolean);
-
-  const hasPass =
-    action.includes('PASS') ||
-    classification.includes('PASS') ||
-    reasons.some((token) => token.startsWith('PASS') || token.includes('NO_PLAY'));
-  const hasBlocked =
-    action.includes('BLOCK') ||
-    action.includes('GATE') ||
-    classification.includes('BLOCK') ||
-    classification.includes('GATE') ||
-    reasons.some((token) => token.includes('BLOCK') || token.includes('GATE'));
-
-  // 1P cards can be marked PASS when live 1P price lanes are unavailable,
-  // while still carrying a directional model call (e.g. BEST_OVER/LEAN_UNDER).
-  // In Discord, surface those as actionable from prediction tier.
-  const isOnePeriod = normalizeMarketTag(card) === '1P';
-  const hasNoProjectionPass = reasons.some(
-    (token) => token.includes('FIRST_PERIOD_NO_PROJECTION') || token.includes('FIRST_PERIOD_PRICE_UNAVAILABLE'),
-  );
-  const predictionToken = normalizeToken(payload?.prediction || payload?.one_p_model_call);
-  const hasDirectionalPrediction =
-    predictionToken &&
-    !predictionToken.includes('PASS') &&
-    (predictionToken.includes('OVER') || predictionToken.includes('UNDER'));
-  if (isOnePeriod && hasNoProjectionPass && hasDirectionalPrediction) {
-    if (predictionToken.includes('BEST') || predictionToken.includes('PLAY')) return 'official';
-    if (predictionToken.includes('LEAN') || predictionToken.includes('WATCH') || predictionToken.includes('HOLD')) return 'lean';
-    return 'lean';
-  }
-
-  if (hasPass || hasBlocked) return 'pass_blocked';
-  if (action === 'FIRE' || classification === 'BASE') return 'official';
-  if (['WATCH', 'LEAN', 'HOLD'].includes(action) || classification === 'LEAN') return 'lean';
-  return 'lean';
+  return 'pass_blocked';
 }
 
 function resolveNhlTotalConvictionTierFromEdge(edgeRaw) {
@@ -1893,7 +1720,6 @@ module.exports = {
   postDiscordCards,
   isNonPassCard,
   isDisplayableWebhookCard,
-  isDisplayableWebhookCardLegacy,
   isPlayerPropCard,
   isFirstPeriodCard,
   buildDiscordSnapshot,

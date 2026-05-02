@@ -840,9 +840,8 @@ function buildPlayDecisionOutcome(play: Play) {
 }
 
 export function resolveLiveOfficialStatus(play: Play): 'PLAY' | 'LEAN' | 'PASS' | 'INVALID' {
-  const invalidEnforcementEnabled = process.env.ENABLE_INVALID_DECISION_ENFORCEMENT !== 'false';
   const decisionOutcome = play.decision_outcome ?? buildPlayDecisionOutcome(play);
-  if (!decisionOutcome) return invalidEnforcementEnabled ? 'INVALID' : 'PASS';
+  if (!decisionOutcome) return 'INVALID';
   const outcomeStatus = String(decisionOutcome.status || '').toUpperCase();
   if (outcomeStatus === 'INVALID') return 'INVALID';
   if (outcomeStatus === 'PLAY') return 'PLAY';

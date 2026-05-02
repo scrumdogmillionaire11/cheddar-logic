@@ -1156,7 +1156,7 @@ describe('runPotdEngine', () => {
       line: null,
       price: -135,
       totalScore: 0.9,
-      edgePct: 0.01, // below NHL ML noise floor (0.02) — fallback pool scores it but gate rejects it
+      edgePct: 0.01,
     });
     const passCandidate = buildSelectedCandidate({
       gameId: 'nhl-non-play-002',
@@ -1224,13 +1224,11 @@ describe('runPotdEngine', () => {
 
     expect(result.success).toBe(true);
     expect(result.noPlay).toBe(true);
-    // SLIGHT_EDGE is scored for the fallback pool but rejected by noise gate; PASS is never scored
-    expect(scoreCandidateFn).toHaveBeenCalledTimes(1);
-    expect(scoreCandidateFn).toHaveBeenCalledWith(expect.objectContaining({ gameId: slightEdgeCandidate.gameId }));
+    expect(scoreCandidateFn).not.toHaveBeenCalled();
     expect(readRows('SELECT * FROM potd_plays')).toEqual([]);
   });
 
-  test('SLIGHT_EDGE with strong edge fires as fallback when no PLAY candidates exist', async () => {
+  test('SLIGHT_EDGE with strong edge does not fire when no PLAY candidates exist', async () => {
     const { runPotdEngine } = require('../run_potd_engine');
 
     const ghostCandidate = buildSelectedCandidate({
@@ -1280,9 +1278,9 @@ describe('runPotdEngine', () => {
     });
 
     expect(result.success).toBe(true);
-    expect(result.noPlay).toBeUndefined();
-    expect(result.usedFallbackTier).toBe('SLIGHT_EDGE');
-    expect(readRows('SELECT game_id FROM potd_plays')).toEqual([{ game_id: ghostCandidate.gameId }]);
+    expect(result.noPlay).toBe(true);
+    expect(result.usedFallbackTier).toBeUndefined();
+    expect(readRows('SELECT game_id FROM potd_plays')).toEqual([]);
   });
 
   test('tiebreak: multiple PLAY outcomes selects highest confidence or deterministic first', async () => {

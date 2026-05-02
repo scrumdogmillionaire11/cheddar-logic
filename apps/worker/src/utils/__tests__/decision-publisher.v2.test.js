@@ -529,6 +529,76 @@ describe('decision publisher v2 pipeline', () => {
     );
   });
 
+  test('promotes clean NHL moneyline slight edge to PLAY with additive metadata', () => {
+    const payload = buildWave1Payload({
+      sport: 'NHL',
+      market_type: 'MONEYLINE',
+      recommended_bet_type: 'moneyline',
+      selection: { side: 'HOME' },
+      prediction: 'HOME',
+      line: null,
+      price: -110,
+      model_prob: 0.64,
+      driver: {
+        score: 0.5,
+        inputs: { conflict: 0.1 },
+      },
+      odds_context: {
+        captured_at: minutesAgoIso(1),
+        h2h_home: -110,
+        h2h_away: 100,
+      },
+    });
+    applyUiActionFields(payload);
+
+    expect(payload.decision_v2.official_status).toBe('PLAY');
+    expect(payload.decision_v2.promoted_from).toBe('LEAN');
+    expect(payload.decision_v2.promotion_reason_code).toBe(
+      'HIGH_END_SLIGHT_EDGE_PROMOTION',
+    );
+    expect(payload.decision_v2.primary_reason_code).toBe(
+      'HIGH_END_SLIGHT_EDGE_PROMOTION',
+    );
+    expect(payload.decision_v2.price_reason_codes).toContain(
+      'HIGH_END_SLIGHT_EDGE_PROMOTION',
+    );
+  });
+
+  test('heavy-favorite demoter keeps promotion metadata but owns primary reason', () => {
+    const payload = buildWave1Payload({
+      sport: 'NHL',
+      market_type: 'MONEYLINE',
+      recommended_bet_type: 'moneyline',
+      selection: { side: 'HOME' },
+      prediction: 'HOME',
+      line: null,
+      price: -300,
+      model_prob: 0.83,
+      driver: {
+        score: 0.5,
+        inputs: { conflict: 0.1 },
+      },
+      odds_context: {
+        captured_at: minutesAgoIso(1),
+        h2h_home: -300,
+        h2h_away: 240,
+      },
+    });
+    applyUiActionFields(payload);
+
+    expect(payload.decision_v2.official_status).toBe('LEAN');
+    expect(payload.decision_v2.promoted_from).toBe('LEAN');
+    expect(payload.decision_v2.promotion_reason_code).toBe(
+      'HIGH_END_SLIGHT_EDGE_PROMOTION',
+    );
+    expect(payload.decision_v2.primary_reason_code).toBe(
+      'HEAVY_FAVORITE_PRICE_CAP',
+    );
+    expect(payload.decision_v2.price_reason_codes).toContain(
+      'HIGH_END_SLIGHT_EDGE_PROMOTION',
+    );
+  });
+
   test('NCAAM retains legacy action/status while still stamping decision_v2', () => {
     const payload = buildWave1Payload({
       sport: 'NCAAM',
@@ -1722,6 +1792,31 @@ describe('computeWebhookFields', () => {
     computeWebhookFields(p);
     expectCanonicalPublish(p, 'PLAY', 'official');
     expect(p.decision_trace.source_of_truth).toBe('decision_v2.official_status');
+  });
+
+  it('publisher preserves promotion metadata on PLAY decisions', () => {
+    const p = {
+      sport: 'NHL',
+      kind: 'PLAY',
+      market_type: 'moneyline',
+      selection: { side: 'HOME' },
+      edge: 0.12,
+      decision_v2: {
+        official_status: 'PLAY',
+        promoted_from: 'LEAN',
+        promotion_reason_code: 'HIGH_END_SLIGHT_EDGE_PROMOTION',
+        primary_reason_code: 'HIGH_END_SLIGHT_EDGE_PROMOTION',
+        price_reason_codes: ['EDGE_CLEAR', 'HIGH_END_SLIGHT_EDGE_PROMOTION'],
+      },
+      action: 'FIRE',
+      classification: 'BASE',
+    };
+    computeWebhookFields(p);
+    expectCanonicalPublish(p, 'PLAY', 'official');
+    expect(p.decision_v2.promoted_from).toBe('LEAN');
+    expect(p.decision_v2.promotion_reason_code).toBe(
+      'HIGH_END_SLIGHT_EDGE_PROMOTION',
+    );
   });
 
   it('fails closed for legacy-only card with action=HOLD', () => {

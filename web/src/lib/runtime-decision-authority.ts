@@ -173,6 +173,28 @@ export function readRuntimeCanonicalDecision(
   options: ReadRuntimeDecisionOptions = {},
 ): RuntimeCanonicalDecision {
   const strictTestMode = isCanonicalDecisionStrictTestModeEnabled();
+  const hasCanonicalInput = Boolean(
+    payload?.decision_v2 && typeof payload.decision_v2 === 'object',
+  ) || Boolean(
+    payload?.canonical_decision && typeof payload.canonical_decision === 'object',
+  );
+
+  if (!hasCanonicalInput) {
+    if (strictTestMode) {
+      throw new Error('Canonical decision missing');
+    }
+
+    return {
+      officialStatus: 'INVALID',
+      action: null,
+      classification: null,
+      status: null,
+      isActionable: false,
+      reasonCode: MISSING_CANONICAL_DECISION_REASON,
+      missingCanonicalDecision: true,
+      lifecycle: MISSING_CANONICAL_LIFECYCLE,
+    };
+  }
 
   const canonical = resolveCanonicalDecision(payload ?? null, {
     stage: options.stage ?? 'read_api',
