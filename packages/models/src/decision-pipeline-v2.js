@@ -190,6 +190,10 @@ const PROMOTION_BLOCKING_PRICE_REASONS = new Set([
   PRICE_REASONS.PLAY_CONTRADICTION_CAPPED,
   PRICE_REASONS.LINE_MOVE_ADVERSE,
   PRICE_REASONS.SIGMA_FALLBACK_DEGRADED,
+  // High-edge non-TOTAL sanity review is a gate signal, not a hard blocker.
+  // But once a card lands in baseline LEAN because support is only moderate,
+  // that gate must prevent WI-1228's high-end promotion from elevating it to PLAY.
+  PRICE_REASONS.EDGE_SANITY_NON_TOTAL,
 ]);
 
 const FIELD_SOURCES = {
