@@ -1,7 +1,6 @@
 const {
   isNonPassCard,
   isDisplayableWebhookCard,
-  isDisplayableWebhookCardLegacy,
   classifyDecisionBucket,
   selectionSummary,
   passesLeanThreshold,
@@ -61,6 +60,19 @@ function stampNhlTotals(pd) {
   else if (pd.nhl_totals_status.status === 'SLIGHT EDGE') pd.final_play_state = 'LEAN';
   else if (pd.nhl_totals_status.status === 'PASS') pd.final_play_state = 'NO_PLAY';
   computeWebhookFields(pd);
+  pd.decision_v2 = {
+    official_status:
+      pd.nhl_totals_status.status === 'PLAY'
+        ? 'PLAY'
+        : pd.nhl_totals_status.status === 'SLIGHT EDGE'
+          ? 'SLIGHT_EDGE'
+          : 'PASS',
+    source: 'decision_authority',
+    primary_reason_code:
+      pd.nhl_totals_status.status === 'PASS'
+        ? reasonCodes[0] || 'PASS_NO_EDGE'
+        : 'EDGE_CLEAR',
+  };
 }
 
 function makeCard(overrides = {}) {
@@ -79,35 +91,23 @@ function makeCard(overrides = {}) {
   };
 
   if (!Object.prototype.hasOwnProperty.call(payloadData, 'decision_v2')) {
-    const hasCompatibilityBucket =
-      Object.prototype.hasOwnProperty.call(payloadData, 'webhook_bucket') &&
-      !Object.prototype.hasOwnProperty.call(payloadData, 'webhook_publish_status');
+    const action = String(payloadData.action || payloadData.status || '').toUpperCase();
+    const classification = String(payloadData.classification || '').toUpperCase();
+    const passReason = String(payloadData.pass_reason_code || payloadData.pass_reason || '').toUpperCase();
+    const status =
+      action.includes('PASS') ||
+      classification.includes('PASS') ||
+      passReason.startsWith('PASS')
+        ? 'PASS'
+        : action === 'HOLD' || action === 'WATCH' || action === 'LEAN' || classification === 'LEAN'
+          ? 'SLIGHT_EDGE'
+          : 'PLAY';
 
-    if (hasCompatibilityBucket) {
-      // Force canonical resolver to return null so webhook_bucket compatibility behavior stays testable.
-      payloadData.decision_v2 = {
-        official_status: 'PLAY',
-        source: 'legacy_repair',
-      };
-    } else {
-      const action = String(payloadData.action || payloadData.status || '').toUpperCase();
-      const classification = String(payloadData.classification || '').toUpperCase();
-      const passReason = String(payloadData.pass_reason_code || payloadData.pass_reason || '').toUpperCase();
-      const status =
-        action.includes('PASS') ||
-        classification.includes('PASS') ||
-        passReason.startsWith('PASS')
-          ? 'PASS'
-          : action === 'HOLD' || action === 'WATCH' || action === 'LEAN' || classification === 'LEAN'
-            ? 'LEAN'
-            : 'PLAY';
-
-      payloadData.decision_v2 = {
-        official_status: status,
-        source: 'legacy_repair',
-        primary_reason_code: status === 'PASS' ? 'PASS_NO_EDGE' : 'EDGE_CLEAR',
-      };
-    }
+    payloadData.decision_v2 = {
+      official_status: status,
+      source: 'decision_authority',
+      primary_reason_code: status === 'PASS' ? 'PASS_NO_EDGE' : 'EDGE_CLEAR',
+    };
   }
 
   return {
@@ -265,7 +265,7 @@ describe('post_discord_cards helpers', () => {
     expect(isDisplayableWebhookCard(onePeriodPass)).toBe(true);
     expect(isDisplayableWebhookCard(onePeriodPlayableEvidence)).toBe(true);
     expect(isDisplayableWebhookCard(onePeriodHoldEvidence)).toBe(true);
-    expect(isDisplayableWebhookCard(passCard)).toBe(true);
+    expect(isDisplayableWebhookCard(passCard)).toBe(false);
   });
 
   test('buildDiscordSnapshot creates one per-game message with official/lean/pass sections', () => {
@@ -298,9 +298,9 @@ describe('post_discord_cards helpers', () => {
 
     const snapshot = buildDiscordSnapshot({ cards, now: new Date('2026-03-20T14:00:00.000Z') });
 
-    expect(snapshot.totalCards).toBe(3);
+    expect(snapshot.totalCards).toBe(2);
     expect(snapshot.totalGames).toBe(1);
-    expect(snapshot.sectionCounts).toEqual({ official: 2, lean: 0, passBlocked: 1 });
+    expect(snapshot.sectionCounts).toEqual({ official: 2, lean: 0, passBlocked: 0 });
     expect(snapshot.messages[0]).toContain('🟢 PLAY');
     // PASS block is suppressed when official plays are rendered — no contradiction
     expect(snapshot.messages[0]).not.toContain('⚪ PASS');
@@ -763,7 +763,9 @@ describe('post_discord_cards helpers', () => {
             surfaced_reason_code: 'FIRST_PERIOD_PRICE_UNAVAILABLE',
           },
           decision_v2: {
-            source: 'legacy_repair',
+            official_status: 'SLIGHT_EDGE',
+            source: 'decision_authority',
+            primary_reason_code: 'FIRST_PERIOD_PRICE_UNAVAILABLE',
           },
           projection_only: false,
         },
@@ -1397,25 +1399,35 @@ describe('WI-0934: NHL totals bucket policy — PLAY / SLIGHT EDGE / PASS', () =
 });
 
 describe('canonical webhook fields path', () => {
-  it('classifyDecisionBucket reads webhook_publish_status before compatibility bucket fields', () => {
+  it('classifyDecisionBucket reads DecisionOutcome status and ignores compatibility bucket fields', () => {
     const playCard = makeCard({
       payloadData: {
-        webhook_publish_status: 'PLAY',
         webhook_bucket: 'pass_blocked',
         webhook_eligible: false,
+        decision_v2: {
+          official_status: 'PLAY',
+          source: 'decision_authority',
+        },
       },
     });
     const slightEdgeCard = makeCard({
       payloadData: {
-        webhook_publish_status: 'SLIGHT_EDGE',
         webhook_bucket: 'official',
+        decision_v2: {
+          official_status: 'SLIGHT_EDGE',
+          source: 'decision_authority',
+        },
       },
     });
     const passBlockedCard = makeCard({
       payloadData: {
-        webhook_publish_status: 'PASS_BLOCKED',
         webhook_bucket: 'official',
         webhook_eligible: true,
+        decision_v2: {
+          official_status: 'PASS',
+          source: 'decision_authority',
+          primary_reason_code: 'PASS_NO_EDGE',
+        },
       },
     });
 
@@ -1434,7 +1446,6 @@ describe('canonical webhook fields path', () => {
         id: 'canonical-line-play',
         cardType: 'nhl-total',
         payloadData: {
-          webhook_publish_status: 'PLAY',
           webhook_bucket: 'pass_blocked',
           webhook_eligible: false,
           kind: 'PLAY',
@@ -1444,13 +1455,16 @@ describe('canonical webhook fields path', () => {
           price: -110,
           model_projection: 6.1,
           edge: 0.6,
+          decision_v2: {
+            official_status: 'PLAY',
+            source: 'decision_authority',
+          },
         },
       }),
       makeCard({
         id: 'canonical-game-prop-lean',
         cardType: 'nhl-tsoa-call',
         payloadData: {
-          webhook_publish_status: 'SLIGHT_EDGE',
           webhook_bucket: 'pass_blocked',
           webhook_eligible: false,
           webhook_lean_eligible: true,
@@ -1459,13 +1473,16 @@ describe('canonical webhook fields path', () => {
           selection: { team: 'Boston Bruins' },
           price: +140,
           edge: 0.24,
+          decision_v2: {
+            official_status: 'SLIGHT_EDGE',
+            source: 'decision_authority',
+          },
         },
       }),
       makeCard({
         id: 'canonical-player-prop-lean',
         cardType: 'nhl_player_shots_props',
         payloadData: {
-          webhook_publish_status: 'SLIGHT_EDGE',
           webhook_bucket: 'official',
           webhook_eligible: false,
           webhook_lean_eligible: true,
@@ -1475,13 +1492,16 @@ describe('canonical webhook fields path', () => {
           price: -125,
           player_projection: '4.2 shots',
           edge: 0.31,
+          decision_v2: {
+            official_status: 'SLIGHT_EDGE',
+            source: 'decision_authority',
+          },
         },
       }),
       makeCard({
         id: 'canonical-line-pass',
         cardType: 'nhl-total',
         payloadData: {
-          webhook_publish_status: 'PASS_BLOCKED',
           webhook_bucket: 'official',
           webhook_eligible: true,
           kind: 'PLAY',
@@ -1492,13 +1512,17 @@ describe('canonical webhook fields path', () => {
           model_projection: 5.1,
           edge: 0.4,
           why: 'Blocked Line Prop',
+          decision_v2: {
+            official_status: 'PASS',
+            source: 'decision_authority',
+            primary_reason_code: 'PASS_NO_EDGE',
+          },
         },
       }),
       makeCard({
         id: 'canonical-game-prop-pass',
         cardType: 'nhl-game-prop-anytime',
         payloadData: {
-          webhook_publish_status: 'PASS_BLOCKED',
           webhook_bucket: 'lean',
           webhook_eligible: true,
           kind: 'PLAY',
@@ -1506,19 +1530,28 @@ describe('canonical webhook fields path', () => {
           selection: { team: 'Blocked Game Prop' },
           price: +220,
           edge: 0.45,
+          decision_v2: {
+            official_status: 'PASS',
+            source: 'decision_authority',
+            primary_reason_code: 'PASS_NO_EDGE',
+          },
         },
       }),
       makeCard({
         id: 'canonical-player-prop-pass',
         cardType: 'nhl_player_shots_props',
         payloadData: {
-          webhook_publish_status: 'PASS_BLOCKED',
           webhook_bucket: 'lean',
           webhook_eligible: true,
           market_type: 'SHOTS',
           prediction: 'Blocked Player over 2.5 shots',
           price: -105,
           edge: 0.5,
+          decision_v2: {
+            official_status: 'PASS',
+            source: 'decision_authority',
+            primary_reason_code: 'PASS_NO_EDGE',
+          },
         },
       }),
     ];
@@ -1540,45 +1573,17 @@ describe('canonical webhook fields path', () => {
     expect(content).not.toContain('⚠️ WATCH');
   });
 
-  it('legacy rows without webhook_publish_status still fall back to compatibility fields', () => {
+  it('cards without a canonical DecisionOutcome fail closed', () => {
     const card = makeCard({
       payloadData: {
-        webhook_bucket: 'lean',
-        webhook_eligible: true,
-        webhook_lean_eligible: true,
-        action: 'PASS',
-        kind: 'PLAY',
-        selection: { side: 'OVER' },
-        edge: 0.3,
+        action: 'FIRE',
+        classification: 'BASE',
       },
     });
+    delete card.payloadData.decision_v2;
 
-    expect(classifyDecisionBucket(card)).toBe('lean');
-    expect(isDisplayableWebhookCard(card)).toBe(true);
-    expect(passesLeanThreshold(card)).toBe(true);
-  });
-
-  // classifyDecisionBucket reads webhook_bucket when canonical publish status is absent.
-  it('classifyDecisionBucket returns official when webhook_bucket=official', () => {
-    const card = makeCard({ payloadData: { webhook_bucket: 'official' } });
-    expect(classifyDecisionBucket(card)).toBe('official');
-  });
-
-  it('classifyDecisionBucket returns lean when webhook_bucket=lean', () => {
-    const card = makeCard({ payloadData: { webhook_bucket: 'lean' } });
-    expect(classifyDecisionBucket(card)).toBe('lean');
-  });
-
-  it('classifyDecisionBucket returns pass_blocked when webhook_bucket=pass_blocked', () => {
-    const card = makeCard({ payloadData: { webhook_bucket: 'pass_blocked' } });
     expect(classifyDecisionBucket(card)).toBe('pass_blocked');
-  });
-
-  it('classifyDecisionBucket falls back to legacy when no webhook_bucket', () => {
-    const card = makeCard({
-      payloadData: { action: 'FIRE', classification: 'BASE' },
-    });
-    expect(classifyDecisionBucket(card)).toBe('official');
+    expect(isDisplayableWebhookCard(card)).toBe(false);
   });
 
   it('classifyDecisionBucket returns pass_blocked for EVIDENCE card with pre-stamped webhook_bucket=official', () => {
@@ -1597,15 +1602,22 @@ describe('canonical webhook fields path', () => {
     expect(classifyDecisionBucket(card)).toBe('pass_blocked');
   });
 
-  // isDisplayableWebhookCard reads webhook_eligible
-  it('isDisplayableWebhookCard returns true when webhook_eligible=true', () => {
-    const card = makeCard({ payloadData: { webhook_eligible: true } });
+  it('isDisplayableWebhookCard returns true for canonical PLAY rows', () => {
+    const card = makeCard({
+      payloadData: {
+        webhook_eligible: true,
+        decision_v2: {
+          official_status: 'PLAY',
+          source: 'decision_authority',
+        },
+      },
+    });
     expect(isDisplayableWebhookCard(card)).toBe(true);
   });
 
-  it('isDisplayableWebhookCard returns false when webhook_eligible=false', () => {
+  it('isDisplayableWebhookCard ignores webhook_eligible=false when canonical status is PLAY', () => {
     const card = makeCard({ payloadData: { webhook_eligible: false } });
-    expect(isDisplayableWebhookCard(card)).toBe(false);
+    expect(isDisplayableWebhookCard(card)).toBe(true);
   });
 
   it('isDisplayableWebhookCard returns false for EVIDENCE card with pre-stamped webhook_eligible=true', () => {

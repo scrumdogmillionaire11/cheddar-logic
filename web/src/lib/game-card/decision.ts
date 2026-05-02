@@ -120,12 +120,6 @@ function expressionStatusFromAction(
 export function resolvePlayDisplayDecision(
   play?:
     | {
-        action?: Play['action'];
-        classification?: Play['classification'];
-        status?: Play['status'];
-        cardType?: string;
-        market_type?: string;
-        final_market_decision?: Play['final_market_decision'];
         decision_outcome?: {
           status?: 'PLAY' | 'SLIGHT_EDGE' | 'PASS';
           reasons?: {
@@ -160,17 +154,9 @@ export function resolvePlayDisplayDecision(
     };
   }
 
-  // Only MLB full-game legacy rows bypass canonical read.
-  // All other rows remain fail-closed on missing canonical decision_v2.
-  // All cards must use canonical decision_v2.
-  // Cards without decision_v2 fail closed to PASS via readRuntimeCanonicalDecision.
-
   const authorityDecision = readRuntimeCanonicalDecision(
     {
       decision_v2: play?.decision_v2 ?? null,
-      action: play?.action,
-      classification: play?.classification,
-      status: play?.status ?? play?.final_market_decision?.surfaced_status,
     },
     { stage: 'read_api' },
   );

@@ -55,14 +55,14 @@ withEnv({ ENABLE_INVALID_DECISION_ENFORCEMENT: 'true', ENFORCE_CANONICAL_DECISIO
 });
 
 // ---------------------------------------------------------------------------
-// Kill switch OFF: legacy-only payload reverts to PASS fallback
+// Kill switch OFF: legacy-only payload still fails closed without decision_v2
 // ---------------------------------------------------------------------------
 withEnv({ ENABLE_INVALID_DECISION_ENFORCEMENT: 'false', ENFORCE_CANONICAL_DECISION_ONLY_STRICT_TEST: 'false' }, () => {
   const legacyOnlyPayload = { action: 'FIRE', classification: 'BASE', status: 'PLAY' };
 
-  assert.strictEqual(resolvePlayDisplayDecision(legacyOnlyPayload as never).action, 'PASS', 'cards must revert to PASS on legacy-only payload when kill switch is OFF');
-  assert.strictEqual(resolveLiveOfficialStatus(legacyOnlyPayload as never), 'PASS', 'games must revert to PASS on legacy-only payload when kill switch is OFF');
-  assert.strictEqual(resolveDecisionTier(legacyOnlyPayload as Record<string, unknown>), 'PASS', 'results must revert to PASS on legacy-only payload when kill switch is OFF');
+  assert.strictEqual(resolvePlayDisplayDecision(legacyOnlyPayload as never).action, null, 'cards must remain null/hidden on legacy-only payload when kill switch is OFF');
+  assert.strictEqual(resolveLiveOfficialStatus(legacyOnlyPayload as never), 'INVALID', 'games must remain INVALID on legacy-only payload when kill switch is OFF');
+  assert.strictEqual(resolveDecisionTier(legacyOnlyPayload as Record<string, unknown>), 'INVALID', 'results must remain INVALID on legacy-only payload when kill switch is OFF');
 });
 
 // ---------------------------------------------------------------------------

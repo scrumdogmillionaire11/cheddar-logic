@@ -3294,12 +3294,6 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
     pass_reason_code: resolvedPassReasonCode,
     final_market_decision: buildFinalMarketDecision({
       decisionV2: sourcePlay?.decision_v2,
-      fallbackOfficialStatus:
-        resolvedDisplayDecision.action === 'FIRE'
-          ? 'PLAY'
-          : resolvedDisplayDecision.action === 'HOLD'
-            ? 'LEAN'
-            : 'PASS',
       reasonCodes: reasonCodesUnique,
       passReasonCode: resolvedPassReasonCode,
       edge: edgePct,
@@ -3906,17 +3900,7 @@ export function transformPropGames(games: GameData[]): PropGameCard[] {
       } else if (propVerdict === 'PROJECTION' || propVerdict === 'NO_PLAY') {
         status = 'NO_PLAY';
       } else {
-        // Legacy fallback: no prop verdict fields and not projection-only/fallback.
-        const resolvedAction = resolvePlayDisplayDecision({
-          action: play.action,
-        }).action;
-        if (resolvedAction === 'FIRE') {
-          status = 'FIRE';
-        } else if (resolvedAction === 'HOLD') {
-          status = play.action === 'HOLD' ? 'HOLD' : 'WATCH';
-        } else {
-          status = 'NO_PLAY';
-        }
+        status = 'NO_PLAY';
       }
 
       const canonicalPropProjection =
