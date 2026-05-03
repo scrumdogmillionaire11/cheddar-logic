@@ -490,6 +490,7 @@ function writeShadowCandidates(db, { playDate, capturedAt, minEdgePct, candidate
         canonicalSelection,
         identityKey: buildShadowCandidateIdentity(candidate, canonicalSelection),
         groupKey: buildShadowMarketMatchGroup(candidate),
+        shadowReason: candidate._shadowReason ?? null,
       };
     })
     .filter(Boolean);
@@ -501,13 +502,13 @@ function writeShadowCandidates(db, { playDate, capturedAt, minEdgePct, candidate
       home_team, away_team, game_id, price, line,
       edge_pct, total_score, line_value, market_consensus,
       model_win_prob, implied_prob, projection_source, gap_to_min_edge,
-      selection, game_time_utc, candidate_identity_key
+      selection, game_time_utc, candidate_identity_key, shadow_reason
     ) VALUES (
       @play_date, @captured_at, @sport, @market_type, @selection_label,
       @home_team, @away_team, @game_id, @price, @line,
       @edge_pct, @total_score, @line_value, @market_consensus,
       @model_win_prob, @implied_prob, @projection_source, @gap_to_min_edge,
-      @selection, @game_time_utc, @candidate_identity_key
+      @selection, @game_time_utc, @candidate_identity_key, @shadow_reason
     )
     ON CONFLICT(play_date, candidate_identity_key) DO UPDATE SET
       captured_at = excluded.captured_at,
@@ -528,7 +529,8 @@ function writeShadowCandidates(db, { playDate, capturedAt, minEdgePct, candidate
       projection_source = excluded.projection_source,
       gap_to_min_edge = excluded.gap_to_min_edge,
       selection = excluded.selection,
-      game_time_utc = excluded.game_time_utc
+      game_time_utc = excluded.game_time_utc,
+      shadow_reason = excluded.shadow_reason
   `);
   const existingRowsStmt = db.prepare(`
     SELECT id, play_date, sport, market_type, home_team, away_team, game_id,
@@ -571,6 +573,7 @@ function writeShadowCandidates(db, { playDate, capturedAt, minEdgePct, candidate
         selection: row.canonicalSelection,
         game_time_utc: c.commence_time ?? null,
         candidate_identity_key: row.identityKey,
+        shadow_reason: row.shadowReason,
       });
     }
 
@@ -680,6 +683,11 @@ const POTD_MIN_TOTAL_SCORE = Number(process.env.POTD_MIN_TOTAL_SCORE || 0.30);  
 // With 4 active sports the effective ceiling is 4.
 const POTD_MAX_NOMINEES = Number(process.env.POTD_MAX_NOMINEES || 5);
 const POTD_MAX_NEAR_MISS_SHADOW_CANDIDATES = 3;
+const SHADOW_REASONS = Object.freeze({
+  NOT_SELECTED: 'NOT_SELECTED',
+  BELOW_OFFICIAL_EDGE_FLOOR: 'BELOW_OFFICIAL_EDGE_FLOOR',
+  BELOW_SCORE_GATE: 'BELOW_SCORE_GATE',
+});
 const POTD_EMPTY_SELECTION_REJECTION_CODES = new Set([
   'NO_QUALIFIED_PROPS',
   'SKIP_MARKET_NO_EDGE',
@@ -1383,7 +1391,50 @@ async function gatherBestCandidate({
   });
 
   const bestEdgeSelectorPool = selectBestEdgeByShadowGroup(fireableSelectorPool);
-  const shadowCandidatePool = bestEdgeSelectorPool;
+
+  // Near-miss / shadow pool: wider than the official fireable pool.
+  // Includes any model-backed today-scoped candidate with positive edge and a
+  // finite score, regardless of whether it cleared the official noise floor or
+  // score gate.  Official POTD selection is unaffected — it still uses
+  // bestEdgeSelectorPool above.
+  const fireableIdentities = new Set(
+    fireableSelectorPool.map(c => shadowCandidateIdentity(c)).filter(Boolean),
+  );
+  const shadowEligiblePool = playDateScopedCandidates.filter(c =>
+    isModelBackedCandidate(c) &&
+    !isSportModelGated(c) &&
+    !hasEmptySelectionRejectionCode(c) &&
+    isFiniteNumber(c.edgePct) &&
+    c.edgePct > 0 &&
+    isFiniteNumber(c.totalScore),
+  );
+
+  // Fireable candidates take priority within each shadow group: a non-fireable
+  // high-edge candidate from the same game/market must not displace a fireable
+  // lower-edge candidate as the group representative.
+  const fireableGroupKeys = new Set(
+    fireableSelectorPool.map(c => buildShadowMarketMatchGroup(c)).filter(Boolean),
+  );
+  const nonFireableFillPool = shadowEligiblePool.filter(
+    c => !fireableGroupKeys.has(buildShadowMarketMatchGroup(c)),
+  );
+  const shadowCandidatePool = [
+    ...bestEdgeSelectorPool,
+    ...selectBestEdgeByShadowGroup(nonFireableFillPool),
+  ].map(c => {
+    const noiseFloor = resolveNoiseFloor(c.sport, c.marketType, POTD_MIN_EDGE);
+    const identity = shadowCandidateIdentity(c);
+    let shadowReason;
+    if (identity && fireableIdentities.has(identity)) {
+      shadowReason = SHADOW_REASONS.NOT_SELECTED;
+    } else if (c.edgePct <= noiseFloor) {
+      shadowReason = SHADOW_REASONS.BELOW_OFFICIAL_EDGE_FLOOR;
+    } else {
+      shadowReason = SHADOW_REASONS.BELOW_SCORE_GATE;
+    }
+    return { ...c, _shadowReason: shadowReason };
+  });
+
   const fireableNominees = selectTopPlaysFn(bestEdgeSelectorPool, {
     minConfidence: POTD_MIN_TOTAL_SCORE,
     minEdgePct: 0,
