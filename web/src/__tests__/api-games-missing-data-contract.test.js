@@ -26,6 +26,7 @@ const gamesPerfMetricsPath = path.resolve(
   '../../src/lib/games/perf-metrics.ts',
 );
 const cardsPagePath = path.resolve(__dirname, '../../src/components/cards/CardsPageContext.tsx');
+const filterPanelPath = path.resolve(__dirname, '../../src/components/filter-panel.tsx');
 const passClassificationPath = path.resolve(
   __dirname,
   '../../src/lib/game-card/pass-classification.ts',
@@ -35,6 +36,7 @@ const gamesRouteSource = fs.readFileSync(gamesRoutePath, 'utf8');
 const gamesRouteHandlerSource = fs.readFileSync(gamesRouteHandlerPath, 'utf8');
 const gamesPerfMetricsSource = fs.readFileSync(gamesPerfMetricsPath, 'utf8');
 const cardsPageSource = fs.readFileSync(cardsPagePath, 'utf8');
+const filterPanelSource = fs.readFileSync(filterPanelPath, 'utf8');
 const passClassificationSource = fs.readFileSync(passClassificationPath, 'utf8');
 
 console.log('🧪 API games missing-data contract tests');
@@ -132,6 +134,17 @@ assert(
     'card_display_log remains historical/analytics',
   ) && !gamesRouteHandlerSource.includes('FROM card_display_log'),
   '/api/games true_play authority should not query card_display_log as a live authority source',
+);
+
+assert(
+  gamesRouteHandlerSource.includes('if (!play.decision_v2)') &&
+    gamesRouteHandlerSource.includes("incrementStageCounter(\n                stageCounters,\n                'wave1_skipped_no_d2'"),
+  '/api/games must hard-drop modern wave-1 rows that lack canonical decision_v2',
+);
+
+assert(
+  filterPanelSource.includes("label: 'Watch / Slight Edge'"),
+  'wedge filter UI must describe WATCH rows as Watch / Slight Edge',
 );
 
 assert(

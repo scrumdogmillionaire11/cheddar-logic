@@ -86,7 +86,7 @@ export default function FilterPanel({
     : ['NHL', 'NBA', 'MLB'];
   const statusOptions: Array<{ value: ExpressionStatus; label: string }> = [
     { value: 'FIRE', label: 'PLAY' },
-    { value: 'WATCH', label: 'LEAN' },
+    { value: 'WATCH', label: 'Watch / Slight Edge' },
     { value: 'PASS', label: 'PASS' },
   ];
   const marketOptions: Market[] = ['ML', 'SPREAD', 'TOTAL'];
