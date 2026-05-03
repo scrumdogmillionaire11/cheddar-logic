@@ -2912,6 +2912,48 @@ describe('near-miss wide shadow pool', () => {
     resetTables();
   });
 
+  test('consensus-only spread candidate is still captured as near miss when strict model pool is empty', async () => {
+    const { runPotdEngine } = require('../run_potd_engine');
+    const fallbackSpread = buildSelectedCandidate({
+      gameId: 'nsw-consensus-spread-001',
+      sport: 'NHL',
+      marketType: 'SPREAD',
+      selection: null,
+      selectionLabel: 'Boston Bruins -1.5',
+      line: -1.5,
+      edgePct: 0.031,
+      totalScore: 0.66,
+      edgeSourceTag: 'CONSENSUS_FALLBACK',
+    });
+
+    const result = await runPotdEngine({
+      jobKey: 'potd|nsw-consensus-fallback-shadow',
+      force: true,
+      fetchOddsFn: async () => ({ games: [{ gameId: fallbackSpread.gameId }], errors: [] }),
+      buildCandidatesFn: () => [fallbackSpread],
+      scoreCandidateFn: (value) => value,
+      selectTopPlaysFn: () => [],
+      kellySizeFn: () => 0,
+      sendDiscordMessagesFn: async () => 1,
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.noPlay).toBe(true);
+
+    const shadowRows = readRows(
+      `SELECT game_id, market_type, selection, shadow_reason
+       FROM potd_shadow_candidates`,
+    );
+    expect(shadowRows).toEqual([
+      {
+        game_id: fallbackSpread.gameId,
+        market_type: 'SPREAD',
+        selection: 'HOME',
+        shadow_reason: 'NON_MODEL_SOURCE',
+      },
+    ]);
+  });
+
   test('sub-score-gate candidate from different game surfaces as BELOW_SCORE_GATE near miss', async () => {
     const { runPotdEngine } = require('../run_potd_engine');
     const winner = buildSelectedCandidate({
