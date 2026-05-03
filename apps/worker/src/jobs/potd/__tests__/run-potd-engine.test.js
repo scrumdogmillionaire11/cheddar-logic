@@ -2157,7 +2157,8 @@ describe('WI-1039-B: POTD timing state machine and heartbeat', () => {
 
     const message = alertCalls[0][0].messages[0];
     expect(message).toContain('Near misses:');
-    expect(message).toContain('None available');
+    // Sub-floor candidates (edgePct 0.018 / 0.017) now surface as near misses.
+    expect(message).toContain('Edge 1.80%');
 
     if (origUrl !== undefined) process.env.DISCORD_ALERT_WEBHOOK_URL = origUrl;
     else delete process.env.DISCORD_ALERT_WEBHOOK_URL;
@@ -2885,5 +2886,297 @@ describe('WI-1175: same-game near-miss suppression', () => {
     expect(rows).toHaveLength(1);
     // Stale 219.5 row must be replaced by the updated 220.5 candidate
     expect(rows[0].line).toBe(220.5);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Near-miss shadow pool — wide eligibility, not just strict PLAY candidates
+// ---------------------------------------------------------------------------
+describe('near-miss wide shadow pool', () => {
+  let dataModule;
+
+  beforeAll(async () => {
+    jest.resetModules();
+    process.env.CHEDDAR_DB_PATH = TEST_DB_PATH;
+    process.env.CHEDDAR_DB_AUTODISCOVER = 'false';
+    process.env.CHEDDAR_DB_ALLOW_MULTI_PROCESS = 'false';
+    process.env.POTD_STARTING_BANKROLL = '10';
+    process.env.POTD_KELLY_FRACTION = '0.25';
+    process.env.POTD_MAX_WAGER_PCT = '0.2';
+    dataModule = require('@cheddar-logic/data');
+    dataModule.closeDatabase();
+  });
+
+  beforeEach(() => {
+    dataModule.closeDatabase();
+    resetTables();
+  });
+
+  test('sub-score-gate candidate from different game surfaces as BELOW_SCORE_GATE near miss', async () => {
+    const { runPotdEngine } = require('../run_potd_engine');
+    const winner = buildSelectedCandidate({
+      gameId: 'nsw-winner-001',
+      sport: 'NBA',
+      home_team: 'Boston Celtics',
+      away_team: 'New York Knicks',
+      selectionLabel: 'OVER 221.5',
+      line: 221.5,
+      totalScore: 0.82,
+      edgePct: 0.04,
+    });
+    // Different game, positive edge > NBA TOTAL noise floor (0.03), but totalScore below gate (0.30)
+    const subScore = buildSelectedCandidate({
+      gameId: 'nsw-subscore-001',
+      sport: 'NBA',
+      home_team: 'Denver Nuggets',
+      away_team: 'Phoenix Suns',
+      selectionLabel: 'OVER 226.5',
+      line: 226.5,
+      totalScore: 0.22,
+      edgePct: 0.04,
+    });
+
+    [winner, subScore].forEach((c) => insertPlayableDecisionPayloadForCandidate(c));
+
+    const result = await runPotdEngine({
+      jobKey: 'potd|nsw-subscore',
+      force: true,
+      fetchOddsFn: async () => ({
+        games: [winner, subScore].map((c) => ({ gameId: c.gameId })),
+        errors: [],
+      }),
+      buildCandidatesFn: (game) => [winner, subScore].filter((c) => c.gameId === game.gameId),
+      scoreCandidateFn: (v) => v,
+      kellySizeFn: () => 2.0,
+      sendDiscordMessagesFn: async () => 1,
+    });
+
+    expect(result.success).toBe(true);
+    expect(readRows('SELECT game_id FROM potd_plays')).toEqual([{ game_id: winner.gameId }]);
+
+    const shadowRows = readRows(
+      'SELECT game_id, shadow_reason FROM potd_shadow_candidates ORDER BY edge_pct DESC',
+    );
+    expect(shadowRows).toHaveLength(1);
+    expect(shadowRows[0].game_id).toBe(subScore.gameId);
+    expect(shadowRows[0].shadow_reason).toBe('BELOW_SCORE_GATE');
+  });
+
+  test('sub-edge-floor candidate from different game surfaces as BELOW_OFFICIAL_EDGE_FLOOR near miss', async () => {
+    const { runPotdEngine } = require('../run_potd_engine');
+    const winner = buildSelectedCandidate({
+      gameId: 'nsw-ef-winner-001',
+      sport: 'NHL',
+      selectionLabel: 'OVER 5.5',
+      line: 5.5,
+      totalScore: 0.75,
+      edgePct: 0.04,
+    });
+    // Different game, positive edge but below the 2% noise floor (POTD_MIN_EDGE = 0.02)
+    const subEdge = buildSelectedCandidate({
+      gameId: 'nsw-subedge-001',
+      sport: 'NHL',
+      home_team: 'Chicago Blackhawks',
+      away_team: 'Detroit Red Wings',
+      selectionLabel: 'OVER 5.0',
+      line: 5.0,
+      totalScore: 0.55,
+      edgePct: 0.008,
+    });
+
+    [winner, subEdge].forEach((c) => insertPlayableDecisionPayloadForCandidate(c));
+
+    await runPotdEngine({
+      jobKey: 'potd|nsw-subedge',
+      force: true,
+      fetchOddsFn: async () => ({
+        games: [winner, subEdge].map((c) => ({ gameId: c.gameId })),
+        errors: [],
+      }),
+      buildCandidatesFn: (game) => [winner, subEdge].filter((c) => c.gameId === game.gameId),
+      scoreCandidateFn: (v) => v,
+      kellySizeFn: () => 2.0,
+      sendDiscordMessagesFn: async () => 1,
+    });
+
+    const shadowRows = readRows(
+      'SELECT game_id, shadow_reason FROM potd_shadow_candidates',
+    );
+    expect(shadowRows).toHaveLength(1);
+    expect(shadowRows[0].game_id).toBe(subEdge.gameId);
+    expect(shadowRows[0].shadow_reason).toBe('BELOW_OFFICIAL_EDGE_FLOOR');
+  });
+
+  test('fireable non-winner gets NOT_SELECTED reason', async () => {
+    const { runPotdEngine } = require('../run_potd_engine');
+    const winner = buildSelectedCandidate({
+      gameId: 'nsw-ns-winner-001',
+      sport: 'NBA',
+      home_team: 'Milwaukee Bucks',
+      away_team: 'Indiana Pacers',
+      selectionLabel: 'OVER 232.5',
+      line: 232.5,
+      totalScore: 0.88,
+      edgePct: 0.05,
+    });
+    const fireable = buildSelectedCandidate({
+      gameId: 'nsw-ns-fireable-001',
+      sport: 'NBA',
+      home_team: 'Los Angeles Lakers',
+      away_team: 'Golden State Warriors',
+      selectionLabel: 'OVER 219.5',
+      line: 219.5,
+      totalScore: 0.72,
+      edgePct: 0.04,
+    });
+
+    [winner, fireable].forEach((c) => insertPlayableDecisionPayloadForCandidate(c));
+
+    await runPotdEngine({
+      jobKey: 'potd|nsw-not-selected',
+      force: true,
+      fetchOddsFn: async () => ({
+        games: [winner, fireable].map((c) => ({ gameId: c.gameId })),
+        errors: [],
+      }),
+      buildCandidatesFn: (game) => [winner, fireable].filter((c) => c.gameId === game.gameId),
+      scoreCandidateFn: (v) => v,
+      kellySizeFn: () => 2.0,
+      sendDiscordMessagesFn: async () => 1,
+    });
+
+    const shadowRows = readRows(
+      'SELECT game_id, shadow_reason FROM potd_shadow_candidates',
+    );
+    expect(shadowRows).toHaveLength(1);
+    expect(shadowRows[0].game_id).toBe(fireable.gameId);
+    expect(shadowRows[0].shadow_reason).toBe('NOT_SELECTED');
+  });
+
+  test('WI-1175 suppression intact: same-game same-market sub-threshold candidate is suppressed', async () => {
+    const { runPotdEngine } = require('../run_potd_engine');
+    const winner = buildSelectedCandidate({
+      gameId: 'nsw-suppress-001',
+      sport: 'NBA',
+      home_team: 'Oklahoma City Thunder',
+      away_team: 'Minnesota Timberwolves',
+      selection: 'OVER',
+      selectionLabel: 'OVER 218.5',
+      line: 218.5,
+      totalScore: 0.78,
+      edgePct: 0.035,
+    });
+    // Same game, same market (TOTAL), but below score gate — must still be suppressed
+    const sameGameSubScore = buildSelectedCandidate({
+      gameId: 'nsw-suppress-001',
+      sport: 'NBA',
+      home_team: 'Oklahoma City Thunder',
+      away_team: 'Minnesota Timberwolves',
+      selection: 'UNDER',
+      selectionLabel: 'UNDER 219.5',
+      line: 219.5,
+      totalScore: 0.20,
+      edgePct: 0.015,
+    });
+    // Different game that should survive
+    const otherGame = buildSelectedCandidate({
+      gameId: 'nsw-other-001',
+      sport: 'NBA',
+      home_team: 'Sacramento Kings',
+      away_team: 'Portland Trail Blazers',
+      selectionLabel: 'OVER 224.5',
+      line: 224.5,
+      totalScore: 0.21,
+      edgePct: 0.012,
+    });
+
+    [winner, sameGameSubScore, otherGame].forEach((c) =>
+      insertPlayableDecisionPayloadForCandidate(c),
+    );
+
+    await runPotdEngine({
+      jobKey: 'potd|nsw-suppress-check',
+      force: true,
+      fetchOddsFn: async () => ({
+        games: [winner, sameGameSubScore, otherGame].map((c) => ({ gameId: c.gameId })),
+        errors: [],
+      }),
+      buildCandidatesFn: (game) =>
+        [winner, sameGameSubScore, otherGame].filter((c) => c.gameId === game.gameId),
+      scoreCandidateFn: (v) => v,
+      kellySizeFn: () => 2.0,
+      sendDiscordMessagesFn: async () => 1,
+    });
+
+    const shadowRows = readRows(
+      'SELECT game_id, shadow_reason FROM potd_shadow_candidates',
+    );
+    // sameGameSubScore suppressed, only otherGame survives
+    expect(shadowRows).toHaveLength(1);
+    expect(shadowRows[0].game_id).toBe(otherGame.gameId);
+  });
+
+  test('official POTD winner is unchanged when sub-threshold near misses exist', async () => {
+    const { runPotdEngine } = require('../run_potd_engine');
+    const winner = buildSelectedCandidate({
+      gameId: 'nsw-potd-unchanged-winner',
+      sport: 'NHL',
+      selectionLabel: 'OVER 5.5',
+      line: 5.5,
+      totalScore: 0.81,
+      edgePct: 0.04,
+    });
+    const subScoreA = buildSelectedCandidate({
+      gameId: 'nsw-potd-unchanged-a',
+      sport: 'NHL',
+      home_team: 'Tampa Bay Lightning',
+      away_team: 'Florida Panthers',
+      selectionLabel: 'OVER 6.0',
+      line: 6.0,
+      totalScore: 0.18,
+      edgePct: 0.025,
+    });
+    const subScoreB = buildSelectedCandidate({
+      gameId: 'nsw-potd-unchanged-b',
+      sport: 'NHL',
+      home_team: 'Colorado Avalanche',
+      away_team: 'Dallas Stars',
+      selectionLabel: 'OVER 5.5',
+      line: 5.5,
+      totalScore: 0.15,
+      edgePct: 0.022,
+    });
+
+    [winner, subScoreA, subScoreB].forEach((c) =>
+      insertPlayableDecisionPayloadForCandidate(c),
+    );
+
+    const result = await runPotdEngine({
+      jobKey: 'potd|nsw-winner-unchanged',
+      force: true,
+      fetchOddsFn: async () => ({
+        games: [winner, subScoreA, subScoreB].map((c) => ({ gameId: c.gameId })),
+        errors: [],
+      }),
+      buildCandidatesFn: (game) =>
+        [winner, subScoreA, subScoreB].filter((c) => c.gameId === game.gameId),
+      scoreCandidateFn: (v) => v,
+      kellySizeFn: () => 2.0,
+      sendDiscordMessagesFn: async () => 1,
+    });
+
+    expect(result.success).toBe(true);
+    // Winner is the strict PLAY candidate, unaffected by sub-threshold near misses
+    const playRows = readRows('SELECT game_id FROM potd_plays');
+    expect(playRows).toEqual([{ game_id: winner.gameId }]);
+
+    // Sub-threshold candidates ARE captured as near misses
+    const shadowRows = readRows(
+      'SELECT game_id FROM potd_shadow_candidates ORDER BY edge_pct DESC',
+    );
+    expect(shadowRows).toHaveLength(2);
+    expect(shadowRows.map((r) => r.game_id)).toEqual(
+      expect.arrayContaining([subScoreA.gameId, subScoreB.gameId]),
+    );
   });
 });
