@@ -1225,7 +1225,10 @@ function resolvePrimaryReason({
     return 'SUPPORT_BELOW_PLAY_THRESHOLD';
   }
 
-  return 'SUPPORT_BELOW_PLAY_THRESHOLD';
+  if (edgePct === null) {
+    return 'PASS_MISSING_EDGE';
+  }
+  return 'PASS_NO_EDGE';
 }
 
 function resolveTerminalReasonFamily({
@@ -1287,6 +1290,8 @@ function resolveTerminalReasonFamily({
   if (
     primaryReasonCode === 'SUPPORT_BELOW_PLAY_THRESHOLD' ||
     primaryReasonCode === 'SUPPORT_BELOW_LEAN_THRESHOLD' ||
+    primaryReasonCode === 'PASS_MISSING_EDGE' ||
+    primaryReasonCode === 'PASS_NO_EDGE' ||
     priceReasonCodes.includes(PRICE_REASONS.NO_EDGE_AT_PRICE)
   ) {
     return 'EDGE_INSUFFICIENT';
@@ -2095,4 +2100,6 @@ module.exports = {
   isWave1EligiblePayload,
   maybePromoteHighEndLean,
   buildDecisionV2,
+  resolvePrimaryReason,
+  resolveTerminalReasonFamily,
 };
