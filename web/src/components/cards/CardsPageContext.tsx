@@ -643,7 +643,7 @@ export function CardsPageProvider({
           inflightLifecycleMode: globalGamesRequestLifecycle,
         });
         const shouldRetryForLifecycleChange =
-          globalGamesRequestLifecycle !== effectiveLifecycleMode;
+          globalGamesRequestLifecycle !== requestedLifecycleMode;
         if (
           shouldRetryForLifecycleChange &&
           lifecycleRetryTimeoutRef.current === null
@@ -700,7 +700,7 @@ export function CardsPageProvider({
 
       try {
         globalGamesFetchInFlight = true;
-        globalGamesRequestLifecycle = effectiveLifecycleMode;
+        globalGamesRequestLifecycle = requestedLifecycleMode;
         globalGamesLastEffectiveLifecycle = effectiveLifecycleMode;
         globalGamesLastFetchAt = now;
 
@@ -710,7 +710,7 @@ export function CardsPageProvider({
 
         const timeoutHandle = createTimeoutSignal(CLIENT_FETCH_TIMEOUT_MS);
         const lifecycleQuery =
-          effectiveLifecycleMode === 'active' ? '?lifecycle=active' : '';
+          requestedLifecycleMode === 'active' ? '?lifecycle=active' : '';
         const response = await fetch(`/api/games${lifecycleQuery}`, {
           ...(timeoutHandle.signal ? { signal: timeoutHandle.signal } : {}),
           cache: 'no-store',

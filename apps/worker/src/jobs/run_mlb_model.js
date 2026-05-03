@@ -2442,6 +2442,75 @@ function americanOddsToImpliedProbability(price) {
   return Math.abs(price) / (Math.abs(price) + 100);
 }
 
+function toUpperToken(value) {
+  if (value === null || value === undefined) return '';
+  return String(value).trim().toUpperCase().replace(/[\s-]+/g, '_');
+}
+
+function resolveMlbCalibrationLookup(payload = {}) {
+  const recommendedBetType = toUpperToken(payload.recommended_bet_type);
+  const marketType = toUpperToken(payload.market_type);
+  const cardType = toUpperToken(payload.card_type);
+
+  if (
+    recommendedBetType === 'TOTAL' &&
+    (cardType === 'MLB_F5' ||
+      marketType === 'FIRST_5_INNINGS' ||
+      marketType === 'FIRST_PERIOD')
+  ) {
+    return { sport: 'MLB', marketType: 'MLB_F5_TOTAL' };
+  }
+
+  if (recommendedBetType === 'MONEYLINE') {
+    return { sport: 'ALL', marketType: 'ML' };
+  }
+
+  if (recommendedBetType === 'SPREAD' || recommendedBetType === 'PUCKLINE') {
+    return { sport: 'ALL', marketType: 'SPREAD' };
+  }
+
+  return null;
+}
+
+function applyMlbCalibrationToPayload(payload, calibrationStatement = null) {
+  if (!payload || typeof payload !== 'object' || !Number.isFinite(payload.p_fair)) {
+    return { calibrated: false, calibrationSource: null, calibrationLookup: null };
+  }
+
+  const calibrationLookup = resolveMlbCalibrationLookup(payload);
+  let breakpoints = null;
+  if (calibrationStatement && calibrationLookup) {
+    try {
+      const calibrationRow = calibrationStatement.get(
+        calibrationLookup.sport,
+        calibrationLookup.marketType,
+      );
+      breakpoints = calibrationRow ? JSON.parse(calibrationRow.breakpoints_json) : null;
+    } catch (_error) {
+      breakpoints = null;
+    }
+  }
+
+  const { calibratedProb, calibrationSource } = applyCalibration(
+    payload.p_fair,
+    breakpoints,
+  );
+  payload.p_fair = calibratedProb;
+  if (Number.isFinite(payload.model_prob)) {
+    payload.model_prob = calibratedProb;
+  }
+  if (!payload.raw_data || typeof payload.raw_data !== 'object') {
+    payload.raw_data = {};
+  }
+  payload.raw_data.calibration_source = calibrationSource;
+
+  return {
+    calibrated: calibrationSource === 'isotonic',
+    calibrationSource,
+    calibrationLookup,
+  };
+}
+
 function resolveMlbMoneylineExecutionInputs({
   prediction,
   winProbHome,
@@ -4140,6 +4209,14 @@ async function runMLBModel({
           `[MLB_SIGMA_PRESEASON_DEFAULT] threshold=${MIN_MLB_GAMES_FOR_RECAL} sigma=${JSON.stringify(mlbSigma)}`,
         );
       }
+      let calibrationStatement = null;
+      try {
+        calibrationStatement = getDatabase().prepare(
+          'SELECT breakpoints_json FROM calibration_models WHERE sport = ? AND market_type = ?',
+        );
+      } catch (_error) {
+        console.log('[CAL_APPLY] MLB calibration_models table not ready — using raw');
+      }
       console.log(`[SIGMA_SOURCE] sport=MLB source=${mlbSigma.sigma_source} games_sampled=${mlbSigma.games_sampled ?? null}`);
       // WI-0814: warn when using uncalibrated sigma — MLB F5/moneyline cards will be downgraded to LEAN
       if (mlbSigma.sigma_source === 'fallback') {
@@ -5114,6 +5191,7 @@ async function runMLBModel({
             applyMlbVerificationContract({ payloadData });
             assertMlbExecutionInvariant(payloadData);
             applyDecisionNamespaceMetadata(payloadData);
+            applyMlbCalibrationToPayload(payloadData, calibrationStatement);
             ensureCanonicalDecisionV2(payloadData);
 
             const cardTitle = isF5
@@ -5178,24 +5256,6 @@ async function runMLBModel({
             if (!card.payloadData.raw_data) card.payloadData.raw_data = {};
             card.payloadData.raw_data.sigma_source = mlbSigma.sigma_source;
             card.payloadData.raw_data.sigma_games_sampled = mlbSigma.games_sampled ?? null;
-            // WI-0831: apply isotonic calibration to fair_prob before Kelly and card write.
-            {
-              const pd = card.payloadData;
-              if (Number.isFinite(pd.p_fair)) {
-                let breakpoints = null;
-                try {
-                  const calRow = getDatabase().prepare(
-                    'SELECT breakpoints_json FROM calibration_models WHERE sport = ? AND market_type = ?',
-                  ).get('MLB', 'MLB_F5_TOTAL');
-                  breakpoints = calRow ? JSON.parse(calRow.breakpoints_json) : null;
-                } catch (_e) {
-                  console.log('[CAL_APPLY] MLB calibration_models table not ready — using raw');
-                }
-                const { calibratedProb, calibrationSource } = applyCalibration(pd.p_fair, breakpoints);
-                pd.p_fair = calibratedProb;
-                pd.raw_data.calibration_source = calibrationSource;
-              }
-            }
             // WI-0819: attach advisory Kelly stake fraction to actionable cards.
             {
               const pd = card.payloadData;
@@ -5395,6 +5455,8 @@ module.exports = {
   deriveMlbExecutionEnvelope,
   resolveMlbTotalExecutionInputs,
   resolveMlbMoneylineExecutionInputs,
+  resolveMlbCalibrationLookup,
+  applyMlbCalibrationToPayload,
   assertMlbExecutionInvariant,
   applyExecutionGateToMlbPayload,
   applyExecutionGateWithStaleRecoveryToMlbPayload,

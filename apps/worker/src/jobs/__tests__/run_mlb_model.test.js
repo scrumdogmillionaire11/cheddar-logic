@@ -65,6 +65,8 @@ const {
   computeSyntheticLineF5Driver,
   resolveMlbTotalExecutionInputs,
   resolveMlbMoneylineExecutionInputs,
+  resolveMlbCalibrationLookup,
+  applyMlbCalibrationToPayload,
   applyMlbFeatureTimelinessGuardToPayload,
   getPitcherEraFromDb,
 } = require('../run_mlb_model');
@@ -3095,7 +3097,9 @@ describe('multi-market insertion (IME-01-03)', () => {
     raw_data: { mlb: {} },
   };
 
-  function buildImeDataMocks(snapshot = BASE_SNAPSHOT) {
+  function buildImeDataMocks(snapshot = BASE_SNAPSHOT, {
+    calibrationModelResolver = null,
+  } = {}) {
     const insertCardPayload = jest.fn();
     const insertModelOutput = jest.fn();
     const prepareModelAndCardWrite = jest.fn();
@@ -3103,10 +3107,23 @@ describe('multi-market insertion (IME-01-03)', () => {
 
     return {
       getDatabase: jest.fn(() => ({
-        prepare: jest.fn(() => ({
-          get: jest.fn(() => null),
-          all: jest.fn(() => []),
-        })),
+        prepare: jest.fn((sql) => {
+          const query = String(sql || '');
+          if (query.includes('FROM calibration_models')) {
+            return {
+              get: jest.fn((sport, marketType) => (
+                typeof calibrationModelResolver === 'function'
+                  ? calibrationModelResolver(sport, marketType)
+                  : null
+              )),
+              all: jest.fn(() => []),
+            };
+          }
+          return {
+            get: jest.fn(() => null),
+            all: jest.fn(() => []),
+          };
+        }),
       })),
       insertJobRun: jest.fn(),
       markJobRunSuccess,
@@ -3166,10 +3183,14 @@ describe('multi-market insertion (IME-01-03)', () => {
     snapshot = BASE_SNAPSHOT,
     projectF5MLResult = null,
     insertCardPayloadImpl = null,
+    calibrationModelResolver = null,
+    applyCalibrationImpl = null,
   } = {}) {
     jest.resetModules();
 
-    const dataMocks = buildImeDataMocks(snapshot);
+    const dataMocks = buildImeDataMocks(snapshot, {
+      calibrationModelResolver,
+    });
     if (typeof insertCardPayloadImpl === 'function') {
       dataMocks.insertCardPayload.mockImplementation(insertCardPayloadImpl);
     }
@@ -3225,10 +3246,13 @@ describe('multi-market insertion (IME-01-03)', () => {
       })),
     }));
     jest.doMock('../../utils/calibration', () => ({
-      applyCalibration: jest.fn((probability) => ({
-        calibratedProb: probability,
-        calibrationSource: 'mock',
-      })),
+      applyCalibration: jest.fn(
+        applyCalibrationImpl ??
+          ((probability) => ({
+            calibratedProb: probability,
+            calibrationSource: 'mock',
+          })),
+      ),
     }));
     jest.doMock('../../models/feature-time-guard', () => ({
       assertFeatureTimeliness: jest.fn(() => ({
@@ -3407,6 +3431,102 @@ describe('multi-market insertion (IME-01-03)', () => {
     expect(
       Number.isFinite(Number(mlPayload.ml_away ?? mlPayload.h2h_away ?? mlPayload?.odds_context?.h2h_away)),
     ).toBe(true);
+  });
+
+  test('Texas Rangers away moneyline does not reuse MLB_F5_TOTAL calibration rows', async () => {
+    const snapshot = {
+      ...BASE_SNAPSHOT,
+      id: 'odds-ime-tex-det-001',
+      game_id: 'mlb-2026-tex-det-001',
+      home_team: 'Detroit Tigers',
+      away_team: 'Texas Rangers',
+      h2h_home: -115,
+      h2h_away: 105,
+    };
+    const gameDriverCards = [
+      {
+        market: 'full_game_ml',
+        prediction: 'AWAY',
+        confidence: 0.72,
+        ev_threshold_passed: true,
+        status: 'WATCH',
+        action: 'WATCH',
+        classification: 'LEAN',
+        reasoning: 'Texas fair win probability exceeds Caesars implied price',
+        reason_codes: [],
+        missing_inputs: [],
+        projection_source: 'FULL_MODEL',
+        drivers: [{ edge: 0.052, win_prob_home: 0.46 }],
+      },
+    ];
+
+    const { result, dataMocks } = await runImeScenario({
+      snapshot,
+      gameDriverCards,
+      calibrationModelResolver: (sport, marketType) => (
+        sport === 'MLB' && marketType === 'MLB_F5_TOTAL'
+          ? {
+              breakpoints_json: JSON.stringify([
+                { x: 0.7, y: 0.01 },
+                { x: 0.9, y: 0.02 },
+              ]),
+            }
+          : null
+      ),
+      applyCalibrationImpl: (probability, breakpoints) => (
+        Array.isArray(breakpoints) && breakpoints.length > 0
+          ? { calibratedProb: 0.01, calibrationSource: 'isotonic' }
+          : { calibratedProb: probability, calibrationSource: 'raw' }
+      ),
+    });
+
+    expect(result.success).toBe(true);
+    const mlPayload = dataMocks.insertCardPayload.mock.calls
+      .map(([card]) => card.payloadData)
+      .find((payload) => payload.card_type === 'mlb-full-game-ml');
+    const fairAmerican = Math.round((-100 * mlPayload.p_fair) / (1 - mlPayload.p_fair));
+
+    expect(mlPayload).toBeDefined();
+    expect(mlPayload.p_fair).toBeCloseTo(0.54, 6);
+    expect(fairAmerican).toBeGreaterThanOrEqual(-130);
+    expect(fairAmerican).toBeLessThanOrEqual(-110);
+    expect(mlPayload.raw_data.calibration_source).toBe('raw');
+    expect(mlPayload.p_implied).toBeLessThan(mlPayload.p_fair);
+    expect(mlPayload.edge).toBeGreaterThan(0.04);
+  });
+
+  test('applyMlbCalibrationToPayload uses the supported MLB F5 lookup and keeps probability fields in sync', () => {
+    const payload = {
+      card_type: 'mlb-f5',
+      recommended_bet_type: 'total',
+      market_type: 'FIRST_5_INNINGS',
+      p_fair: 0.61,
+      model_prob: 0.61,
+      raw_data: {},
+    };
+    const calibrationStatement = {
+      get: jest.fn(() => ({
+        breakpoints_json: JSON.stringify([
+          { x: 0.55, y: 0.57 },
+          { x: 0.65, y: 0.57 },
+        ]),
+      })),
+    };
+
+    const result = applyMlbCalibrationToPayload(payload, calibrationStatement);
+
+    expect(resolveMlbCalibrationLookup(payload)).toEqual({
+      sport: 'MLB',
+      marketType: 'MLB_F5_TOTAL',
+    });
+    expect(result.calibrated).toBe(true);
+    expect(result.calibrationLookup).toEqual({
+      sport: 'MLB',
+      marketType: 'MLB_F5_TOTAL',
+    });
+    expect(payload.p_fair).toBeCloseTo(0.57, 6);
+    expect(payload.model_prob).toBeCloseTo(0.57, 6);
+    expect(payload.raw_data.calibration_source).toBe('isotonic');
   });
 
   test('full-game MLB payloads surface splits divergence market intel when available', async () => {

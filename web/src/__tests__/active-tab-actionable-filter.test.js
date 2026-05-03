@@ -46,18 +46,17 @@ assert(
 );
 
 assert(
-  filtersSource.includes(
-    'if (play.market === \'NONE\' || play.pick === \'NO PLAY\') return false;',
-  ),
-  'actionable helper should reject NONE market and NO PLAY picks',
+  filtersSource.includes('const canonicalMarket = canonicalToLegacyMarket(play.market_type);') &&
+    filtersSource.includes('if (!canonicalMarket) return false;'),
+  'actionable helper should reject plays with no valid canonical market',
 );
 
 assert(
-  filtersSource.includes('const officialStatus = play.decision_v2?.official_status;') &&
+  filtersSource.includes('const officialStatus = resolveCanonicalOfficialStatus(play);') &&
     filtersSource.includes(
       "return officialStatus === 'PLAY' || officialStatus === 'LEAN';",
     ),
-  'actionable helper should use canonical decision_v2 official status when available',
+  'actionable helper should use canonical official status when available',
 );
 
 assert(
