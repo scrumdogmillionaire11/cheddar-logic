@@ -29,6 +29,27 @@ function runInsert(db, sql, ...params) {
   db.prepare(sql).run(...params);
 }
 
+function buildPayload({
+  sport,
+  officialStatus,
+  marketType,
+  selection,
+  line = null,
+  price = null,
+  executionStatus = 'EXECUTABLE',
+}) {
+  return JSON.stringify({
+    kind: 'PLAY',
+    sport: String(sport || '').toUpperCase(),
+    market_type: marketType,
+    selection,
+    line,
+    price,
+    execution_status: executionStatus,
+    decision_v2: { official_status: officialStatus },
+  });
+}
+
 function seedReportData(db) {
   const now = new Date('2026-03-13T12:00:00.000Z').toISOString();
   const yesterday = new Date('2026-03-12T12:00:00.000Z').toISOString();
@@ -79,16 +100,59 @@ function seedReportData(db) {
     'in_progress',
   );
 
-  const payload = JSON.stringify({ home_team: 'Home A', away_team: 'Away A' });
-  const payloadNhl = JSON.stringify({ home_team: 'Home B', away_team: 'Away B' });
-
   for (const [id, gameId, sport, title, payloadData] of [
-    ['card-a1', finalNba, 'nba', 'NBA eligible pending', payload],
-    ['card-a2', finalNba, 'nba', 'NBA errored mismatch', payload],
-    ['card-b1', finalNhl, 'nhl', 'NHL no display', payloadNhl],
-    ['card-b2', finalNhl, 'nhl', 'NHL missing market key', payloadNhl],
-    ['card-c1', pendingNba, 'nba', 'NBA waiting final', payload],
-    ['card-b3', finalNhl, 'nhl', 'NHL errored 1P', payloadNhl],
+    ['card-a1', finalNba, 'nba', 'NBA eligible pending', buildPayload({
+      sport: 'NBA',
+      officialStatus: 'PLAY',
+      marketType: 'MONEYLINE',
+      selection: 'HOME',
+      price: -110,
+    })],
+    ['card-a2', finalNba, 'nba', 'NBA errored mismatch', buildPayload({
+      sport: 'NBA',
+      officialStatus: 'PLAY',
+      marketType: 'MONEYLINE',
+      selection: 'AWAY',
+      price: -105,
+    })],
+    ['card-b1', finalNhl, 'nhl', 'NHL no display', buildPayload({
+      sport: 'NHL',
+      officialStatus: 'LEAN',
+      marketType: 'MONEYLINE',
+      selection: 'HOME',
+      price: -120,
+    })],
+    ['card-b2', finalNhl, 'nhl', 'NHL missing market key', buildPayload({
+      sport: 'NHL',
+      officialStatus: 'PASS',
+      marketType: 'MONEYLINE',
+      selection: 'HOME',
+      price: -130,
+      executionStatus: 'BLOCKED',
+    })],
+    ['card-c1', pendingNba, 'nba', 'NBA waiting final', buildPayload({
+      sport: 'NBA',
+      officialStatus: 'PLAY',
+      marketType: 'MONEYLINE',
+      selection: 'HOME',
+      price: -115,
+    })],
+    ['card-b3', finalNhl, 'nhl', 'NHL errored 1P', buildPayload({
+      sport: 'NHL',
+      officialStatus: 'PLAY',
+      marketType: 'TOTAL',
+      selection: 'OVER',
+      line: 1.5,
+      price: -110,
+    })],
+    ['card-p1', finalNhl, 'nhl', 'NHL projection only', buildPayload({
+      sport: 'NHL',
+      officialStatus: 'PLAY',
+      marketType: 'TOTAL',
+      selection: 'OVER',
+      line: 5.5,
+      executionStatus: 'PROJECTION_ONLY',
+    })],
   ]) {
     runInsert(
       db,
@@ -387,6 +451,16 @@ describe('settlement health report', () => {
     expect(report.coverage.pendingWithFinalNoDisplay).toBe(1);
     expect(report.coverage.pendingWithFinalMissingMarketKey).toBe(1);
     expect(report.coverage.pendingDisplayedWithoutFinal).toBe(1);
+    expect(report.visibilityIntegrity).toMatchObject({
+      totalRows: 7,
+      actionableRecentRows: 5,
+      counts: {
+        ENROLLED: 4,
+        PROJECTION_ONLY: 1,
+        NOT_DISPLAY_ELIGIBLE: 1,
+        DISPLAY_LOG_NOT_ENROLLED: 1,
+      },
+    });
 
     expect(report.failures.byCode).toEqual(
       expect.arrayContaining([
@@ -407,6 +481,9 @@ describe('settlement health report', () => {
     ]);
     expect(report.samples.pendingDisplayedWithoutFinal).toEqual([
       expect.objectContaining({ cardId: 'card-c1', gameId: 'game-live-nba' }),
+    ]);
+    expect(report.visibilityIntegrity.samples.DISPLAY_LOG_NOT_ENROLLED).toEqual([
+      expect.objectContaining({ cardId: 'card-b1', gameId: 'game-final-nhl' }),
     ]);
 
     expect(report.jobRuns.settle_pending_cards.latestFailure).toMatchObject({
@@ -429,6 +506,7 @@ describe('settlement health report', () => {
 
     const text = formatSettlementHealthReport(report);
     expect(text).toContain('Sport filter: NHL');
+    expect(text).toContain('Visibility integrity');
     expect(text).toContain('Failed settlements by code');
     expect(text).toContain('MISSING_PERIOD_SCORE: 1');
   });

@@ -43,6 +43,7 @@ const { sendDiscordMessages } = require('./post_discord_cards');
 const { SPORTS_CONFIG: ODDS_SPORTS_CONFIG } = require('@cheddar-logic/odds/src/config');
 const { isFeatureEnabled } = require('@cheddar-logic/data/src/feature-flags');
 const { refreshStaleOdds } = require('./refresh_stale_odds');
+const { collectVisibilityIntegrityDiagnostics } = require('./report_settlement_health');
 
 function parseEnvNumber(name, fallback, { min = null, max = null } = {}) {
   const raw = process.env[name];
@@ -152,6 +153,16 @@ const CARD_OUTPUT_DEGRADED_RATE_MAX = parseEnvNumber(
   0.45,
   { min: 0, max: 1 },
 );
+const VISIBILITY_INTEGRITY_LOOKBACK_HOURS = parseEnvNumber(
+  'VISIBILITY_INTEGRITY_LOOKBACK_HOURS',
+  24,
+  { min: 1 },
+);
+const VISIBILITY_INTEGRITY_SAMPLE_LIMIT = parseEnvNumber(
+  'VISIBILITY_INTEGRITY_SAMPLE_LIMIT',
+  5,
+  { min: 1 },
+);
 const DEFAULT_MODEL_JOB_EXPECTED_INTERVAL_MINUTES = parseEnvNumber(
   'MODEL_JOB_EXPECTED_INTERVAL_MINUTES',
   120,
@@ -174,6 +185,9 @@ const CHECK_REGISTRY = Object.freeze({
   },
   card_output_integrity: {
     phase: 'cards', checkName: 'output_integrity', checkId: buildCheckId('cards', 'output_integrity', 'all_sports'),
+  },
+  visibility_integrity: {
+    phase: 'cards', checkName: 'visibility_integrity', checkId: buildCheckId('cards', 'visibility_integrity', 'display_log_enrollment'),
   },
   mlb_f5_market_availability: {
     phase: 'mlb', checkName: 'f5_market_availability', checkId: buildCheckId('mlb', 'market_availability', 'f5'),
@@ -2274,6 +2288,68 @@ function checkCalibrationKillSwitches() {
   }
 }
 
+function buildVisibilityIntegrityAlertMarker({ count, sampleIds, lookbackHours }) {
+  const renderedIds = sampleIds.length > 0 ? sampleIds.join(',') : 'none';
+  return `VISIBILITY_INTEGRITY_ALERT count=${count} lookback_hours=${lookbackHours} sample_ids=${renderedIds}`;
+}
+
+function checkVisibilityIntegrity({
+  lookbackHours = VISIBILITY_INTEGRITY_LOOKBACK_HOURS,
+  sampleLimit = VISIBILITY_INTEGRITY_SAMPLE_LIMIT,
+} = {}) {
+  const db = getDatabase();
+  const now = new Date();
+  const dateRange = {
+    start: new Date(now.getTime() - lookbackHours * 60 * 60 * 1000).toISOString(),
+    end: now.toISOString(),
+  };
+  const diagnostics = collectVisibilityIntegrityDiagnostics(db, {
+    dateRange,
+    sampleLimit,
+  });
+  const missingEnrollmentCount = Number(
+    diagnostics?.counts?.DISPLAY_LOG_NOT_ENROLLED || 0,
+  );
+  const sampleIds = (diagnostics?.samples?.DISPLAY_LOG_NOT_ENROLLED || []).map(
+    (sample) => sample.cardId,
+  );
+
+  if (missingEnrollmentCount > 0) {
+    const marker = buildVisibilityIntegrityAlertMarker({
+      count: missingEnrollmentCount,
+      sampleIds,
+      lookbackHours,
+    });
+    const reason =
+      `${missingEnrollmentCount} display-eligible row(s) created in the last ` +
+      `${lookbackHours}h are missing card_display_log enrollment; sampleIds=` +
+      `${sampleIds.length > 0 ? sampleIds.join(', ') : 'none'}`;
+    console.warn(`[check_pipeline_health] ${marker}`);
+    writePipelineHealth('cards', 'visibility_integrity', 'failed', reason);
+    return {
+      ok: false,
+      reason,
+      missingEnrollmentCount,
+      sampleIds,
+      diagnostics,
+      alertMarker: marker,
+    };
+  }
+
+  const reason =
+    `Visibility integrity OK — no display-eligible rows created in the last ` +
+    `${lookbackHours}h are missing card_display_log enrollment`;
+  writePipelineHealth('cards', 'visibility_integrity', 'ok', reason);
+  return {
+    ok: true,
+    reason,
+    missingEnrollmentCount: 0,
+    sampleIds: [],
+    diagnostics,
+    alertMarker: null,
+  };
+}
+
 /**
  * Returns true only when the current row causes the check to cross the failed
  * streak threshold. Continued failed runs remain persisted in pipeline_health
@@ -2421,7 +2497,12 @@ async function checkWatchdogHeartbeat() {
 /**
  * Main health check runner
  */
-async function checkPipelineHealth({ jobKey, dryRun }) {
+async function checkPipelineHealth({
+  jobKey,
+  dryRun,
+  skipHeartbeat = false,
+  checksOverride = null,
+}) {
 
   if (dryRun) {
     console.log(`[check_pipeline_health] DRY_RUN: ${jobKey}`);
@@ -2434,13 +2515,16 @@ async function checkPipelineHealth({ jobKey, dryRun }) {
   try {
     console.log(`[check_pipeline_health] Running health checks...`);
 
-    await checkWatchdogHeartbeat();
+    if (!skipHeartbeat) {
+      await checkWatchdogHeartbeat();
+    }
 
-    const checks = {
+    const defaultChecks = {
       schedule_freshness: checkScheduleFreshness,
       odds_freshness: checkOddsFreshness,
       cards_freshness: checkCardsFreshness,
       card_output_integrity: checkCardOutputIntegrity,
+      visibility_integrity: () => checkVisibilityIntegrity(),
       mlb_f5_market_availability: checkMlbF5MarketAvailability,
       mlb_game_line_coverage: checkMlbGameLineCoverage,
       mlb_seed_freshness: () => checkMlbSeedFreshness(),
@@ -2479,6 +2563,7 @@ async function checkPipelineHealth({ jobKey, dryRun }) {
         }),
       calibration_kill_switches: checkCalibrationKillSwitches,
     };
+    const checks = checksOverride || defaultChecks;
 
     const results = {};
     let allOk = true;
@@ -2541,7 +2626,16 @@ async function checkPipelineHealth({ jobKey, dryRun }) {
     if (calibrationKillSwitches.length > 0) {
       console.warn(`[check_pipeline_health] CALIB_KILL_SWITCH_ACTIVE: ${calibrationKillSwitches.map((r) => r.market).join(', ')}`);
     }
-    return { allOk, summary, calibrationKillSwitches, calibrationRows };
+    const visibilityIntegrityAlert =
+      Number(results.visibility_integrity?.missingEnrollmentCount || 0) > 0;
+    return {
+      ok: !visibilityIntegrityAlert,
+      allOk,
+      summary,
+      calibrationKillSwitches,
+      calibrationRows,
+      visibilityIntegrity: results.visibility_integrity || null,
+    };
   } catch (error) {
     console.error(`[check_pipeline_health] Error:`, error);
     markJobRunFailure(runId, error.message);
@@ -2615,6 +2709,8 @@ module.exports = {
   checkMlbSeedFreshness,
   checkOddsFreshness,
   checkCalibrationKillSwitches,
+  buildVisibilityIntegrityAlertMarker,
+  checkVisibilityIntegrity,
   checkWatchdogHeartbeat,
   shouldSendAlert,
   buildHealthAlertMessage,
