@@ -29,6 +29,10 @@ const {
 const DEFAULT_SAMPLE_LIMIT = 10;
 const SETTLEMENT_JOB_NAMES = ['settle_game_results', 'settle_pending_cards'];
 const DEFAULT_LOG_DIR = path.resolve(__dirname, '../../../../logs');
+const PROJECTION_ONLY_LINE_SOURCES = new Set([
+  'projection_floor',
+  'synthetic_fallback',
+]);
 
 function parseArgs(argv = process.argv.slice(2)) {
   const options = {
@@ -141,6 +145,211 @@ function toCount(value) {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
+function toUpperToken(value) {
+  if (value === null || value === undefined) return '';
+  return String(value).trim().toUpperCase();
+}
+
+function toLowerToken(value) {
+  if (value === null || value === undefined) return '';
+  return String(value).trim().toLowerCase();
+}
+
+function toFiniteNumberOrNull(value) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function normalizeLegacyDecisionStatus(value) {
+  const status = toUpperToken(value);
+  if (status === 'PLAY' || status === 'FIRE') return 'PLAY';
+  if (status === 'LEAN') return 'LEAN';
+  return '';
+}
+
+function resolveVisibilityOfficialStatus(payloadData) {
+  const decisionV2 =
+    payloadData?.decision_v2 && typeof payloadData.decision_v2 === 'object'
+      ? payloadData.decision_v2
+      : null;
+  const explicitStatus = toUpperToken(decisionV2?.official_status);
+  if (explicitStatus === 'PLAY' || explicitStatus === 'LEAN' || explicitStatus === 'PASS') {
+    return explicitStatus;
+  }
+
+  return normalizeLegacyDecisionStatus(payloadData?.status || payloadData?.action);
+}
+
+function isVisibilityStatusActionable(value) {
+  return value === 'PLAY' || value === 'LEAN';
+}
+
+function normalizeVisibilityMarketType(rawValue) {
+  const token = toUpperToken(rawValue).replace(/[\s-]+/g, '_');
+  if (!token) return '';
+
+  if (token === 'MONEYLINE' || token === 'ML' || token === 'H2H') return 'MONEYLINE';
+  if (token === 'SPREAD' || token === 'PUCKLINE' || token === 'PUCK_LINE') return 'SPREAD';
+  if (
+    token === 'TOTAL' ||
+    token === 'TOTALS' ||
+    token === 'OVER_UNDER' ||
+    token === 'OU' ||
+    token === 'FIRST_PERIOD' ||
+    token === '1P' ||
+    token === 'P1'
+  ) {
+    return 'TOTAL';
+  }
+
+  return token;
+}
+
+function normalizeVisibilityPeriod(rawValue) {
+  const token = toUpperToken(rawValue).replace(/[\s-]+/g, '_');
+  if (!token) return '';
+  if (
+    token === 'FIRST_PERIOD' ||
+    token === '1P' ||
+    token === 'P1' ||
+    token === 'FIRST'
+  ) {
+    return '1P';
+  }
+  if (token === 'FULL_GAME' || token === 'FULLGAME' || token === 'GAME') {
+    return 'FULL_GAME';
+  }
+  return token;
+}
+
+function resolveVisibilityPeriod(payloadData, context = {}) {
+  const explicitPeriod = normalizeVisibilityPeriod(
+    context.period ??
+      payloadData?.period ??
+      payloadData?.time_period ??
+      payloadData?.market?.period ??
+      payloadData?.market_context?.period ??
+      payloadData?.market_context?.wager?.period ??
+      payloadData?.pricing_trace?.period ??
+      payloadData?.decision_v2?.pricing_trace?.period ??
+      null,
+  );
+  if (explicitPeriod) return explicitPeriod;
+
+  const marketType = normalizeVisibilityMarketType(
+    context.marketType ??
+      payloadData?.market_type ??
+      payloadData?.market_context?.market_type ??
+      payloadData?.recommended_bet_type,
+  );
+  if (marketType === 'TOTAL') {
+    const marketToken = toUpperToken(
+      context.marketType ??
+        payloadData?.market_type ??
+        payloadData?.market_context?.market_type ??
+        payloadData?.recommended_bet_type,
+    ).replace(/[\s-]+/g, '_');
+    if (marketToken === 'FIRST_PERIOD' || marketToken === '1P' || marketToken === 'P1') {
+      return '1P';
+    }
+  }
+
+  return 'FULL_GAME';
+}
+
+function extractVisibilityLineSource(payloadData) {
+  return toLowerToken(
+    payloadData?.decision_basis_meta?.market_line_source ??
+      payloadData?.market_context?.wager?.line_source ??
+      payloadData?.pricing_trace?.line_source ??
+      payloadData?.decision_v2?.pricing_trace?.line_source ??
+      payloadData?.line_source ??
+      payloadData?.play?.line_source,
+  );
+}
+
+function isProjectionOnlyPayload(payloadData) {
+  const basis = toUpperToken(
+    payloadData?.decision_basis ??
+      payloadData?.decision_basis_meta?.decision_basis ??
+      payloadData?.basis ??
+      payloadData?.play?.decision_basis,
+  );
+  if (basis === 'PROJECTION_ONLY') return true;
+
+  const executionStatus = toUpperToken(
+    payloadData?.execution_status ??
+      payloadData?.play?.execution_status,
+  );
+  if (executionStatus === 'PROJECTION_ONLY') return true;
+
+  const propDisplayState = toUpperToken(
+    payloadData?.prop_display_state ??
+      payloadData?.play?.prop_display_state,
+  );
+  if (propDisplayState === 'PROJECTION_ONLY') return true;
+
+  const lineSource = extractVisibilityLineSource(payloadData);
+  if (lineSource && PROJECTION_ONLY_LINE_SOURCES.has(lineSource)) return true;
+
+  const tags = Array.isArray(payloadData?.tags) ? payloadData.tags : [];
+  return tags.some((tag) => toLowerToken(tag) === 'no_odds_mode');
+}
+
+function isDisplayEligiblePayload(payloadData, context = {}) {
+  const kind = toUpperToken(payloadData?.kind || 'PLAY');
+  if (kind !== 'PLAY') return false;
+
+  if (isProjectionOnlyPayload(payloadData)) return false;
+
+  const officialStatus = resolveVisibilityOfficialStatus(payloadData);
+  if (!isVisibilityStatusActionable(officialStatus)) return false;
+
+  const sport = toUpperToken(context.sport ?? payloadData?.sport);
+  const marketType = normalizeVisibilityMarketType(
+    context.marketType ??
+      payloadData?.market_type ??
+      payloadData?.market_context?.market_type ??
+      payloadData?.recommended_bet_type,
+  );
+  if (!sport || !marketType) return false;
+
+  const selection = toUpperToken(
+    context.selection ??
+      payloadData?.selection?.side ??
+      payloadData?.selection,
+  );
+  const line =
+    context.line !== undefined
+      ? toFiniteNumberOrNull(context.line)
+      : toFiniteNumberOrNull(payloadData?.line);
+  const price =
+    context.price !== undefined
+      ? toFiniteNumberOrNull(context.price)
+      : toFiniteNumberOrNull(payloadData?.price);
+
+  if (marketType === 'MONEYLINE') {
+    return (selection === 'HOME' || selection === 'AWAY') && price !== null;
+  }
+  if (marketType === 'SPREAD') {
+    return (
+      (selection === 'HOME' || selection === 'AWAY') &&
+      line !== null &&
+      price !== null
+    );
+  }
+  if (marketType === 'TOTAL') {
+    const period = resolveVisibilityPeriod(payloadData, context);
+    return (
+      (selection === 'OVER' || selection === 'UNDER') &&
+      line !== null &&
+      (price !== null || period === '1P')
+    );
+  }
+
+  return false;
+}
+
 function buildCoverageFilters({
   sport = null,
   dateRange = null,
@@ -166,6 +375,145 @@ function buildCoverageFilters({
   return {
     whereSql: whereClauses.length > 0 ? ` AND ${whereClauses.join(' AND ')}` : '',
     params,
+  };
+}
+
+function buildCardPayloadFilters({
+  sport = null,
+  dateRange = null,
+  tableAlias = 'cp',
+  timestampExpression = 'COALESCE(cp.created_at, CURRENT_TIMESTAMP)',
+}) {
+  const whereClauses = [];
+  const params = [];
+
+  if (sport) {
+    whereClauses.push(`UPPER(COALESCE(${tableAlias}.sport, '')) = ?`);
+    params.push(String(sport).toUpperCase());
+  }
+  if (dateRange?.start) {
+    whereClauses.push(`datetime(${timestampExpression}) >= datetime(?)`);
+    params.push(dateRange.start);
+  }
+  if (dateRange?.end) {
+    whereClauses.push(`datetime(${timestampExpression}) <= datetime(?)`);
+    params.push(dateRange.end);
+  }
+
+  return {
+    whereSql: whereClauses.length > 0 ? ` WHERE ${whereClauses.join(' AND ')}` : '',
+    params,
+  };
+}
+
+function classifyVisibilityIntegrityRow(row) {
+  const payloadData = parseJsonObject(row.payload_data) || {};
+  const context = {
+    sport: row.sport,
+    marketType: row.market_type,
+    selection: row.selection,
+    line: row.line,
+    price: row.price,
+  };
+
+  if (isProjectionOnlyPayload(payloadData)) {
+    return {
+      bucket: 'PROJECTION_ONLY',
+      payloadData,
+      displayEligible: false,
+    };
+  }
+
+  const displayEligible = isDisplayEligiblePayload(payloadData, context);
+  if (displayEligible) {
+    return {
+      bucket: row.display_log_pick_id ? 'ENROLLED' : 'DISPLAY_LOG_NOT_ENROLLED',
+      payloadData,
+      displayEligible: true,
+    };
+  }
+
+  return {
+    bucket: 'NOT_DISPLAY_ELIGIBLE',
+    payloadData,
+    displayEligible: false,
+  };
+}
+
+function collectVisibilityIntegrityDiagnostics(db, {
+  sport = null,
+  dateRange = null,
+  sampleLimit = DEFAULT_SAMPLE_LIMIT,
+} = {}) {
+  const limit = Number.isFinite(sampleLimit) && sampleLimit > 0
+    ? Math.trunc(sampleLimit)
+    : DEFAULT_SAMPLE_LIMIT;
+  const filters = buildCardPayloadFilters({
+    sport,
+    dateRange,
+    tableAlias: 'cp',
+    timestampExpression: 'COALESCE(cp.created_at, CURRENT_TIMESTAMP)',
+  });
+  const rows = db.prepare(`
+    SELECT
+      cp.id AS card_id,
+      cp.game_id,
+      cp.sport,
+      cp.card_type,
+      cp.card_title,
+      cp.created_at,
+      cp.payload_data,
+      cdl.pick_id AS display_log_pick_id,
+      cdl.displayed_at
+    FROM card_payloads cp
+    LEFT JOIN card_display_log cdl ON cdl.pick_id = cp.id
+    ${filters.whereSql}
+    ORDER BY datetime(COALESCE(cp.created_at, CURRENT_TIMESTAMP)) DESC, cp.id DESC
+  `).all(...filters.params);
+
+  const counts = {
+    ENROLLED: 0,
+    PROJECTION_ONLY: 0,
+    NOT_DISPLAY_ELIGIBLE: 0,
+    DISPLAY_LOG_NOT_ENROLLED: 0,
+  };
+  const samples = {
+    ENROLLED: [],
+    PROJECTION_ONLY: [],
+    NOT_DISPLAY_ELIGIBLE: [],
+    DISPLAY_LOG_NOT_ENROLLED: [],
+  };
+
+  let actionableRecentRows = 0;
+
+  for (const row of rows) {
+    const classified = classifyVisibilityIntegrityRow(row);
+    counts[classified.bucket] += 1;
+    if (classified.displayEligible) {
+      actionableRecentRows += 1;
+    }
+
+    if (samples[classified.bucket].length < limit) {
+      const officialStatus = resolveVisibilityOfficialStatus(classified.payloadData);
+      samples[classified.bucket].push({
+        cardId: row.card_id,
+        gameId: row.game_id,
+        sport: row.sport,
+        cardType: row.card_type,
+        cardTitle: row.card_title || null,
+        createdAt: row.created_at || null,
+        displayedAt: row.displayed_at || null,
+        officialStatus: officialStatus || null,
+      });
+    }
+  }
+
+  return {
+    auditWindow: dateRange,
+    totalRows: rows.length,
+    actionableRecentRows,
+    counts,
+    samples,
   };
 }
 
@@ -652,6 +1000,11 @@ async function generateSettlementHealthReport({
 
   try {
     const coverage = collectCoverageDiagnostics(reader, resolvedSport, dateRange);
+    const visibilityIntegrity = collectVisibilityIntegrityDiagnostics(reader, {
+      sport: resolvedSport,
+      dateRange,
+      sampleLimit,
+    });
     const failures = collectFailureDiagnostics(reader, {
       sport: resolvedSport,
       dateRange,
@@ -702,12 +1055,19 @@ async function generateSettlementHealthReport({
         hasActionableUnsettledFinalDisplayed:
           coverage.eligiblePendingFinalDisplayed > 0,
         hasFailedSettlements: failures.totalErrored > 0,
+        hasVisibilityIntegrityGaps:
+          visibilityIntegrity.counts.DISPLAY_LOG_NOT_ENROLLED > 0,
         pendingTotal: coverage.totalPending,
         pendingActionableFinalDisplayed: coverage.eligiblePendingFinalDisplayed,
         finalDisplayedUnsettled: coverage.finalDisplayedUnsettled,
         failedSettlementRows: failures.totalErrored,
+        visibilityIntegrityActionableRecentRows:
+          visibilityIntegrity.actionableRecentRows,
+        visibilityIntegrityMissingEnrollment:
+          visibilityIntegrity.counts.DISPLAY_LOG_NOT_ENROLLED,
       },
       coverage,
+      visibilityIntegrity,
       failures,
       samples: blockedSamples,
       jobRuns,
@@ -741,6 +1101,9 @@ function formatSettlementHealthReport(report) {
   );
   lines.push(`- Final displayed unsettled: ${report.summary.finalDisplayedUnsettled}`);
   lines.push(`- Failed settlement rows: ${report.summary.failedSettlementRows}`);
+  lines.push(
+    `- Visibility integrity missing enrollment: ${report.summary.visibilityIntegrityMissingEnrollment}`,
+  );
   lines.push('');
   lines.push('Coverage');
   lines.push(`- totalPending: ${report.coverage.totalPending}`);
@@ -750,6 +1113,21 @@ function formatSettlementHealthReport(report) {
   lines.push(`- pendingWithFinalNoDisplay: ${report.coverage.pendingWithFinalNoDisplay}`);
   lines.push(`- pendingWithFinalMissingMarketKey: ${report.coverage.pendingWithFinalMissingMarketKey}`);
   lines.push(`- pendingDisplayedWithoutFinal: ${report.coverage.pendingDisplayedWithoutFinal}`);
+
+  lines.push('');
+  lines.push('Visibility integrity');
+  lines.push(`- actionableRecentRows: ${report.visibilityIntegrity.actionableRecentRows}`);
+  lines.push(`- ENROLLED: ${report.visibilityIntegrity.counts.ENROLLED}`);
+  lines.push(`- PROJECTION_ONLY: ${report.visibilityIntegrity.counts.PROJECTION_ONLY}`);
+  lines.push(`- NOT_DISPLAY_ELIGIBLE: ${report.visibilityIntegrity.counts.NOT_DISPLAY_ELIGIBLE}`);
+  lines.push(`- DISPLAY_LOG_NOT_ENROLLED: ${report.visibilityIntegrity.counts.DISPLAY_LOG_NOT_ENROLLED}`);
+  if (report.visibilityIntegrity.samples.DISPLAY_LOG_NOT_ENROLLED.length === 0) {
+    lines.push('- DISPLAY_LOG_NOT_ENROLLED samples: none');
+  } else {
+    lines.push(
+      `- DISPLAY_LOG_NOT_ENROLLED samples: ${report.visibilityIntegrity.samples.DISPLAY_LOG_NOT_ENROLLED.map((sample) => sample.cardId).join(', ')}`,
+    );
+  }
 
   lines.push('');
   lines.push('Failed settlements by code');
@@ -818,6 +1196,7 @@ module.exports = {
   collectFailureDiagnostics,
   collectPendingSamples,
   collectSettlementJobRuns,
+  collectVisibilityIntegrityDiagnostics,
   formatSettlementHealthReport,
   generateSettlementHealthReport,
   parseArgs,
@@ -828,10 +1207,23 @@ module.exports = {
     buildCardResultFilters,
     buildCoverageFilters,
     buildDateRange,
+    buildCardPayloadFilters,
+    classifyVisibilityIntegrityRow,
+    extractVisibilityLineSource,
+    isDisplayEligiblePayload,
+    isProjectionOnlyPayload,
+    normalizeLegacyDecisionStatus,
+    normalizeVisibilityMarketType,
+    normalizeVisibilityPeriod,
     normalizeSportFilter,
     normalizeLogFilePath,
     parseJsonObject,
     parsePositiveInteger,
+    resolveVisibilityOfficialStatus,
+    resolveVisibilityPeriod,
+    toFiniteNumberOrNull,
     toLogTimestamp,
+    toLowerToken,
+    toUpperToken,
   },
 };

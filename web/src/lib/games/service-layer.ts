@@ -10,6 +10,28 @@ function hasDisplayableOdds(row: GameRow): boolean {
   );
 }
 
+function isProjectionOnlyPropPlay(play: Play): boolean {
+  return (
+    play.market_type === 'PROP' &&
+    (play.execution_status === 'PROJECTION_ONLY' ||
+      play.status === 'PASS' ||
+      play.action === 'PASS')
+  );
+}
+
+function hasDisplayablePregamePlays(row: GameRow, plays: Play[]): boolean {
+  if (plays.length === 0) return false;
+
+  // NHL prop-only projection rows can manufacture false pregame listings when
+  // a bad schedule row survives briefly without odds. Keep non-prop markets and
+  // bettable prop rows eligible, but fail closed on projection-only prop-only rows.
+  if (String(row.sport || '').toUpperCase() === 'NHL') {
+    return plays.some((play) => !isProjectionOnlyPropPlay(play));
+  }
+
+  return true;
+}
+
 export type GamesServiceRowsResult = {
   responseRows: GameRow[];
   deduplicatedRows: GameRow[];
@@ -26,7 +48,8 @@ export function prepareGamesServiceRows(params: {
     lifecycleMode === 'pregame'
       ? rows.reduce((count, row) => {
           const hasOdds = hasDisplayableOdds(row);
-          const hasPlays = (playsMap.get(row.game_id)?.length ?? 0) > 0;
+          const plays = playsMap.get(row.game_id) ?? [];
+          const hasPlays = hasDisplayablePregamePlays(row, plays);
           const hasIngestFailure = Boolean(row.ingest_failure_reason_code);
           return !hasOdds && !hasPlays && !hasIngestFailure
             ? count + 1
@@ -38,7 +61,8 @@ export function prepareGamesServiceRows(params: {
     lifecycleMode === 'pregame'
       ? rows.filter((row) => {
           const hasOdds = hasDisplayableOdds(row);
-          const hasPlays = (playsMap.get(row.game_id)?.length ?? 0) > 0;
+          const plays = playsMap.get(row.game_id) ?? [];
+          const hasPlays = hasDisplayablePregamePlays(row, plays);
           const hasIngestFailure = Boolean(row.ingest_failure_reason_code);
           return hasOdds || hasPlays || hasIngestFailure;
         })

@@ -163,6 +163,14 @@ function makeFullDb({
         };
       }
 
+      if (
+        s.includes('FROM games g') &&
+        s.includes('LEFT JOIN card_payloads cp') &&
+        s.includes('FROM odds_snapshots o')
+      ) {
+        return { all: jest.fn(() => []) };
+      }
+
       if (s.includes('FROM games g') && s.includes('NOT EXISTS')) {
         return { get: jest.fn(() => ({ cnt: backlogCount })) };
       }

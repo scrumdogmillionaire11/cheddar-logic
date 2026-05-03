@@ -184,6 +184,43 @@ describe('Edge sanity gate (WI-1186)', () => {
     });
   });
 
+  describe('EDGE_SANITY_NON_TOTAL blocks WI-1228 promotion (regression WI-1226)', () => {
+    let buildDecisionV2;
+
+    beforeEach(() => {
+      jest.resetModules();
+      const dp = require('../decision-pipeline-v2');
+      buildDecisionV2 = dp.buildDecisionV2;
+    });
+
+    it('moderate-support high-edge SPREAD lands LEAN and does NOT promote to PLAY', () => {
+      // NBA SPREAD: edge 24% (> 20% sanity threshold), support 0.60 (above lean 0.56, below play 0.68).
+      // classifyPrice returns CHEDDAR + EDGE_SANITY_NON_TOTAL.
+      // computeOfficialStatus yields LEAN (support between lean and play thresholds).
+      // maybePromoteHighEndLean must be blocked by EDGE_SANITY_NON_TOTAL in PROMOTION_BLOCKING_PRICE_REASONS.
+      const payload = buildHighEdgeSpreadPayload({
+        model_prob: 0.764,
+        driver: {
+          score: 0.60,
+          inputs: {
+            pace_tier: 'SLOW',
+            event_env: 'NEUTRAL',
+            event_direction_tag: 'HOME',
+            vol_env: 'MEDIUM',
+            total_bias: 'NONE',
+          },
+        },
+      });
+
+      const result = buildDecisionV2(payload);
+
+      expect(result.official_status).toBe('LEAN');
+      expect(result.price_reason_codes).toContain('EDGE_SANITY_NON_TOTAL');
+      // Promotion must be blocked — LEAN stays LEAN.
+      expect(result.promoted_from).toBeUndefined();
+    });
+  });
+
   describe('Backward compatibility — PENDING_VERIFICATION status', () => {
     let buildDecisionV2;
 
