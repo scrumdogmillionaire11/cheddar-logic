@@ -253,7 +253,7 @@ describe('card_display_log capture for playable rows', () => {
     fs.rmSync(tempDir, { recursive: true, force: true });
   });
 
-  test('logs only PLAY/LEAN rows (not PASS and not EVIDENCE kind)', () => {
+  test('logs only PLAY/Slight Edge rows (not Pass and not EVIDENCE kind)', () => {
     const db = dbModule.getDatabase();
     ensureCoreTables(db);
     const now = new Date().toISOString();
@@ -310,6 +310,27 @@ describe('card_display_log capture for playable rows', () => {
     });
 
     dbModule.insertCardPayload({
+      id: 'card-play',
+      gameId,
+      sport: 'nba',
+      cardType: 'nba-test-play',
+      cardTitle: 'Play card',
+      createdAt: now,
+      payloadData: buildPlayPayload({
+        gameId,
+        sport: 'NBA',
+        homeTeam: 'Home',
+        awayTeam: 'Away',
+        officialStatus: 'PLAY',
+        marketType: 'MONEYLINE',
+        selection: 'AWAY',
+        line: undefined,
+        price: 118,
+      }),
+      runId: 'run-a',
+    });
+
+    dbModule.insertCardPayload({
       id: 'card-lean',
       gameId,
       sport: 'nba',
@@ -332,16 +353,26 @@ describe('card_display_log capture for playable rows', () => {
 
     const rows = db
       .prepare(
-        `SELECT pick_id, market_type, selection, line, odds FROM card_display_log ORDER BY id`,
+        `SELECT pick_id, market_type, selection, line, odds FROM card_display_log ORDER BY pick_id`,
       )
       .all();
 
-    expect(rows).toHaveLength(1);
-    expect(rows[0].pick_id).toBe('card-lean');
-    expect(String(rows[0].market_type).toUpperCase()).toBe('SPREAD');
-    expect(String(rows[0].selection).toUpperCase()).toBe('HOME');
-    expect(rows[0].line).toBe(-2.5);
-    expect(rows[0].odds).toBe(-108);
+    expect(rows).toHaveLength(2);
+    expect(rows.map((row) => row.pick_id)).toEqual(['card-lean', 'card-play']);
+    expect(rows[0]).toMatchObject({
+      pick_id: 'card-lean',
+      market_type: 'SPREAD',
+      selection: 'HOME',
+      line: -2.5,
+      odds: -108,
+    });
+    expect(rows[1]).toMatchObject({
+      pick_id: 'card-play',
+      market_type: 'MONEYLINE',
+      selection: 'AWAY',
+      line: null,
+      odds: 118,
+    });
   });
 
   test('uses strict legacy status fallback only when official_status is absent', () => {
@@ -426,7 +457,7 @@ describe('card_display_log capture for playable rows', () => {
     ]);
   });
 
-  test('enforces one row per run_id + game_id across mixed markets/sides', () => {
+  test('enrolls every eligible row across mixed markets and sides in the same run', () => {
     const db = dbModule.getDatabase();
     ensureCoreTables(db);
     const now = new Date().toISOString();
@@ -487,197 +518,37 @@ describe('card_display_log capture for playable rows', () => {
       runId: 'run-b',
     });
 
-    const row = db
+    const rows = db
       .prepare(
         `
         SELECT pick_id, line, odds, run_id, game_id, market_type, selection
         FROM card_display_log
         WHERE game_id = ?
+        ORDER BY pick_id
         `,
       )
-      .get(gameId);
+      .all(gameId);
 
-    expect(row).toBeDefined();
-    expect(row.pick_id).toBe('card-moneyline-play');
-    expect(row.line).toBeNull();
-    expect(row.odds).toBe(110);
-    expect(row.run_id).toBe('run-b');
-    expect(String(row.market_type).toUpperCase()).toBe('MONEYLINE');
-    expect(String(row.selection).toUpperCase()).toBe('AWAY');
-
-    const totalRows = db
-      .prepare(`SELECT COUNT(*) AS count FROM card_display_log WHERE game_id = ?`)
-      .get(gameId);
-    expect(totalRows.count).toBe(1);
-  });
-
-  test('ranks by confidence x 30-day market performance before edge/support', () => {
-    const db = dbModule.getDatabase();
-    ensureCoreTables(db);
-    const now = new Date().toISOString();
-    const gameId = 'game-rank-perf-1';
-
-    db.prepare(
-      `
-      INSERT INTO games (id, sport, game_id, home_team, away_team, game_time_utc, status)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-    `,
-    ).run('g-rank-1', 'nba', gameId, 'Home', 'Away', now, 'scheduled');
-
-    seedSettledPerformanceRows(db, {
-      sport: 'NBA',
-      marketType: 'SPREAD',
-      wins: 20,
-      losses: 5,
-      prefix: 'spread-high-perf',
-    });
-    seedSettledPerformanceRows(db, {
-      sport: 'NBA',
-      marketType: 'MONEYLINE',
-      wins: 10,
-      losses: 15,
-      prefix: 'moneyline-low-perf',
-    });
-
-    dbModule.insertCardPayload({
-      id: 'card-spread-perf',
-      gameId,
-      sport: 'nba',
-      cardType: 'nba-test-play',
-      cardTitle: 'Spread higher weighted confidence',
-      createdAt: now,
-      payloadData: buildPlayPayload({
-        gameId,
-        sport: 'NBA',
-        homeTeam: 'Home',
-        awayTeam: 'Away',
-        officialStatus: 'PLAY',
-        marketType: 'SPREAD',
-        selection: 'HOME',
-        line: -3.5,
-        price: -110,
-        confidencePct: 60,
-        edgePct: 0.02,
-        supportScore: 40,
-      }),
-      runId: 'run-perf-rank',
-    });
-
-    dbModule.insertCardPayload({
-      id: 'card-moneyline-perf',
-      gameId,
-      sport: 'nba',
-      cardType: 'nba-test-play',
-      cardTitle: 'Moneyline lower weighted confidence',
-      createdAt: now,
-      payloadData: buildPlayPayload({
-        gameId,
-        sport: 'NBA',
-        homeTeam: 'Home',
-        awayTeam: 'Away',
-        officialStatus: 'PLAY',
-        marketType: 'MONEYLINE',
+    expect(rows).toHaveLength(2);
+    expect(rows).toEqual([
+      {
+        pick_id: 'card-moneyline-play',
+        line: null,
+        odds: 110,
+        run_id: 'run-b',
+        game_id: gameId,
+        market_type: 'MONEYLINE',
         selection: 'AWAY',
-        line: undefined,
-        price: 115,
-        confidencePct: 70,
-        edgePct: 0.15,
-        supportScore: 95,
-      }),
-      runId: 'run-perf-rank',
-    });
-
-    const row = db
-      .prepare(
-        `
-        SELECT pick_id, market_type, selection
-        FROM card_display_log
-        WHERE game_id = ? AND run_id = ?
-      `,
-      )
-      .get(gameId, 'run-perf-rank');
-
-    expect(row).toBeDefined();
-    expect(row.pick_id).toBe('card-spread-perf');
-    expect(String(row.market_type).toUpperCase()).toBe('SPREAD');
-    expect(String(row.selection).toUpperCase()).toBe('HOME');
-  });
-
-  test('falls back to decision_v2.edge_delta_pct when ranking display-log candidates', () => {
-    const db = dbModule.getDatabase();
-    ensureCoreTables(db);
-    const now = new Date().toISOString();
-    const gameId = 'game-edge-delta-pct-rank-1';
-
-    db.prepare(
-      `
-      INSERT INTO games (id, sport, game_id, home_team, away_team, game_time_utc, status)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-    `,
-    ).run('g-edge-delta-1', 'nhl', gameId, 'Home', 'Away', now, 'scheduled');
-
-    dbModule.insertCardPayload({
-      id: 'card-edge-delta-low',
-      gameId,
-      sport: 'nhl',
-      cardType: 'nhl-test-play',
-      cardTitle: 'Lower edge delta',
-      createdAt: now,
-      payloadData: buildPlayPayload({
-        gameId,
-        sport: 'NHL',
-        homeTeam: 'Home',
-        awayTeam: 'Away',
-        officialStatus: 'PLAY',
-        marketType: 'TOTAL',
-        selection: 'OVER',
-        line: 5.5,
-        price: -110,
-        confidencePct: 65,
-        edgePct: null,
-        edgeDeltaPct: 0.04,
-        supportScore: 60,
-      }),
-      runId: 'run-edge-delta-rank',
-    });
-
-    dbModule.insertCardPayload({
-      id: 'card-edge-delta-high',
-      gameId,
-      sport: 'nhl',
-      cardType: 'nhl-test-play',
-      cardTitle: 'Higher edge delta',
-      createdAt: now,
-      payloadData: buildPlayPayload({
-        gameId,
-        sport: 'NHL',
-        homeTeam: 'Home',
-        awayTeam: 'Away',
-        officialStatus: 'PLAY',
-        marketType: 'TOTAL',
-        selection: 'UNDER',
-        line: 5.5,
-        price: -110,
-        confidencePct: 65,
-        edgePct: null,
-        edgeDeltaPct: 0.09,
-        supportScore: 60,
-      }),
-      runId: 'run-edge-delta-rank',
-    });
-
-    const row = db
-      .prepare(
-        `
-        SELECT pick_id, selection
-        FROM card_display_log
-        WHERE game_id = ? AND run_id = ?
-      `,
-      )
-      .get(gameId, 'run-edge-delta-rank');
-
-    expect(row).toBeDefined();
-    expect(row.pick_id).toBe('card-edge-delta-high');
-    expect(String(row.selection).toUpperCase()).toBe('UNDER');
+      },
+      {
+        pick_id: 'card-spread-play',
+        line: -4.5,
+        odds: -110,
+        run_id: 'run-b',
+        game_id: gameId,
+        market_type: 'SPREAD',
+        selection: 'HOME',
+      },
+    ]);
   });
 });

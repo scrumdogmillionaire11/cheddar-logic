@@ -477,53 +477,6 @@ function get30DayPerformanceFactor(db, params, cache) {
   return result;
 }
 
-function buildDisplayedPlayRankContext(db, candidate, cache) {
-  const payloadData =
-    candidate?.payloadData && typeof candidate.payloadData === 'object'
-      ? candidate.payloadData
-      : {};
-  const officialStatus = resolveOfficialPlayStatus(payloadData);
-  const statusRank = rankOfficialStatus(officialStatus);
-  const confidencePct = toConfidencePct(payloadData, candidate?.confidencePct);
-  const perf = get30DayPerformanceFactor(
-    db,
-    {
-      sport: candidate?.sport,
-      marketType: candidate?.marketType,
-      anchorIso: candidate?.displayedAt || new Date().toISOString(),
-    },
-    cache,
-  );
-  const weightedConfidence = confidencePct * perf.factor;
-  const edgePct = toSortableNumber(
-    payloadData?.decision_v2?.edge_delta_pct ?? payloadData?.decision_v2?.edge_pct,
-  );
-  const supportScore = toSortableNumber(payloadData?.decision_v2?.support_score);
-  const displayedAtMs = safeTimestampMs(candidate?.displayedAt);
-  const pickId = String(candidate?.pickId || '');
-
-  return {
-    statusRank,
-    weightedConfidence,
-    edgePct,
-    supportScore,
-    displayedAtMs,
-    pickId,
-  };
-}
-
-function compareDisplayedPlayRank(a, b) {
-  if (a.statusRank !== b.statusRank) return a.statusRank - b.statusRank;
-  if (a.weightedConfidence !== b.weightedConfidence) {
-    return a.weightedConfidence - b.weightedConfidence;
-  }
-  if (a.edgePct !== b.edgePct) return a.edgePct - b.edgePct;
-  if (a.supportScore !== b.supportScore) return a.supportScore - b.supportScore;
-  if (a.displayedAtMs !== b.displayedAtMs) return a.displayedAtMs - b.displayedAtMs;
-  if (a.pickId === b.pickId) return 0;
-  return a.pickId > b.pickId ? 1 : -1;
-}
-
 function upsertBestDisplayedPlayLog(db, entry) {
   if (!hasCardDisplayLogTable(db)) return false;
 
@@ -531,26 +484,13 @@ function upsertBestDisplayedPlayLog(db, entry) {
     .prepare(
       `
       SELECT
-        id,
-        pick_id,
-        sport,
-        market_type,
-        line,
-        odds,
-        confidence_pct,
-        displayed_at
+        id
       FROM card_display_log
-      WHERE game_id = ?
-        AND ((? IS NULL AND run_id IS NULL) OR run_id = ?)
-      ORDER BY datetime(displayed_at) DESC, id DESC
+      WHERE pick_id = ?
       LIMIT 1
     `,
     )
-    .get(
-      entry.gameId,
-      entry.runId,
-      entry.runId,
-    );
+    .get(entry.pickId);
 
   if (!existing) {
     db.prepare(
@@ -576,62 +516,6 @@ function upsertBestDisplayedPlayLog(db, entry) {
     );
     return true;
   }
-
-  if (existing.pick_id !== entry.pickId) {
-    const cache = new Map();
-    const existingPayloadRow = db
-      .prepare(
-        `
-        SELECT payload_data
-        FROM card_payloads
-        WHERE id = ?
-        LIMIT 1
-      `,
-      )
-      .get(existing.pick_id);
-
-    let existingPayloadData = {};
-    if (existingPayloadRow?.payload_data) {
-      try {
-        existingPayloadData = JSON.parse(existingPayloadRow.payload_data);
-      } catch {
-        existingPayloadData = {};
-      }
-    }
-
-    const candidateRank = buildDisplayedPlayRankContext(
-      db,
-      {
-        pickId: entry.pickId,
-        sport: entry.sport,
-        marketType: entry.marketType,
-        confidencePct: entry.confidencePct,
-        displayedAt: entry.displayedAt,
-        payloadData: entry.payloadData,
-      },
-      cache,
-    );
-    const existingRank = buildDisplayedPlayRankContext(
-      db,
-      {
-        pickId: existing.pick_id,
-        sport: existing.sport,
-        marketType: existing.market_type,
-        confidencePct: existing.confidence_pct,
-        displayedAt: existing.displayed_at,
-        payloadData: existingPayloadData,
-      },
-      cache,
-    );
-
-    if (compareDisplayedPlayRank(candidateRank, existingRank) <= 0) {
-      return false;
-    }
-  }
-
-  db.prepare(
-    `DELETE FROM card_display_log WHERE pick_id = ? AND id != ?`,
-  ).run(entry.pickId, existing.id);
 
   db.prepare(
     `
