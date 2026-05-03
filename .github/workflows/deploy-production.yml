@@ -115,7 +115,7 @@ jobs:
           username: ${{ secrets.PI_USER }}
           key: ${{ secrets.PI_SSH_KEY }}
           port: 22
-          command_timeout: 20m
+          command_timeout: 28m
           envs: CF_API_TOKEN,CF_ZONE_ID
           script: |
             set -Ee
@@ -932,7 +932,7 @@ jobs:
 
               let response;
               try {
-                response = await fetch(url, { headers: { 'Accept': 'application/json' } });
+                response = await fetch(url, { headers: { 'Accept': 'application/json' }, signal: AbortSignal.timeout(30000) });
               } catch (err) {
                 endpointStats.warnings += 1;
                 warn(`${name} request failed: ${err.message}`);
