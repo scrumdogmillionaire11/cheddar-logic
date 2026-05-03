@@ -1757,9 +1757,11 @@ function buildDecisionV2(payload, context = {}) {
       drivers_used.length > 0 || asString(payload?.driver?.key) !== null;
 
     // Pre-flight: absent drivers is a model signal failure → EDGE_INSUFFICIENT family,
-    // not a market data failure (PRICING_UNAVAILABLE). classifyPrice never sees it.
+    // not a market data failure (PRICING_UNAVAILABLE). Only applies when market data is
+    // present (missingReason=null) and wager is valid, preserving the original
+    // missingReason → exactWagerValid → hasPrimarySupport precedence from classifyPrice.
     let priceDecision;
-    if (!hasPrimarySupport) {
+    if (!hasPrimarySupport && missingReason === null && exact_wager_valid) {
       priceDecision = {
         sharp_price_status: 'NO_SUPPORT',
         price_reason_codes: [PRICE_REASONS.NO_PRIMARY_SUPPORT],
