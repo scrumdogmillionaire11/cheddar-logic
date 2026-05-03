@@ -11,7 +11,7 @@ WorkingDirectory=/opt/cheddar-logic
 Environment="NODE_ENV=production"
 EnvironmentFile=/opt/cheddar-logic/.env.production
 
-ExecStart=/usr/bin/npm --prefix /opt/cheddar-logic/apps/worker run scheduler
+ExecStart=/usr/bin/node /opt/cheddar-logic/apps/worker/src/schedulers/main.js
 
 # Restart policy
 Restart=on-failure
