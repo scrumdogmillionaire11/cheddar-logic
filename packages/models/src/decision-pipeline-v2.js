@@ -176,10 +176,6 @@ const HARD_INVALIDATION_PRICE_REASONS = new Set([
   PRICE_REASONS.EXACT_WAGER_MISMATCH,
   PRICE_REASONS.MARKET_EDGE_UNAVAILABLE,
   PRICE_REASONS.PROXY_EDGE_BLOCKED,
-  // WI-1186: LINE_NOT_CONFIRMED and EDGE_RECHECK_PENDING removed from hard-invalidation set.
-  // These are now gate warnings (emitted in reason_codes) rather than status blockers.
-  // PRICE_SYNC_PENDING remains hard-invalid (external system state unconfirmed).
-  PRICE_REASONS.PRICE_SYNC_PENDING,
 ]);
 const PLAY_CAPPED_PRICE_REASONS = new Set([
   PRICE_REASONS.PLAY_REQUIRES_FRESH_MARKET,

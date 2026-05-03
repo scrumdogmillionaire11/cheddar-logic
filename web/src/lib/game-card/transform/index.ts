@@ -1693,16 +1693,10 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
         ...watchdogReasonCodes,
         ...priceReasonCodes,
         effectiveDecisionV2.primary_reason_code,
-        ...(edgeVerificationBlocked
-          ? ['BLOCKED_BET_VERIFICATION_REQUIRED']
-          : []),
       ]),
     );
     const decisionV2TotalBias = decisionV2.consistency?.total_bias;
     const tags = Array.from(new Set([...(wave1DecisionPlay.tags ?? [])]));
-    if (edgeVerificationBlocked) {
-      tags.push('LINE_NOT_CONFIRMED');
-    }
     if (
       effectiveDecisionV2.proxy_capped === true ||
       priceReasonCodes.includes('PROXY_EDGE_CAPPED') ||
@@ -3110,11 +3104,9 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
       reasonCodesUnique.push('PASS_PROXY_EDGE_SANITY_COMBO');
       finalBet = null;
     } else {
-      // Both triggered but edge is good: degrade to WATCH and block bet for verification
+      // Both triggered but edge is good: degrade to WATCH
       finalDecision = 'WATCH';
       reasonCodesUnique.push('DOWNGRADED_PROXY_EDGE_SANITY_COMBO');
-      reasonCodesUnique.push('BLOCKED_BET_VERIFICATION_REQUIRED');
-      finalBet = null;
     }
   } else if (edgeSanityTriggered) {
     // Edge sanity always removes bet (the gate blocks execution)
@@ -3122,14 +3114,11 @@ function buildPlay(game: GameData, drivers: DriverRow[]): Play {
     if (finalDecision === 'PASS') {
       reasonCodesUnique.push('PASS_EDGE_SANITY_NON_TOTAL');
     } else if (finalDecision === 'WATCH') {
-      // WATCH with edge sanity remains WATCH, but bet is blocked pending verification
       reasonCodesUnique.push('DOWNGRADED_EDGE_SANITY_NON_TOTAL');
-      reasonCodesUnique.push('BLOCKED_BET_VERIFICATION_REQUIRED');
     } else if (finalDecision === 'FIRE') {
-      // FIRE with edge sanity downgrades to WATCH and blocks bet pending verification
+      // FIRE with edge sanity downgrades to WATCH
       finalDecision = 'WATCH';
       reasonCodesUnique.push('DOWNGRADED_EDGE_SANITY_NON_TOTAL');
-      reasonCodesUnique.push('BLOCKED_BET_VERIFICATION_REQUIRED');
     }
   } else if (proxyTriggered) {
     // WI-DECISION-FIX: Proxy cap downgrades tier (FIRE→WATCH) but keeps bet recommendation
