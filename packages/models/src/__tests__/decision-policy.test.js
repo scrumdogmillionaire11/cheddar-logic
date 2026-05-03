@@ -217,9 +217,11 @@ describe('resolveCanonicalPlayState — canonical play-state contract', () => {
     expect(resolveCanonicalPlayState(payload)).toBe('BLOCKED');
   });
 
-  test('1b: LEAN status + NO_PRIMARY_SUPPORT → BLOCKED', () => {
+  test('1b: PASS status + NO_PRIMARY_SUPPORT → BLOCKED', () => {
+    // After WI-1226: NO_PRIMARY_SUPPORT cards produce official_status='PASS' (not LEAN).
+    // resolveCanonicalPlayState still returns BLOCKED because NO_PRIMARY_SUPPORT is a HARD_GATE_CODE.
     const payload = {
-      decision_v2: { official_status: 'LEAN' },
+      decision_v2: { official_status: 'PASS' },
       reason_codes: ['NO_PRIMARY_SUPPORT'],
     };
     expect(resolveCanonicalPlayState(payload)).toBe('BLOCKED');

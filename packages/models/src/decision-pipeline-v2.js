@@ -623,7 +623,6 @@ function classifyPrice({
   impliedProb,
   missingReason = null,
   exactWagerValid = true,
-  hasPrimarySupport = true,
   proxyUsed = false,
   proxyAllowed = false,
 }) {
@@ -641,14 +640,6 @@ function classifyPrice({
     return {
       sharp_price_status: 'UNPRICED',
       price_reason_codes: [PRICE_REASONS.EXACT_WAGER_MISMATCH],
-      proxy_capped: false,
-    };
-  }
-
-  if (!hasPrimarySupport) {
-    return {
-      sharp_price_status: 'UNPRICED',
-      price_reason_codes: [PRICE_REASONS.NO_PRIMARY_SUPPORT],
       proxy_capped: false,
     };
   }
@@ -1000,7 +991,11 @@ function computeOfficialStatus({
   // WI-1186: PENDING_VERIFICATION status is no longer emitted (edge sanity is now a gate).
   // This branch preserved for backward compat with pre-WI-1186 payloads only.
   if (sharpPriceStatus === 'PENDING_VERIFICATION') return 'PASS';
-  if (sharpPriceStatus === 'UNPRICED' || sharpPriceStatus === 'COTTAGE') {
+  if (
+    sharpPriceStatus === 'UNPRICED' ||
+    sharpPriceStatus === 'COTTAGE' ||
+    sharpPriceStatus === 'NO_SUPPORT'
+  ) {
     return 'PASS';
   }
 
@@ -1199,7 +1194,11 @@ function resolvePrimaryReason({
     return priceReasonCodes[0] || PRICE_REASONS.LINE_NOT_CONFIRMED;
   }
 
-  if (sharpPriceStatus === 'UNPRICED' || sharpPriceStatus === 'COTTAGE') {
+  if (
+    sharpPriceStatus === 'UNPRICED' ||
+    sharpPriceStatus === 'COTTAGE' ||
+    sharpPriceStatus === 'NO_SUPPORT'
+  ) {
     return priceReasonCodes[0] || PRICE_REASONS.MARKET_PRICE_MISSING;
   }
 
@@ -1234,6 +1233,7 @@ function resolveTerminalReasonFamily({
   watchdogStatus,
   priceReasonCodes = [],
   primaryReasonCode,
+  sharpPriceStatus = null,
 }) {
   if (officialStatus === 'PLAY' || officialStatus === 'LEAN') {
     return 'PLAY_ELIGIBLE';
@@ -1241,6 +1241,11 @@ function resolveTerminalReasonFamily({
 
   if (watchdogStatus === 'BLOCKED') {
     return 'WATCHDOG_DATA_QUALITY';
+  }
+
+  // NO_SUPPORT = missing model drivers — model signal failure, not market data failure.
+  if (sharpPriceStatus === 'NO_SUPPORT') {
+    return 'EDGE_INSUFFICIENT';
   }
 
   if (priceReasonCodes.includes(PRICE_REASONS.EXACT_WAGER_MISMATCH)) {
@@ -1262,7 +1267,6 @@ function resolveTerminalReasonFamily({
         PRICE_REASONS.MODEL_PROB_MISSING,
         PRICE_REASONS.MARKET_EDGE_UNAVAILABLE,
         PRICE_REASONS.PROXY_EDGE_BLOCKED,
-        PRICE_REASONS.NO_PRIMARY_SUPPORT,
       ].includes(code),
     )
   ) {
@@ -1298,6 +1302,7 @@ function buildCanonicalEnvelopeV2({
   priceReasonCodes = [],
   watchdogReasonCodes = [],
   executionStatus,
+  sharpPriceStatus = null,
 }) {
   const reasonCodes = uniqueReasonCodes(
     primaryReasonCode,
@@ -1311,6 +1316,7 @@ function buildCanonicalEnvelopeV2({
       watchdogStatus,
       priceReasonCodes,
       primaryReasonCode,
+      sharpPriceStatus,
     }),
     primary_reason_code: primaryReasonCode,
     reason_codes: reasonCodes,
@@ -1750,18 +1756,28 @@ function buildDecisionV2(payload, context = {}) {
     const hasPrimarySupport =
       drivers_used.length > 0 || asString(payload?.driver?.key) !== null;
 
-    const priceDecision = classifyPrice({
-      sport,
-      marketType: market_type,
-      edgePct: edge_pct,
-      fairProb: fair_prob,
-      impliedProb: implied_prob,
-      missingReason,
-      exactWagerValid: exact_wager_valid,
-      hasPrimarySupport,
-      proxyUsed: proxy_used,
-      proxyAllowed: proxy_allowed,
-    });
+    // Pre-flight: absent drivers is a model signal failure → EDGE_INSUFFICIENT family,
+    // not a market data failure (PRICING_UNAVAILABLE). classifyPrice never sees it.
+    let priceDecision;
+    if (!hasPrimarySupport) {
+      priceDecision = {
+        sharp_price_status: 'NO_SUPPORT',
+        price_reason_codes: [PRICE_REASONS.NO_PRIMARY_SUPPORT],
+        proxy_capped: false,
+      };
+    } else {
+      priceDecision = classifyPrice({
+        sport,
+        marketType: market_type,
+        edgePct: edge_pct,
+        fairProb: fair_prob,
+        impliedProb: implied_prob,
+        missingReason,
+        exactWagerValid: exact_wager_valid,
+        proxyUsed: proxy_used,
+        proxyAllowed: proxy_allowed,
+      });
+    }
     const proxy_capped = priceDecision.proxy_capped === true;
 
     const computedOfficialStatus = computeOfficialStatus({
@@ -1925,6 +1941,7 @@ function buildDecisionV2(payload, context = {}) {
       watchdogReasonCodes: watchdog.watchdog_reason_codes,
       // Only set execution_status to 'BLOCKED' if watchdog_status is 'BLOCKED', else always 'EXECUTABLE'
       executionStatus: watchdog.watchdog_status === 'BLOCKED' ? 'BLOCKED' : 'EXECUTABLE',
+      sharpPriceStatus: priceDecision.sharp_price_status,
     });
 
     return {
