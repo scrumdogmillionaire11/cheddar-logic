@@ -1876,13 +1876,27 @@ function evaluatePropMarketCandidate({
  */
 function resolveCanonicalGameId(gameId, homeTeam, awayTeam, gameTime, db) {
   try {
-    // Try game_id_map first (explicit mapping)
+    // Try game_id_map first (explicit mapping) using the current schema:
+    // provider + external_game_id -> canonical game_id.
     try {
-      const mapRow = db.prepare(
-        'SELECT canonical_game_id FROM game_id_map WHERE espn_game_id = ? LIMIT 1',
-      ).get(gameId);
-      if (mapRow && mapRow.canonical_game_id) {
-        return mapRow.canonical_game_id;
+      const candidateExternalIds = [String(gameId)];
+      const espnDirectMatch = String(gameId).match(/^espndirect_[a-z]+_(\d+)$/);
+      if (espnDirectMatch?.[1]) {
+        candidateExternalIds.push(espnDirectMatch[1]);
+      }
+
+      for (const externalId of candidateExternalIds) {
+        const mapRow = db.prepare(
+          `SELECT game_id
+           FROM game_id_map
+           WHERE LOWER(sport) = 'nhl'
+             AND provider = 'espn'
+             AND external_game_id = ?
+           LIMIT 1`,
+        ).get(externalId);
+        if (mapRow && mapRow.game_id) {
+          return mapRow.game_id;
+        }
       }
     } catch {
       // game_id_map may not exist — proceed to fallback
@@ -4042,4 +4056,4 @@ if (require.main === module) {
     });
 }
 
-module.exports = { runNHLPlayerShotsModel };
+module.exports = { runNHLPlayerShotsModel, resolveCanonicalGameId };

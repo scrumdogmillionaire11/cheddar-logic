@@ -52,6 +52,7 @@ const {
   checkMlbF5MarketAvailability,
   checkMlbSeedFreshness,
   checkPipelineHealth,
+  checkNhlFalseListingCandidates,
   checkNhlSogSyncFreshness,
   checkNhlBlkSourceIntegrity,
   checkNhlBlkRatesFreshness,
@@ -80,6 +81,7 @@ function makeDb({
   cardOutputIntegrityRow = null,
   invalidBySportRows = [],
   recentInvalidExamples = [],
+  falseListingRows = [],
 } = {}) {
   return {
     prepare: jest.fn((sql) => {
@@ -98,16 +100,6 @@ function makeDb({
       // shouldSendAlert SELECT from pipeline_health
       if (s.includes('FROM pipeline_health') && s.includes('ORDER BY created_at')) {
         return { all: jest.fn(() => pipelineRows) };
-      }
-
-      // settlement backlog: games g WHERE status IN ('final'...) AND NOT EXISTS (game_results)
-      if (s.includes('FROM games g') && s.includes('NOT EXISTS')) {
-        return { get: jest.fn(() => ({ cnt: backlogCount })) };
-      }
-
-      // schedule freshness and model freshness: COUNT(*) FROM games
-      if (s.includes('COUNT(*)') && s.includes('FROM games')) {
-        return { get: jest.fn(() => ({ cnt: scheduleCount })) };
       }
 
       if (s.includes('FROM job_runs') && s.includes('job_key = ?') && s.includes("status = 'success'")) {
@@ -132,6 +124,26 @@ function makeDb({
         return {
           get: jest.fn(() => ({ cnt: nbaMoneylineCardsCount })),
         };
+      }
+
+      if (
+        s.includes('FROM games g') &&
+        s.includes('LEFT JOIN card_payloads cp') &&
+        s.includes('FROM odds_snapshots o')
+      ) {
+        return {
+          all: jest.fn(() => falseListingRows),
+        };
+      }
+
+      // settlement backlog: games g WHERE status IN ('final'...) AND NOT EXISTS (game_results)
+      if (s.includes('FROM games g') && s.includes('NOT EXISTS')) {
+        return { get: jest.fn(() => ({ cnt: backlogCount })) };
+      }
+
+      // schedule freshness and model freshness: COUNT(*) FROM games
+      if (s.includes('COUNT(*)') && s.includes('FROM games')) {
+        return { get: jest.fn(() => ({ cnt: scheduleCount })) };
       }
 
       if (s.includes('FROM card_payloads') && s.includes('COUNT(*) AS total_cards')) {
@@ -730,6 +742,77 @@ describe('checkNhlSogSyncFreshness', () => {
 
     expect(result.ok).toBe(true);
     expect(result.reason).toMatch(/ran successfully/);
+  });
+});
+
+describe('checkNhlFalseListingCandidates', () => {
+  test('returns failed when a future midnight-ET prop-only no-odds row exists', () => {
+    const writes = [];
+    const db = makeDb({
+      falseListingRows: [
+        {
+          game_id: '401869792',
+          home_team: 'COLORADO AVALANCHE',
+          away_team: 'LOS ANGELES KINGS',
+          game_time_utc: '2026-05-04T04:00:00Z',
+          card_count: 8,
+          prop_card_count: 8,
+          non_prop_card_count: 0,
+        },
+      ],
+    });
+    db.prepare = jest.fn((sql) => {
+      const s = sql.replace(/\s+/g, ' ').trim();
+      if (s.includes('INSERT INTO pipeline_health')) {
+        return { run: (...args) => writes.push(args) };
+      }
+      return makeDb({
+        falseListingRows: [
+          {
+            game_id: '401869792',
+            home_team: 'COLORADO AVALANCHE',
+            away_team: 'LOS ANGELES KINGS',
+            game_time_utc: '2026-05-04T04:00:00Z',
+            card_count: 8,
+            prop_card_count: 8,
+            non_prop_card_count: 0,
+          },
+        ],
+      }).prepare(sql);
+    });
+    getDatabase.mockReturnValue(db);
+
+    const result = checkNhlFalseListingCandidates();
+
+    expect(result.ok).toBe(false);
+    expect(result.reason).toContain('NHL_FALSE_LISTING_CANDIDATE');
+    expect(result.reason).toContain('401869792');
+    expect(writes).toHaveLength(1);
+    expect(writes[0][1]).toBe('false_listing_candidates');
+    expect(writes[0][2]).toBe('failed');
+  });
+
+  test('returns ok for normal evening ET no-odds prop-only rows', () => {
+    getDatabase.mockReturnValue(
+      makeDb({
+        falseListingRows: [
+          {
+            game_id: '401869779',
+            home_team: 'TAMPA BAY LIGHTNING',
+            away_team: 'MONTREAL CANADIENS',
+            game_time_utc: '2026-05-03T22:00:00Z',
+            card_count: 8,
+            prop_card_count: 8,
+            non_prop_card_count: 0,
+          },
+        ],
+      }),
+    );
+
+    const result = checkNhlFalseListingCandidates();
+
+    expect(result.ok).toBe(true);
+    expect(result.reason).toMatch(/no future scheduled nhl rows/i);
   });
 });
 

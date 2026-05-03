@@ -196,6 +196,9 @@ const CHECK_REGISTRY = Object.freeze({
   nhl_moneyline_coverage: {
     phase: 'nhl', checkName: 'moneyline_coverage', checkId: buildCheckId('nhl', 'coverage', 'moneyline'),
   },
+  nhl_false_listing_candidates: {
+    phase: 'nhl', checkName: 'false_listing_candidates', checkId: buildCheckId('nhl', 'integrity', 'false_listing_candidates'),
+  },
   nhl_sog_sync_freshness: {
     phase: 'nhl', checkName: 'sog_sync_freshness', checkId: buildCheckId('job', 'freshness', 'sync_nhl_sog_player_ids'),
   },
@@ -1248,6 +1251,95 @@ function checkNhlMoneylineCoverage({ lookaheadHours = 6, lookbackHours = 12 } = 
       nhl_games_with_h2h_odds: h2hGamesCount,
       nhl_moneyline_cards_count: moneylineCardsCount,
       alert_code: null,
+    },
+  };
+}
+
+function isEtMidnightGameTime(value) {
+  if (!value) return false;
+  const normalized = String(value).includes('T')
+    ? String(value)
+    : String(value).replace(' ', 'T');
+  const utcValue = normalized.endsWith('Z') ? normalized : `${normalized}Z`;
+  const dt = DateTime.fromISO(utcValue, { zone: 'utc' });
+  if (!dt.isValid) return false;
+  const et = dt.setZone('America/New_York');
+  return et.hour === 0 && et.minute === 0;
+}
+
+function checkNhlFalseListingCandidates({ lookaheadHours = 36 } = {}) {
+  const db = getDatabase();
+  const nowUtc = DateTime.utc();
+  const endUtc = nowUtc.plus({ hours: lookaheadHours });
+
+  const candidateRows = db
+    .prepare(
+      `SELECT
+         g.game_id,
+         g.home_team,
+         g.away_team,
+         g.game_time_utc,
+         COUNT(cp.id) AS card_count,
+         SUM(CASE WHEN LOWER(cp.card_type) LIKE 'nhl-player-%' THEN 1 ELSE 0 END) AS prop_card_count,
+         SUM(CASE WHEN LOWER(cp.card_type) NOT LIKE 'nhl-player-%' THEN 1 ELSE 0 END) AS non_prop_card_count
+       FROM games g
+       LEFT JOIN card_payloads cp
+         ON cp.game_id = g.game_id
+       WHERE UPPER(g.sport) = 'NHL'
+         AND LOWER(COALESCE(g.status, '')) = 'scheduled'
+         AND datetime(g.game_time_utc) > datetime(?)
+         AND datetime(g.game_time_utc) <= datetime(?)
+         AND NOT EXISTS (
+           SELECT 1
+           FROM odds_snapshots o
+           WHERE o.game_id = g.game_id
+             AND (
+               o.h2h_home IS NOT NULL OR
+               o.h2h_away IS NOT NULL OR
+               o.total IS NOT NULL OR
+               o.spread_home IS NOT NULL OR
+               o.spread_away IS NOT NULL
+             )
+         )
+       GROUP BY g.game_id, g.home_team, g.away_team, g.game_time_utc
+       HAVING COUNT(cp.id) > 0`,
+    )
+    .all(nowUtc.toISO(), endUtc.toISO());
+
+  const suspiciousRows = candidateRows.filter(
+    (row) =>
+      Number(row.non_prop_card_count || 0) === 0 &&
+      isEtMidnightGameTime(row.game_time_utc),
+  );
+
+  if (suspiciousRows.length === 0) {
+    const reason =
+      `NHL false-listing candidates: no future scheduled NHL rows in next ${lookaheadHours}h ` +
+      'with midnight ET start time, prop-only cards, and no displayable odds';
+    writePipelineHealth('nhl', 'false_listing_candidates', 'ok', reason);
+    return {
+      ok: true,
+      reason,
+      diagnostics: { candidate_count: 0, samples: [] },
+    };
+  }
+
+  const samples = suspiciousRows
+    .slice(0, 3)
+    .map(
+      (row) =>
+        `${row.game_id} ${row.away_team} @ ${row.home_team} ${row.game_time_utc}`,
+    );
+  const reason =
+    `NHL_FALSE_LISTING_CANDIDATE: ${suspiciousRows.length} future scheduled NHL row(s) ` +
+    `have midnight ET start time, prop-only cards, and no displayable odds; samples=${samples.join(' | ')}`;
+  writePipelineHealth('nhl', 'false_listing_candidates', 'failed', reason);
+  return {
+    ok: false,
+    reason,
+    diagnostics: {
+      candidate_count: suspiciousRows.length,
+      samples,
     },
   };
 }
@@ -2362,6 +2454,7 @@ async function checkPipelineHealth({ jobKey, dryRun }) {
         }),
       nhl_market_call_diagnostics: checkNhlMarketCallDiagnostics,
       nhl_moneyline_coverage: checkNhlMoneylineCoverage,
+      nhl_false_listing_candidates: checkNhlFalseListingCandidates,
       nhl_sog_sync_freshness: checkNhlSogSyncFreshness,
       nhl_sog_pull_freshness: checkNhlSogPullFreshness,
       nhl_shots_model_freshness: () =>
@@ -2528,6 +2621,7 @@ module.exports = {
   summarizeNhlRejectReasonFamilies,
   checkNhlMarketCallDiagnostics,
   checkNhlMoneylineCoverage,
+  checkNhlFalseListingCandidates,
   summarizeNbaRejectReasonFamilies,
   checkNbaMarketCallDiagnostics,
   checkNbaMoneylineCoverage,

@@ -138,6 +138,7 @@ function buildMockDb({
   teamMetricsRow = null,
   oddsSnapshotRow = null,
   oddsSnapshotRawData = null,
+  gameIdMapRows = {},
 } = {}) {
   return {
     prepare: jest.fn((sql) => {
@@ -173,6 +174,11 @@ function buildMockDb({
       }
       if (s.includes('from team_metrics_cache')) {
         return { get: jest.fn(() => teamMetricsRow) };
+      }
+      if (s.includes('from game_id_map')) {
+        return {
+          get: jest.fn((externalGameId) => gameIdMapRows[externalGameId] ?? null),
+        };
       }
       if (s.includes('from odds_snapshots')) {
         if (oddsSnapshotRow) {
@@ -334,6 +340,44 @@ describe('run_nhl_player_shots_model', () => {
     const sql = String(gamesPrepare[0]).toLowerCase();
     expect(sql).toContain("datetime(game_time_utc) > datetime('now')");
     expect(sql).toContain("datetime(game_time_utc) < datetime('now', '+36 hours')");
+  });
+
+  test('resolveCanonicalGameId uses current game_id_map schema for ESPN numeric IDs', () => {
+    const { mod } = loadFreshModule();
+    const mockDb = buildMockDb({
+      gameIdMapRows: {
+        '401869779': { game_id: 'nhl-canonical-401869779' },
+      },
+    });
+
+    const resolved = mod.resolveCanonicalGameId(
+      '401869779',
+      'Tampa Bay Lightning',
+      'Montreal Canadiens',
+      '2026-05-03T22:00:00Z',
+      mockDb,
+    );
+
+    expect(resolved).toBe('nhl-canonical-401869779');
+  });
+
+  test('resolveCanonicalGameId normalizes espndirect ids before querying game_id_map', () => {
+    const { mod } = loadFreshModule();
+    const mockDb = buildMockDb({
+      gameIdMapRows: {
+        '401869779': { game_id: 'nhl-canonical-401869779' },
+      },
+    });
+
+    const resolved = mod.resolveCanonicalGameId(
+      'espndirect_nhl_401869779',
+      'Tampa Bay Lightning',
+      'Montreal Canadiens',
+      '2026-05-03T22:00:00Z',
+      mockDb,
+    );
+
+    expect(resolved).toBe('nhl-canonical-401869779');
   });
 
   test('uses 10-game lookback for breakout context while keeping 5-game minimum', async () => {
