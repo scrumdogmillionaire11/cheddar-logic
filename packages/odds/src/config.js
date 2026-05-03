@@ -25,7 +25,7 @@
 const SPORTS_CONFIG = {
   NHL: {
     active: true,
-    season: { start: '10-01', end: '04-30' },
+    season: { start: '10-01', end: '06-30' }, // extended to cover NHL playoffs (through ~late June)
     markets: ['totals', 'h2h'],
     tokensPerFetch: 2,
     defaultTTL: 240, // 4 hours standard

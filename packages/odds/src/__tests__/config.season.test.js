@@ -168,9 +168,9 @@ describe('NFL season logic (wrap-around: 09-01 to 02-15)', () => {
   });
 });
 
-// ─── NHL (wrap-around: Oct 1 – Apr 30) ───────────────────────────────────────
+// ─── NHL (wrap-around: Oct 1 – Jun 30, covers regular season + playoffs) ─────
 
-describe('NHL season logic (wrap-around: 10-01 to 04-30)', () => {
+describe('NHL season logic (wrap-around: 10-01 to 06-30)', () => {
   beforeEach(() => {
     SPORTS_CONFIG.NHL.active = true;
   });
@@ -181,6 +181,24 @@ describe('NHL season logic (wrap-around: 10-01 to 04-30)', () => {
   test('January 15 — in season', () => {
     withDate('01-15', () => {
       expect(isInSeason('NHL')).toBe(true);
+    });
+  });
+
+  test('May 3 — in season (NHL playoffs)', () => {
+    withDate('05-03', () => {
+      expect(isInSeason('NHL')).toBe(true);
+    });
+  });
+
+  test('June 30 (last day) — in season (Stanley Cup Finals window)', () => {
+    withDate('06-30', () => {
+      expect(isInSeason('NHL')).toBe(true);
+    });
+  });
+
+  test('July 1 (one day after end) — NOT in season', () => {
+    withDate('07-01', () => {
+      expect(isInSeason('NHL')).toBe(false);
     });
   });
 
