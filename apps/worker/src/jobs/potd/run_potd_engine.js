@@ -90,6 +90,22 @@ function canonicalizeShadowSelection(candidate) {
 
   const marketType = String(candidate?.marketType || '').toUpperCase();
   const selectionLabel = String(candidate?.selectionLabel || '').toUpperCase();
+  const homeTeam = normalizeShadowTeam(candidate?.home_team || candidate?.homeTeam);
+  const awayTeam = normalizeShadowTeam(candidate?.away_team || candidate?.awayTeam);
+
+  // Some providers emit team labels (not HOME/AWAY tokens) for SPREAD/MONEYLINE.
+  // Infer canonical side from team names so near-miss rows still persist.
+  if (marketType === 'SPREAD' || marketType === 'MONEYLINE') {
+    if (explicit && homeTeam && explicit === homeTeam) return 'HOME';
+    if (explicit && awayTeam && explicit === awayTeam) return 'AWAY';
+
+    if (homeTeam && (selectionLabel.startsWith(homeTeam) || selectionLabel.includes(homeTeam))) {
+      return 'HOME';
+    }
+    if (awayTeam && (selectionLabel.startsWith(awayTeam) || selectionLabel.includes(awayTeam))) {
+      return 'AWAY';
+    }
+  }
 
   if (marketType === 'TOTAL') {
     if (selectionLabel.startsWith('OVER')) return 'OVER';
@@ -687,6 +703,8 @@ const SHADOW_REASONS = Object.freeze({
   NOT_SELECTED: 'NOT_SELECTED',
   BELOW_OFFICIAL_EDGE_FLOOR: 'BELOW_OFFICIAL_EDGE_FLOOR',
   BELOW_SCORE_GATE: 'BELOW_SCORE_GATE',
+  NON_MODEL_SOURCE: 'NON_MODEL_SOURCE',
+  EDGE_FORMULA_MISMATCH: 'EDGE_FORMULA_MISMATCH',
 });
 const POTD_EMPTY_SELECTION_REJECTION_CODES = new Set([
   'NO_QUALIFIED_PROPS',
@@ -1400,14 +1418,22 @@ async function gatherBestCandidate({
   const fireableIdentities = new Set(
     fireableSelectorPool.map(c => shadowCandidateIdentity(c)).filter(Boolean),
   );
-  const shadowEligiblePool = playDateScopedCandidates.filter(c =>
-    isModelBackedCandidate(c) &&
+  const broadShadowEligiblePool = playDateScopedCandidates.filter(c =>
     !isSportModelGated(c) &&
     !hasEmptySelectionRejectionCode(c) &&
     isFiniteNumber(c.edgePct) &&
     c.edgePct > 0 &&
-    isFiniteNumber(c.totalScore),
+    isFiniteNumber(c.totalScore) &&
+    Boolean(canonicalizeShadowSelection(c)),
   );
+  const strictShadowEligiblePool = broadShadowEligiblePool.filter(c =>
+    isModelBackedCandidate(c),
+  );
+  // If strict model-backed pool is empty, preserve near-miss visibility with
+  // best available broad pool candidates (consensus/fallback or formula-mismatch).
+  const shadowEligiblePool = strictShadowEligiblePool.length > 0
+    ? strictShadowEligiblePool
+    : broadShadowEligiblePool;
 
   // Fireable candidates take priority within each shadow group: a non-fireable
   // high-edge candidate from the same game/market must not displace a fireable
@@ -1427,6 +1453,10 @@ async function gatherBestCandidate({
     let shadowReason;
     if (identity && fireableIdentities.has(identity)) {
       shadowReason = SHADOW_REASONS.NOT_SELECTED;
+    } else if (c.edgeSourceTag !== 'MODEL') {
+      shadowReason = SHADOW_REASONS.NON_MODEL_SOURCE;
+    } else if (hasEdgeFormulaMismatch(c)) {
+      shadowReason = SHADOW_REASONS.EDGE_FORMULA_MISMATCH;
     } else if (c.edgePct <= noiseFloor) {
       shadowReason = SHADOW_REASONS.BELOW_OFFICIAL_EDGE_FLOOR;
     } else {
