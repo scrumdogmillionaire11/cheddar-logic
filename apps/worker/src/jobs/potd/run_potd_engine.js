@@ -883,6 +883,7 @@ function buildCandidateAuditEntry(candidate, noiseFloor, minScore) {
     confidenceLabel: candidate.confidenceLabel ?? null,
     rejectionDiagnostics: rejectionCodes,
     rejectedReason,
+    promotionAudit: candidate.promotionAudit ?? null,
   };
 }
 
@@ -1401,6 +1402,7 @@ async function gatherBestCandidate({
           scoredCandidates.push({
             ...scored,
             decisionOutcomeStatus: outcomeStatus || null,
+            promotionAudit: modelPayloadRecord?.payload?.decision_v2?.promotion_audit ?? null,
           });
         }
       }

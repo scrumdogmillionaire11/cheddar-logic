@@ -137,12 +137,69 @@ function maybePromoteHighEndEdgeStatus(payload, normalizedStatus) {
     !modelHealthAcceptable ||
     !priceVerified
   ) {
+    // Stamp a structured promotion audit so diagnostic tooling can explain suppression.
+    payload.decision_v2.promotion_audit = {
+      eligible_sport: sport,
+      eligible_market_type: marketType,
+      initial_status: normalizedStatus,
+      promoted: false,
+      gates: {
+        edge_floor: {
+          required: NHL_MONEYLINE_PROMOTION_EDGE_PCT_MIN,
+          actual: isFiniteNumber(edgePct) ? edgePct : null,
+          passed: passesEdgeFloor,
+        },
+        support_score_floor: {
+          required: NHL_MONEYLINE_PROMOTION_SUPPORT_SCORE_MIN,
+          actual: isFiniteNumber(supportScore) ? supportScore : null,
+          passed: passesSupportFloor,
+        },
+        no_hard_blockers: {
+          passed: noHardBlockers,
+        },
+        model_health_acceptable: {
+          passed: modelHealthAcceptable,
+        },
+        price_verified: {
+          passed: priceVerified,
+        },
+      },
+      suppressed_by: [
+        !passesEdgeFloor && 'EDGE_BELOW_FLOOR',
+        !passesSupportFloor && 'SUPPORT_SCORE_BELOW_FLOOR',
+        !noHardBlockers && 'HARD_BLOCKER_PRESENT',
+        !modelHealthAcceptable && 'MODEL_HEALTH_NOT_ACCEPTABLE',
+        !priceVerified && 'PRICE_VERIFICATION_FAILED',
+      ].filter(Boolean),
+    };
     return normalizedStatus;
   }
 
   payload.decision_v2.promoted_from = normalizedStatus;
   payload.decision_v2.promotion_reason_code = HIGH_END_EDGE_PROMOTION_REASON_CODE;
   payload.decision_v2.primary_reason_code = HIGH_END_EDGE_PROMOTION_REASON_CODE;
+  payload.decision_v2.promotion_audit = {
+    eligible_sport: sport,
+    eligible_market_type: marketType,
+    initial_status: normalizedStatus,
+    promoted: true,
+    gates: {
+      edge_floor: {
+        required: NHL_MONEYLINE_PROMOTION_EDGE_PCT_MIN,
+        actual: isFiniteNumber(edgePct) ? edgePct : null,
+        passed: true,
+      },
+      support_score_floor: {
+        required: NHL_MONEYLINE_PROMOTION_SUPPORT_SCORE_MIN,
+        actual: isFiniteNumber(supportScore) ? supportScore : null,
+        passed: true,
+      },
+      no_hard_blockers: { passed: true },
+      model_health_acceptable: { passed: true },
+      price_verified: { passed: true },
+    },
+    suppressed_by: [],
+  };
   const existingReasonCodes = Array.isArray(payload.reason_codes) ? payload.reason_codes : [];
   const existingPriceReasonCodes = Array.isArray(payload.decision_v2.price_reason_codes)
     ? payload.decision_v2.price_reason_codes
