@@ -149,14 +149,110 @@ export function getActiveRunIds(
   }
 }
 
+function buildSafeJsonExtract(payloadExpr: string, path: string): string {
+  return `CASE
+    WHEN json_valid(${payloadExpr}) = 1 THEN json_extract(${payloadExpr}, '${path}')
+    ELSE NULL
+  END`;
+}
+
+function buildSafeJsonText(payloadExpr: string, path: string): string {
+  return `CAST(${buildSafeJsonExtract(payloadExpr, path)} AS TEXT)`;
+}
+
+export function buildMarketIdentityKeyExpression(
+  cardPayloadAlias = 'cp',
+): string {
+  const payloadExpr = `${cardPayloadAlias}.payload_data`;
+  const marketTypeExpr = `UPPER(TRIM(COALESCE(
+    ${buildSafeJsonText(payloadExpr, '$.play.market_type')},
+    ${buildSafeJsonText(payloadExpr, '$.market_type')},
+    ${buildSafeJsonText(payloadExpr, '$.market_context.market_type')},
+    ${buildSafeJsonText(payloadExpr, '$.play.market_context.market_type')},
+    ${buildSafeJsonText(payloadExpr, '$.recommended_bet_type')},
+    ''
+  )))`;
+  const selectionSideExpr = `UPPER(TRIM(COALESCE(
+    ${buildSafeJsonText(payloadExpr, '$.play.selection.side')},
+    ${buildSafeJsonText(payloadExpr, '$.selection.side')},
+    ${buildSafeJsonText(payloadExpr, '$.market_context.selection_side')},
+    ${buildSafeJsonText(payloadExpr, '$.play.market_context.selection_side')},
+    ${buildSafeJsonText(payloadExpr, '$.canonical_envelope_v2.selection_side')},
+    ${buildSafeJsonText(payloadExpr, '$.decision_v2.selection_side')},
+    ${buildSafeJsonText(payloadExpr, '$.prediction')},
+    ''
+  )))`;
+  const lineValueExpr = `TRIM(COALESCE(
+    ${buildSafeJsonText(payloadExpr, '$.play.line')},
+    ${buildSafeJsonText(payloadExpr, '$.line')},
+    ${buildSafeJsonText(payloadExpr, '$.market.line')},
+    ${buildSafeJsonText(payloadExpr, '$.market_context.wager.line')},
+    ${buildSafeJsonText(payloadExpr, '$.play.market_context.wager.line')},
+    ''
+  ))`;
+  const rawPeriodExpr = `UPPER(TRIM(COALESCE(
+    ${buildSafeJsonText(payloadExpr, '$.play.period')},
+    ${buildSafeJsonText(payloadExpr, '$.period')},
+    ${buildSafeJsonText(payloadExpr, '$.time_period')},
+    ${buildSafeJsonText(payloadExpr, '$.market.period')},
+    ${buildSafeJsonText(payloadExpr, '$.market_context.period')},
+    ${buildSafeJsonText(payloadExpr, '$.market_context.wager.period')},
+    ${buildSafeJsonText(payloadExpr, '$.play.market_context.wager.period')},
+    ''
+  )))`;
+  const periodScopeExpr = `CASE
+    WHEN ${rawPeriodExpr} IN ('', 'FG', 'FULL_GAME', 'FULLGAME') THEN 'FG'
+    WHEN ${rawPeriodExpr} IN ('1P', 'P1', 'FIRST_PERIOD', '1ST_PERIOD') THEN '1P'
+    WHEN ${rawPeriodExpr} IN ('F5', 'FIRST_5_INNINGS', 'FIRST5INNINGS') THEN 'F5'
+    ELSE ${rawPeriodExpr}
+  END`;
+  const marketFamilyExpr = `LOWER(TRIM(COALESCE(
+    ${buildSafeJsonText(payloadExpr, '$.play.prop_type')},
+    ${buildSafeJsonText(payloadExpr, '$.prop_type')},
+    ${buildSafeJsonText(payloadExpr, '$.play.canonical_market_key')},
+    ${buildSafeJsonText(payloadExpr, '$.canonical_market_key')},
+    ${cardPayloadAlias}.card_type,
+    ''
+  )))`;
+  const marketSubjectExpr = `LOWER(TRIM(COALESCE(
+    ${buildSafeJsonText(payloadExpr, '$.play.player_id')},
+    ${buildSafeJsonText(payloadExpr, '$.player_id')},
+    ${buildSafeJsonText(payloadExpr, '$.play.player_name')},
+    ${buildSafeJsonText(payloadExpr, '$.player_name')},
+    ${buildSafeJsonText(payloadExpr, '$.play.selection.team_abbr')},
+    ${buildSafeJsonText(payloadExpr, '$.selection.team_abbr')},
+    ${buildSafeJsonText(payloadExpr, '$.play.team_abbr')},
+    ${buildSafeJsonText(payloadExpr, '$.team_abbr')},
+    ${buildSafeJsonText(payloadExpr, '$.team_abbrev')},
+    ${buildSafeJsonText(payloadExpr, '$.market_context.selection_team')},
+    ${buildSafeJsonText(payloadExpr, '$.play.market_context.selection_team')},
+    ${buildSafeJsonText(payloadExpr, '$.canonical_envelope_v2.selection_team')},
+    ''
+  )))`;
+
+  return `(
+    COALESCE(${cardPayloadAlias}.game_id, '')
+    || '|' || ${marketTypeExpr}
+    || '|' || ${selectionSideExpr}
+    || '|' || ${lineValueExpr}
+    || '|' || ${periodScopeExpr}
+    || '|' || ${marketFamilyExpr}
+    || '|' || ${marketSubjectExpr}
+  )`;
+}
+
 // Narrowed settled suppression: exclude only the specific card/market type that
 // settled, not every card in the game. Prevents game-level collateral exclusion.
-export function buildCardTypePreciseSettledPredicate(): string {
+// Default alias contract remains:
+// cr.card_type = cp.card_type
+export function buildCardTypePreciseSettledPredicate(
+  cardPayloadAlias = 'cp',
+): string {
   return `NOT EXISTS (
     SELECT 1
     FROM card_results cr
-    WHERE cr.game_id = cp.game_id
-      AND cr.card_type = cp.card_type
+    WHERE cr.game_id = ${cardPayloadAlias}.game_id
+      AND cr.card_type = ${cardPayloadAlias}.card_type
       AND cr.status = 'settled'
   )`;
 }
@@ -165,14 +261,20 @@ export function buildCardTypePreciseSettledPredicate(): string {
 // no active-run card exists for the same game+card_type. This prevents valid
 // card types from being hidden just because the active run skipped that type.
 // Callers must push activeRunIds TWICE into params (first IN, then inner IN).
-export function buildPerTypeRunScopePredicate(runIdPlaceholders: string): string {
+// Default alias contract remains:
+// inner_cp.card_type = cp.card_type
+export function buildPerTypeRunScopePredicate(
+  runIdPlaceholders: string,
+  cardPayloadAlias = 'cp',
+  innerAlias = 'inner_cp',
+): string {
   return `(
-    cp.run_id IN (${runIdPlaceholders})
+    ${cardPayloadAlias}.run_id IN (${runIdPlaceholders})
     OR NOT EXISTS (
-      SELECT 1 FROM card_payloads inner_cp
-      WHERE inner_cp.game_id = cp.game_id
-        AND inner_cp.card_type = cp.card_type
-        AND inner_cp.run_id IN (${runIdPlaceholders})
+      SELECT 1 FROM card_payloads ${innerAlias}
+      WHERE ${innerAlias}.game_id = ${cardPayloadAlias}.game_id
+        AND ${innerAlias}.card_type = ${cardPayloadAlias}.card_type
+        AND ${innerAlias}.run_id IN (${runIdPlaceholders})
     )
   )`;
 }
