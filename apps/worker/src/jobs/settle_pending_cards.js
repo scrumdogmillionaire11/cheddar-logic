@@ -50,6 +50,27 @@ const SETTLEMENT_PARTIAL_WRITE_CRITICAL = 'SETTLEMENT_PARTIAL_WRITE_CRITICAL';
 const SETTLEMENT_CRITICAL_MISMATCH_UNRESOLVED = 'SETTLEMENT_CRITICAL_MISMATCH_UNRESOLVED';
 const SETTLEMENT_INFO = 'SETTLEMENT_INFO';
 
+const NON_FATAL_SETTLEMENT_ERROR_CODES = new Set([
+  // Data-availability gaps can produce void rows without indicating a write-integrity failure.
+  'MISSING_PERIOD_SCORE',
+  'MISSING_FINAL_SCORE',
+  'FIRST_PERIOD_NOT_FINAL',
+  'MISSING_PERIOD_PLAYER_SHOTS_DATA',
+  'MISSING_PLAYER_SHOTS_DATA',
+  'MISSING_PERIOD_PLAYER_SHOTS_VALUE',
+  'MISSING_PLAYER_SHOTS_VALUE',
+]);
+
+function classifySettlementErrorHealthClass(errorCode) {
+  if (errorCode === 'MARKET_KEY_MISMATCH') {
+    return SETTLEMENT_CRITICAL_MISMATCH_UNRESOLVED;
+  }
+  if (NON_FATAL_SETTLEMENT_ERROR_CODES.has(errorCode)) {
+    return SETTLEMENT_INFO;
+  }
+  return SETTLEMENT_PARTIAL_WRITE_CRITICAL;
+}
+
 function parseLockedPrice(value) {
   if (value === null || value === undefined || value === '') return null;
   const parsed = Number(value);
@@ -2830,10 +2851,7 @@ async function settlePendingCards({
           if (didErrorNow) {
             cardsErrored++;
             healthIssues.push({
-              healthClass:
-                errorCode === 'MARKET_KEY_MISMATCH'
-                  ? SETTLEMENT_CRITICAL_MISMATCH_UNRESOLVED
-                  : SETTLEMENT_PARTIAL_WRITE_CRITICAL,
+              healthClass: classifySettlementErrorHealthClass(errorCode),
               cardId: pendingCard.card_id,
               resultId: pendingCard.result_id,
               message: `Card ${pendingCard.card_id}: ${errorCode} ${settlementErr.message}`,

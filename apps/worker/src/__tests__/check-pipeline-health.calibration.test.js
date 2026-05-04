@@ -167,6 +167,7 @@ describe('visibility integrity health checks', () => {
   let visibilityRows;
   let insertJobRun;
   let markJobRunSuccess;
+  let markJobRunFailure;
 
   beforeEach(() => {
     jest.resetModules();
@@ -174,6 +175,7 @@ describe('visibility integrity health checks', () => {
     visibilityRows = [];
     insertJobRun = jest.fn(() => 1);
     markJobRunSuccess = jest.fn();
+    markJobRunFailure = jest.fn();
 
     const db = {
       prepare: jest.fn((sql) => {
@@ -200,7 +202,7 @@ describe('visibility integrity health checks', () => {
       getDatabase: jest.fn(() => db),
       insertJobRun,
       markJobRunSuccess,
-      markJobRunFailure: jest.fn(),
+      markJobRunFailure,
       createJob: jest.fn(),
       wasJobRecentlySuccessful: jest.fn(() => false),
       writePipelineHealthState: null,
@@ -336,7 +338,8 @@ describe('visibility integrity health checks', () => {
       sampleIds: ['card-miss-1'],
     });
     expect(insertJobRun).toHaveBeenCalled();
-    expect(markJobRunSuccess).toHaveBeenCalled();
+    expect(markJobRunFailure).toHaveBeenCalled();
+    expect(markJobRunSuccess).not.toHaveBeenCalled();
   });
 });
 
