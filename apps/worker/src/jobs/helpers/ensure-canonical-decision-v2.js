@@ -16,6 +16,13 @@
  */
 
 const CANONICAL_DECISION_SOURCE = 'decision_authority';
+const HIGH_END_EDGE_PROMOTION_REASON_CODE = 'HIGH_END_EDGE_PROMOTION';
+const NHL_MONEYLINE_PROMOTION_EDGE_PCT_MIN = Number(
+  process.env.DECISION_V2_NHL_MONEYLINE_PROMOTION_EDGE_PCT_MIN || 0.10,
+);
+const NHL_MONEYLINE_PROMOTION_SUPPORT_SCORE_MIN = Number(
+  process.env.DECISION_V2_NHL_MONEYLINE_PROMOTION_SUPPORT_SCORE_MIN || 0.30,
+);
 
 /**
  * Deduplicate and filter an array of string reason codes.
@@ -34,15 +41,121 @@ function _uniqueReasonCodes(codes = []) {
 
 /**
  * Normalize a raw status string to a canonical DecisionOutcomeStatus token.
- * Returns 'PLAY', 'LEAN', or 'PASS'. Never returns 'INVALID' (caller handles that case).
+ * Returns 'PLAY', 'LEAN', 'SLIGHT_EDGE', or 'PASS'. Never returns 'INVALID' (caller handles that case).
  * @param {string} value
- * @returns {'PLAY'|'LEAN'|'PASS'}
+ * @returns {'PLAY'|'LEAN'|'SLIGHT_EDGE'|'PASS'}
  */
 function normalizeOfficialStatusForDecisionV2(value) {
   const token = String(value || '').toUpperCase();
   if (token === 'PLAY' || token === 'FIRE' || token === 'BASE') return 'PLAY';
+  if (token === 'SLIGHT_EDGE' || token === 'SLIGHT EDGE') return 'SLIGHT_EDGE';
   if (token === 'LEAN' || token === 'WATCH' || token === 'HOLD') return 'LEAN';
   return 'PASS';
+}
+
+function isFiniteNumber(value) {
+  return typeof value === 'number' && Number.isFinite(value);
+}
+
+function firstFiniteNumber(values = []) {
+  for (const value of values) {
+    if (isFiniteNumber(value)) return value;
+  }
+  return null;
+}
+
+function normalizeMarketType(value) {
+  const token = String(value || '').toUpperCase().replace(/\s+/g, '_');
+  if (token === 'MONEYLINE' || token === 'H2H') return 'MONEYLINE';
+  if (token === 'SPREAD') return 'SPREAD';
+  if (token === 'TOTAL') return 'TOTAL';
+  return token;
+}
+
+function hasHardBlockers(payload) {
+  if (!payload || typeof payload !== 'object') return true;
+  const v2 = payload.decision_v2 || {};
+  const reasonCodes = Array.isArray(v2.reason_codes) ? v2.reason_codes : payload.reason_codes;
+  if (Array.isArray(v2.hard_blockers) && v2.hard_blockers.length > 0) return true;
+  if (v2.hard_blocker === true || v2.has_hard_blocker === true) return true;
+  if (Array.isArray(reasonCodes)) {
+    return reasonCodes.some((code) =>
+      String(code || '').toUpperCase().includes('HARD_BLOCKER'));
+  }
+  return false;
+}
+
+function isModelHealthAcceptable(payload) {
+  if (!payload || typeof payload !== 'object') return false;
+  const v2 = payload.decision_v2 || {};
+  if (typeof v2.model_health_ok === 'boolean') return v2.model_health_ok;
+  const status = String(v2.model_health_status || payload.model_health_status || '').toUpperCase();
+  if (!status) return false;
+  return status !== 'CRITICAL' && status !== 'STALE' && status !== 'FAILED';
+}
+
+function isPriceVerificationPassed(payload) {
+  if (!payload || typeof payload !== 'object') return false;
+  const v2 = payload.decision_v2 || {};
+  if (typeof v2.price_verification_passed === 'boolean') return v2.price_verification_passed;
+  const status = String(v2.price_verification_status || payload.price_verification_status || '').toUpperCase();
+  return status === 'PASS' || status === 'PASSED' || status === 'OK';
+}
+
+function maybePromoteHighEndEdgeStatus(payload, normalizedStatus) {
+  if (!payload || typeof payload !== 'object') return normalizedStatus;
+  if (normalizedStatus !== 'LEAN' && normalizedStatus !== 'SLIGHT_EDGE') return normalizedStatus;
+
+  const sport = String(payload.sport || '').toUpperCase();
+  const marketType = normalizeMarketType(
+    payload.decision_v2?.market_type || payload.market_type || payload.recommended_bet_type,
+  );
+  if (sport !== 'NHL' || marketType !== 'MONEYLINE') return normalizedStatus;
+
+  const edgePct = firstFiniteNumber([
+    payload.decision_v2?.edge_pct,
+    payload.edge_pct,
+    payload.edge,
+  ]);
+  const supportScore = firstFiniteNumber([
+    payload.decision_v2?.support_score,
+    payload.support_score,
+    payload.decision_v2?.score,
+  ]);
+
+  const passesEdgeFloor = isFiniteNumber(edgePct) && edgePct >= NHL_MONEYLINE_PROMOTION_EDGE_PCT_MIN;
+  const passesSupportFloor =
+    isFiniteNumber(supportScore) && supportScore >= NHL_MONEYLINE_PROMOTION_SUPPORT_SCORE_MIN;
+  const noHardBlockers = !hasHardBlockers(payload);
+  const modelHealthAcceptable = isModelHealthAcceptable(payload);
+  const priceVerified = isPriceVerificationPassed(payload);
+
+  if (
+    !passesEdgeFloor ||
+    !passesSupportFloor ||
+    !noHardBlockers ||
+    !modelHealthAcceptable ||
+    !priceVerified
+  ) {
+    return normalizedStatus;
+  }
+
+  payload.decision_v2.promoted_from = normalizedStatus;
+  payload.decision_v2.promotion_reason_code = HIGH_END_EDGE_PROMOTION_REASON_CODE;
+  payload.decision_v2.primary_reason_code = HIGH_END_EDGE_PROMOTION_REASON_CODE;
+  const existingReasonCodes = Array.isArray(payload.reason_codes) ? payload.reason_codes : [];
+  const existingPriceReasonCodes = Array.isArray(payload.decision_v2.price_reason_codes)
+    ? payload.decision_v2.price_reason_codes
+    : [];
+  payload.reason_codes = _uniqueReasonCodes([
+    ...existingReasonCodes,
+    HIGH_END_EDGE_PROMOTION_REASON_CODE,
+  ]);
+  payload.decision_v2.price_reason_codes = _uniqueReasonCodes([
+    ...existingPriceReasonCodes,
+    HIGH_END_EDGE_PROMOTION_REASON_CODE,
+  ]);
+  return 'PLAY';
 }
 
 /**
@@ -112,7 +225,8 @@ function ensureCanonicalDecisionV2(payload) {
     return;
   }
 
-  const officialStatus = normalizeOfficialStatusForDecisionV2(rawStatusSource);
+  const initialOfficialStatus = normalizeOfficialStatusForDecisionV2(rawStatusSource);
+  const officialStatus = maybePromoteHighEndEdgeStatus(payload, initialOfficialStatus);
 
   const fallbackReasonCode =
     payload.pass_reason_code ||
