@@ -4,7 +4,9 @@
 
 - Audit captured: `2026-05-03T12:45:00Z`
 - Audit window: `2026-04-25T00:00:00Z` through `2026-05-03T00:00:00Z`
-- Data source: local active DB resolved by the worker (`packages/data/cheddar.db`)
+- Data source: local baseline snapshot resolved by the worker (`packages/data/cheddar.db`)
+  - This artifact is an incident baseline, not a production-authority snapshot.
+  - Production-authority validation must use `CHEDDAR_DB_PATH=/opt/data/cheddar-prod.db`.
 - Classification contract: current worker display-enrollment rules
   - `ENROLLED`: display-eligible `PLAY` / `LEAN` row with `card_display_log`
   - `PROJECTION_ONLY`: payload explicitly marked `PROJECTION_ONLY`

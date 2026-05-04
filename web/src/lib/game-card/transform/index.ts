@@ -1003,7 +1003,8 @@ function isRenderableGameSurfacePlay(game: GameData, play: ApiPlay): boolean {
     !isProjectionOnlyCardPlay(play) &&
     !shouldSuppressNoActionableNonTotalPass(play) &&
     isPlayItem(play, game.sport) &&
-    play.market_type !== 'PROP'
+    play.market_type !== 'PROP' &&
+    play.market_type !== 'INFO'
   );
 }
 
@@ -3636,6 +3637,34 @@ function assertContractInDev(cards: GameCard[]): void {
   }
 
   console.info('[cards-contract-report]', report);
+}
+
+export function getGameExclusionReason(game: GameData): string | null {
+  const hasRenderablePlay = game.plays.some((play) =>
+    isRenderableGameSurfacePlay(game, play),
+  );
+  if (hasRenderablePlay) return null;
+
+  const hasMlbProjectionSurface = game.plays.some((play) =>
+    isMlbProjectionSurfacePlay(play) &&
+    isPlayItem(play, game.sport) &&
+    play.market_type !== 'PROP',
+  );
+  if (hasMlbProjectionSurface) return 'mlb-projection-surface';
+
+  const hasSuppressedNonTotalPass = game.plays.some((play) =>
+    shouldSuppressNoActionableNonTotalPass(play) &&
+    isPlayItem(play, game.sport) &&
+    play.market_type !== 'PROP',
+  );
+  if (hasSuppressedNonTotalPass) return 'suppressed-non-total-pass';
+
+  const hasProjectionOnly = game.plays.some((play) =>
+    isProjectionOnlyGameSurfacePlay(game, play),
+  );
+  if (hasProjectionOnly) return 'projection-only';
+
+  return 'no-renderable-plays';
 }
 
 /**

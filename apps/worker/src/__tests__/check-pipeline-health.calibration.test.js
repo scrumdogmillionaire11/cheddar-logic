@@ -339,3 +339,38 @@ describe('visibility integrity health checks', () => {
     expect(markJobRunSuccess).toHaveBeenCalled();
   });
 });
+
+describe('job runtime exit semantics', () => {
+  let exitSpy;
+  let logSpy;
+  let errorSpy;
+
+  beforeEach(() => {
+    jest.resetModules();
+    exitSpy = jest.spyOn(process, 'exit').mockImplementation(() => {});
+    logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+    errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    exitSpy.mockRestore();
+    logSpy.mockRestore();
+    errorSpy.mockRestore();
+  });
+
+  test('exits non-zero when job result returns ok=false', async () => {
+    const { createJob } = require('../../../../packages/data/src/job-runtime');
+
+    await createJob('check_pipeline_health', async () => ({ ok: false }));
+
+    expect(exitSpy).toHaveBeenCalledWith(1);
+  });
+
+  test('exits zero when job result returns ok=true', async () => {
+    const { createJob } = require('../../../../packages/data/src/job-runtime');
+
+    await createJob('check_pipeline_health', async () => ({ ok: true }));
+
+    expect(exitSpy).toHaveBeenCalledWith(0);
+  });
+});
