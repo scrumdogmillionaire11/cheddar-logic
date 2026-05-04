@@ -1145,7 +1145,7 @@ describe('runPotdEngine', () => {
     expect(playRows).toEqual([{ game_id: playCandidate.gameId }]);
   });
 
-  test('PASS outcomes are always rejected; SLIGHT_EDGE below noise floor does not fire', async () => {
+  test('PASS outcomes are rejected; SLIGHT_EDGE below noise floor is monitored but does not fire', async () => {
     const { runPotdEngine } = require('../run_potd_engine');
 
     const slightEdgeCandidate = buildSelectedCandidate({
@@ -1225,11 +1225,22 @@ describe('runPotdEngine', () => {
 
     expect(result.success).toBe(true);
     expect(result.noPlay).toBe(true);
-    expect(scoreCandidateFn).not.toHaveBeenCalled();
+    expect(scoreCandidateFn).toHaveBeenCalledTimes(1);
+    expect(scoreCandidateFn).toHaveBeenCalledWith(expect.objectContaining({ gameId: slightEdgeCandidate.gameId }));
     expect(readRows('SELECT * FROM potd_plays')).toEqual([]);
+
+    const shadowRows = readRows(
+      'SELECT game_id, shadow_reason FROM potd_shadow_candidates',
+    );
+    expect(shadowRows).toEqual([
+      {
+        game_id: slightEdgeCandidate.gameId,
+        shadow_reason: 'NON_PLAY_DECISION_OUTCOME',
+      },
+    ]);
   });
 
-  test('SLIGHT_EDGE with strong edge does not fire when no PLAY candidates exist', async () => {
+  test('SLIGHT_EDGE with strong edge is monitored in near-miss outputs but never becomes official', async () => {
     const { runPotdEngine } = require('../run_potd_engine');
 
     const ghostCandidate = buildSelectedCandidate({
@@ -1259,6 +1270,8 @@ describe('runPotdEngine', () => {
       },
     });
 
+    const scoreCandidateFn = jest.fn((value) => value);
+
     const result = await runPotdEngine({
       jobKey: 'potd|anti-ghost-no-play',
       force: true,
@@ -1272,7 +1285,7 @@ describe('runPotdEngine', () => {
             }
           : { games: [], errors: [] },
       buildCandidatesFn: () => [ghostCandidate],
-      scoreCandidateFn: (value) => value,
+      scoreCandidateFn,
       selectTopPlaysFn: (values) => values,
       kellySizeFn: () => 2.0,
       sendDiscordMessagesFn: async () => 1,
@@ -1281,7 +1294,18 @@ describe('runPotdEngine', () => {
     expect(result.success).toBe(true);
     expect(result.noPlay).toBe(true);
     expect(result.usedFallbackTier).toBeUndefined();
+    expect(scoreCandidateFn).toHaveBeenCalledTimes(1);
     expect(readRows('SELECT game_id FROM potd_plays')).toEqual([]);
+
+    const shadowRows = readRows(
+      'SELECT game_id, shadow_reason FROM potd_shadow_candidates',
+    );
+    expect(shadowRows).toEqual([
+      {
+        game_id: ghostCandidate.gameId,
+        shadow_reason: 'NON_PLAY_DECISION_OUTCOME',
+      },
+    ]);
   });
 
   test('tiebreak: multiple PLAY outcomes selects highest confidence or deterministic first', async () => {

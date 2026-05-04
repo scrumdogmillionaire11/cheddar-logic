@@ -701,8 +701,10 @@ const POTD_MIN_TOTAL_SCORE = Number(process.env.POTD_MIN_TOTAL_SCORE || 0.30);  
 const POTD_MAX_NOMINEES = Number(process.env.POTD_MAX_NOMINEES || 5);
 const POTD_MAX_NEAR_MISS_SHADOW_CANDIDATES = 3;
 const POTD_MODEL_HEALTH_MAX_AGE_MINUTES = Number(process.env.POTD_MODEL_HEALTH_MAX_AGE_MINUTES || 180);
+const POTD_MONITORED_DECISION_STATUSES = new Set(['PLAY', 'LEAN', 'SLIGHT_EDGE']);
 const SHADOW_REASONS = Object.freeze({
   NOT_SELECTED: 'NOT_SELECTED',
+  NON_PLAY_DECISION_OUTCOME: 'NON_PLAY_DECISION_OUTCOME',
   BELOW_OFFICIAL_EDGE_FLOOR: 'BELOW_OFFICIAL_EDGE_FLOOR',
   BELOW_SCORE_GATE: 'BELOW_SCORE_GATE',
   NON_MODEL_SOURCE: 'NON_MODEL_SOURCE',
@@ -1289,7 +1291,16 @@ function shouldRejectNonPlayDecisionOutcomeCandidate(candidate, decisionOutcome)
   if (!candidate || typeof candidate !== 'object') return false;
   if (resolveEdgeSourceContract(candidate.sport, candidate.marketType) !== 'MODEL') return false;
   if (!resolveModelContractPayloadCardType(candidate.sport, candidate.marketType)) return true;
-  return decisionOutcome?.status !== 'PLAY';
+  const status = String(decisionOutcome?.status || '').toUpperCase();
+  return !POTD_MONITORED_DECISION_STATUSES.has(status);
+}
+
+function isOfficialPlayDecisionOutcomeCandidate(candidate) {
+  if (!candidate || typeof candidate !== 'object') return false;
+  if (resolveEdgeSourceContract(candidate.sport, candidate.marketType) !== 'MODEL') return true;
+  const contractCardType = resolveModelContractPayloadCardType(candidate.sport, candidate.marketType);
+  if (!contractCardType) return false;
+  return String(candidate.decisionOutcomeStatus || '').toUpperCase() === 'PLAY';
 }
 
 async function gatherBestCandidate({
@@ -1382,7 +1393,12 @@ async function gatherBestCandidate({
         }
 
         const scored = scoreCandidateFn(candidate);
-        if (scored) scoredCandidates.push(scored);
+        if (scored) {
+          scoredCandidates.push({
+            ...scored,
+            decisionOutcomeStatus: String(gameDecisionOutcome?.status || '').toUpperCase() || null,
+          });
+        }
       }
     }
   }
@@ -1447,6 +1463,19 @@ async function gatherBestCandidate({
   }
   const fireableSelectorPool = playDateScopedCandidates.filter(c => {
     if (!isModelBackedCandidate(c)) return false;
+    if (!isOfficialPlayDecisionOutcomeCandidate(c)) {
+      if (POTD_AUDIT_LOG_ENABLED) {
+        console.log(JSON.stringify({
+          type: 'POTD_OFFICIAL_PLAY_DECISION_OUTCOME_GATE',
+          sport: c.sport,
+          marketType: c.marketType,
+          selectionLabel: c.selectionLabel,
+          decisionOutcomeStatus: c.decisionOutcomeStatus || null,
+          note: 'Candidate excluded from official POTD selection because DecisionOutcome status is not PLAY',
+        }));
+      }
+      return false;
+    }
     if (isSportModelGated(c)) {
       if (POTD_AUDIT_LOG_ENABLED) {
         console.log(JSON.stringify({
@@ -1530,6 +1559,8 @@ async function gatherBestCandidate({
     let shadowReason;
     if (identity && fireableIdentities.has(identity)) {
       shadowReason = SHADOW_REASONS.NOT_SELECTED;
+    } else if (c.decisionOutcomeStatus && c.decisionOutcomeStatus !== 'PLAY') {
+      shadowReason = SHADOW_REASONS.NON_PLAY_DECISION_OUTCOME;
     } else if (c.edgeSourceTag !== 'MODEL') {
       shadowReason = SHADOW_REASONS.NON_MODEL_SOURCE;
     } else if (hasEdgeFormulaMismatch(c)) {
