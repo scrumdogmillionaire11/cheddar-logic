@@ -715,6 +715,7 @@ export function buildEmptyResultsResponseBody(
                 totalSettled: 0,
                 withPayloadSettled: 0,
                 orphanedSettled: 0,
+                undisplayedSettled: null,
                 displayedFinal: 0,
                 settledFinalDisplayed: 0,
                 missingFinalDisplayed: 0,
