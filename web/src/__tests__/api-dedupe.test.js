@@ -2,21 +2,66 @@
  * API Dedupe Behavior Tests
  *
  * Verifies:
- * 1. Default dedupe returns latest per (game_id, card_type)
+ * 1. Default dedupe returns latest per market identity
  * 2. dedupe=none returns all cards in creation order
- * 3. Behavior is consistent across list and game-specific endpoints
+ * 3. Distinct same-type markets survive default dedupe
  * 4. Timestamp ties are deterministic via id DESC tie-break
  * 5. Run-scoped query safely falls back when active run has no matching rows
  */
 
 import db from '../../../packages/data/src/db.js';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { setupIsolatedTestDb } from './db-test-runtime.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const REPO_ROOT = path.resolve(__dirname, '../../..');
+
+function buildMarketIdentityKeyExpr(alias = 'cp') {
+  return `(
+    COALESCE(${alias}.game_id, '')
+    || '|' || UPPER(TRIM(COALESCE(json_extract(${alias}.payload_data, '$.play.market_type'), json_extract(${alias}.payload_data, '$.market_type'), json_extract(${alias}.payload_data, '$.recommended_bet_type'), '')))
+    || '|' || UPPER(TRIM(COALESCE(json_extract(${alias}.payload_data, '$.play.selection.side'), json_extract(${alias}.payload_data, '$.selection.side'), json_extract(${alias}.payload_data, '$.prediction'), '')))
+    || '|' || TRIM(COALESCE(CAST(json_extract(${alias}.payload_data, '$.play.line') AS TEXT), CAST(json_extract(${alias}.payload_data, '$.line') AS TEXT), ''))
+    || '|' || CASE
+      WHEN UPPER(TRIM(COALESCE(json_extract(${alias}.payload_data, '$.play.period'), json_extract(${alias}.payload_data, '$.period'), ''))) IN ('', 'FG', 'FULL_GAME', 'FULLGAME') THEN 'FG'
+      WHEN UPPER(TRIM(COALESCE(json_extract(${alias}.payload_data, '$.play.period'), json_extract(${alias}.payload_data, '$.period'), ''))) IN ('1P', 'P1', 'FIRST_PERIOD', '1ST_PERIOD') THEN '1P'
+      WHEN UPPER(TRIM(COALESCE(json_extract(${alias}.payload_data, '$.play.period'), json_extract(${alias}.payload_data, '$.period'), ''))) IN ('F5', 'FIRST_5_INNINGS', 'FIRST5INNINGS') THEN 'F5'
+      ELSE UPPER(TRIM(COALESCE(json_extract(${alias}.payload_data, '$.play.period'), json_extract(${alias}.payload_data, '$.period'), '')))
+    END
+    || '|' || LOWER(TRIM(COALESCE(json_extract(${alias}.payload_data, '$.play.prop_type'), json_extract(${alias}.payload_data, '$.prop_type'), json_extract(${alias}.payload_data, '$.play.canonical_market_key'), json_extract(${alias}.payload_data, '$.canonical_market_key'), ${alias}.card_type, '')))
+    || '|' || LOWER(TRIM(COALESCE(CAST(json_extract(${alias}.payload_data, '$.play.player_id') AS TEXT), CAST(json_extract(${alias}.payload_data, '$.player_id') AS TEXT), json_extract(${alias}.payload_data, '$.play.player_name'), json_extract(${alias}.payload_data, '$.player_name'), json_extract(${alias}.payload_data, '$.team_abbr'), '')))
+  )`;
+}
 
 async function runTests() {
   console.log('🧪 Starting API Dedupe Behavior Tests...\n');
   const testRuntime = await setupIsolatedTestDb('api-dedupe');
 
   try {
+    const cardsRouteSource = fs.readFileSync(
+      path.join(REPO_ROOT, 'web/src/app/api/cards/route.ts'),
+      'utf8',
+    );
+    const cardsQuerySource = fs.readFileSync(
+      path.join(REPO_ROOT, 'web/src/lib/cards/query.ts'),
+      'utf8',
+    );
+
+    if (
+      !cardsRouteSource.includes("buildMarketIdentityKeyExpression('cp')") ||
+      !cardsRouteSource.includes('PARTITION BY market_identity_key') ||
+      !cardsQuerySource.includes('export function buildMarketIdentityKeyExpression')
+    ) {
+      console.log(
+        '❌ FAIL: cards route/query do not expose the market_identity_key dedupe contract',
+      );
+      process.exit(1);
+    }
+    console.log('✓ Route/query source uses market_identity_key dedupe\n');
+
     // Initialize database
     const client = db.getDatabase();
 
@@ -65,7 +110,10 @@ async function runTests() {
 
     // Insert three cards for the same game and type with different timestamps
     const payload1 = {
-      prediction: 'AWAY',
+      market_type: 'TOTAL',
+      prediction: 'OVER',
+      selection: { side: 'OVER' },
+      line: 5.5,
       confidence: 0.62,
       meta: {
         is_mock: true,
@@ -75,7 +123,10 @@ async function runTests() {
     };
 
     const payload2 = {
-      prediction: 'HOME',
+      market_type: 'TOTAL',
+      prediction: 'OVER',
+      selection: { side: 'OVER' },
+      line: 5.5,
       confidence: 0.65,
       meta: {
         is_mock: true,
@@ -85,7 +136,10 @@ async function runTests() {
     };
 
     const payload3 = {
-      prediction: 'AWAY',
+      market_type: 'TOTAL',
+      prediction: 'OVER',
+      selection: { side: 'OVER' },
+      line: 5.5,
       confidence: 0.68,
       meta: {
         is_mock: true,
@@ -150,13 +204,17 @@ async function runTests() {
 
     console.log(`✓ Inserted 3 cards for game_id: ${testGameId}\n`);
 
-    // Test 1: Default dedupe (should return only latest)
-    console.log('🧪 Test 1: Default dedupe (latest_per_game_type)');
+    // Test 1: Default dedupe (should return only latest exact market identity)
+    console.log('🧪 Test 1: Default dedupe returns latest exact market identity');
     const dedupeSQL = `
       WITH ranked AS (
-        SELECT *, ROW_NUMBER() OVER (PARTITION BY game_id, card_type ORDER BY created_at DESC, id DESC) AS rn
-        FROM card_payloads
-        WHERE game_id = ? AND sport = ?
+        SELECT cp.*,
+          ROW_NUMBER() OVER (
+            PARTITION BY ${buildMarketIdentityKeyExpr('cp')}
+            ORDER BY cp.created_at DESC, cp.id DESC
+          ) AS rn
+        FROM card_payloads cp
+        WHERE cp.game_id = ? AND cp.sport = ?
       )
       SELECT id, card_title, created_at FROM ranked WHERE rn = 1
     `;
@@ -200,9 +258,23 @@ async function runTests() {
       process.exit(1);
     }
 
-    // Test 3: Different card types should not dedupe together
-    console.log('🧪 Test 3: Different card types do not dedupe together');
-    const altCardType = 'nhl-model-output-alt';
+    // Test 3: Distinct same-type markets should not dedupe together
+    console.log(
+      '🧪 Test 3: Distinct same-type markets survive default dedupe',
+    );
+    const altCardType = cardType;
+    const altPayload = {
+      market_type: 'TOTAL',
+      prediction: 'OVER',
+      selection: { side: 'OVER' },
+      line: 6.5,
+      confidence: 0.58,
+      meta: {
+        is_mock: true,
+        inference_source: 'mock',
+        model_endpoint: null,
+      },
+    };
     client
       .prepare(
         `INSERT INTO card_payloads 
@@ -214,8 +286,8 @@ async function runTests() {
         testGameId,
         sport,
         altCardType,
-        'Alt Card Type',
-        JSON.stringify(payload1),
+        'Alt Total 6.5',
+        JSON.stringify(altPayload),
         card1CreatedAt,
         new Date(now.getTime() + 3600000).toISOString(),
         runId,
@@ -223,12 +295,16 @@ async function runTests() {
 
     const dedupeWithAltSQL = `
       WITH ranked AS (
-        SELECT *, ROW_NUMBER() OVER (PARTITION BY game_id, card_type ORDER BY created_at DESC, id DESC) AS rn
-        FROM card_payloads
-        WHERE game_id = ?
+        SELECT cp.*,
+          ROW_NUMBER() OVER (
+            PARTITION BY ${buildMarketIdentityKeyExpr('cp')}
+            ORDER BY cp.created_at DESC, cp.id DESC
+          ) AS rn
+        FROM card_payloads cp
+        WHERE cp.game_id = ?
       )
-      SELECT id, card_type FROM ranked WHERE rn = 1
-      ORDER BY card_type
+      SELECT id, card_type, card_title FROM ranked WHERE rn = 1
+      ORDER BY created_at DESC, id DESC
     `;
 
     const dedupeWithAltResult = client
@@ -236,21 +312,17 @@ async function runTests() {
       .all(testGameId);
     if (
       dedupeWithAltResult.length === 2 &&
-      dedupeWithAltResult.some(
-        (r) => r.id === card3Id && r.card_type === cardType,
-      ) &&
-      dedupeWithAltResult.some(
-        (r) => r.id === cardAltId && r.card_type === altCardType,
-      )
+      dedupeWithAltResult.some((r) => r.id === card3Id) &&
+      dedupeWithAltResult.some((r) => r.id === cardAltId)
     ) {
-      console.log('✅ PASS: Dedupe respects card_type boundary');
+      console.log('✅ PASS: Distinct same-type lines survive dedupe');
       dedupeWithAltResult.forEach((r) => {
-        console.log(`   ${r.id} (${r.card_type})`);
+        console.log(`   ${r.id} (${r.card_title})`);
       });
       console.log();
     } else {
       console.log(
-        '❌ FAIL: Expected 2 cards (different types), got:',
+        '❌ FAIL: Expected 2 cards (latest 5.5 + separate 6.5 market), got:',
         dedupeWithAltResult,
       );
       process.exit(1);
@@ -298,13 +370,13 @@ async function runTests() {
     const tieDedupeResult = client
       .prepare(
         `WITH ranked AS (
-           SELECT *,
+           SELECT cp.*,
              ROW_NUMBER() OVER (
-               PARTITION BY game_id, card_type
-               ORDER BY created_at DESC, id DESC
+               PARTITION BY ${buildMarketIdentityKeyExpr('cp')}
+               ORDER BY cp.created_at DESC, cp.id DESC
              ) AS rn
-           FROM card_payloads
-           WHERE game_id = ? AND card_type = ?
+           FROM card_payloads cp
+           WHERE cp.game_id = ? AND cp.card_type = ?
          )
          SELECT id FROM ranked WHERE rn = 1`,
       )
@@ -431,7 +503,7 @@ async function runTests() {
       WITH ranked AS (
         SELECT cp.*,
           ROW_NUMBER() OVER (
-            PARTITION BY cp.game_id, cp.card_type
+            PARTITION BY ${buildMarketIdentityKeyExpr('cp')}
             ORDER BY cp.created_at DESC, cp.id DESC
           ) AS rn
         FROM card_payloads cp

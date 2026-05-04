@@ -33,6 +33,9 @@ const PROJECTION_ONLY_LINE_SOURCES = new Set([
   'projection_floor',
   'synthetic_fallback',
 ]);
+const DISPLAY_LOG_NOT_ENROLLED_BUCKET = 'DISPLAY_LOG_NOT_ENROLLED';
+const DISPLAY_LOG_NOT_ENROLLED_REASON =
+  'Missing card_display_log enrollment keeps the row out of surfaced results; diagnostics do not attempt repair writes.';
 
 function parseArgs(argv = process.argv.slice(2)) {
   const options = {
@@ -427,7 +430,7 @@ function classifyVisibilityIntegrityRow(row) {
   const displayEligible = isDisplayEligiblePayload(payloadData, context);
   if (displayEligible) {
     return {
-      bucket: row.display_log_pick_id ? 'ENROLLED' : 'DISPLAY_LOG_NOT_ENROLLED',
+      bucket: row.display_log_pick_id ? 'ENROLLED' : DISPLAY_LOG_NOT_ENROLLED_BUCKET,
       payloadData,
       displayEligible: true,
     };
@@ -437,6 +440,18 @@ function classifyVisibilityIntegrityRow(row) {
     bucket: 'NOT_DISPLAY_ELIGIBLE',
     payloadData,
     displayEligible: false,
+  };
+}
+
+function buildDisplayLogNotEnrolledDiagnostic({
+  count = 0,
+  samples = [],
+} = {}) {
+  return {
+    bucket: DISPLAY_LOG_NOT_ENROLLED_BUCKET,
+    reason: DISPLAY_LOG_NOT_ENROLLED_REASON,
+    count: Number.isFinite(Number(count)) ? Number(count) : 0,
+    samples: Array.isArray(samples) ? samples : [],
   };
 }
 
@@ -475,13 +490,13 @@ function collectVisibilityIntegrityDiagnostics(db, {
     ENROLLED: 0,
     PROJECTION_ONLY: 0,
     NOT_DISPLAY_ELIGIBLE: 0,
-    DISPLAY_LOG_NOT_ENROLLED: 0,
+    [DISPLAY_LOG_NOT_ENROLLED_BUCKET]: 0,
   };
   const samples = {
     ENROLLED: [],
     PROJECTION_ONLY: [],
     NOT_DISPLAY_ELIGIBLE: [],
-    DISPLAY_LOG_NOT_ENROLLED: [],
+    [DISPLAY_LOG_NOT_ENROLLED_BUCKET]: [],
   };
 
   let actionableRecentRows = 0;
@@ -514,6 +529,10 @@ function collectVisibilityIntegrityDiagnostics(db, {
     actionableRecentRows,
     counts,
     samples,
+    displayLogNotEnrolled: buildDisplayLogNotEnrolledDiagnostic({
+      count: counts[DISPLAY_LOG_NOT_ENROLLED_BUCKET],
+      samples: samples[DISPLAY_LOG_NOT_ENROLLED_BUCKET],
+    }),
   };
 }
 
@@ -1056,7 +1075,7 @@ async function generateSettlementHealthReport({
           coverage.eligiblePendingFinalDisplayed > 0,
         hasFailedSettlements: failures.totalErrored > 0,
         hasVisibilityIntegrityGaps:
-          visibilityIntegrity.counts.DISPLAY_LOG_NOT_ENROLLED > 0,
+          visibilityIntegrity.displayLogNotEnrolled.count > 0,
         pendingTotal: coverage.totalPending,
         pendingActionableFinalDisplayed: coverage.eligiblePendingFinalDisplayed,
         finalDisplayedUnsettled: coverage.finalDisplayedUnsettled,
@@ -1064,7 +1083,7 @@ async function generateSettlementHealthReport({
         visibilityIntegrityActionableRecentRows:
           visibilityIntegrity.actionableRecentRows,
         visibilityIntegrityMissingEnrollment:
-          visibilityIntegrity.counts.DISPLAY_LOG_NOT_ENROLLED,
+          visibilityIntegrity.displayLogNotEnrolled.count,
       },
       coverage,
       visibilityIntegrity,
@@ -1120,12 +1139,13 @@ function formatSettlementHealthReport(report) {
   lines.push(`- ENROLLED: ${report.visibilityIntegrity.counts.ENROLLED}`);
   lines.push(`- PROJECTION_ONLY: ${report.visibilityIntegrity.counts.PROJECTION_ONLY}`);
   lines.push(`- NOT_DISPLAY_ELIGIBLE: ${report.visibilityIntegrity.counts.NOT_DISPLAY_ELIGIBLE}`);
-  lines.push(`- DISPLAY_LOG_NOT_ENROLLED: ${report.visibilityIntegrity.counts.DISPLAY_LOG_NOT_ENROLLED}`);
-  if (report.visibilityIntegrity.samples.DISPLAY_LOG_NOT_ENROLLED.length === 0) {
+  lines.push(`- DISPLAY_LOG_NOT_ENROLLED: ${report.visibilityIntegrity.displayLogNotEnrolled.count}`);
+  lines.push(`- DISPLAY_LOG_NOT_ENROLLED reason: ${report.visibilityIntegrity.displayLogNotEnrolled.reason}`);
+  if (report.visibilityIntegrity.displayLogNotEnrolled.samples.length === 0) {
     lines.push('- DISPLAY_LOG_NOT_ENROLLED samples: none');
   } else {
     lines.push(
-      `- DISPLAY_LOG_NOT_ENROLLED samples: ${report.visibilityIntegrity.samples.DISPLAY_LOG_NOT_ENROLLED.map((sample) => sample.cardId).join(', ')}`,
+      `- DISPLAY_LOG_NOT_ENROLLED samples: ${report.visibilityIntegrity.displayLogNotEnrolled.samples.map((sample) => sample.cardId).join(', ')}`,
     );
   }
 
@@ -1193,6 +1213,9 @@ if (require.main === module) {
 }
 
 module.exports = {
+  DISPLAY_LOG_NOT_ENROLLED_BUCKET,
+  DISPLAY_LOG_NOT_ENROLLED_REASON,
+  buildDisplayLogNotEnrolledDiagnostic,
   collectFailureDiagnostics,
   collectPendingSamples,
   collectSettlementJobRuns,

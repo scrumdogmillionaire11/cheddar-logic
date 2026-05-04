@@ -55,6 +55,9 @@ import {
 import {
   ACTIVE_EXCLUDED_STATUSES,
   buildBettingSurfacePayloadPredicate,
+  buildCardTypePreciseSettledPredicate,
+  buildMarketIdentityKeyExpression,
+  buildPerTypeRunScopePredicate,
   clampNumber,
   getActiveRunIds,
   getRunStatus,
@@ -150,27 +153,22 @@ export async function GET(
     const currentRunId = activeRunIds[0] ?? null;
     const runStatus = getRunStatus(db, currentRunId);
 
-    const baseWhere: string[] = ['game_id = ?'];
+    const baseWhere: string[] = ['cp.game_id = ?'];
     const baseParams: Array<string | number> = [gameId];
 
     if (cardType) {
-      baseWhere.push('card_type = ?');
+      baseWhere.push('cp.card_type = ?');
       baseParams.push(cardType);
     }
 
     // Exclude FPL cards - they are served from cheddar-fpl-sage backend
-    baseWhere.push("sport != 'FPL'");
+    baseWhere.push("LOWER(cp.sport) != 'fpl'");
     baseWhere.push(
-      `(LOWER(card_type) IN (${PROJECTION_SURFACE_CARD_TYPES_SQL}) OR ${buildBettingSurfacePayloadPredicate('card_payloads.payload_data')})`,
+      `(LOWER(cp.card_type) IN (${PROJECTION_SURFACE_CARD_TYPES_SQL}) OR ${buildBettingSurfacePayloadPredicate('cp.payload_data')})`,
     );
-    baseWhere.push(`NOT EXISTS (
-      SELECT 1
-      FROM card_results cr
-      WHERE cr.game_id = card_payloads.game_id
-        AND cr.status = 'settled'
-    )`);
+    baseWhere.push(buildCardTypePreciseSettledPredicate('cp'));
     if (!ENABLE_WELCOME_HOME) {
-      baseWhere.push("card_type NOT IN ('welcome-home', 'welcome-home-v2')");
+      baseWhere.push("cp.card_type NOT IN ('welcome-home', 'welcome-home-v2')");
     }
 
     // Apply lifecycle filtering if enabled and lifecycle=active is requested
@@ -183,10 +181,10 @@ export async function GET(
         .toISOString()
         .substring(0, 19)
         .replace('T', ' ');
-      baseWhere.push(`UPPER(COALESCE((SELECT status FROM games WHERE game_id = card_payloads.game_id), '')) NOT IN (${ACTIVE_EXCLUDED_STATUSES.map(
+      baseWhere.push(`UPPER(COALESCE(g.status, '')) NOT IN (${ACTIVE_EXCLUDED_STATUSES.map(
         (status) => `'${status}'`,
       ).join(', ')})`);
-      baseWhere.push(`datetime((SELECT game_time_utc FROM games WHERE game_id = card_payloads.game_id)) <= datetime(?)`);
+      baseWhere.push(`datetime(g.game_time_utc) <= datetime(?)`);
       baseParams.push(nowSql);
     }
 
@@ -194,28 +192,37 @@ export async function GET(
     const runScopedParams = [...baseParams];
     if (activeRunIds.length > 0) {
       const runIdPlaceholders = activeRunIds.map(() => '?').join(', ');
-      runScopedWhere.push(`run_id IN (${runIdPlaceholders})`);
-      runScopedParams.push(...activeRunIds);
+      runScopedWhere.push(
+        buildPerTypeRunScopePredicate(runIdPlaceholders, 'cp', 'inner_cp'),
+      );
+      runScopedParams.push(...activeRunIds, ...activeRunIds);
     }
 
     const dedupeMode = dedupe === 'none' ? 'none' : 'latest_per_game_type';
     const buildSql = (whereSql: string) =>
       dedupeMode === 'none'
         ? `
-        SELECT * FROM card_payloads
+        SELECT cp.* FROM card_payloads cp
+        LEFT JOIN games g ON cp.game_id = g.game_id
         WHERE ${whereSql}
-        ORDER BY created_at DESC, id DESC
+        ORDER BY cp.created_at DESC, cp.id DESC
         LIMIT ? OFFSET ?
       `
         : `
-        WITH ranked AS (
+        WITH filtered AS (
+          SELECT cp.*,
+            ${buildMarketIdentityKeyExpression('cp')} AS market_identity_key
+          FROM card_payloads cp
+          LEFT JOIN games g ON cp.game_id = g.game_id
+          WHERE ${whereSql}
+        ),
+        ranked AS (
           SELECT *,
             ROW_NUMBER() OVER (
-              PARTITION BY game_id, card_type
+              PARTITION BY market_identity_key
               ORDER BY created_at DESC, id DESC
             ) AS rn
-          FROM card_payloads
-          WHERE ${whereSql}
+          FROM filtered
         )
         SELECT * FROM ranked
         WHERE rn = 1

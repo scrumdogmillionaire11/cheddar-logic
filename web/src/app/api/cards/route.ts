@@ -60,6 +60,7 @@ import {
   ACTIVE_EXCLUDED_STATUSES,
   buildBettingSurfacePayloadPredicate,
   buildCardTypePreciseSettledPredicate,
+  buildMarketIdentityKeyExpression,
   buildPerTypeRunScopePredicate,
   buildSimplifiedGateWhere,
   clampNumber,
@@ -583,16 +584,21 @@ export async function GET(request: NextRequest) {
         LIMIT ? OFFSET ?
       `
         : `
-        WITH ranked AS (
+        WITH filtered AS (
           SELECT cp.*,
             g.game_time_utc,
-            ROW_NUMBER() OVER (
-              PARTITION BY cp.game_id, cp.card_type
-              ORDER BY cp.created_at DESC, cp.id DESC
-            ) AS rn
+            ${buildMarketIdentityKeyExpression('cp')} AS market_identity_key
           FROM card_payloads cp
           LEFT JOIN games g ON cp.game_id = g.game_id
           ${whereSql}
+        ),
+        ranked AS (
+          SELECT cp.*,
+            ROW_NUMBER() OVER (
+              PARTITION BY market_identity_key
+              ORDER BY created_at DESC, id DESC
+            ) AS rn
+          FROM filtered cp
         )
         SELECT * FROM ranked
         WHERE rn = 1

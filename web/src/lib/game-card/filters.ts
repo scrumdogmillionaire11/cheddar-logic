@@ -27,6 +27,15 @@ const ENABLE_WELCOME_HOME =
 
 
 /**
+ * Per-row data quality state surfaced by /api/games.
+ * Consumers should check this before trusting odds or plays.
+ *   healthy  — full fresh response
+ *   degraded — timeout fallback; plays absent, base game data only
+ *   stale    — served from in-memory cache; all fields reflect a prior snapshot
+ */
+export type ApiGameState = 'healthy' | 'stale' | 'degraded';
+
+/**
  * Sort modes for game cards
  */
 export type SortMode =
