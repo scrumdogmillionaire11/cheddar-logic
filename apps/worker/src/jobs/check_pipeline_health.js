@@ -45,6 +45,9 @@ const { isFeatureEnabled } = require('@cheddar-logic/data/src/feature-flags');
 const { refreshStaleOdds } = require('./refresh_stale_odds');
 const { collectVisibilityIntegrityDiagnostics } = require('./report_settlement_health');
 
+const WATCHDOG_CRITICAL_BREACH = 'WATCHDOG_CRITICAL_BREACH';
+const WATCHDOG_INFO = 'WATCHDOG_INFO';
+
 function parseEnvNumber(name, fallback, { min = null, max = null } = {}) {
   const raw = process.env[name];
   if (raw === undefined || raw === null || String(raw).trim() === '') return fallback;
@@ -168,12 +171,19 @@ const DEFAULT_MODEL_JOB_EXPECTED_INTERVAL_MINUTES = parseEnvNumber(
   120,
   { min: 1 },
 );
+const SCHEDULED_GAME_CARD_COVERAGE_LOOKAHEAD_HOURS = 6;
+const SCHEDULED_GAME_CARD_COVERAGE_START_BUFFER_MINUTES = 15;
+const SCHEDULED_GAME_CARD_COVERAGE_FAIL_THRESHOLD = 0.50;
+const SCHEDULED_GAME_CARD_COVERAGE_WARN_THRESHOLD = 0.80;
 
 function buildCheckId(domain, name, scope) {
   return `${domain}:${name}:${scope}`;
 }
 
 const CHECK_REGISTRY = Object.freeze({
+  watchdog_heartbeat: {
+    phase: 'watchdog', checkName: 'heartbeat', checkId: buildCheckId('watchdog', 'heartbeat', 'global'),
+  },
   schedule_freshness: {
     phase: 'schedule', checkName: 'freshness', checkId: buildCheckId('schedule', 'freshness', 'global'),
   },
@@ -195,6 +205,9 @@ const CHECK_REGISTRY = Object.freeze({
   mlb_game_line_coverage: {
     phase: 'mlb', checkName: 'game_line_coverage', checkId: buildCheckId('mlb', 'coverage', 'game_line'),
   },
+  mlb_scheduled_game_card_coverage: {
+    phase: 'mlb', checkName: 'scheduled_game_card_coverage', checkId: buildCheckId('mlb', 'coverage', 'scheduled_game_card'),
+  },
   mlb_seed_freshness: {
     phase: 'mlb', checkName: 'seed_freshness', checkId: buildCheckId('mlb', 'freshness', 'seed'),
   },
@@ -209,6 +222,9 @@ const CHECK_REGISTRY = Object.freeze({
   },
   nhl_moneyline_coverage: {
     phase: 'nhl', checkName: 'moneyline_coverage', checkId: buildCheckId('nhl', 'coverage', 'moneyline'),
+  },
+  nhl_scheduled_game_card_coverage: {
+    phase: 'nhl', checkName: 'scheduled_game_card_coverage', checkId: buildCheckId('nhl', 'coverage', 'scheduled_game_card'),
   },
   nhl_false_listing_candidates: {
     phase: 'nhl', checkName: 'false_listing_candidates', checkId: buildCheckId('nhl', 'integrity', 'false_listing_candidates'),
@@ -239,6 +255,9 @@ const CHECK_REGISTRY = Object.freeze({
   },
   nba_moneyline_coverage: {
     phase: 'nba', checkName: 'moneyline_coverage', checkId: buildCheckId('nba', 'coverage', 'moneyline'),
+  },
+  nba_scheduled_game_card_coverage: {
+    phase: 'nba', checkName: 'scheduled_game_card_coverage', checkId: buildCheckId('nba', 'coverage', 'scheduled_game_card'),
   },
   mlb_model_freshness: {
     phase: 'mlb', checkName: 'model_freshness', checkId: buildCheckId('model', 'freshness', 'mlb'),
@@ -891,6 +910,98 @@ function getLatestOddsSnapshot(db, gameId) {
   `,
     )
     .get(gameId);
+}
+
+function checkScheduledGameCardCoverage(
+  sport,
+  {
+    lookaheadHours = SCHEDULED_GAME_CARD_COVERAGE_LOOKAHEAD_HOURS,
+    startBufferMinutes = SCHEDULED_GAME_CARD_COVERAGE_START_BUFFER_MINUTES,
+  } = {},
+) {
+  const db = getDatabase();
+  const normalizedSport = String(sport || '').toUpperCase();
+  const nowUtc = DateTime.utc();
+  const startUtc = nowUtc.plus({ minutes: startBufferMinutes });
+  const endUtc = nowUtc.plus({ hours: lookaheadHours });
+
+  const scheduledRows = db
+    .prepare(
+      `SELECT
+         g.game_id,
+         g.game_time_utc,
+         COUNT(cp.id) AS card_count
+       FROM games g
+       LEFT JOIN card_payloads cp
+         ON cp.game_id = g.game_id
+       WHERE UPPER(g.sport) = ?
+         AND LOWER(COALESCE(g.status, '')) IN ('scheduled', 'pre')
+         AND datetime(g.game_time_utc) >= datetime(?)
+         AND datetime(g.game_time_utc) <= datetime(?)
+       GROUP BY g.game_id, g.game_time_utc
+       ORDER BY datetime(g.game_time_utc) ASC, g.game_id ASC`,
+    )
+    .all(normalizedSport, startUtc.toISO(), endUtc.toISO());
+
+  if (scheduledRows.length === 0) {
+    const reason =
+      `${normalizedSport} scheduled game card coverage: no scheduled games between ` +
+      `T+${startBufferMinutes}m and T+${lookaheadHours}h`;
+    writePipelineHealth(normalizedSport.toLowerCase(), 'scheduled_game_card_coverage', 'ok', reason);
+    return {
+      ok: true,
+      status: 'ok',
+      check_name: 'scheduled_game_card_coverage',
+      sport: normalizedSport,
+      reason,
+      diagnostics: {
+        total_games: 0,
+        covered_games: 0,
+        missing_game_ids: [],
+        coverage_pct: 1,
+        lookahead_hours: lookaheadHours,
+        start_buffer_minutes: startBufferMinutes,
+      },
+    };
+  }
+
+  const missingGameIds = scheduledRows
+    .filter((row) => Number(row.card_count || 0) === 0)
+    .map((row) => row.game_id);
+  const totalGames = scheduledRows.length;
+  const coveredGames = totalGames - missingGameIds.length;
+  const coveragePct = coveredGames / totalGames;
+
+  let status = 'ok';
+  if (coveragePct < SCHEDULED_GAME_CARD_COVERAGE_FAIL_THRESHOLD) {
+    status = 'failed';
+  } else if (coveragePct < SCHEDULED_GAME_CARD_COVERAGE_WARN_THRESHOLD) {
+    status = 'warning';
+  }
+
+  const coveragePctText = `${Math.round(coveragePct * 100)}%`;
+  const missingSuffix = missingGameIds.length > 0
+    ? ` Missing: [${missingGameIds.join(', ')}]`
+    : '';
+  const reason =
+    `${normalizedSport} scheduled game card coverage: Coverage ` +
+    `${coveredGames}/${totalGames} (${coveragePctText}).${missingSuffix}`;
+  writePipelineHealth(normalizedSport.toLowerCase(), 'scheduled_game_card_coverage', status, reason);
+  return {
+    ok: status === 'ok',
+    status,
+    check_name: 'scheduled_game_card_coverage',
+    sport: normalizedSport,
+    reason,
+    diagnostics: {
+      total_games: totalGames,
+      covered_games: coveredGames,
+      missing_game_ids: missingGameIds,
+      coverage_pct: coveragePct,
+      lookahead_hours: lookaheadHours,
+      start_buffer_minutes: startBufferMinutes,
+    },
+  };
 }
 
 const MLB_REJECT_REASON_FAMILIES = Object.freeze([
@@ -1623,6 +1734,18 @@ function checkNbaMoneylineCoverage({ lookaheadHours = 6, lookbackHours = 12 } = 
       alert_code: null,
     },
   };
+}
+
+function checkMlbScheduledGameCardCoverage(options = {}) {
+  return checkScheduledGameCardCoverage('MLB', options);
+}
+
+function checkNhlScheduledGameCardCoverage(options = {}) {
+  return checkScheduledGameCardCoverage('NHL', options);
+}
+
+function checkNbaScheduledGameCardCoverage(options = {}) {
+  return checkScheduledGameCardCoverage('NBA', options);
 }
 
 /**
@@ -2471,19 +2594,26 @@ async function checkWatchdogHeartbeat() {
     )
     .get();
 
-  if (!prev) return; // First ever run — skip
+  if (!prev) {
+    return {
+      ok: true,
+      reason: 'No prior successful watchdog run; baseline unavailable',
+      healthClass: WATCHDOG_INFO,
+    };
+  }
 
   const gapMs = Date.now() - new Date(prev.started_at).getTime();
   const gapH = (gapMs / 3600000).toFixed(1);
   const isGap = gapMs > 2 * 60 * 60 * 1000;
+  const reason = isGap
+    ? `Last watchdog run was ${gapH}h ago`
+    : `Heartbeat OK (${gapH}h since last run)`;
 
   writePipelineHealth(
     'watchdog',
     'heartbeat',
     isGap ? 'warning' : 'ok',
-    isGap
-      ? `Last watchdog run was ${gapH}h ago`
-      : `Heartbeat OK (${gapH}h since last run)`,
+    reason,
   );
 
   if (isGap && process.env.ENABLE_PIPELINE_HEALTH_WATCHDOG !== 'false') {
@@ -2499,6 +2629,30 @@ async function checkWatchdogHeartbeat() {
       console.warn(`[check_pipeline_health] Watchdog heartbeat alert sent — ${gapH}h gap`);
     }
   }
+
+  return {
+    ok: !isGap,
+    reason,
+    healthClass: isGap ? WATCHDOG_CRITICAL_BREACH : null,
+  };
+}
+
+function collectJobHealthIssues(results, { defaultHealthClass, nonFatalHealthClasses = [] }) {
+  const nonFatalSet = new Set(nonFatalHealthClasses);
+  const healthIssues = [];
+
+  for (const [checkName, result] of Object.entries(results || {})) {
+    if (!result || result.ok !== false) continue;
+    const healthClass = result.healthClass || defaultHealthClass;
+    healthIssues.push({
+      checkName,
+      healthClass,
+      fatal: !nonFatalSet.has(healthClass),
+      reason: result.reason || `${checkName} failed`,
+    });
+  }
+
+  return healthIssues;
 }
 
 /**
@@ -2522,10 +2676,6 @@ async function checkPipelineHealth({
   try {
     console.log(`[check_pipeline_health] Running health checks...`);
 
-    if (!skipHeartbeat) {
-      await checkWatchdogHeartbeat();
-    }
-
     const defaultChecks = {
       schedule_freshness: checkScheduleFreshness,
       odds_freshness: checkOddsFreshness,
@@ -2534,6 +2684,7 @@ async function checkPipelineHealth({
       visibility_integrity: () => checkVisibilityIntegrity(),
       mlb_f5_market_availability: checkMlbF5MarketAvailability,
       mlb_game_line_coverage: checkMlbGameLineCoverage,
+      mlb_scheduled_game_card_coverage: checkMlbScheduledGameCardCoverage,
       mlb_seed_freshness: () => checkMlbSeedFreshness(),
       settlement_backlog: checkSettlementBacklog,
       // Per-sport model freshness (only fires when upcoming games exist for that sport)
@@ -2545,6 +2696,7 @@ async function checkPipelineHealth({
         }),
       nhl_market_call_diagnostics: checkNhlMarketCallDiagnostics,
       nhl_moneyline_coverage: checkNhlMoneylineCoverage,
+      nhl_scheduled_game_card_coverage: checkNhlScheduledGameCardCoverage,
       nhl_false_listing_candidates: checkNhlFalseListingCandidates,
       nhl_sog_sync_freshness: checkNhlSogSyncFreshness,
       nhl_sog_pull_freshness: checkNhlSogPullFreshness,
@@ -2563,6 +2715,7 @@ async function checkPipelineHealth({
         }),
       nba_market_call_diagnostics: checkNbaMarketCallDiagnostics,
       nba_moneyline_coverage: checkNbaMoneylineCoverage,
+      nba_scheduled_game_card_coverage: checkNbaScheduledGameCardCoverage,
       mlb_model_freshness: () =>
         checkSportModelFreshness('mlb', 'run_mlb_model', 'model_freshness', getModelFreshnessMaxAgeMinutes(), {
           expectedIntervalMinutes: 120,
@@ -2574,6 +2727,18 @@ async function checkPipelineHealth({
 
     const results = {};
     let allOk = true;
+
+    if (!skipHeartbeat) {
+      const heartbeatResult = await checkWatchdogHeartbeat();
+      results.watchdog_heartbeat = heartbeatResult;
+
+      if (heartbeatResult.ok) {
+        console.log(`  ✓ watchdog_heartbeat: ${heartbeatResult.reason}`);
+      } else {
+        console.warn(`  ⚠️  watchdog_heartbeat: ${heartbeatResult.reason}`);
+        allOk = false;
+      }
+    }
 
     for (const [checkName, checkFn] of Object.entries(checks)) {
       const result = await checkFn();
@@ -2596,6 +2761,7 @@ async function checkPipelineHealth({
       const alertCandidates = [];
       for (const [key, result] of Object.entries(results)) {
         if (result.ok) continue;
+        if ((result.healthClass || WATCHDOG_CRITICAL_BREACH) === WATCHDOG_INFO) continue;
         const mapping = CHECK_REGISTRY[key];
         if (!mapping) continue;
         if (shouldSendAlert(mapping.phase, mapping.checkName, PIPELINE_HEALTH_ALERT_CONSECUTIVE, PIPELINE_HEALTH_COOLDOWN_MINUTES)) {
@@ -2616,11 +2782,22 @@ async function checkPipelineHealth({
     }
     // --- end Discord watchdog alert ---
 
-    const summary = allOk
-      ? 'All pipeline health checks passed'
-      : 'Some pipeline health checks failed (see logs)';
+    const healthIssues = collectJobHealthIssues(results, {
+      defaultHealthClass: WATCHDOG_CRITICAL_BREACH,
+      nonFatalHealthClasses: [WATCHDOG_INFO],
+    });
+    const criticalHealthIssues = healthIssues.filter((issue) => issue.fatal);
+    const summary = criticalHealthIssues.length > 0
+      ? `Critical pipeline health failures: ${criticalHealthIssues.map((issue) => `[${issue.healthClass}] ${issue.checkName}: ${issue.reason}`).join('; ')}`
+      : allOk
+        ? 'All pipeline health checks passed'
+        : 'Pipeline health warnings detected (non-fatal)';
 
-    markJobRunSuccess(runId);
+    if (criticalHealthIssues.length > 0) {
+      markJobRunFailure(runId, summary);
+    } else {
+      markJobRunSuccess(runId);
+    }
     console.log(`[check_pipeline_health] ${summary}`);
 
     const calibrationKillSwitches = (results.calibration_kill_switches?.calibrationKillSwitches) || [];
@@ -2633,12 +2810,14 @@ async function checkPipelineHealth({
     if (calibrationKillSwitches.length > 0) {
       console.warn(`[check_pipeline_health] CALIB_KILL_SWITCH_ACTIVE: ${calibrationKillSwitches.map((r) => r.market).join(', ')}`);
     }
-    const visibilityIntegrityAlert =
-      Number(results.visibility_integrity?.missingEnrollmentCount || 0) > 0;
     return {
-      ok: !visibilityIntegrityAlert,
+      ok: criticalHealthIssues.length === 0,
       allOk,
       summary,
+      exitCode: criticalHealthIssues.length > 0 ? 1 : 0,
+      jobStatus: criticalHealthIssues.length > 0 ? 'failed' : 'success',
+      healthIssues,
+      criticalHealthIssues,
       calibrationKillSwitches,
       calibrationRows,
       visibilityIntegrity: results.visibility_integrity || null,
@@ -2724,6 +2903,10 @@ module.exports = {
   summarizeNhlRejectReasonFamilies,
   checkNhlMarketCallDiagnostics,
   checkNhlMoneylineCoverage,
+  checkScheduledGameCardCoverage,
+  checkMlbScheduledGameCardCoverage,
+  checkNhlScheduledGameCardCoverage,
+  checkNbaScheduledGameCardCoverage,
   checkNhlFalseListingCandidates,
   summarizeNbaRejectReasonFamilies,
   checkNbaMarketCallDiagnostics,

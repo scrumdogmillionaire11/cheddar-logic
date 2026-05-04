@@ -7,6 +7,25 @@
 const {getDatabase, closeDatabase } = require('./db');
 const { runMigrations } = require('./migrate');
 
+function resolveJobExitCode(result) {
+  if (result && Number.isFinite(Number(result.exitCode))) {
+    return Number(result.exitCode);
+  }
+  if (result && result.ok === false) {
+    return 1;
+  }
+  if (result && result.success === false) {
+    return 1;
+  }
+
+  const jobStatus = String(result?.jobStatus || '').trim().toLowerCase();
+  if (jobStatus === 'failed' || jobStatus === 'degraded') {
+    return 1;
+  }
+
+  return 0;
+}
+
 /**
  * Run a function with an initialized DB and guaranteed cleanup.
  * @param {function} fn - async function that receives db client
@@ -40,11 +59,10 @@ async function createJob(name, run) {
   const dryRun =
     process.env.DRY_RUN === 'true' || process.argv.includes('--dry-run');
   console.log(`[${name}] Starting (dryRun=${dryRun})`);
-  try {
+ try {
     const result = await run({ dryRun });
     console.log(`[${name}] Complete`);
-    // Allow health-check jobs to signal non-zero exit via { ok: false }
-    const exitCode = result && result.ok === false ? 1 : 0;
+    const exitCode = resolveJobExitCode(result);
     process.exit(exitCode);
   } catch (err) {
     console.error(`[${name}] Fatal:`, err.message);
@@ -55,4 +73,5 @@ async function createJob(name, run) {
 module.exports = {
   withDb,
   createJob,
+  resolveJobExitCode,
 };

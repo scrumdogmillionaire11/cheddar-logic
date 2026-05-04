@@ -39,6 +39,10 @@ async function runSourceContractAssertions(assert) {
     new URL('../lib/games/route-handler.ts', import.meta.url),
     'utf8',
   );
+  const serviceLayerSource = await fs.readFile(
+    new URL('../lib/games/service-layer.ts', import.meta.url),
+    'utf8',
+  );
   // WI-0621 extracted inferMarketFromCardType into a separate module.
   const marketInferenceSource = await fs.readFile(
     new URL('../lib/games/market-inference.ts', import.meta.url),
@@ -77,6 +81,17 @@ async function runSourceContractAssertions(assert) {
     routeSource.includes('cardRows = mergeMlbGameLineFallbackRows({') &&
       routeSource.includes('isEligibleMlbGameLineFallbackRow'),
     'MLB full-game fallback merge must be enabled with strict eligibility guards to restore publishable rows lost by active-run filtering',
+  );
+  assert(
+    serviceLayerSource.includes(
+      'function isMainSurfaceCoveragePlay(row: GameRow, play: Play): boolean',
+    ) &&
+      serviceLayerSource.includes('isPlayItem(play, row.sport)') &&
+      serviceLayerSource.includes("play.market_type === 'INFO'") &&
+      serviceLayerSource.includes('isProjectionOnlyCoveragePlay(play)') &&
+      serviceLayerSource.includes('MAIN_SURFACE_EXCLUDED_CARD_TYPES') &&
+      serviceLayerSource.includes("inferredMarket !== 'FIRST_5_INNINGS'"),
+    '/api/games coverage must require a main-surface renderable play instead of any card row',
   );
 }
 

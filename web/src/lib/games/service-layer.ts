@@ -1,4 +1,16 @@
+import { isPlayItem } from '@/lib/game-card/transform/legacy-repair';
+
+import { inferMarketFromCardType } from './market-inference';
 import type { GameRow, LifecycleMode, Play } from './route-handler';
+
+const PROJECTION_ONLY_LINE_SOURCES = new Set<string>([
+  'PROJECTION_FLOOR',
+  'SYNTHETIC_FALLBACK',
+]);
+const MAIN_SURFACE_EXCLUDED_CARD_TYPES = new Set<string>([
+  'mlb-f5',
+  'mlb-f5-ml',
+]);
 
 function hasDisplayableOdds(row: GameRow): boolean {
   return (
@@ -10,26 +22,39 @@ function hasDisplayableOdds(row: GameRow): boolean {
   );
 }
 
-function isProjectionOnlyPropPlay(play: Play): boolean {
+function isProjectionOnlyCoveragePlay(play: Play): boolean {
+  const lineSource = play.line_source?.trim().toUpperCase() ?? null;
+  const marketLineSource =
+    play.market_context?.wager?.line_source?.trim().toUpperCase() ?? null;
+  const projectionSource =
+    play.prop_decision?.projection_source?.trim().toUpperCase() ?? null;
+
   return (
-    play.market_type === 'PROP' &&
-    (play.execution_status === 'PROJECTION_ONLY' ||
-      play.status === 'PASS' ||
-      play.action === 'PASS')
+    play.basis === 'PROJECTION_ONLY' ||
+    play.execution_status === 'PROJECTION_ONLY' ||
+    play.prop_display_state === 'PROJECTION_ONLY' ||
+    (lineSource != null && PROJECTION_ONLY_LINE_SOURCES.has(lineSource)) ||
+    (marketLineSource != null &&
+      PROJECTION_ONLY_LINE_SOURCES.has(marketLineSource)) ||
+    projectionSource === 'SYNTHETIC_FALLBACK'
   );
 }
 
+function isMainSurfaceCoveragePlay(row: GameRow, play: Play): boolean {
+  if (!isPlayItem(play, row.sport)) return false;
+  if (play.market_type === 'INFO') return false;
+  if (isProjectionOnlyCoveragePlay(play)) return false;
+
+  const normalizedCardType = String(play.cardType || '').trim().toLowerCase();
+  if (MAIN_SURFACE_EXCLUDED_CARD_TYPES.has(normalizedCardType)) return false;
+
+  const inferredMarket =
+    play.market_type ?? inferMarketFromCardType(play.cardType) ?? null;
+  return inferredMarket !== 'FIRST_5_INNINGS';
+}
+
 function hasDisplayablePregamePlays(row: GameRow, plays: Play[]): boolean {
-  if (plays.length === 0) return false;
-
-  // NHL prop-only projection rows can manufacture false pregame listings when
-  // a bad schedule row survives briefly without odds. Keep non-prop markets and
-  // bettable prop rows eligible, but fail closed on projection-only prop-only rows.
-  if (String(row.sport || '').toUpperCase() === 'NHL') {
-    return plays.some((play) => !isProjectionOnlyPropPlay(play));
-  }
-
-  return true;
+  return plays.some((play) => isMainSurfaceCoveragePlay(row, play));
 }
 
 export type GamesServiceRowsResult = {

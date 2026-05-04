@@ -1,7 +1,11 @@
 import assert from 'node:assert';
 
 import { applyFilters, DEFAULT_GAME_FILTERS } from '../lib/game-card/filters';
-import { transformToGameCard } from '../lib/game-card/transform/index';
+import {
+  getGameExclusionReason,
+  transformGames,
+  transformToGameCard,
+} from '../lib/game-card/transform/index';
 
 type OfficialStatus = 'PLAY' | 'LEAN' | 'PASS';
 type ExecutionStatus = 'EXECUTABLE' | 'BLOCKED' | 'PROJECTION_ONLY';
@@ -94,6 +98,80 @@ function buildMoneylineGame(params: {
   };
 }
 
+type TestGame = ReturnType<typeof buildMoneylineGame>;
+type TestPlay = TestGame['plays'][number];
+
+function buildDiagnosticInfoPlay(params: {
+  sport: 'MLB' | 'NHL';
+  officialStatus: OfficialStatus;
+}): TestPlay {
+  const basePlay = buildMoneylineGame({
+    sport: params.sport,
+    officialStatus: params.officialStatus,
+    executionStatus: 'EXECUTABLE',
+  }).plays[0] as TestPlay;
+
+  return {
+    ...basePlay,
+    cardTitle: 'Diagnostic info',
+    reasoning: 'Informational diagnostic only.',
+    driverKey: `driver-${params.sport}-INFO`,
+    market_type: 'INFO',
+    action:
+      params.officialStatus === 'PLAY'
+        ? 'FIRE'
+        : params.officialStatus === 'LEAN'
+          ? 'HOLD'
+          : 'PASS',
+    classification:
+      params.officialStatus === 'PLAY'
+        ? 'BASE'
+        : params.officialStatus === 'LEAN'
+          ? 'LEAN'
+          : 'PASS',
+    decision_v2: {
+      ...basePlay.decision_v2,
+      official_status: params.officialStatus,
+      direction: 'HOME',
+    },
+  };
+}
+
+function buildMixedInfoGame(sport: 'MLB' | 'NHL'): TestGame {
+  const game = buildMoneylineGame({
+    sport,
+    officialStatus: 'LEAN',
+    executionStatus: 'EXECUTABLE',
+  });
+  const playablePlay = game.plays[0] as TestPlay;
+  const infoPlay = buildDiagnosticInfoPlay({ sport, officialStatus: 'PLAY' });
+
+  return {
+    ...game,
+    id: `game-${sport}-mixed-info`,
+    gameId: `game-${sport}-mixed-info`,
+    plays: [infoPlay, playablePlay],
+    true_play: infoPlay,
+  };
+}
+
+function buildInfoOnlyGame(sport: 'MLB' | 'NHL'): TestGame {
+  const game = buildMoneylineGame({
+    sport,
+    officialStatus: 'LEAN',
+    executionStatus: 'EXECUTABLE',
+  });
+  const infoPlay = buildDiagnosticInfoPlay({ sport, officialStatus: 'LEAN' });
+
+  return {
+    ...game,
+    id: `game-${sport}-info-only`,
+    gameId: `game-${sport}-info-only`,
+    plays: [infoPlay],
+    true_play: infoPlay,
+  };
+}
+
 for (const sport of ['MLB', 'NHL'] as const) {
   const executableCard = transformToGameCard(
     buildMoneylineGame({ sport, officialStatus: 'LEAN', executionStatus: 'EXECUTABLE' }) as never,
@@ -145,5 +223,21 @@ for (const sport of ['MLB', 'NHL'] as const) {
   assert.strictEqual(card.play?.selection?.team, 'Home Team');
 }
 
+for (const sport of ['MLB', 'NHL'] as const) {
+  const mixedGame = buildMixedInfoGame(sport);
+  assert.strictEqual(getGameExclusionReason(mixedGame as never), null);
+
+  const [card] = transformGames([mixedGame as never]);
+  assert.ok(card, `${sport} mixed INFO fixture should remain on the main surface`);
+  assert.strictEqual(card.play?.market_type, 'MONEYLINE');
+  assert.strictEqual(card.play?.action, 'HOLD');
+  assert.notStrictEqual(card.play?.market_type, 'INFO');
+}
+
+for (const sport of ['MLB', 'NHL'] as const) {
+  const infoOnlyGame = buildInfoOnlyGame(sport);
+  assert.strictEqual(getGameExclusionReason(infoOnlyGame as never), 'no-renderable-plays');
+  assert.deepStrictEqual(transformGames([infoOnlyGame as never]), []);
+}
 
 console.log('Game card decision authority tests passed');

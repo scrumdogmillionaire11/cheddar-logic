@@ -1003,7 +1003,8 @@ function isRenderableGameSurfacePlay(game: GameData, play: ApiPlay): boolean {
     !isProjectionOnlyCardPlay(play) &&
     !shouldSuppressNoActionableNonTotalPass(play) &&
     isPlayItem(play, game.sport) &&
-    play.market_type !== 'PROP'
+    play.market_type !== 'PROP' &&
+    play.market_type !== 'INFO'
   );
 }
 
@@ -1016,31 +1017,6 @@ function isProjectionOnlyGameSurfacePlay(
     isProjectionOnlyCardPlay(play) &&
     isPlayItem(play, game.sport) &&
     play.market_type !== 'PROP'
-  );
-}
-
-function shouldExcludeProjectionOnlyGameSurface(game: GameData): boolean {
-  const hasRenderablePlay = game.plays.some((play) =>
-    isRenderableGameSurfacePlay(game, play),
-  );
-  if (hasRenderablePlay) return false;
-
-  const hasMlbProjectionSurfaceOnly = game.plays.some((play) =>
-    isMlbProjectionSurfacePlay(play) &&
-    isPlayItem(play, game.sport) &&
-    play.market_type !== 'PROP',
-  );
-  if (hasMlbProjectionSurfaceOnly) return true;
-
-  const hasSuppressedNonTotalPass = game.plays.some((play) =>
-    shouldSuppressNoActionableNonTotalPass(play) &&
-    isPlayItem(play, game.sport) &&
-    play.market_type !== 'PROP',
-  );
-  if (hasSuppressedNonTotalPass) return true;
-
-  return game.plays.some((play) =>
-    isProjectionOnlyGameSurfacePlay(game, play),
   );
 }
 
@@ -1489,10 +1465,7 @@ function getValueStatus(edge?: number): ValueStatus {
 function buildPlay(game: GameData, drivers: DriverRow[]): Play {
   const canonicalTruePlay =
     game.true_play &&
-    !isProjectionOnlyCardPlay(game.true_play) &&
-    !shouldSuppressNoActionableNonTotalPass(game.true_play) &&
-    game.true_play.market_type !== 'PROP' &&
-    isPlayItem(game.true_play, game.sport) &&
+    isRenderableGameSurfacePlay(game, game.true_play) &&
     (ENABLE_WELCOME_HOME || !isWelcomeHomePlay(game.true_play))
       ? game.true_play
       : null;
@@ -3638,12 +3611,40 @@ function assertContractInDev(cards: GameCard[]): void {
   console.info('[cards-contract-report]', report);
 }
 
+export function getGameExclusionReason(game: GameData): string | null {
+  const hasRenderablePlay = game.plays.some((play) =>
+    isRenderableGameSurfacePlay(game, play),
+  );
+  if (hasRenderablePlay) return null;
+
+  const hasMlbProjectionSurface = game.plays.some((play) =>
+    isMlbProjectionSurfacePlay(play) &&
+    isPlayItem(play, game.sport) &&
+    play.market_type !== 'PROP',
+  );
+  if (hasMlbProjectionSurface) return 'mlb-projection-surface';
+
+  const hasSuppressedNonTotalPass = game.plays.some((play) =>
+    shouldSuppressNoActionableNonTotalPass(play) &&
+    isPlayItem(play, game.sport) &&
+    play.market_type !== 'PROP',
+  );
+  if (hasSuppressedNonTotalPass) return 'suppressed-non-total-pass';
+
+  const hasProjectionOnly = game.plays.some((play) =>
+    isProjectionOnlyGameSurfacePlay(game, play),
+  );
+  if (hasProjectionOnly) return 'projection-only';
+
+  return 'no-renderable-plays';
+}
+
 /**
  * Transform array of GameData to GameCard[]
  */
 export function transformGames(games: GameData[]): GameCard[] {
   const transformed = games
-    .filter((game) => !shouldExcludeProjectionOnlyGameSurface(game))
+    .filter((game) => getGameExclusionReason(game) === null)
     .map(transformToGameCard);
   const deduped = dedupeCardsByGameMarket(transformed);
   assertContractInDev(deduped);

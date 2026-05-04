@@ -88,6 +88,7 @@ function buildPlay(overrides: Record<string, unknown> = {}) {
     edge: null,
     status: 'PASS',
     action: 'PASS',
+    kind: 'PLAY',
     market_type: 'PROP',
     execution_status: 'PROJECTION_ONLY',
     selection: { side: 'OVER', team: 'Player Name' },
@@ -165,6 +166,177 @@ console.log('🧪 games service-layer tests');
     result.responseRows.length,
     1,
     'ingest-failure rows should stay visible even when only projection-only props exist',
+  );
+}
+
+{
+  const row = buildRow();
+  const playsMap = new Map([
+    [
+      row.game_id,
+      [
+        buildPlay({
+          cardType: 'nhl-moneyline-call',
+          market_type: 'INFO',
+          execution_status: 'EXECUTABLE',
+          status: 'WATCH',
+          action: 'HOLD',
+        }),
+      ],
+    ],
+  ]);
+  const result = prepareGamesServiceRows({
+    rows: [row],
+    lifecycleMode: 'pregame',
+    playsMap,
+  });
+
+  assert.equal(
+    result.responseRows.length,
+    0,
+    'INFO-only rows should not satisfy /api/games coverage',
+  );
+}
+
+{
+  const row = buildRow();
+  const playsMap = new Map([
+    [
+      row.game_id,
+      [
+        buildPlay({
+          cardType: 'nhl-goalie',
+          market_type: 'MONEYLINE',
+          execution_status: 'EXECUTABLE',
+          status: 'WATCH',
+          action: 'HOLD',
+        }),
+      ],
+    ],
+  ]);
+  const result = prepareGamesServiceRows({
+    rows: [row],
+    lifecycleMode: 'pregame',
+    playsMap,
+  });
+
+  assert.equal(
+    result.responseRows.length,
+    0,
+    'evidence-only or unsupported rows should not satisfy /api/games coverage',
+  );
+}
+
+{
+  const row = buildRow({
+    sport: 'MLB',
+  });
+  const playsMap = new Map([
+    [
+      row.game_id,
+      [
+        buildPlay({
+          cardType: 'mlb-f5',
+          market_type: 'FIRST_5_INNINGS',
+          execution_status: 'EXECUTABLE',
+          status: 'WATCH',
+          action: 'HOLD',
+          selection: { side: 'OVER' },
+          line: 4.5,
+        }),
+      ],
+    ],
+  ]);
+  const result = prepareGamesServiceRows({
+    rows: [row],
+    lifecycleMode: 'pregame',
+    playsMap,
+  });
+
+  assert.equal(
+    result.responseRows.length,
+    0,
+    'MLB F5-only rows should not count as main-surface coverage',
+  );
+}
+
+{
+  const row = buildRow({
+    sport: 'MLB',
+  });
+  const playsMap = new Map([
+    [
+      row.game_id,
+      [
+        buildPlay({
+          cardType: 'mlb-full-game',
+          market_type: 'TOTAL',
+          execution_status: 'EXECUTABLE',
+          status: 'WATCH',
+          action: 'HOLD',
+          selection: { side: 'OVER' },
+          line: 8.5,
+        }),
+      ],
+    ],
+  ]);
+  const result = prepareGamesServiceRows({
+    rows: [row],
+    lifecycleMode: 'pregame',
+    playsMap,
+  });
+
+  assert.equal(
+    result.responseRows.length,
+    1,
+    'supported full-game rows should continue to satisfy /api/games coverage',
+  );
+}
+
+{
+  const row = buildRow({
+    sport: 'MLB',
+  });
+  const playsMap = new Map([
+    [
+      row.game_id,
+      [
+        buildPlay({
+          cardType: 'mlb-model-output',
+          market_type: 'INFO',
+          execution_status: 'EXECUTABLE',
+          status: 'WATCH',
+          action: 'HOLD',
+          kind: 'EVIDENCE',
+        }),
+        buildPlay({
+          cardType: 'mlb-full-game-ml',
+          market_type: 'MONEYLINE',
+          execution_status: 'EXECUTABLE',
+          status: 'WATCH',
+          action: 'HOLD',
+          prediction: 'HOME',
+          selection: { side: 'HOME', team: 'Colorado Avalanche' },
+          price: -120,
+        }),
+      ],
+    ],
+  ]);
+  const result = prepareGamesServiceRows({
+    rows: [row],
+    lifecycleMode: 'pregame',
+    playsMap,
+  });
+
+  assert.equal(
+    result.responseRows.length,
+    1,
+    'mixed diagnostic and valid rows should stay covered via the valid main-surface row',
+  );
+  assert.equal(
+    result.pregameRowsDroppedNoOddsNoPlays,
+    0,
+    'mixed diagnostic and valid rows should not be counted as uncovered',
   );
 }
 

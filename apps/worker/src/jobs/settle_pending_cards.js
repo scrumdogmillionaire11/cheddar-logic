@@ -31,6 +31,7 @@ const {
   insertJobRun,
   markJobRunSuccess,
   markJobRunFailure,
+  createJob,
   normalizeMarketType,
   normalizeSelectionForMarket,
   parseLine,
@@ -44,6 +45,31 @@ const {
   resolveExplicitOfficialDecisionStatus,
   resolveNormalizedDecisionStatus,
 } = require('@cheddar-logic/data/src');
+
+const SETTLEMENT_PARTIAL_WRITE_CRITICAL = 'SETTLEMENT_PARTIAL_WRITE_CRITICAL';
+const SETTLEMENT_CRITICAL_MISMATCH_UNRESOLVED = 'SETTLEMENT_CRITICAL_MISMATCH_UNRESOLVED';
+const SETTLEMENT_INFO = 'SETTLEMENT_INFO';
+
+const NON_FATAL_SETTLEMENT_ERROR_CODES = new Set([
+  // Data-availability gaps can produce void rows without indicating a write-integrity failure.
+  'MISSING_PERIOD_SCORE',
+  'MISSING_FINAL_SCORE',
+  'FIRST_PERIOD_NOT_FINAL',
+  'MISSING_PERIOD_PLAYER_SHOTS_DATA',
+  'MISSING_PLAYER_SHOTS_DATA',
+  'MISSING_PERIOD_PLAYER_SHOTS_VALUE',
+  'MISSING_PLAYER_SHOTS_VALUE',
+]);
+
+function classifySettlementErrorHealthClass(errorCode) {
+  if (errorCode === 'MARKET_KEY_MISMATCH') {
+    return SETTLEMENT_CRITICAL_MISMATCH_UNRESOLVED;
+  }
+  if (NON_FATAL_SETTLEMENT_ERROR_CODES.has(errorCode)) {
+    return SETTLEMENT_INFO;
+  }
+  return SETTLEMENT_PARTIAL_WRITE_CRITICAL;
+}
 
 function parseLockedPrice(value) {
   if (value === null || value === undefined || value === '') return null;
@@ -2263,6 +2289,26 @@ function shouldEnableDisplayBackfill(allowDisplayBackfill) {
   return false;
 }
 
+function buildSettlementHealthOutcome(healthIssues) {
+  const criticalHealthIssues = (healthIssues || []).filter(
+    (issue) => issue.healthClass !== SETTLEMENT_INFO,
+  );
+  const summary = criticalHealthIssues.length > 0
+    ? criticalHealthIssues
+      .map((issue) => `[${issue.healthClass}] ${issue.message}`)
+      .join('; ')
+    : '';
+
+  return {
+    criticalHealthIssues,
+    summary,
+    ok: criticalHealthIssues.length === 0,
+    success: criticalHealthIssues.length === 0,
+    exitCode: criticalHealthIssues.length > 0 ? 1 : 0,
+    jobStatus: criticalHealthIssues.length > 0 ? 'failed' : 'success',
+  };
+}
+
 /**
  * Main job entrypoint
  * @param {object} options - Job options
@@ -2291,7 +2337,15 @@ async function settlePendingCards({
       console.log(
         `[SettleCards] Skipping (already succeeded or running): ${jobKey}`,
       );
-      return { success: true, jobRunId: null, skipped: true, jobKey };
+      return {
+        ok: true,
+        success: true,
+        exitCode: 0,
+        jobStatus: 'success',
+        jobRunId: null,
+        skipped: true,
+        jobKey,
+      };
     }
 
     // Sequential ordering guard: card settlement must not run before projection settlement completes.
@@ -2303,7 +2357,16 @@ async function settlePendingCards({
         console.log(
           `SKIP: settle_projections not yet SUCCESS for this window — skipping card settlement (expected key: ${projectionsJobKey})`,
         );
-        return { success: true, jobRunId: null, skipped: true, guardedBy: 'settle_projections', jobKey };
+        return {
+          ok: true,
+          success: true,
+          exitCode: 0,
+          jobStatus: 'success',
+          jobRunId: null,
+          skipped: true,
+          guardedBy: 'settle_projections',
+          jobKey,
+        };
       }
     }
 
@@ -2312,7 +2375,15 @@ async function settlePendingCards({
       console.log(
         `[SettleCards] DRY_RUN=true — would run jobKey=${jobKey || 'none'}`,
       );
-      return { success: true, jobRunId: null, dryRun: true, jobKey };
+      return {
+        ok: true,
+        success: true,
+        exitCode: 0,
+        jobStatus: 'success',
+        jobRunId: null,
+        dryRun: true,
+        jobKey,
+      };
     }
 
     try {
@@ -2398,6 +2469,7 @@ async function settlePendingCards({
       let cardsSkipped = 0;
       let clvResolvedAtSettlement = 0;
       let clvOpenAfterSettlement = 0;
+      const healthIssues = [];
       const settledAt = new Date().toISOString();
       const clvSnapshotCache = new Map();
       let nonActionableAutoClosed = 0;
@@ -2420,6 +2492,10 @@ async function settlePendingCards({
         console.warn(
           `[SettleCards] Failed to auto-close ${nonActionableClose.failures} non-actionable final rows`,
         );
+        healthIssues.push({
+          healthClass: SETTLEMENT_PARTIAL_WRITE_CRITICAL,
+          message: `Failed to auto-close ${nonActionableClose.failures} non-actionable final row(s)`,
+        });
       }
       if (nonActionableClose.fallbackCloses > 0) {
         console.warn(
@@ -2774,6 +2850,12 @@ async function settlePendingCards({
             state.settled_at === settledAt;
           if (didErrorNow) {
             cardsErrored++;
+            healthIssues.push({
+              healthClass: classifySettlementErrorHealthClass(errorCode),
+              cardId: pendingCard.card_id,
+              resultId: pendingCard.result_id,
+              message: `Card ${pendingCard.card_id}: ${errorCode} ${settlementErr.message}`,
+            });
             if (clvTracked && lockedMarket) {
               const clvSettlement = buildClvSettlementPayload({
                 db,
@@ -2915,15 +2997,21 @@ async function settlePendingCards({
       );
 
       const cardsArchived = 0;
-
-      markJobRunSuccess(jobRunId);
+      const healthOutcome = buildSettlementHealthOutcome(healthIssues);
+      if (healthOutcome.ok) {
+        markJobRunSuccess(jobRunId);
+      } else {
+        markJobRunFailure(jobRunId, healthOutcome.summary);
+      }
       try {
         const { writePipelineHealth } = require('./check_pipeline_health');
         writePipelineHealth(
           'settlement',
           'model_run',
-          cardsErrored === 0 ? 'ok' : 'warning',
-          `settle_pending_cards completed: ${cardsSettled} settled, ${cardsErrored} errored`,
+          healthOutcome.ok ? 'ok' : 'failed',
+          healthOutcome.ok
+            ? `settle_pending_cards completed: ${cardsSettled} settled, ${cardsErrored} errored`
+            : `settle_pending_cards fail-closed: ${healthOutcome.summary}`,
         );
       } catch (_phErr) { /* non-fatal */ }
       const coverageAfter = getSettlementCoverageDiagnostics(db);
@@ -2935,7 +3023,10 @@ async function settlePendingCards({
       );
 
       return {
-        success: true,
+        ok: healthOutcome.ok,
+        success: healthOutcome.success,
+        exitCode: healthOutcome.exitCode,
+        jobStatus: healthOutcome.jobStatus,
         jobRunId,
         jobKey,
         cardsSettled,
@@ -2973,14 +3064,23 @@ async function settlePendingCards({
             noFinalGameResult: coverageBefore.pendingDisplayedWithoutFinal,
           },
         },
-        errors: [],
+        errors: healthIssues.map((issue) => issue.message),
+        healthIssues,
       };
     } catch (error) {
       if (error.code === 'JOB_RUN_ALREADY_CLAIMED') {
         console.log(
           `[RaceGuard] Skipping settle_pending_cards (job already claimed): ${jobKey || 'none'}`,
         );
-        return { success: true, jobRunId: null, skipped: true, jobKey };
+        return {
+          ok: true,
+          success: true,
+          exitCode: 0,
+          jobStatus: 'success',
+          jobRunId: null,
+          skipped: true,
+          jobKey,
+        };
       }
       console.error(`[SettleCards] Job failed:`, error.message);
       console.error(error.stack);
@@ -2998,21 +3098,24 @@ async function settlePendingCards({
         writePipelineHealth('settlement', 'model_run', 'failed', `settle_pending_cards failed: ${error.message}`);
       } catch (_phErr) { /* non-fatal */ }
 
-      return { success: false, jobRunId, jobKey, error: error.message };
+      return {
+        ok: false,
+        success: false,
+        exitCode: 1,
+        jobStatus: 'failed',
+        jobRunId,
+        jobKey,
+        error: error.message,
+      };
     }
   });
 }
 
 // CLI execution
 if (require.main === module) {
-  settlePendingCards()
-    .then((result) => {
-      process.exit(result.success ? 0 : 1);
-    })
-    .catch((error) => {
-      console.error('Unhandled error:', error);
-      process.exit(1);
-    });
+  createJob('settle_pending_cards', ({ dryRun }) =>
+    settlePendingCards({ dryRun })
+  );
 }
 
 module.exports = {
