@@ -98,6 +98,10 @@ async function validateCardsSourceContract(assert) {
     'cards page should use canonical surfaced decision context in primary rendering',
   );
   assert.ok(
+    source.includes('Official') && source.includes('Monitored') && source.includes('Diagnostic'),
+    'cards page should expose official/monitored/diagnostic opportunity labels',
+  );
+  assert.ok(
     !source.includes('Sharp Verdict:'),
     'cards page should not leak internal sharp verdict label',
   );
@@ -117,6 +121,12 @@ async function validateCardsSourceContract(assert) {
   assert.ok(
     !cardsListSource.includes('.filter(({ play }) => isActionableProjectionPlay(play))'),
     'cards list should not re-filter projection items after provider filtering',
+  );
+  assert.ok(
+    cardsListSource.includes('Official:') &&
+      cardsListSource.includes('Monitored:') &&
+      cardsListSource.includes('Diagnostic:'),
+    'cards list should show opportunity lane counts for official, monitored, and diagnostic states',
   );
   assert.ok(
     filterPanelSource.includes("from '@/lib/game-card/preset-helpers'"),

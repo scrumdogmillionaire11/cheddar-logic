@@ -285,6 +285,7 @@ async function run() {
       'diagnosticNominees',
       'nearMissSummary',
       'winnerStatus',
+      'nextBestFallback',
     ];
     for (const key of expectedKeys) {
       assert.ok(
@@ -310,6 +311,8 @@ async function run() {
     assert.equal(payload.data.nominees[0].rank, 2);
     assert.deepEqual(payload.data.diagnosticNominees, []);
     assert.equal(payload.data.nearMissSummary.sampleSize, 0);
+    // nextBestFallback is null when an official play exists today
+    assert.equal(payload.data.nextBestFallback, null, 'nextBestFallback should be null when official play exists');
 
     console.log('✅ API POTD behavioral smoke test passed');
   } finally {
@@ -318,7 +321,82 @@ async function run() {
   }
 }
 
-run().catch((error) => {
+async function runNextBestFallback() {
+  const testRuntime = await setupIsolatedTestDb('api-potd-next-best');
+  let server = null;
+
+  try {
+    const client = db.getDatabase();
+    const now = new Date();
+    const today = getEtDateKey(now);
+    const gameTimeUtc = new Date(now.getTime() + 3 * 60 * 60 * 1000).toISOString();
+    const capturedAt = new Date().toISOString();
+
+    // No potd_plays row for today — intentionally omitted
+
+    // Insert shadow candidate for today
+    client
+      .prepare(
+        `INSERT INTO potd_shadow_candidates
+         (play_date, captured_at, sport, market_type, selection_label,
+          home_team, away_team, game_id, price, line, edge_pct,
+          total_score, model_win_prob, projection_source, shadow_reason,
+          candidate_identity_key, game_time_utc)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        today,
+        capturedAt,
+        'NHL',
+        'MONEYLINE',
+        'Anaheim Ducks ML',
+        'Anaheim Ducks',
+        'San Jose Sharks',
+        'nhl-game-fallback',
+        145,
+        null,
+        0.175,
+        82.5,
+        0.615,
+        'model_v2',
+        'NON_PLAY_DECISION_OUTCOME',
+        'NHL:MONEYLINE:Anaheim Ducks ML',
+        gameTimeUtc,
+      );
+
+    server = await startIsolatedNextServer({
+      dbPath: testRuntime.dbPath,
+      label: 'api-potd-next-best',
+      readinessPath: '/api/potd',
+    });
+
+    const response = await fetch(`${server.baseUrl}/api/potd`, {
+      signal: AbortSignal.timeout(5000),
+    });
+    assert.equal(response.status, 200);
+    const payload = await response.json();
+    assert.equal(payload.success, true);
+    assert.equal(payload.data.today, null, 'today should be null (no official play)');
+    assert.ok(payload.data.nextBestFallback, 'nextBestFallback should be populated');
+    assert.equal(payload.data.nextBestFallback.presentationLabel, 'Next Best');
+    assert.equal(payload.data.nextBestFallback.sourceTable, 'potd_shadow_candidates');
+    assert.equal(payload.data.nextBestFallback.selectionLabel, 'Anaheim Ducks ML');
+    assert.equal(payload.data.nextBestFallback.sport, 'NHL');
+    assert.ok(payload.data.nextBestFallback.edgePct > 0, 'edgePct should be positive');
+
+    console.log('✅ API POTD next-best fallback test passed');
+  } finally {
+    if (server) await server.stop();
+    testRuntime.cleanup();
+  }
+}
+
+async function runAll() {
+  await run();
+  await runNextBestFallback();
+}
+
+runAll().catch((error) => {
   console.error('❌ API POTD behavioral smoke test failed');
   console.error(error);
   process.exit(1);

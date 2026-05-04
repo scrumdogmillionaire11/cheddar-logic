@@ -130,6 +130,12 @@ function normalizeStatus(payload) {
   return 'NO_BET';
 }
 
+function toSurfaceBucket(status) {
+  if (status === 'PLAY') return 'OFFICIAL';
+  if (status === 'LEAN') return 'MONITORED';
+  return 'DIAGNOSTIC';
+}
+
 function reasonCode(payload) {
   const play = payload?.play && typeof payload.play === 'object' ? payload.play : null;
   const decisionV2 = payload?.decision_v2 ?? play?.decision_v2 ?? null;
@@ -142,6 +148,7 @@ function reasonCode(payload) {
 }
 
 function cardsBehavior(payload) {
+  const status = normalizeStatus(payload);
   const visibleOnCards = isBettingSurfacePayloadCards(payload);
   const visibilityClass = visibleOnCards ? 'visible' : 'hidden';
   const projectionSource = (
@@ -156,7 +163,8 @@ function cardsBehavior(payload) {
   ).toUpperCase();
 
   return {
-    status: normalizeStatus(payload),
+    status,
+    surface_bucket: toSurfaceBucket(status),
     reason_code: reasonCode(payload),
     visibility_class: visibilityClass,
     has_projection_marker:
@@ -167,6 +175,7 @@ function cardsBehavior(payload) {
 }
 
 function gamesBehavior(payload) {
+  const status = normalizeStatus(payload);
   const play = payload?.play && typeof payload.play === 'object' ? payload.play : payload;
   const lineSource = (
     payload?.line_source ??
@@ -191,7 +200,8 @@ function gamesBehavior(payload) {
   ).toUpperCase();
 
   return {
-    status: normalizeStatus(payload),
+    status,
+    surface_bucket: toSurfaceBucket(status),
     reason_code: reasonCode(payload),
     visibility_class: visibilityClass,
     has_projection_marker:
@@ -267,7 +277,7 @@ const runtimeSnapshot = FIXTURES.map(({ fixtureId, payload }) => {
   const games = gamesBehavior(payload);
 
   const deltas = [];
-  for (const field of ['status', 'reason_code', 'visibility_class', 'has_projection_marker']) {
+  for (const field of ['status', 'surface_bucket', 'reason_code', 'visibility_class', 'has_projection_marker']) {
     if (String(cards[field]) !== String(games[field])) {
       deltas.push(field);
     }
@@ -287,57 +297,57 @@ const expectedSnapshot = [
     fixtureId: 'parity-001-standard-play',
     parity_status: 'MATCH',
     field_deltas: [],
-    cards: { status: 'PLAY', reason_code: 'EDGE_CONFIRMED', visibility_class: 'visible', has_projection_marker: false },
-    games: { status: 'PLAY', reason_code: 'EDGE_CONFIRMED', visibility_class: 'visible', has_projection_marker: false },
+    cards: { status: 'PLAY', surface_bucket: 'OFFICIAL', reason_code: 'EDGE_CONFIRMED', visibility_class: 'visible', has_projection_marker: false },
+    games: { status: 'PLAY', surface_bucket: 'OFFICIAL', reason_code: 'EDGE_CONFIRMED', visibility_class: 'visible', has_projection_marker: false },
   },
   {
     fixtureId: 'parity-002-standard-lean',
     parity_status: 'MATCH',
     field_deltas: [],
-    cards: { status: 'LEAN', reason_code: 'LEAN_EDGE', visibility_class: 'visible', has_projection_marker: false },
-    games: { status: 'LEAN', reason_code: 'LEAN_EDGE', visibility_class: 'visible', has_projection_marker: false },
+    cards: { status: 'LEAN', surface_bucket: 'MONITORED', reason_code: 'LEAN_EDGE', visibility_class: 'visible', has_projection_marker: false },
+    games: { status: 'LEAN', surface_bucket: 'MONITORED', reason_code: 'LEAN_EDGE', visibility_class: 'visible', has_projection_marker: false },
   },
   {
     fixtureId: 'parity-003-projection-only',
     parity_status: 'EXPECTED_DELTA',
     field_deltas: ['visibility_class'],
-    cards: { status: 'PASS', reason_code: 'NO_MARKET_LINE', visibility_class: 'hidden', has_projection_marker: true },
-    games: { status: 'PASS', reason_code: 'NO_MARKET_LINE', visibility_class: 'projection_only', has_projection_marker: true },
+    cards: { status: 'PASS', surface_bucket: 'DIAGNOSTIC', reason_code: 'NO_MARKET_LINE', visibility_class: 'hidden', has_projection_marker: true },
+    games: { status: 'PASS', surface_bucket: 'DIAGNOSTIC', reason_code: 'NO_MARKET_LINE', visibility_class: 'projection_only', has_projection_marker: true },
   },
   {
     fixtureId: 'parity-004-synthetic-fallback',
     parity_status: 'EXPECTED_DELTA',
     field_deltas: ['visibility_class'],
-    cards: { status: 'PASS', reason_code: 'SYNTHETIC_FALLBACK_GATE', visibility_class: 'hidden', has_projection_marker: true },
-    games: { status: 'PASS', reason_code: 'SYNTHETIC_FALLBACK_GATE', visibility_class: 'projection_only', has_projection_marker: true },
+    cards: { status: 'PASS', surface_bucket: 'DIAGNOSTIC', reason_code: 'SYNTHETIC_FALLBACK_GATE', visibility_class: 'hidden', has_projection_marker: true },
+    games: { status: 'PASS', surface_bucket: 'DIAGNOSTIC', reason_code: 'SYNTHETIC_FALLBACK_GATE', visibility_class: 'projection_only', has_projection_marker: true },
   },
   {
     fixtureId: 'parity-005-pass-with-reason',
     parity_status: 'MATCH',
     field_deltas: [],
-    cards: { status: 'PASS', reason_code: 'SIGMA_INSUFFICIENT', visibility_class: 'visible', has_projection_marker: false },
-    games: { status: 'PASS', reason_code: 'SIGMA_INSUFFICIENT', visibility_class: 'visible', has_projection_marker: false },
+    cards: { status: 'PASS', surface_bucket: 'DIAGNOSTIC', reason_code: 'SIGMA_INSUFFICIENT', visibility_class: 'visible', has_projection_marker: false },
+    games: { status: 'PASS', surface_bucket: 'DIAGNOSTIC', reason_code: 'SIGMA_INSUFFICIENT', visibility_class: 'visible', has_projection_marker: false },
   },
   {
     fixtureId: 'parity-006-blocked',
     parity_status: 'MATCH',
     field_deltas: [],
-    cards: { status: 'NO_BET', reason_code: 'INPUT_GATE_BLOCK', visibility_class: 'visible', has_projection_marker: false },
-    games: { status: 'NO_BET', reason_code: 'INPUT_GATE_BLOCK', visibility_class: 'visible', has_projection_marker: false },
+    cards: { status: 'NO_BET', surface_bucket: 'DIAGNOSTIC', reason_code: 'INPUT_GATE_BLOCK', visibility_class: 'visible', has_projection_marker: false },
+    games: { status: 'NO_BET', surface_bucket: 'DIAGNOSTIC', reason_code: 'INPUT_GATE_BLOCK', visibility_class: 'visible', has_projection_marker: false },
   },
   {
     fixtureId: 'parity-007-nested-play',
     parity_status: 'MATCH',
     field_deltas: [],
-    cards: { status: 'PLAY', reason_code: 'EDGE_CONFIRMED', visibility_class: 'visible', has_projection_marker: false },
-    games: { status: 'PLAY', reason_code: 'EDGE_CONFIRMED', visibility_class: 'visible', has_projection_marker: false },
+    cards: { status: 'PLAY', surface_bucket: 'OFFICIAL', reason_code: 'EDGE_CONFIRMED', visibility_class: 'visible', has_projection_marker: false },
+    games: { status: 'PLAY', surface_bucket: 'OFFICIAL', reason_code: 'EDGE_CONFIRMED', visibility_class: 'visible', has_projection_marker: false },
   },
   {
     fixtureId: 'parity-008-projection-floor',
     parity_status: 'EXPECTED_DELTA',
     field_deltas: ['visibility_class', 'has_projection_marker'],
-    cards: { status: 'PASS', reason_code: 'PROJECTION_FLOOR_GATE', visibility_class: 'hidden', has_projection_marker: false },
-    games: { status: 'PASS', reason_code: 'PROJECTION_FLOOR_GATE', visibility_class: 'projection_only', has_projection_marker: true },
+    cards: { status: 'PASS', surface_bucket: 'DIAGNOSTIC', reason_code: 'PROJECTION_FLOOR_GATE', visibility_class: 'hidden', has_projection_marker: false },
+    games: { status: 'PASS', surface_bucket: 'DIAGNOSTIC', reason_code: 'PROJECTION_FLOOR_GATE', visibility_class: 'projection_only', has_projection_marker: true },
   },
 ];
 

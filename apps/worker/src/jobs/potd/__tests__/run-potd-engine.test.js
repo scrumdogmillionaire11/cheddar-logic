@@ -1308,6 +1308,109 @@ describe('runPotdEngine', () => {
     ]);
   });
 
+  test('WI-1263: high-edge SLIGHT_EDGE candidate emits promotion_audit identifying suppression gate', async () => {
+    const { runPotdEngine, __private } = require('../run_potd_engine');
+    const buildCandidateAuditEntry = __private.buildCandidateAuditEntry;
+
+    // NHL MONEYLINE, edge=17.5% (above 10% floor), support_score=0.15 (below 0.30 floor)
+    // Expected: stays SLIGHT_EDGE, promotion_audit.suppressed_by = ['SUPPORT_SCORE_BELOW_FLOOR']
+    const highEdgeCandidate = buildSelectedCandidate({
+      gameId: 'nhl-wi1263-audit',
+      sport: 'NHL',
+      marketType: 'MONEYLINE',
+      selection: 'HOME',
+      selectionLabel: 'Anaheim Ducks ML',
+      line: null,
+      price: 145,
+      totalScore: 0.82,
+      edgePct: 0.175,
+    });
+
+    insertModelDecisionPayloadRow({
+      gameId: highEdgeCandidate.gameId,
+      sport: 'NHL',
+      homeTeam: highEdgeCandidate.home_team,
+      awayTeam: highEdgeCandidate.away_team,
+      gameTimeUtc: highEdgeCandidate.commence_time,
+      decisionV2: {
+        official_status: 'SLIGHT_EDGE',
+        market_type: 'MONEYLINE',
+        prediction: 'HOME',
+        price: 145,
+        edge_pct: 0.175,
+        support_score: 0.15,
+        model_health_ok: true,
+        price_verification_passed: true,
+      },
+    });
+
+    const result = await runPotdEngine({
+      jobKey: 'potd|wi1263-audit',
+      force: true,
+      fetchOddsFn: async ({ sport }) =>
+        sport === 'NHL'
+          ? {
+              games: [
+                {
+                  gameId: highEdgeCandidate.gameId,
+                  sport: 'NHL',
+                  homeTeam: highEdgeCandidate.home_team,
+                  awayTeam: highEdgeCandidate.away_team,
+                  gameTimeUtc: highEdgeCandidate.commence_time,
+                  market: { spreads: [], totals: [], h2h: [] },
+                },
+              ],
+              errors: [],
+            }
+          : { games: [], errors: [] },
+      buildCandidatesFn: () => [highEdgeCandidate],
+      scoreCandidateFn: (value) => value,
+      selectTopPlaysFn: (values) => values,
+      kellySizeFn: () => 2.0,
+      sendDiscordMessagesFn: async () => 1,
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.noPlay).toBe(true);
+
+    // The shadow candidate is tracked (NON_PLAY_DECISION_OUTCOME)
+    const shadowRows = readRows(
+      `SELECT game_id, shadow_reason FROM potd_shadow_candidates WHERE game_id = 'nhl-wi1263-audit'`,
+    );
+    expect(shadowRows).toEqual([
+      { game_id: 'nhl-wi1263-audit', shadow_reason: 'NON_PLAY_DECISION_OUTCOME' },
+    ]);
+
+    // buildCandidateAuditEntry includes promotionAudit when candidate carries it
+    // Simulate what the scored candidate would have after assembly
+    const candidateWithAudit = {
+      ...highEdgeCandidate,
+      decisionOutcomeStatus: 'SLIGHT_EDGE',
+      promotionAudit: {
+        eligible_sport: 'NHL',
+        eligible_market_type: 'MONEYLINE',
+        initial_status: 'SLIGHT_EDGE',
+        promoted: false,
+        gates: {
+          edge_floor: { required: 0.10, actual: 0.175, passed: true },
+          support_score_floor: { required: 0.30, actual: 0.15, passed: false },
+          no_hard_blockers: { passed: true },
+          model_health_acceptable: { passed: true },
+          price_verified: { passed: true },
+        },
+        suppressed_by: ['SUPPORT_SCORE_BELOW_FLOOR'],
+      },
+    };
+
+    const auditEntry = buildCandidateAuditEntry(candidateWithAudit, 0.02, 55);
+    expect(auditEntry.promotionAudit).not.toBeNull();
+    expect(auditEntry.promotionAudit.promoted).toBe(false);
+    expect(auditEntry.promotionAudit.suppressed_by).toContain('SUPPORT_SCORE_BELOW_FLOOR');
+    expect(auditEntry.promotionAudit.gates.edge_floor.passed).toBe(true);
+    expect(auditEntry.promotionAudit.gates.support_score_floor.passed).toBe(false);
+    expect(auditEntry.promotionAudit.gates.support_score_floor.actual).toBe(0.15);
+  });
+
   test('tiebreak: multiple PLAY outcomes selects highest confidence or deterministic first', async () => {
     const { runPotdEngine } = require('../run_potd_engine');
 

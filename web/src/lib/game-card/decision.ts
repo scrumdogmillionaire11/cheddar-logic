@@ -59,11 +59,78 @@ export type DecisionModel = {
 
 export type PlayDisplayAction = 'FIRE' | 'HOLD' | 'PASS';
 
+export type OpportunitySurface = 'OFFICIAL' | 'MONITORED' | 'DIAGNOSTIC';
+
+export type OpportunityState = {
+  canonicalStatus: 'PLAY' | 'LEAN' | 'PASS';
+  rawStatus: 'PLAY' | 'LEAN' | 'SLIGHT_EDGE' | 'PASS' | 'UNKNOWN';
+  surface: OpportunitySurface;
+};
+
 export type ResolvedPlayDisplayDecision = {
   action: PlayDisplayAction | null;
   status: ExpressionStatus | null;
   classification: 'BASE' | 'LEAN' | 'PASS' | null;
 };
+
+function normalizeRawDecisionStatus(value: unknown): OpportunityState['rawStatus'] {
+  const normalized = String(value ?? '')
+    .trim()
+    .toUpperCase();
+  if (normalized === 'PLAY') return 'PLAY';
+  if (normalized === 'LEAN') return 'LEAN';
+  if (normalized === 'SLIGHT_EDGE' || normalized === 'SLIGHT EDGE') {
+    return 'SLIGHT_EDGE';
+  }
+  if (normalized === 'PASS') return 'PASS';
+  return 'UNKNOWN';
+}
+
+export function resolveOpportunityState(play?:
+  | {
+      decision_outcome?: { status?: string | null } | null;
+      decision_v2?: {
+        official_status?: string | null;
+        canonical_envelope_v2?: { official_status?: string | null } | null;
+      } | null;
+      final_market_decision?: { surfaced_status?: string | null } | null;
+      action?: string | null;
+      decision?: string | null;
+    }
+  | null): OpportunityState {
+  const outcomeStatus = normalizeRawDecisionStatus(play?.decision_outcome?.status);
+  const v2Status = normalizeRawDecisionStatus(
+    play?.decision_v2?.official_status ??
+      play?.decision_v2?.canonical_envelope_v2?.official_status,
+  );
+  const surfaced = normalizeRawDecisionStatus(play?.final_market_decision?.surfaced_status);
+  const actionStatus = normalizeRawDecisionStatus(play?.action ?? play?.decision);
+
+  const rawStatus =
+    outcomeStatus !== 'UNKNOWN'
+      ? outcomeStatus
+      : v2Status !== 'UNKNOWN'
+        ? v2Status
+        : surfaced !== 'UNKNOWN'
+          ? surfaced
+          : actionStatus;
+
+  const canonicalStatus: OpportunityState['canonicalStatus'] =
+    rawStatus === 'PLAY' ? 'PLAY' : rawStatus === 'PASS' ? 'PASS' : 'LEAN';
+
+  const surface: OpportunityState['surface'] =
+    canonicalStatus === 'PLAY'
+      ? 'OFFICIAL'
+      : canonicalStatus === 'LEAN'
+        ? 'MONITORED'
+        : 'DIAGNOSTIC';
+
+  return {
+    canonicalStatus,
+    rawStatus,
+    surface,
+  };
+}
 
 interface Odds {
   h2hHome: number | null;
