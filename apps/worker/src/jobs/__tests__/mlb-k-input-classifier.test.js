@@ -12,6 +12,7 @@
 const {
   classifyMlbPitcherKQuality,
   buildCompletenessMatrix,
+  buildLeashConfidence,
   dedupeFlags,
 } = require('../mlb-k-input-classifier');
 
@@ -21,17 +22,26 @@ const {
 function allCorePresent() {
   return {
     starter: {
-      k_pct:    0.28,
+      k_pct: 0.28,
       swstr_pct: 0.13,
+      pitch_count_avg: 93,
     },
     opponent: {
-      k_pct_vs_hand:           0.22,
-      contact_pct_vs_hand:     0.76,
-      chase_pct_vs_hand:       0.31,
+      k_pct_vs_hand: 0.22,
+      contact_pct_vs_hand: 0.78,
       projected_lineup_status: 'CONFIRMED',
     },
     leash: {
       pitch_count_avg: 93,
+      expected_ip: 6.0,
+      last_three_pitch_counts: [95, 92, 92],
+    },
+    projection_diagnostics: {
+      projection_source: 'FULL_MODEL',
+      missing_inputs: [],
+      degraded_inputs: [],
+      status_cap: null,
+      placeholder_fields: [],
     },
   };
 }
@@ -39,71 +49,79 @@ function allCorePresent() {
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 describe('classifyMlbPitcherKQuality', () => {
-  // Test 1 — FULL_MODEL when all core fields present
   it('returns FULL_MODEL when all core fields are present with real values', () => {
     const result = classifyMlbPitcherKQuality(allCorePresent());
 
     expect(result.model_quality).toBe('FULL_MODEL');
     expect(result.hardMissing).toHaveLength(0);
     expect(result.proxies).toHaveLength(0);
-    // degraded may be non-empty (e.g. missing chase_pct) but that is fine
+    expect(result.degraded).toHaveLength(0);
+    expect(result.reasonCodes).toEqual([]);
   });
 
-  // Test 2 — FALLBACK when whiff proxy used
-  it('returns FALLBACK (not FULL_MODEL) when whiff proxy substitutes real swstr_pct/csw_pct', () => {
+  it('returns FALLBACK when the scoring path had to use a whiff proxy', () => {
     const inputs = allCorePresent();
-    // Remove real whiff metrics, add proxy signal
     delete inputs.starter.swstr_pct;
-    inputs.starter.csw_pct     = null;
-    inputs.starter.whiff_proxy = 0.18;
+    inputs.starter.csw_pct = null;
+    inputs.projection_diagnostics.degraded_inputs = ['starter_whiff_proxy'];
+    inputs.projection_diagnostics.missing_inputs = ['statcast_swstr'];
 
     const result = classifyMlbPitcherKQuality(inputs);
 
     expect(result.model_quality).toBe('FALLBACK');
     expect(result.proxies).toContain('starter_whiff_proxy');
-    // Explicit guard — must NEVER be FULL_MODEL when proxy used
+    expect(result.reasonCodes).toContain(
+      'QUALITY_PROXY_SUBSTITUTED:starter_whiff_proxy',
+    );
     expect(result.model_quality).not.toBe('FULL_MODEL');
   });
 
-  // Test 3 — FALLBACK when opponent contact profile missing
-  it('returns FALLBACK (not FULL_MODEL) when contact_pct_vs_hand is absent', () => {
+  it('returns FALLBACK when leash quality comes from IP-only proxy data', () => {
     const inputs = allCorePresent();
-    inputs.opponent.contact_pct_vs_hand = null;
+    delete inputs.starter.pitch_count_avg;
+    inputs.leash.pitch_count_avg = null;
+    inputs.leash.last_three_pitch_counts = [];
+    inputs.leash.ip_avg = 5.4;
+    inputs.leash.leash_flag = 'IP_PROXY';
 
     const result = classifyMlbPitcherKQuality(inputs);
 
     expect(result.model_quality).toBe('FALLBACK');
-    expect(result.hardMissing).toContain('opp_contact_profile');
-    // Explicit guard
+    expect(result.proxies).toContain('leash_ip_avg_proxy');
+    expect(result.leash_confidence.source).toBe('IP_AVG_PROXY');
     expect(result.model_quality).not.toBe('FULL_MODEL');
   });
 
-  // Test 4 — FALLBACK when IP proxy substitutes real leash metric
-  it('returns FALLBACK (not FULL_MODEL) when ip_proxy substitutes real pitch_count_avg / ip_avg', () => {
+  it('returns FALLBACK when placeholder fields are explicitly flagged', () => {
     const inputs = allCorePresent();
-    // Remove real leash metrics, add proxy signal
-    inputs.leash = { ip_proxy: 5.5 };
+    inputs.projection_diagnostics.placeholder_fields = [
+      'starter.k_pct',
+      'opponent.contact_pct_vs_hand',
+    ];
 
     const result = classifyMlbPitcherKQuality(inputs);
 
     expect(result.model_quality).toBe('FALLBACK');
-    expect(result.proxies).toContain('ip_proxy');
-    // Explicit guard
+    expect(result.proxies).toContain('placeholder_input:starter.k_pct');
+    expect(result.reasonCodes).toContain(
+      'QUALITY_PROXY_SUBSTITUTED:placeholder_input:starter.k_pct',
+    );
     expect(result.model_quality).not.toBe('FULL_MODEL');
   });
 
-  it('returns DEGRADED_MODEL (not FULL_MODEL) when only secondary fields are missing', () => {
+  it('returns DEGRADED_MODEL when lineup confirmation is missing', () => {
     const inputs = allCorePresent();
-    // Secondary gap: chase_pct missing + lineup only PROJECTED
-    inputs.opponent.chase_pct_vs_hand       = undefined;
-    inputs.opponent.projected_lineup_status = 'PROJECTED';
+    inputs.opponent.projected_lineup_status = 'MISSING';
+    inputs.projection_diagnostics.projection_source = 'DEGRADED_MODEL';
 
     const result = classifyMlbPitcherKQuality(inputs);
 
     expect(result.model_quality).toBe('DEGRADED_MODEL');
     expect(result.hardMissing).toHaveLength(0);
     expect(result.proxies).toHaveLength(0);
-    expect(result.degraded.length).toBeGreaterThan(0);
+    expect(result.degraded).toEqual(
+      expect.arrayContaining(['lineup_unconfirmed', 'projection_source_degraded']),
+    );
   });
 });
 
@@ -140,30 +158,75 @@ describe('dedupeFlags', () => {
 });
 
 describe('buildCompletenessMatrix', () => {
-  it('marks fields as true when finite numbers are provided', () => {
+  it('emits stable starter, opponent, and leash keys for complete inputs', () => {
     const matrix = buildCompletenessMatrix(
-      { k_pct: 0.28, swstr_pct: 0.13, csw_pct: 0.29 },
-      { k_pct_vs_hand: 0.22, contact_pct_vs_hand: 0.76, projected_lineup_status: 'CONFIRMED' },
-      { pitch_count_avg: 93 }
+      { k_pct: 0.28, swstr_pct: 0.13, csw_pct: 0.29, pitch_count_avg: 93 },
+      { k_pct_vs_hand: 0.22, contact_pct_vs_hand: 0.78, projected_lineup_status: 'CONFIRMED' },
+      { pitch_count_avg: 93, expected_ip: 6.0, last_three_pitch_counts: [95, 92, 92] },
     );
 
-    expect(matrix.starter_profile.k_pct).toBe(true);
-    expect(matrix.starter_profile.swstr_pct).toBe(true);
-    expect(matrix.opponent_profile.k_pct_vs_hand).toBe(true);
-    expect(matrix.opponent_profile.contact_pct_vs_hand).toBe(true);
-    expect(matrix.opponent_profile.projected_lineup).toBe(true);
+    expect(Object.keys(matrix.starter_profile).sort()).toEqual([
+      'csw_pct',
+      'ip_avg',
+      'k_pct',
+      'pitch_count_avg',
+      'swstr_pct',
+    ]);
+    expect(Object.keys(matrix.opponent_profile).sort()).toEqual([
+      'contact_pct_vs_hand',
+      'k_pct_vs_hand',
+      'projected_lineup_status',
+    ]);
+    expect(Object.keys(matrix.leash_profile).sort()).toEqual([
+      'direct_pitch_count_history',
+      'expected_ip',
+      'ip_avg',
+      'pitch_count_avg',
+    ]);
+    expect(matrix.leash_profile.direct_pitch_count_history).toBe(true);
   });
 
   it('marks fields as false when null/undefined/NaN', () => {
     const matrix = buildCompletenessMatrix(
       { k_pct: null, swstr_pct: undefined },
       { k_pct_vs_hand: NaN, contact_pct_vs_hand: null },
-      {}
+      { pitch_count_avg: null, ip_avg: null, expected_ip: null },
     );
 
     expect(matrix.starter_profile.k_pct).toBe(false);
     expect(matrix.starter_profile.swstr_pct).toBe(false);
     expect(matrix.opponent_profile.k_pct_vs_hand).toBe(false);
     expect(matrix.opponent_profile.contact_pct_vs_hand).toBe(false);
+    expect(matrix.opponent_profile.projected_lineup_status).toBe(false);
+    expect(matrix.leash_profile.pitch_count_avg).toBe(false);
+    expect(matrix.leash_profile.ip_avg).toBe(false);
+  });
+});
+
+describe('buildLeashConfidence', () => {
+  it('grades direct pitch-count history above proxy-only leash inputs', () => {
+    expect(
+      buildLeashConfidence({
+        pitch_count_avg: 93,
+        expected_ip: 6.0,
+        last_three_pitch_counts: [95, 92, 92],
+      }),
+    ).toMatchObject({
+      level: 'HIGH',
+      source: 'PITCH_COUNT_HISTORY',
+      proxy_in_use: false,
+    });
+
+    expect(
+      buildLeashConfidence({
+        ip_avg: 5.4,
+        expected_ip: 5.0,
+        leash_flag: 'IP_PROXY',
+      }),
+    ).toMatchObject({
+      level: 'MEDIUM',
+      source: 'IP_AVG_PROXY',
+      proxy_in_use: true,
+    });
   });
 });

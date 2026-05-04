@@ -61,6 +61,7 @@ const {
   getProbableStarterIdentity,
   buildPitcherKLineContract,
   buildMlbPitcherKPayloadFields,
+  buildMlbPitcherKQualityAudit,
   resolvePitcherKPayloadIdentity,
   computeSyntheticLineF5Driver,
   resolveMlbTotalExecutionInputs,
@@ -1568,6 +1569,182 @@ describe('buildMlbPitcherKPayloadFields', () => {
         line_source: 'draftkings',
       }),
     });
+  });
+
+  test('emits stable completeness and projection diagnostics fields on pitcher-K payloads', () => {
+    const payload = buildMlbPitcherKPayloadFields({
+      driver: {
+        basis: 'PROJECTION_ONLY',
+        prediction: 'PASS',
+        card_verdict: 'PASS',
+        projection_source: 'DEGRADED_MODEL',
+        projection: { k_mean: 6.2 },
+        prop_decision: {
+          verdict: 'PASS',
+          lean_side: null,
+          input_completeness: {
+            starter_profile: {
+              k_pct: true,
+              swstr_pct: false,
+              csw_pct: false,
+              pitch_count_avg: false,
+              ip_avg: true,
+            },
+            opponent_profile: {
+              k_pct_vs_hand: true,
+              contact_pct_vs_hand: true,
+              projected_lineup_status: false,
+            },
+            leash_profile: {
+              pitch_count_avg: false,
+              ip_avg: true,
+              expected_ip: true,
+              direct_pitch_count_history: false,
+            },
+          },
+          leash_confidence: {
+            level: 'MEDIUM',
+            source: 'IP_AVG_PROXY',
+            tier: 'Mod',
+            flag: 'IP_PROXY',
+            expected_ip: 5.0,
+            pitch_count_avg: null,
+            ip_avg: 5.4,
+            direct_pitch_count_history: false,
+            proxy_in_use: true,
+          },
+          projection_diagnostics: {
+            projection_source: 'DEGRADED_MODEL',
+            missing_inputs: ['statcast_swstr'],
+            degraded_inputs: ['starter_whiff_proxy'],
+            placeholder_fields: [],
+            status_cap: 'LEAN',
+          },
+        },
+      },
+      pitcherPlayerId: '592450',
+      pitcherPlayerName: 'Gerrit Cole',
+    });
+
+    expect(payload.payloadFields.input_completeness).toMatchObject({
+      starter_profile: expect.objectContaining({
+        k_pct: true,
+        pitch_count_avg: false,
+        ip_avg: true,
+      }),
+      opponent_profile: expect.objectContaining({
+        k_pct_vs_hand: true,
+        contact_pct_vs_hand: true,
+        projected_lineup_status: false,
+      }),
+      leash_profile: expect.objectContaining({
+        pitch_count_avg: false,
+        ip_avg: true,
+        expected_ip: true,
+      }),
+    });
+    expect(payload.payloadFields.leash_confidence).toMatchObject({
+      source: 'IP_AVG_PROXY',
+      proxy_in_use: true,
+    });
+    expect(payload.payloadFields.projection_diagnostics).toMatchObject({
+      projection_source: 'DEGRADED_MODEL',
+      status_cap: 'LEAN',
+    });
+  });
+});
+
+describe('buildMlbPitcherKQualityAudit', () => {
+  test('uses real pitcher and matchup inputs to keep strong-input cards FULL_MODEL', () => {
+    const audit = buildMlbPitcherKQualityAudit({
+      driver: {
+        projection_source: 'FULL_MODEL',
+        projection: {
+          projected_ip: 6.0,
+          starter_swstr_pct: 0.13,
+        },
+        pitcher_k_result: {
+          leash_tier: 'Full',
+          expected_ip: 6.0,
+          missing_inputs: [],
+          degraded_inputs: [],
+        },
+        prop_decision: {
+          projection_source: 'FULL_MODEL',
+          missing_inputs: [],
+          degraded_inputs: [],
+        },
+      },
+      pitcher: {
+        season_k_pct: 0.31,
+        swstr_pct: 0.13,
+        avg_ip: 5.9,
+        last_three_pitch_counts: [97, 94, 92],
+      },
+      mlb: {
+        opp_k_pct_l30: { home: 0.24 },
+        opp_k_pct_l30_pa: { home: 180 },
+        opp_k_pct_season: { home: 0.23 },
+        opp_k_pct_season_pa: { home: 500 },
+        confirmed_lineup: { home: ['1', '2', '3'] },
+      },
+      side: 'home',
+    });
+
+    expect(audit.quality.model_quality).toBe('FULL_MODEL');
+    expect(audit.input_completeness.starter_profile.pitch_count_avg).toBe(true);
+    expect(audit.input_completeness.opponent_profile.contact_pct_vs_hand).toBe(true);
+    expect(audit.leash_confidence.source).toBe('PITCH_COUNT_HISTORY');
+  });
+
+  test('downgrades weak-input cards and emits deterministic quality reason codes', () => {
+    const audit = buildMlbPitcherKQualityAudit({
+      driver: {
+        projection_source: 'DEGRADED_MODEL',
+        projection: {
+          projected_ip: 5.0,
+          starter_swstr_pct: null,
+        },
+        missing_inputs: ['statcast_swstr'],
+        pitcher_k_result: {
+          leash_tier: 'Mod',
+          leash_flag: 'IP_PROXY',
+          expected_ip: 5.0,
+          missing_inputs: ['statcast_swstr'],
+          degraded_inputs: ['starter_whiff_proxy'],
+        },
+        prop_decision: {
+          projection_source: 'DEGRADED_MODEL',
+          missing_inputs: ['statcast_swstr'],
+          degraded_inputs: ['starter_whiff_proxy'],
+          placeholder_fields: ['starter.k_pct'],
+          status_cap: 'LEAN',
+        },
+      },
+      pitcher: {
+        season_k_pct: 0.27,
+        swstr_pct: null,
+        avg_ip: 5.1,
+        last_three_pitch_counts: null,
+      },
+      mlb: {
+        opp_k_pct_l30: { away: 0.21 },
+        opp_k_pct_l30_pa: { away: 160 },
+        confirmed_lineup: { away: null },
+      },
+      side: 'away',
+    });
+
+    expect(audit.quality.model_quality).not.toBe('FULL_MODEL');
+    expect(audit.quality.reasonCodes).toEqual(
+      expect.arrayContaining([
+        'QUALITY_PROXY_SUBSTITUTED:starter_whiff_proxy',
+        'QUALITY_PROXY_SUBSTITUTED:leash_ip_avg_proxy',
+        'QUALITY_PROXY_SUBSTITUTED:placeholder_input:starter.k_pct',
+      ]),
+    );
+    expect(audit.input_completeness.leash_profile.pitch_count_avg).toBe(false);
+    expect(audit.input_completeness.opponent_profile.projected_lineup_status).toBe(false);
   });
 });
 

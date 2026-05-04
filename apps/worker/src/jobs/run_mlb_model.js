@@ -75,6 +75,7 @@ const {
 // WI-0747: MLB K explicit input contract — deterministic quality classifier
 const {
   classifyMlbPitcherKQuality,
+  buildCompletenessMatrix,
   dedupeFlags,
 } = require('./mlb-k-input-classifier');
 const { evaluateExecution, evaluateMlbExecution } = require('./execution-gate');
@@ -3127,6 +3128,160 @@ function resolvePitcherKSelectedPrice(driver = {}, selectionSide = null) {
   return null;
 }
 
+function averageFiniteNumbers(values = []) {
+  if (!Array.isArray(values) || values.length === 0) return null;
+  const finiteValues = values
+    .map((value) => toFiniteNumber(value))
+    .filter((value) => value !== null);
+  if (finiteValues.length === 0) return null;
+  return finiteValues.reduce((sum, value) => sum + value, 0) / finiteValues.length;
+}
+
+function normalizePitcherKLineupStatus(status) {
+  const normalized = String(status || '').trim().toUpperCase();
+  return normalized || 'MISSING';
+}
+
+function resolvePitcherKProjectedLineupStatus(mlb = {}, side = 'home') {
+  const explicitStatus =
+    mlb.projected_lineup_status?.[side] ??
+    mlb.lineup_status?.[side] ??
+    null;
+  if (explicitStatus) {
+    return normalizePitcherKLineupStatus(explicitStatus);
+  }
+
+  const confirmedLineup = mlb.confirmed_lineup?.[side];
+  if (Array.isArray(confirmedLineup)) {
+    return confirmedLineup.length > 0 ? 'CONFIRMED' : 'MISSING';
+  }
+  return confirmedLineup ? 'CONFIRMED' : 'MISSING';
+}
+
+function resolvePitcherKOpponentKPctVsHand(mlb = {}, side = 'home') {
+  const l30 = toFiniteNumber(mlb.opp_k_pct_l30?.[side]);
+  const l30Pa = toFiniteNumber(mlb.opp_k_pct_l30_pa?.[side]) ?? 0;
+  const season = toFiniteNumber(mlb.opp_k_pct_season?.[side]);
+  const seasonPa = toFiniteNumber(mlb.opp_k_pct_season_pa?.[side]) ?? 0;
+
+  if (l30Pa >= 100 && l30 !== null) return l30;
+  if (seasonPa >= 100 && season !== null) return season;
+  return null;
+}
+
+function resolvePitcherKOpponentContactPctVsHand(mlb = {}, side = 'home') {
+  const directL30 = toFiniteNumber(mlb.opp_contact_pct_l30?.[side]);
+  const directSeason = toFiniteNumber(mlb.opp_contact_pct_season?.[side]);
+  if (directL30 !== null) return directL30;
+  if (directSeason !== null) return directSeason;
+
+  const opponentKPct = resolvePitcherKOpponentKPctVsHand(mlb, side);
+  if (opponentKPct === null) return null;
+  return Math.round((1 - opponentKPct) * 1000) / 1000;
+}
+
+function buildMlbPitcherKQualityAudit({
+  driver = {},
+  pitcher = null,
+  mlb = {},
+  side = 'home',
+} = {}) {
+  const projection = driver.projection && typeof driver.projection === 'object'
+    ? driver.projection
+    : {};
+  const pitcherKResult = driver.pitcher_k_result && typeof driver.pitcher_k_result === 'object'
+    ? driver.pitcher_k_result
+    : {};
+  const lastThreePitchCounts = Array.isArray(pitcher?.last_three_pitch_counts)
+    ? pitcher.last_three_pitch_counts
+    : [];
+  const pitchCountAvg = averageFiniteNumbers(lastThreePitchCounts);
+  const ipAvg = pickFirstFinite(pitcher?.avg_ip, pitcher?.recent_ip);
+  const starterProfile = {
+    k_pct: pickFirstFinite(pitcher?.season_k_pct, pitcher?.k_pct),
+    swstr_pct: pickFirstFinite(
+      pitcher?.swstr_pct,
+      projection.starter_swstr_pct,
+      pitcherKResult?.statcast_inputs?.swstr_pct,
+    ),
+    csw_pct: pickFirstFinite(
+      pitcher?.csw_pct,
+      projection.starter_csw_pct,
+      pitcherKResult?.statcast_inputs?.csw_pct,
+    ),
+    pitch_count_avg: pitchCountAvg,
+    ip_avg: ipAvg,
+  };
+  const leashProfile = {
+    pitch_count_avg: pitchCountAvg,
+    ip_avg: ipAvg,
+    expected_ip: pickFirstFinite(
+      projection.projected_ip,
+      projection.expected_ip,
+      pitcherKResult.projected_ip,
+      pitcherKResult.expected_ip,
+    ),
+    last_three_pitch_counts: lastThreePitchCounts,
+    leash_tier: pitcherKResult.leash_tier ?? null,
+    leash_flag: pitcherKResult.leash_flag ?? null,
+  };
+  const opponentProfile = {
+    k_pct_vs_hand: resolvePitcherKOpponentKPctVsHand(mlb, side),
+    contact_pct_vs_hand: resolvePitcherKOpponentContactPctVsHand(mlb, side),
+    projected_lineup_status: resolvePitcherKProjectedLineupStatus(mlb, side),
+  };
+  const projectionDiagnostics = {
+    projection_source:
+      driver.projection_source ??
+      driver.prop_decision?.projection_source ??
+      pitcherKResult.projection_source ??
+      null,
+    missing_inputs: uniqueReasonCodes([
+      ...(Array.isArray(driver.missing_inputs) ? driver.missing_inputs : []),
+      ...(Array.isArray(driver.prop_decision?.missing_inputs)
+        ? driver.prop_decision.missing_inputs
+        : []),
+      ...(Array.isArray(pitcherKResult.missing_inputs)
+        ? pitcherKResult.missing_inputs
+        : []),
+    ]),
+    degraded_inputs: uniqueReasonCodes([
+      ...(Array.isArray(driver.degraded_inputs) ? driver.degraded_inputs : []),
+      ...(Array.isArray(driver.prop_decision?.degraded_inputs)
+        ? driver.prop_decision.degraded_inputs
+        : []),
+      ...(Array.isArray(pitcherKResult.degraded_inputs)
+        ? pitcherKResult.degraded_inputs
+        : []),
+    ]),
+    status_cap:
+      driver.status_cap ??
+      driver.prop_decision?.status_cap ??
+      pitcherKResult.status_cap ??
+      null,
+    placeholder_fields: Array.isArray(driver.prop_decision?.placeholder_fields)
+      ? driver.prop_decision.placeholder_fields
+      : [],
+  };
+
+  const quality = classifyMlbPitcherKQuality({
+    starter: starterProfile,
+    opponent: opponentProfile,
+    leash: leashProfile,
+    projection_diagnostics: projectionDiagnostics,
+  });
+
+  return {
+    starter_profile: starterProfile,
+    opponent_profile: opponentProfile,
+    leash_profile: leashProfile,
+    input_completeness: quality.input_completeness,
+    leash_confidence: quality.leash_confidence,
+    projection_diagnostics: quality.projection_diagnostics,
+    quality,
+  };
+}
+
 function buildMlbPitcherKPayloadFields({
   driver = {},
   pitcherPlayerId = null,
@@ -3151,6 +3306,38 @@ function buildMlbPitcherKPayloadFields({
     basis === 'ODDS_BACKED'
       ? resolvePitcherKSelectedPrice(driver, selectionSide)
       : null;
+  const projectionDiagnostics = driver.prop_decision?.projection_diagnostics ?? {
+    projection_source:
+      driver.projection_source ??
+      driver.prop_decision?.projection_source ??
+      null,
+    missing_inputs: Array.isArray(driver.prop_decision?.missing_inputs)
+      ? driver.prop_decision.missing_inputs
+      : [],
+    degraded_inputs: Array.isArray(driver.prop_decision?.degraded_inputs)
+      ? driver.prop_decision.degraded_inputs
+      : [],
+    placeholder_fields: Array.isArray(driver.prop_decision?.placeholder_fields)
+      ? driver.prop_decision.placeholder_fields
+      : [],
+    status_cap:
+      driver.status_cap ??
+      driver.prop_decision?.status_cap ??
+      null,
+  };
+  const inputCompleteness = driver.prop_decision?.input_completeness ??
+    buildCompletenessMatrix({}, {}, {});
+  const leashConfidence = driver.prop_decision?.leash_confidence ?? {
+    level: 'LOW',
+    source: 'MISSING',
+    tier: null,
+    flag: null,
+    expected_ip: null,
+    pitch_count_avg: null,
+    ip_avg: null,
+    direct_pitch_count_history: false,
+    proxy_in_use: false,
+  };
 
   return {
     selectionSide,
@@ -3173,6 +3360,9 @@ function buildMlbPitcherKPayloadFields({
         driver.prop_decision?.verdict ?? driver.card_verdict,
       ),
       prop_decision: driver.prop_decision ?? null,
+      input_completeness: inputCompleteness,
+      leash_confidence: leashConfidence,
+      projection_diagnostics: projectionDiagnostics,
       pitcher_k_result: driver.pitcher_k_result ?? null,
       line_source: basis === 'ODDS_BACKED' ? driver.line_source ?? null : null,
       over_price: basis === 'ODDS_BACKED' ? driver.over_price ?? null : null,
@@ -4391,44 +4581,40 @@ async function runMLBModel({
             // ── WI-0747: MLB_K_AUDIT — quality classification before card write ──
             if (driver.prop_decision) {
               const pd = driver.prop_decision;
-              const missingInputs = pd.missing_inputs ?? [];
-              const degradedInputs = pd.degraded_inputs ?? [];
-              // WI-0770: use real swstr_pct from DB via model output (starter_swstr_pct
-              // is the raw DB value returned by calculateProjectionK — null when
-              // season_swstr_pct not yet populated by pull_mlb_statcast).
-              const _realSwstrPct = driver.projection?.starter_swstr_pct ?? null;
-              const _statcastSwstrMissing = missingInputs.includes('statcast_swstr');
-              // Map model-layer flags → classifier input signals
-              const _starter = {
-                k_pct:       missingInputs.includes('starter_k_pct') ? null : 0.25,
-                swstr_pct:   _statcastSwstrMissing ? null : _realSwstrPct,
-                csw_pct:     null,
-                whiff_proxy: null, // WI-0770: no hardcoded proxy — absent means absent
-              };
-              const _leash = {
-                pitch_count_avg: missingInputs.includes('leash_metric') ? null : 90,
-                ip_proxy:        missingInputs.includes('leash_metric') ? 5.5 : null,
-              };
-              const _opponent = {
-                k_pct_vs_hand:       (missingInputs.includes('opp_k_pct_vs_hand') ||
-                                      missingInputs.includes('league_avg_k_fallback')) ? null : 0.22,
-                contact_pct_vs_hand: missingInputs.includes('opponent_contact_profile') ? null : 0.76,
-              };
-              const _qr = classifyMlbPitcherKQuality({ starter: _starter, opponent: _opponent, leash: _leash });
-              const _hasHardOrProxy = _qr.hardMissing.length > 0 || _qr.proxies.length > 0;
-              pd.model_quality        = _hasHardOrProxy ? _qr.model_quality : 'FULL_MODEL';
-              pd.proxy_fields         = _qr.proxies;
-              pd.degradation_reasons  = [..._qr.hardMissing, ..._qr.proxies];
-              // WI-0770: surface statcast_inputs in prop_decision for downstream inspection
-              pd.statcast_inputs      = driver.pitcher_k_result?.statcast_inputs ?? null;
-              // Dedup pre-existing missing_inputs and flags
-              pd.missing_inputs = dedupeFlags(pd.missing_inputs ?? []);
-              pd.flags          = dedupeFlags(pd.flags ?? []);
               const sideStr = driver.market?.endsWith('_home') ? 'home' : 'away';
               const _mlbRaw = (typeof pitcherKOddsSnapshot.raw_data === 'string'
                 ? JSON.parse(pitcherKOddsSnapshot.raw_data)
                 : pitcherKOddsSnapshot.raw_data) ?? {};
-              const _pitcher = (_mlbRaw.mlb ?? {})[`${sideStr}_pitcher`];
+              const _mlb = _mlbRaw.mlb ?? {};
+              const _pitcher = _mlb[`${sideStr}_pitcher`];
+              const qualityAudit = buildMlbPitcherKQualityAudit({
+                driver,
+                pitcher: _pitcher,
+                mlb: _mlb,
+                side: sideStr,
+              });
+              const _qr = qualityAudit.quality;
+              pd.model_quality = _qr.model_quality;
+              pd.proxy_fields = _qr.proxies;
+              pd.degradation_reasons = uniqueReasonCodes([
+                ..._qr.hardMissing,
+                ..._qr.proxies,
+                ..._qr.degraded,
+              ]);
+              pd.input_completeness = qualityAudit.input_completeness;
+              pd.leash_confidence = qualityAudit.leash_confidence;
+              pd.projection_diagnostics = qualityAudit.projection_diagnostics;
+              // WI-0770: surface statcast_inputs in prop_decision for downstream inspection
+              pd.statcast_inputs = driver.pitcher_k_result?.statcast_inputs ?? null;
+              driver.reason_codes = uniqueReasonCodes([
+                ...(Array.isArray(driver.reason_codes) ? driver.reason_codes : []),
+                ..._qr.reasonCodes,
+              ]);
+              pd.missing_inputs = dedupeFlags(pd.missing_inputs ?? []);
+              pd.flags = uniqueReasonCodes([
+                ...(Array.isArray(pd.flags) ? pd.flags : []),
+                ..._qr.reasonCodes,
+              ]);
               const auditSummary = buildMlbPitcherKAuditLog({
                 gameId,
                 driver,
@@ -5448,6 +5634,7 @@ module.exports = {
   resolvePitcherKsMode,
   resolveMlbPitcherPropRolloutState,
   resolvePitcherKPayloadIdentity,
+  buildMlbPitcherKQualityAudit,
   buildMlbPitcherKPayloadFields,
   isTimestampFresh,
   filterSnapshotsByGameIds,
