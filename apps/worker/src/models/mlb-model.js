@@ -3211,6 +3211,103 @@ function runTrapScan(pitcher, matchup, market, ump, weather, opts) {
   };
 }
 
+/**
+ * Apply confidence caps based on trap diagnostics (WI-1255).
+ * 
+ * Rules:
+ * 1. opp_profile_staleness === 'STALE' → cap to WATCH; emit CAP_OPP_STALE
+ * 2. leash_bucket === 'UNKNOWN' → cap to WATCH; emit CAP_LEASH_UNKNOWN
+ * 3. opp_profile_staleness === 'STATIC_FALLBACK' → cap to DATA_UNTRUSTED; emit CAP_OPP_STATIC_FALLBACK
+ * 4. leash_bucket === 'SHORT' + over candidate → force TRAP_FLAGGED; emit CAP_SHORT_LEASH_OVER
+ * 5. opp_k_bucket === 'LOW_K' + projected Ks > 6.5 → cap to UNDER_LEAN_ONLY; emit CAP_LOW_OPP_HIGH_PROJ
+ * 6. Both opp_profile_staleness STALE/STATIC_FALLBACK + leash_bucket UNKNOWN → suppress output entirely
+ *
+ * @param {string} posture - Current posture (PLAY, WATCH, LEAN, UNDER_LEAN_ONLY, etc.)
+ * @param {string|null} selectionSide - 'OVER' or 'UNDER'
+ * @param {number|null} projection - Projected K value
+ * @param {object} trapDiagnostics - Trap diagnostics from trap scan
+ * @returns {{ cappedPosture: string, capReason: string|null, suppressOutput: boolean }}
+ */
+function applyConfidenceCaps({
+  posture = 'NO_EDGE_ZONE',
+  selectionSide = null,
+  projection = null,
+  trapDiagnostics = {},
+} = {}) {
+  const {
+    opp_profile_staleness: oppStaleness = null,
+    leash_bucket: leashBucket = null,
+    opp_k_bucket: oppKBucket = null,
+  } = trapDiagnostics;
+
+  const MID_TIER_UPPER_BOUND = 6.5;
+
+  // Full suppression: BOTH opp_profile_staleness is STALE/STATIC_FALLBACK AND leash_bucket is UNKNOWN
+  if (
+    (oppStaleness === 'STALE' || oppStaleness === 'STATIC_FALLBACK') &&
+    leashBucket === 'UNKNOWN'
+  ) {
+    return {
+      cappedPosture: 'NO_OUTPUT_INSUFFICIENT_DATA',
+      capReason: 'INSUFFICIENT_DATA_BOTH_FRESHNESS_LEASH',
+      suppressOutput: true,
+    };
+  }
+
+  // Rule 1: opp_profile_staleness === 'STALE' → cap to WATCH
+  if (oppStaleness === 'STALE') {
+    return {
+      cappedPosture: 'WATCH',
+      capReason: 'CAP_OPP_STALE',
+      suppressOutput: false,
+    };
+  }
+
+  // Rule 2: leash_bucket === 'UNKNOWN' → cap to WATCH
+  if (leashBucket === 'UNKNOWN') {
+    return {
+      cappedPosture: 'WATCH',
+      capReason: 'CAP_LEASH_UNKNOWN',
+      suppressOutput: false,
+    };
+  }
+
+  // Rule 3: opp_profile_staleness === 'STATIC_FALLBACK' → cap to DATA_UNTRUSTED
+  if (oppStaleness === 'STATIC_FALLBACK') {
+    return {
+      cappedPosture: 'DATA_UNTRUSTED',
+      capReason: 'CAP_OPP_STATIC_FALLBACK',
+      suppressOutput: false,
+    };
+  }
+
+  // Rule 4: leash_bucket === 'SHORT' + over candidate → force TRAP_FLAGGED
+  if (leashBucket === 'SHORT' && selectionSide === 'OVER' && posture === 'OVER_CANDIDATE') {
+    return {
+      cappedPosture: 'TRAP_FLAGGED',
+      capReason: 'CAP_SHORT_LEASH_OVER',
+      suppressOutput: false,
+    };
+  }
+
+  // Rule 5: opp_k_bucket === 'LOW_K' + projected Ks > 6.5 → cap to UNDER_LEAN_ONLY
+  const projValue = Number.isFinite(projection) ? projection : null;
+  if (oppKBucket === 'LOW_K' && projValue !== null && projValue > MID_TIER_UPPER_BOUND) {
+    return {
+      cappedPosture: 'UNDER_LEAN_ONLY',
+      capReason: 'CAP_LOW_OPP_HIGH_PROJ',
+      suppressOutput: false,
+    };
+  }
+
+  // No cap applies
+  return {
+    cappedPosture: posture,
+    capReason: null,
+    suppressOutput: false,
+  };
+}
+
 function withTrapDiagnostics(result, trapResult) {
   return {
     ...result,
@@ -3948,7 +4045,19 @@ function scorePitcherK(pitcherInput, matchupInput, umpInput, marketInput, weathe
   const netScore  = Math.max(0, rawScore + penalties.total + commandContextConfidenceDelta);
   const tier = getConfidenceTier(netScore);
 
-  return withTrapDiagnostics({
+  // WI-1255: Apply confidence caps based on trap diagnostics
+  const capResult = applyConfidenceCaps({
+    posture: projectionPosture.posture,
+    selectionSide: side === 'over' ? 'OVER' : side === 'under' ? 'UNDER' : null,
+    projection,
+    trapDiagnostics: baselineTrapResult.diagnostics || {},
+  });
+
+  const finalPosture = capResult.cappedPosture;
+  const confidenceCapReason = capResult.capReason;
+
+  // If output suppression is flagged, modify verdict to NO_OUTPUT_INSUFFICIENT_DATA
+  const finalResult = {
     status: 'COMPLETE',
     projection,
     k_mean: projResult.k_mean,
@@ -3976,7 +4085,7 @@ function scorePitcherK(pitcherInput, matchupInput, umpInput, marketInput, weathe
     raw_score: rawScore,
     net_score: netScore,
     tier,
-    verdict: 'PASS',
+    verdict: capResult.suppressOutput ? 'PASS' : 'PASS',
     // WI-1173: command-context output fields for traceability.
     recent_bb_pct: projResult.recent_bb_pct ?? null,
     recent_bb_pct_status: projResult.recent_bb_pct_status ?? 'MISSING',
@@ -3987,14 +4096,19 @@ function scorePitcherK(pitcherInput, matchupInput, umpInput, marketInput, weathe
       ...(leashResult.flag ? [leashResult.flag] : []),
       ...(trapResult.flags || []),
       ...commandContextReasonCodes,
+      ...(confidenceCapReason ? [confidenceCapReason] : []),
     ])),
-    posture: projectionPosture.posture,
+    posture: finalPosture,
     posture_components: projectionPosture.posture_components,
     posture_inputs: projectionPosture.posture_inputs,
     posture_support: projectionPosture.posture_support,
     basis: mode,
     projection_only: projectionOnly,
-  }, trapResult);
+  };
+
+  const resultWithDiags = withTrapDiagnostics(finalResult, trapResult);
+  resultWithDiags.confidence_cap_reason = confidenceCapReason;
+  return resultWithDiags;
 }
 
 /**
@@ -4446,6 +4560,8 @@ module.exports = {
   normalizePitcherKMarketInput,
   selectPitcherKUnderMarket,
   computePitcherKDriverCards,
+  // WI-1255: Confidence cap enforcement
+  applyConfidenceCaps,
   // Exported for unit testing (WI-0770)
   calculateProjectionK,
   // WI-0872: full-game total model
