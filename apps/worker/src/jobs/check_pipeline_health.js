@@ -45,6 +45,9 @@ const { isFeatureEnabled } = require('@cheddar-logic/data/src/feature-flags');
 const { refreshStaleOdds } = require('./refresh_stale_odds');
 const { collectVisibilityIntegrityDiagnostics } = require('./report_settlement_health');
 
+const WATCHDOG_CRITICAL_BREACH = 'WATCHDOG_CRITICAL_BREACH';
+const WATCHDOG_INFO = 'WATCHDOG_INFO';
+
 function parseEnvNumber(name, fallback, { min = null, max = null } = {}) {
   const raw = process.env[name];
   if (raw === undefined || raw === null || String(raw).trim() === '') return fallback;
@@ -174,6 +177,9 @@ function buildCheckId(domain, name, scope) {
 }
 
 const CHECK_REGISTRY = Object.freeze({
+  watchdog_heartbeat: {
+    phase: 'watchdog', checkName: 'heartbeat', checkId: buildCheckId('watchdog', 'heartbeat', 'global'),
+  },
   schedule_freshness: {
     phase: 'schedule', checkName: 'freshness', checkId: buildCheckId('schedule', 'freshness', 'global'),
   },
@@ -2471,19 +2477,26 @@ async function checkWatchdogHeartbeat() {
     )
     .get();
 
-  if (!prev) return; // First ever run — skip
+  if (!prev) {
+    return {
+      ok: true,
+      reason: 'No prior successful watchdog run; baseline unavailable',
+      healthClass: WATCHDOG_INFO,
+    };
+  }
 
   const gapMs = Date.now() - new Date(prev.started_at).getTime();
   const gapH = (gapMs / 3600000).toFixed(1);
   const isGap = gapMs > 2 * 60 * 60 * 1000;
+  const reason = isGap
+    ? `Last watchdog run was ${gapH}h ago`
+    : `Heartbeat OK (${gapH}h since last run)`;
 
   writePipelineHealth(
     'watchdog',
     'heartbeat',
     isGap ? 'warning' : 'ok',
-    isGap
-      ? `Last watchdog run was ${gapH}h ago`
-      : `Heartbeat OK (${gapH}h since last run)`,
+    reason,
   );
 
   if (isGap && process.env.ENABLE_PIPELINE_HEALTH_WATCHDOG !== 'false') {
@@ -2499,6 +2512,30 @@ async function checkWatchdogHeartbeat() {
       console.warn(`[check_pipeline_health] Watchdog heartbeat alert sent — ${gapH}h gap`);
     }
   }
+
+  return {
+    ok: !isGap,
+    reason,
+    healthClass: isGap ? WATCHDOG_CRITICAL_BREACH : null,
+  };
+}
+
+function collectJobHealthIssues(results, { defaultHealthClass, nonFatalHealthClasses = [] }) {
+  const nonFatalSet = new Set(nonFatalHealthClasses);
+  const healthIssues = [];
+
+  for (const [checkName, result] of Object.entries(results || {})) {
+    if (!result || result.ok !== false) continue;
+    const healthClass = result.healthClass || defaultHealthClass;
+    healthIssues.push({
+      checkName,
+      healthClass,
+      fatal: !nonFatalSet.has(healthClass),
+      reason: result.reason || `${checkName} failed`,
+    });
+  }
+
+  return healthIssues;
 }
 
 /**
@@ -2521,10 +2558,6 @@ async function checkPipelineHealth({
 
   try {
     console.log(`[check_pipeline_health] Running health checks...`);
-
-    if (!skipHeartbeat) {
-      await checkWatchdogHeartbeat();
-    }
 
     const defaultChecks = {
       schedule_freshness: checkScheduleFreshness,
@@ -2575,6 +2608,18 @@ async function checkPipelineHealth({
     const results = {};
     let allOk = true;
 
+    if (!skipHeartbeat) {
+      const heartbeatResult = await checkWatchdogHeartbeat();
+      results.watchdog_heartbeat = heartbeatResult;
+
+      if (heartbeatResult.ok) {
+        console.log(`  ✓ watchdog_heartbeat: ${heartbeatResult.reason}`);
+      } else {
+        console.warn(`  ⚠️  watchdog_heartbeat: ${heartbeatResult.reason}`);
+        allOk = false;
+      }
+    }
+
     for (const [checkName, checkFn] of Object.entries(checks)) {
       const result = await checkFn();
       results[checkName] = result;
@@ -2596,6 +2641,7 @@ async function checkPipelineHealth({
       const alertCandidates = [];
       for (const [key, result] of Object.entries(results)) {
         if (result.ok) continue;
+        if ((result.healthClass || WATCHDOG_CRITICAL_BREACH) === WATCHDOG_INFO) continue;
         const mapping = CHECK_REGISTRY[key];
         if (!mapping) continue;
         if (shouldSendAlert(mapping.phase, mapping.checkName, PIPELINE_HEALTH_ALERT_CONSECUTIVE, PIPELINE_HEALTH_COOLDOWN_MINUTES)) {
@@ -2616,11 +2662,22 @@ async function checkPipelineHealth({
     }
     // --- end Discord watchdog alert ---
 
-    const summary = allOk
-      ? 'All pipeline health checks passed'
-      : 'Some pipeline health checks failed (see logs)';
+    const healthIssues = collectJobHealthIssues(results, {
+      defaultHealthClass: WATCHDOG_CRITICAL_BREACH,
+      nonFatalHealthClasses: [WATCHDOG_INFO],
+    });
+    const criticalHealthIssues = healthIssues.filter((issue) => issue.fatal);
+    const summary = criticalHealthIssues.length > 0
+      ? `Critical pipeline health failures: ${criticalHealthIssues.map((issue) => `[${issue.healthClass}] ${issue.checkName}: ${issue.reason}`).join('; ')}`
+      : allOk
+        ? 'All pipeline health checks passed'
+        : 'Pipeline health warnings detected (non-fatal)';
 
-    markJobRunSuccess(runId);
+    if (criticalHealthIssues.length > 0) {
+      markJobRunFailure(runId, summary);
+    } else {
+      markJobRunSuccess(runId);
+    }
     console.log(`[check_pipeline_health] ${summary}`);
 
     const calibrationKillSwitches = (results.calibration_kill_switches?.calibrationKillSwitches) || [];
@@ -2633,12 +2690,14 @@ async function checkPipelineHealth({
     if (calibrationKillSwitches.length > 0) {
       console.warn(`[check_pipeline_health] CALIB_KILL_SWITCH_ACTIVE: ${calibrationKillSwitches.map((r) => r.market).join(', ')}`);
     }
-    const visibilityIntegrityAlert =
-      Number(results.visibility_integrity?.missingEnrollmentCount || 0) > 0;
     return {
-      ok: !visibilityIntegrityAlert,
+      ok: criticalHealthIssues.length === 0,
       allOk,
       summary,
+      exitCode: criticalHealthIssues.length > 0 ? 1 : 0,
+      jobStatus: criticalHealthIssues.length > 0 ? 'failed' : 'success',
+      healthIssues,
+      criticalHealthIssues,
       calibrationKillSwitches,
       calibrationRows,
       visibilityIntegrity: results.visibility_integrity || null,

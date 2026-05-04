@@ -35,6 +35,7 @@ const {
   insertJobRun,
   markJobRunSuccess,
   markJobRunFailure,
+  createJob,
   shouldRunJobKey,
   withDb,
 } = require('@cheddar-logic/data');
@@ -107,6 +108,9 @@ const NHL_API_TIMEOUT_MS = Math.max(
 
 const SPORTSREF_BASE_URL = 'https://www.sports-reference.com';
 const ODDS_API_BASE_URL = 'https://api.the-odds-api.com/v4/sports';
+const SETTLEMENT_PARTIAL_WRITE_CRITICAL = 'SETTLEMENT_PARTIAL_WRITE_CRITICAL';
+const SETTLEMENT_CRITICAL_MISMATCH_UNRESOLVED = 'SETTLEMENT_CRITICAL_MISMATCH_UNRESOLVED';
+const SETTLEMENT_INFO = 'SETTLEMENT_INFO';
 
 /**
  * Keep matching strict so one completed ESPN event cannot fan out into unrelated games.
@@ -737,9 +741,10 @@ function getGameSignature(game) {
  * @param {string} gameSignature - getGameSignature() result for the current db game row
  * @param {Map<string, string>} eventUseById - mutable registry of eventId → signature
  * @param {string[]} errors - mutable errors array (push on true collision)
+ * @param {Array<object>} healthIssues - mutable health issue array
  * @returns {'proceed' | 'skip'}
  */
-function applyEventUseDedupRule(eventId, gameSignature, eventUseById, errors) {
+function applyEventUseDedupRule(eventId, gameSignature, eventUseById, errors, healthIssues = []) {
   const existingSignature = eventUseById.get(eventId);
   if (!existingSignature) {
     eventUseById.set(eventId, gameSignature);
@@ -755,7 +760,32 @@ function applyEventUseDedupRule(eventId, gameSignature, eventUseById, errors) {
   const msg = `[SettleGames] Collision: event ${eventId} already used for ${existingSignature}; refusing to reuse for ${gameSignature}`;
   console.warn(msg);
   errors.push(msg);
+  healthIssues.push({
+    healthClass: SETTLEMENT_CRITICAL_MISMATCH_UNRESOLVED,
+    eventId,
+    message: msg,
+  });
   return 'skip';
+}
+
+function buildSettlementHealthOutcome(healthIssues) {
+  const criticalHealthIssues = (healthIssues || []).filter(
+    (issue) => issue.healthClass !== SETTLEMENT_INFO,
+  );
+  const summary = criticalHealthIssues.length > 0
+    ? criticalHealthIssues
+      .map((issue) => `[${issue.healthClass}] ${issue.message}`)
+      .join('; ')
+    : '';
+
+  return {
+    criticalHealthIssues,
+    summary,
+    ok: criticalHealthIssues.length === 0,
+    success: criticalHealthIssues.length === 0,
+    exitCode: criticalHealthIssues.length > 0 ? 1 : 0,
+    jobStatus: criticalHealthIssues.length > 0 ? 'failed' : 'success',
+  };
 }
 
 function resolveNhlGamecenterId(dbGameId, mappedNhlGameId) {
@@ -1236,7 +1266,10 @@ async function settleGameResults({
           '[SettleGames] Job complete — 0 games settled (none pending)',
         );
         return {
+          ok: true,
           success: true,
+          exitCode: 0,
+          jobStatus: 'success',
           jobRunId,
           jobKey,
           gamesSettled: 0,
@@ -1256,6 +1289,7 @@ async function settleGameResults({
       let gamesSettled = 0;
       const sportsProcessed = [];
       const errors = [];
+      const healthIssues = [];
       let sportsRefFallbackAttempts = 0;
       let sportsRefFallbackMatches = 0;
       let sportsRefFallbackMisses = 0;
@@ -1328,9 +1362,14 @@ async function settleGameResults({
           console.warn(
             `[SettleGames] All scoreboard fetches failed for ${sport}; continuing with fallback sources`,
           );
-          errors.push(
-            `${sport}: ESPN scoreboard returned no data for any date (fallback-only mode)`,
-          );
+          const message =
+            `${sport}: ESPN scoreboard returned no data for any date (fallback-only mode)`;
+          errors.push(message);
+          healthIssues.push({
+            healthClass: SETTLEMENT_INFO,
+            sport,
+            message,
+          });
         }
 
         const events = [...eventMap.values()];
@@ -1630,7 +1669,15 @@ async function settleGameResults({
           }
 
           const gameSignature = getGameSignature(dbGame);
-          if (applyEventUseDedupRule(selectedMatch.event.id, gameSignature, eventUseById, errors) === 'skip') {
+          if (
+            applyEventUseDedupRule(
+              selectedMatch.event.id,
+              gameSignature,
+              eventUseById,
+              errors,
+              healthIssues,
+            ) === 'skip'
+          ) {
             continue;
           }
 
@@ -1778,12 +1825,23 @@ async function settleGameResults({
             console.error(
               `[SettleGames] Error upserting result for ${dbGame.game_id}: ${gameErr.message}`,
             );
-            errors.push(`${dbGame.game_id}: ${gameErr.message}`);
+            const message = `${dbGame.game_id}: ${gameErr.message}`;
+            errors.push(message);
+            healthIssues.push({
+              healthClass: SETTLEMENT_PARTIAL_WRITE_CRITICAL,
+              gameId: dbGame.game_id,
+              message,
+            });
           }
         }
       }
 
-      markJobRunSuccess(jobRunId);
+      const healthOutcome = buildSettlementHealthOutcome(healthIssues);
+      if (healthOutcome.ok) {
+        markJobRunSuccess(jobRunId);
+      } else {
+        markJobRunFailure(jobRunId, healthOutcome.summary);
+      }
       console.log(
         `[SettleGames] Job complete — ${gamesSettled} games settled across ${sportsProcessed.join(', ') || 'no sports'}`,
       );
@@ -1807,15 +1865,22 @@ async function settleGameResults({
       }
 
       // Finalize monitoring
-      const monitorSummary = monitor.finalizeRun(true);
+      const monitorSummary = monitor.finalizeRun(
+        healthOutcome.ok,
+        healthOutcome.ok ? null : healthOutcome.summary,
+      );
 
       return {
-        success: true,
+        ok: healthOutcome.ok,
+        success: healthOutcome.success,
+        exitCode: healthOutcome.exitCode,
+        jobStatus: healthOutcome.jobStatus,
         jobRunId,
         jobKey,
         gamesSettled,
         sportsProcessed,
         errors,
+        healthIssues,
         monitoring: monitorSummary,
       };
     } catch (error) {
@@ -1823,7 +1888,15 @@ async function settleGameResults({
         console.log(
           `[RaceGuard] Skipping settle_game_results (job already claimed): ${jobKey || 'none'}`,
         );
-        return { success: true, jobRunId: null, skipped: true, jobKey };
+        return {
+          ok: true,
+          success: true,
+          exitCode: 0,
+          jobStatus: 'success',
+          jobRunId: null,
+          skipped: true,
+          jobKey,
+        };
       }
       console.error(`[SettleGames] Job failed:`, error.message);
       console.error(error.stack);
@@ -1843,7 +1916,10 @@ async function settleGameResults({
       }
 
       return {
+        ok: false,
         success: false,
+        exitCode: 1,
+        jobStatus: 'failed',
         jobRunId,
         jobKey,
         error: error.message,
@@ -1855,14 +1931,9 @@ async function settleGameResults({
 
 // CLI execution
 if (require.main === module) {
-  settleGameResults()
-    .then((result) => {
-      process.exit(result.success ? 0 : 1);
-    })
-    .catch((error) => {
-      console.error('Unhandled error:', error);
-      process.exit(1);
-    });
+  createJob('settle_game_results', ({ dryRun }) =>
+    settleGameResults({ dryRun })
+  );
 }
 
 module.exports = {
