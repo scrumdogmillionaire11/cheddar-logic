@@ -1765,8 +1765,8 @@ function projectF5TotalCard(homePitcher, awayPitcher, f5Line, context = {}) {
  *   1. Prefer the shared per-team F5 run projection path when offense/context inputs exist.
  *   2. Fall back to legacy ERA arithmetic when aligned inputs are unavailable.
  *   3. Convert run differential to home win probability via logistic function.
- *   4. Compare projected win probability to implied probability from ML prices.
- *   5. Emit HOME / AWAY / PASS based on edge vs. lean_edge_min (0.04) and confidence.
+ *   4. Compare projected win probability to implied probability from ML prices for diagnostics.
+ *   5. Emit HOME / AWAY from projected run winner; emit PASS only for a near-tie run differential.
  *
  * @param {object} homePitcher - { era, whip, k_per_9 }
  * @param {object} awayPitcher - { era, whip, k_per_9 }
@@ -1889,15 +1889,13 @@ function projectF5ML(
   const homeEdge = winProbHome - impliedHome;
   const awayEdge = (1 - winProbHome) - impliedAway;
 
-  const LEAN_EDGE_MIN = 0.04; // F5 ML edge threshold (slightly wider than totals)
-  const CONFIDENCE_MIN = 6;
-
+  const RUN_DIFF_TIE_EPSILON = 0.01;
   let side = 'PASS';
   let edge = 0;
-  if (homeEdge >= LEAN_EDGE_MIN && confidence >= CONFIDENCE_MIN) {
+  if (runDiff > RUN_DIFF_TIE_EPSILON) {
     side = 'HOME';
     edge = homeEdge;
-  } else if (awayEdge >= LEAN_EDGE_MIN && confidence >= CONFIDENCE_MIN) {
+  } else if (runDiff < -RUN_DIFF_TIE_EPSILON) {
     side = 'AWAY';
     edge = awayEdge;
   }
