@@ -229,6 +229,23 @@ export type PotdSchedule = {
   windowEndTimeEtLabel: string;
 };
 
+export type PotdNextBestPlay = {
+  selectionLabel: string;
+  sport: string;
+  homeTeam: string;
+  awayTeam: string;
+  marketType: string;
+  price: number;
+  line: number | null;
+  edgePct: number;
+  totalScore: number;
+  modelWinProb: number | null;
+  gameTimeUtc: string | null;
+  gameTimeEtLabel: string;
+  presentationLabel: 'Next Best';
+  sourceTable: 'potd_shadow_candidates';
+};
+
 export type PotdResponseData = {
   featuredPick: PotdApiPlay | null;
   today: PotdApiPlay | null;
@@ -239,6 +256,7 @@ export type PotdResponseData = {
   diagnosticNominees: PotdNominee[];
   nearMissSummary: PotdNearMissSummary;
   winnerStatus: 'FIRED' | 'NO_PICK' | null;
+  nextBestFallback: PotdNextBestPlay | null;
 };
 
 export type PotdSettledHistoryData = {
@@ -930,6 +948,60 @@ export async function getPotdResponseData(now = new Date()): Promise<PotdRespons
     );
     const schedule = buildSchedule(todayPlay, todayGames, now);
 
+    let nextBestFallback: PotdNextBestPlay | null = null;
+    if (todayRow === null) {
+      try {
+        const shadowRow = db
+          .prepare(
+            `SELECT sport, home_team, away_team, market_type, selection_label,
+                    price, line, edge_pct, total_score, model_win_prob, game_time_utc
+             FROM potd_shadow_candidates
+             WHERE play_date = ?
+               AND shadow_reason = 'NON_PLAY_DECISION_OUTCOME'
+               AND edge_pct > 0
+               AND model_win_prob IS NOT NULL
+             ORDER BY total_score DESC
+             LIMIT 1`,
+          )
+          .get(todayDateKey) as {
+            sport: string;
+            home_team: string;
+            away_team: string;
+            market_type: string;
+            selection_label: string;
+            price: number;
+            line: number | null;
+            edge_pct: number;
+            total_score: number;
+            model_win_prob: number | null;
+            game_time_utc: string | null;
+          } | undefined;
+        if (shadowRow) {
+          nextBestFallback = {
+            selectionLabel: shadowRow.selection_label,
+            sport: shadowRow.sport,
+            homeTeam: shadowRow.home_team,
+            awayTeam: shadowRow.away_team,
+            marketType: shadowRow.market_type,
+            price: shadowRow.price,
+            line: shadowRow.line,
+            edgePct: shadowRow.edge_pct,
+            totalScore: shadowRow.total_score,
+            modelWinProb: shadowRow.model_win_prob,
+            gameTimeUtc: shadowRow.game_time_utc,
+            gameTimeEtLabel: formatEtDateTime(shadowRow.game_time_utc),
+            presentationLabel: 'Next Best',
+            sourceTable: 'potd_shadow_candidates',
+          };
+        }
+      } catch (error) {
+        console.warn(
+          '[potd-server] nextBestFallback query failed: ',
+          error instanceof Error ? error.message : String(error),
+        );
+      }
+    }
+
     return {
       featuredPick: todayPlay,
       today: todayPlay,
@@ -940,6 +1012,7 @@ export async function getPotdResponseData(now = new Date()): Promise<PotdRespons
       diagnosticNominees: nomineeBuckets.diagnosticNominees,
       nearMissSummary,
       winnerStatus,
+      nextBestFallback,
     };
   } finally {
     if (db) closeReadOnlyInstance(db);

@@ -4,7 +4,7 @@ import {
   addRateLimitHeaders,
 } from '../../../lib/api-security';
 import { getPotdResponseData } from '@/lib/potd-server';
-export type { PotdApiPlay, PotdBankrollSummary, PotdSchedule, PotdResponseData, PotdNominee, PotdNearMissSummary } from '@/lib/potd-server';
+export type { PotdApiPlay, PotdBankrollSummary, PotdSchedule, PotdResponseData, PotdNominee, PotdNearMissSummary, PotdNextBestPlay } from '@/lib/potd-server';
 
 export async function GET(request: NextRequest) {
   try {
@@ -26,6 +26,7 @@ export async function GET(request: NextRequest) {
         diagnosticNominees: data.diagnosticNominees,
         nearMissSummary: data.nearMissSummary,
         winnerStatus: data.winnerStatus,
+        nextBestFallback: data.nextBestFallback,
       },
     });
     return addRateLimitHeaders(response, request);
