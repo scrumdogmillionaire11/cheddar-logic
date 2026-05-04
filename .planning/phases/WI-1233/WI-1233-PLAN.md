@@ -37,6 +37,7 @@ Turn the current “too many `SLIGHT_EDGE` outputs and not enough stable surface
 - Visibility monitoring: `WI-1229`
 - FPL frozen-route cleanup: `WI-1223`
 - NHL shadow-eval calibration infrastructure: `WI-1231`
+- Completed calibration baseline precursor: `WI-1228`
 
 ## Phase 1: Stabilize Surface Authority
 

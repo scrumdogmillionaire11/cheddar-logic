@@ -68,7 +68,7 @@ export function prepareGamesServiceRows(params: {
         })
       : rows;
 
-  const deduplicatedRows = dedupeGamesByMatchup({
+  const deduplicatedRows = dedupeGamesByGameId({
     responseRows,
     playsMap,
   });
@@ -80,47 +80,22 @@ export function prepareGamesServiceRows(params: {
   };
 }
 
-function dedupeGamesByMatchup(params: {
+function dedupeGamesByGameId(params: {
   responseRows: GameRow[];
   playsMap: Map<string, Play[]>;
 }): GameRow[] {
-  const byMatchup = new Map<string, GameRow[]>();
+  const seen = new Map<string, GameRow>();
   for (const row of params.responseRows) {
-    const key = `${row.sport}|${row.away_team.toUpperCase()}|${row.home_team.toUpperCase()}|${row.game_time_utc.substring(0, 10)}`;
-    const bucket = byMatchup.get(key);
-    if (bucket) {
-      bucket.push(row);
+    const existing = seen.get(row.game_id);
+    if (!existing) {
+      seen.set(row.game_id, row);
     } else {
-      byMatchup.set(key, [row]);
-    }
-  }
-
-  const result: GameRow[] = [];
-  for (const group of byMatchup.values()) {
-    if (group.length === 1) {
-      result.push(group[0]);
-      continue;
-    }
-    group.sort((a, b) => {
-      const aKey = a.odds_captured_at ?? a.created_at;
-      const bKey = b.odds_captured_at ?? b.created_at;
-      return bKey < aKey ? -1 : bKey > aKey ? 1 : 0;
-    });
-    const winner = group[0];
-    for (let i = 1; i < group.length; i += 1) {
-      const loserId = group[i].game_id;
-      const loserPlays = params.playsMap.get(loserId);
-      if (!loserPlays || loserPlays.length === 0) continue;
-
-      const winnerPlays = params.playsMap.get(winner.game_id);
-      if (winnerPlays) {
-        winnerPlays.push(...loserPlays);
-      } else {
-        params.playsMap.set(winner.game_id, [...loserPlays]);
+      const existingKey = existing.odds_captured_at ?? existing.created_at;
+      const rowKey = row.odds_captured_at ?? row.created_at;
+      if (rowKey > existingKey) {
+        seen.set(row.game_id, row);
       }
-      params.playsMap.delete(loserId);
     }
-    result.push(winner);
   }
-  return result;
+  return Array.from(seen.values());
 }

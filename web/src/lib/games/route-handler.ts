@@ -1209,6 +1209,7 @@ type GamesApiDataRow = {
   lifecycle_mode: LifecycleMode;
   display_status: DisplayStatus;
   createdAt: string;
+  game_state: 'healthy' | 'stale' | 'degraded';
   projection_inputs_complete: boolean | null;
   projection_missing_inputs: string[];
   source_mapping_ok: boolean | null;
@@ -1397,11 +1398,13 @@ export function buildGamesResponseData(
     gameConsistencyMap?: Map<string, Play['consistency']>;
     truePlayMap?: Map<string, Play>;
     playsMap?: Map<string, Play[]>;
+    gameState?: 'healthy' | 'stale' | 'degraded';
   },
 ): GamesApiDataRow[] {
   const gameConsistencyMap = options?.gameConsistencyMap ?? new Map();
   const truePlayMap = options?.truePlayMap ?? new Map();
   const playsMap = options?.playsMap ?? new Map();
+  const gameState = options?.gameState ?? 'healthy';
 
   return rows.map((row) => {
     const hasOdds =
@@ -1424,6 +1427,7 @@ export function buildGamesResponseData(
       lifecycle_mode: lifecycleMode,
       display_status: displayStatus,
       createdAt: row.created_at,
+      game_state: gameState,
       projection_inputs_complete: row.projection_inputs_complete,
       projection_missing_inputs: row.projection_missing_inputs,
       source_mapping_ok: row.source_mapping_ok,
@@ -1569,7 +1573,9 @@ export function buildGamesTimeoutFallbackPayload(params: {
 }): GamesResponsePayload | null {
   if (params.rows) {
     return buildGamesSuccessPayload({
-      data: buildGamesResponseData(params.rows, params.lifecycleMode),
+      data: buildGamesResponseData(params.rows, params.lifecycleMode, {
+        gameState: 'degraded',
+      }),
       currentRunId: params.currentRunId,
       runStatus: params.runStatus,
       perf: params.perf,
@@ -1588,6 +1594,10 @@ export function buildGamesTimeoutFallbackPayload(params: {
   const cacheAgeMs = Math.max(0, Date.now() - params.cacheEntry.cachedAt);
   return {
     ...params.cacheEntry.payload,
+    data: params.cacheEntry.payload.data.map((row) => ({
+      ...row,
+      game_state: 'stale' as const,
+    })),
     meta: {
       ...params.cacheEntry.payload.meta,
       response_mode: 'stale_cache',
