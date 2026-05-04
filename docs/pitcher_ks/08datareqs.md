@@ -1,8 +1,10 @@
-# 08 — Data requirements
+# 08 — Data requirements & confidence cap enforcement
 
 ## Rule
 
 Current runtime can emit degraded/synthetic PASS rows when some inputs are missing, but it must not emit actionable plays without verified market data. Missing fields must be recorded in `missing_inputs` and `reason_codes`.
+
+**WI-1255 extension:** Missing trap prerequisites trigger confidence caps in Step 6.5, which may downgrade posture, mark cards non-actionable, or suppress output entirely. See "Confidence cap enforcement" section below.
 
 ---
 
@@ -38,6 +40,32 @@ All pitcher inputs must be confirmed before Step 1 begins.
 | `opp_xwoba` | Opp xwOBA vs pitcher handedness | FanGraphs / Savant | Use neutral fallback and flag |
 | `opp_hard_hit_pct` | Opp hard-hit% vs pitcher handedness | FanGraphs / Savant | Use neutral fallback and flag |
 | `bvp_data` | Historical matchup PA/K for each confirmed batter | Baseball Reference splits | BvP overlay blocked |
+
+---
+
+## Confidence cap enforcement (WI-1255)
+
+**Applied in Step 6.5 — after scoring completes, before final verdict emission.**
+
+When critical trap prerequisites are missing or stale, confidence is hard-capped to prevent false signals. See `docs/pitcher_ks/scoring.md` for full rule table.
+
+### Freshness gates
+
+| Field | Acceptable values | Missing → | Cap rule |
+|-------|-------------------|-----------|----------|
+| `opp_profile_staleness` | FRESH, STALE, STATIC_FALLBACK | (diagnostic provided by trap scan) | Rule 3 or 2 |
+| `leash_bucket` | LONG, STANDARD, SHORT, UNKNOWN | (diagnostic provided by trap scan) | Rule 4 or 5 |
+| `opp_k_bucket` | HIGH_K, MID_K, LOW_K | (diagnostic provided by trap scan) | Rule 6 |
+
+**When BOTH `opp_profile_staleness ∈ {STALE, STATIC_FALLBACK}` AND `leash_bucket = UNKNOWN`:** Output marked for exclusion; card does not appear in candidate list.
+
+### Impact on card payload
+
+| Field | Updated value | Condition |
+|-------|----------------|-----------|
+| `posture` | Capped to allowed value | One of rules 1–6 applies |
+| `confidence_cap_reason` | Reason code string | Cap rule triggered; null if no cap |
+| Card excluded from output | Yes | Rule 6 suppression (both conditions met) |
 
 ---
 
