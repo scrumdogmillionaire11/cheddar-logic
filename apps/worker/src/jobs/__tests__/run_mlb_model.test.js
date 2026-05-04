@@ -50,6 +50,7 @@ const {
   buildMlbVerificationRequirements,
   applyMlbVerificationContract,
   applyMlbProjectionOnlyGuards,
+  applyMlbPitcherKPortfolioGuards,
   buildMlbMarketAvailability,
   hydrateCanonicalMlbMarketLines,
   buildMlbPipelineState,
@@ -4270,20 +4271,30 @@ describe('WI-0943 MLB runner log schema cleanup', () => {
 
     expect(Object.keys(payload).sort()).toEqual([
       'gameId',
+      'gameDate',
       'pitcherId',
       'starterQuality',
       'bookmaker',
       'lineAgeMinutes',
       'marketType',
       'decisionState',
+      'posture',
+      'opponentKBucket',
+      'leashBucket',
+      'projectedKs',
       'reasonCodes',
     ].sort());
     expect(payload.gameId).toBe('game-abc');
+    expect(payload.gameDate).toBeNull();
     expect(payload.pitcherId).toBe('pitcher-1');
     expect(payload.starterQuality).toBe('PARTIAL_MODEL');
     expect(payload.bookmaker).toBe('draftkings');
     expect(payload.marketType).toBe('PITCHER_K');
     expect(payload.decisionState).toBe('WATCH');
+    expect(payload.posture).toBeNull();
+    expect(payload.opponentKBucket).toBe('UNKNOWN');
+    expect(payload.leashBucket).toBe('UNKNOWN');
+    expect(payload.projectedKs).toBeNull();
     expect(payload.reasonCodes).toEqual(['statcast_swstr', 'leash_metric']);
     expect(typeof payload.lineAgeMinutes).toBe('number');
     expect(payload.lineAgeMinutes).toBeGreaterThanOrEqual(5);
@@ -5430,5 +5441,193 @@ describe('WI-1255: Confidence cap enforcement', () => {
     // Since we can't directly override trap diagnostics in scorePitcherK without modifying the function,
     // we verify the field exists and is properly tracked
     expect(result).toHaveProperty('confidence_cap_reason');
+  });
+});
+
+describe('WI-1257: MLB projection-only portfolio guardrails', () => {
+  function buildProjectionOnlyPitcherPayload({
+    posture = 'OVER_CANDIDATE',
+    leashBucket = 'STANDARD',
+    oppKBucket = 'MID_K',
+    projectedKs = 5.8,
+  } = {}) {
+    return {
+      basis: 'PROJECTION_ONLY',
+      reason_codes: [],
+      prop_decision: {
+        posture,
+        trap_diagnostics: {
+          leash_bucket: leashBucket,
+          opp_k_bucket: oppKBucket,
+        },
+        projection: {
+          k_mean: projectedKs,
+        },
+      },
+      trap_diagnostics: {
+        leash_bucket: leashBucket,
+        opp_k_bucket: oppKBucket,
+      },
+      projection: {
+        k_mean: projectedKs,
+      },
+    };
+  }
+
+  function baseConfig() {
+    return {
+      max_actionable_per_slate: 2,
+      max_actionable_per_game: 1,
+      max_under_candidates_per_slate: 2,
+      short_leash_warning_threshold: 2,
+    };
+  }
+
+  test('caps same-game actionable count at one candidate', () => {
+    const config = baseConfig();
+    const state = { slates: {} };
+    const first = buildProjectionOnlyPitcherPayload({ posture: 'OVER_CANDIDATE' });
+    const second = buildProjectionOnlyPitcherPayload({ posture: 'UNDER_CANDIDATE' });
+
+    applyMlbPitcherKPortfolioGuards(first, {
+      gameId: 'game-1',
+      gameDate: '2026-05-04T19:10:00Z',
+      config,
+      state,
+    });
+    applyMlbPitcherKPortfolioGuards(second, {
+      gameId: 'game-1',
+      gameDate: '2026-05-04T19:10:00Z',
+      config,
+      state,
+    });
+
+    expect(first.prop_decision.posture).toBe('OVER_CANDIDATE');
+    expect(second.prop_decision.posture).toBe('WATCH');
+    expect(second.reason_codes).toContain('PORTFOLIO_CAP_MAX_PER_GAME');
+  });
+
+  test('caps actionable candidates at two per slate', () => {
+    const config = baseConfig();
+    const state = { slates: {} };
+    const one = buildProjectionOnlyPitcherPayload({ posture: 'OVER_CANDIDATE' });
+    const two = buildProjectionOnlyPitcherPayload({ posture: 'UNDER_CANDIDATE' });
+    const three = buildProjectionOnlyPitcherPayload({ posture: 'OVER_CANDIDATE' });
+
+    applyMlbPitcherKPortfolioGuards(one, {
+      gameId: 'game-1',
+      gameDate: '2026-05-04T19:10:00Z',
+      config,
+      state,
+    });
+    applyMlbPitcherKPortfolioGuards(two, {
+      gameId: 'game-2',
+      gameDate: '2026-05-04T20:10:00Z',
+      config,
+      state,
+    });
+    applyMlbPitcherKPortfolioGuards(three, {
+      gameId: 'game-3',
+      gameDate: '2026-05-04T21:10:00Z',
+      config,
+      state,
+    });
+
+    expect(one.prop_decision.posture).toBe('OVER_CANDIDATE');
+    expect(two.prop_decision.posture).toBe('UNDER_CANDIDATE');
+    expect(three.prop_decision.posture).toBe('WATCH');
+    expect(three.reason_codes).toContain('PORTFOLIO_CAP_MAX_ACTIONABLE_PER_SLATE');
+  });
+
+  test('downgrades all under candidates to WATCH when slate has more than two UNDER_CANDIDATE labels', () => {
+    const config = baseConfig();
+    const state = { slates: {} };
+    const underA = buildProjectionOnlyPitcherPayload({ posture: 'UNDER_CANDIDATE' });
+    const underB = buildProjectionOnlyPitcherPayload({ posture: 'UNDER_CANDIDATE' });
+    const underC = buildProjectionOnlyPitcherPayload({ posture: 'UNDER_CANDIDATE' });
+
+    applyMlbPitcherKPortfolioGuards(underA, {
+      gameId: 'game-a',
+      gameDate: '2026-05-04T19:10:00Z',
+      config,
+      state,
+    });
+    applyMlbPitcherKPortfolioGuards(underB, {
+      gameId: 'game-b',
+      gameDate: '2026-05-04T20:10:00Z',
+      config,
+      state,
+    });
+    applyMlbPitcherKPortfolioGuards(underC, {
+      gameId: 'game-c',
+      gameDate: '2026-05-04T21:10:00Z',
+      config,
+      state,
+    });
+
+    expect(underA.prop_decision.posture).toBe('WATCH');
+    expect(underB.prop_decision.posture).toBe('WATCH');
+    expect(underC.prop_decision.posture).toBe('WATCH');
+    expect(underA.reason_codes).toContain('PORTFOLIO_DOWNGRADE_UNDER_CLUSTER');
+    expect(underB.reason_codes).toContain('PORTFOLIO_DOWNGRADE_UNDER_CLUSTER');
+    expect(underC.reason_codes).toContain('PORTFOLIO_DOWNGRADE_UNDER_CLUSTER');
+  });
+
+  test('emits short-leash correlation warning once fragile cluster threshold is hit', () => {
+    const config = baseConfig();
+    const state = { slates: {} };
+    const first = buildProjectionOnlyPitcherPayload({
+      posture: 'OVER_CANDIDATE',
+      leashBucket: 'SHORT',
+    });
+    const second = buildProjectionOnlyPitcherPayload({
+      posture: 'UNDER_CANDIDATE',
+      leashBucket: 'SHORT',
+    });
+
+    applyMlbPitcherKPortfolioGuards(first, {
+      gameId: 'game-1',
+      gameDate: '2026-05-04T19:10:00Z',
+      config,
+      state,
+    });
+    applyMlbPitcherKPortfolioGuards(second, {
+      gameId: 'game-2',
+      gameDate: '2026-05-04T20:10:00Z',
+      config,
+      state,
+    });
+
+    expect(second.portfolio_warnings).toContain('PORTFOLIO_CORRELATION_SHORT_LEASH_CLUSTER');
+    expect(second.reason_codes).toContain('PORTFOLIO_CORRELATION_SHORT_LEASH_CLUSTER');
+  });
+
+  test('keeps non-clustered scenarios unchanged and records guard audit fields', () => {
+    const config = baseConfig();
+    const state = { slates: {} };
+    const payload = buildProjectionOnlyPitcherPayload({
+      posture: 'OVER_CANDIDATE',
+      leashBucket: 'STANDARD',
+      oppKBucket: 'HIGH_K',
+      projectedKs: 6.2,
+    });
+
+    applyMlbPitcherKPortfolioGuards(payload, {
+      gameId: 'game-clean',
+      gameDate: '2026-05-04T19:10:00Z',
+      config,
+      state,
+    });
+
+    expect(payload.prop_decision.posture).toBe('OVER_CANDIDATE');
+    expect(payload.raw_data.pitcher_k_portfolio_guard).toMatchObject({
+      game_id: 'game-clean',
+      slate_key: '2026-05-04',
+      posture_before: 'OVER_CANDIDATE',
+      posture_after: 'OVER_CANDIDATE',
+      opp_k_bucket: 'HIGH_K',
+      leash_bucket: 'STANDARD',
+      projected_ks: 6.2,
+    });
   });
 });

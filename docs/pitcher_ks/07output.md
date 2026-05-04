@@ -12,6 +12,18 @@ The output is intentionally limited to:
 - posture label derived from baseline K skill, opponent K factor, and projected innings
 - trap diagnostics / availability visibility
 
+Additional projection-only portfolio controls are enforced at runtime to reduce
+variance stacking on the same slate:
+
+- max 2 actionable pitcher-K postures per slate (`OVER_CANDIDATE` / `UNDER_CANDIDATE`)
+- max 1 actionable pitcher-K posture per game
+- if more than 2 `UNDER_CANDIDATE` labels exist on the same slate, all are downgraded to `WATCH`
+- short-leash actionable clusters emit correlation warnings
+
+When a guardrail applies, reason codes and audit metadata are attached to the
+payload (`PORTFOLIO_CAP_MAX_PER_GAME`, `PORTFOLIO_CAP_MAX_ACTIONABLE_PER_SLATE`,
+`PORTFOLIO_DOWNGRADE_UNDER_CLUSTER`, `PORTFOLIO_CORRELATION_SHORT_LEASH_CLUSTER`).
+
 No line, price, margin, or executable `PLAY` state appears unless a future user-provided price contract is introduced.
 
 ---
@@ -177,3 +189,36 @@ Reason codes: [PASS_PROJECTION_ONLY_NO_MARKET, PASS_MISSING_DRIVER_INPUTS]
 PASS
 Reason: PASS_PROJECTION_ONLY_NO_MARKET
 ```
+
+---
+
+## Outcome Logging Contract (WI-1257)
+
+Every pitcher-K card emits a loggable audit record with a stable shape:
+
+```json
+{
+  "gameId": "game-abc",
+  "gameDate": "2026-05-04T19:10:00Z",
+  "pitcherId": "12345",
+  "starterQuality": "FULL_MODEL",
+  "bookmaker": "draftkings",
+  "lineAgeMinutes": 6.2,
+  "marketType": "PITCHER_K",
+  "decisionState": "WATCH",
+  "posture": "UNDER_CANDIDATE",
+  "opponentKBucket": "LOW_K",
+  "leashBucket": "SHORT",
+  "projectedKs": 5.4,
+  "reasonCodes": [
+    "PORTFOLIO_CORRELATION_SHORT_LEASH_CLUSTER"
+  ]
+}
+```
+
+These fields are intended to support downstream aggregation for:
+
+- hit rate by posture
+- over-vs-under directional bias checks
+- calibration sliced by leash bucket
+- query filters by game date, posture label, and leash bucket
