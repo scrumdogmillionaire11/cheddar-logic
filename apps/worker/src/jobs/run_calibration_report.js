@@ -3,9 +3,16 @@
 require('dotenv').config();
 
 const {
+  createJob,
   closeDatabase,
   getDatabase,
+  insertJobRun,
+  markJobRunFailure,
+  markJobRunSuccess,
+  shouldRunJobKey,
+  withDb,
 } = require('@cheddar-logic/data');
+const { randomUUID } = require('crypto');
 const {
   getCalibrationReport,
 } = require('../calibration/calibration-tracker');
@@ -102,9 +109,37 @@ function runCalibrationReport(options = {}) {
     : PERIOD_DAYS;
   const computedAt = options.computedAt || new Date().toISOString();
   const periodStart = new Date(Date.now() - (periodDays * 24 * 60 * 60 * 1000)).toISOString();
+  const dryRun =
+    options.dryRun === true ||
+    process.env.DRY_RUN === 'true' ||
+    process.argv.includes('--dry-run');
+  const jobKey = options.jobKey || null;
+  const jobRunId = jobKey && !dryRun ? randomUUID() : null;
 
-  const updatedPredictions = syncResolvedPredictionOutcomes(db, periodDays);
-  const activeMarkets = db.prepare(`
+  if (jobKey && !dryRun && !shouldRunJobKey(jobKey)) {
+    console.log(`[CALIBRATION] Skipping (already succeeded or running): ${jobKey}`);
+    return { success: true, skipped: true, jobKey };
+  }
+
+  if (dryRun) {
+    console.log(`[CALIBRATION] DRY_RUN=true — would run jobKey=${jobKey || 'none'}`);
+    return { success: true, dryRun: true, jobKey };
+  }
+
+  if (jobRunId) {
+    try {
+      insertJobRun('run_calibration_report', jobRunId, jobKey);
+    } catch (error) {
+      if (error?.code === 'JOB_RUN_ALREADY_CLAIMED') {
+        return { success: true, skipped: true, jobKey };
+      }
+      throw error;
+    }
+  }
+
+  try {
+    const updatedPredictions = syncResolvedPredictionOutcomes(db, periodDays);
+    const activeMarkets = db.prepare(`
     SELECT DISTINCT market
     FROM calibration_predictions
     WHERE outcome IS NOT NULL
@@ -112,7 +147,7 @@ function runCalibrationReport(options = {}) {
     ORDER BY market ASC
   `).all(`-${periodDays} days`);
 
-  const insertReport = db.prepare(`
+    const insertReport = db.prepare(`
     INSERT INTO calibration_reports (
       market,
       period_start,
@@ -126,10 +161,10 @@ function runCalibrationReport(options = {}) {
     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
-  const reports = [];
-  const writeReports = db.transaction((rows) => {
-    for (const row of rows) {
-      insertReport.run(
+    const reports = [];
+    const writeReports = db.transaction((rows) => {
+      for (const row of rows) {
+        insertReport.run(
         row.market,
         periodStart,
         periodDays,
@@ -139,44 +174,51 @@ function runCalibrationReport(options = {}) {
         row.killSwitchActive ? 1 : 0,
         computedAt,
       );
-    }
-  });
-
-  for (const marketRow of activeMarkets) {
-    const market = String(marketRow.market || '').trim().toUpperCase();
-    const threshold = THRESHOLDS[market];
-    if (!threshold) {
-      continue;
-    }
-
-    const report = getCalibrationReport(market, {
-      db,
-      minSamples: 0,
-      periodDays,
+      }
     });
-    if (!report) {
-      continue;
+
+    for (const marketRow of activeMarkets) {
+      const market = String(marketRow.market || '').trim().toUpperCase();
+      const threshold = THRESHOLDS[market];
+      if (!threshold) {
+        continue;
+      }
+
+      const report = getCalibrationReport(market, {
+        db,
+        minSamples: 0,
+        periodDays,
+      });
+      if (!report) {
+        continue;
+      }
+
+      const killSwitchActive = (
+        report.nSamples >= threshold.minSamples &&
+        Number.isFinite(report.ece) &&
+        report.ece > threshold.ece
+      );
+
+      reports.push({
+        ...report,
+        killSwitchActive,
+      });
     }
 
-    const killSwitchActive = (
-      report.nSamples >= threshold.minSamples &&
-      Number.isFinite(report.ece) &&
-      report.ece > threshold.ece
-    );
+    writeReports(reports);
+    clearCalibrationGateCache();
 
-    reports.push({
-      ...report,
-      killSwitchActive,
-    });
+    if (jobRunId) markJobRunSuccess(jobRunId);
+    return {
+      success: true,
+      jobKey,
+      updatedPredictions,
+      reports,
+    };
+  } catch (error) {
+    if (jobRunId) markJobRunFailure(jobRunId, error.message);
+    throw error;
   }
-
-  writeReports(reports);
-  clearCalibrationGateCache();
-
-  return {
-    updatedPredictions,
-    reports,
-  };
 }
 
 module.exports = {
@@ -186,13 +228,9 @@ module.exports = {
 };
 
 if (require.main === module) {
-  try {
-    const result = runCalibrationReport();
+  createJob('run_calibration_report', ({ dryRun }) => withDb(() => {
+    const result = runCalibrationReport({ dryRun });
     console.log(JSON.stringify(result, null, 2));
-  } catch (error) {
-    console.error('[CALIBRATION] run_calibration_report failed:', error);
-    process.exitCode = 1;
-  } finally {
-    closeDatabase();
-  }
+    return result;
+  }));
 }

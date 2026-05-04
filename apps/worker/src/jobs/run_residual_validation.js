@@ -14,7 +14,16 @@
  */
 
 require('dotenv').config();
-const { getDatabase } = require('@cheddar-logic/data');
+const { randomUUID } = require('crypto');
+const {
+  createJob,
+  getDatabase,
+  insertJobRun,
+  markJobRunFailure,
+  markJobRunSuccess,
+  shouldRunJobKey,
+  withDb,
+} = require('@cheddar-logic/data');
 
 /**
  * Compute Pearson correlation between two arrays.
@@ -48,8 +57,48 @@ function computePearson(xs, ys) {
  * @param {import('better-sqlite3').Database} [dbOverride] - Optional DB handle; falls back to getDatabase()
  * @returns {Promise<{ pearsonR: number, hitRateQ1: number, hitRateQ4: number, n: number } | { skipped: true }>}
  */
-async function run(dbOverride) {
-  const db = dbOverride || getDatabase();
+function isDbHandle(value) {
+  return Boolean(value) && typeof value.prepare === 'function';
+}
+
+function normalizeRunOptions(options = {}) {
+  if (isDbHandle(options)) return { db: options };
+  if (options && typeof options === 'object') return options;
+  return {};
+}
+
+async function run(options = {}) {
+  const normalized = normalizeRunOptions(options);
+  const db = normalized.db || getDatabase();
+  const dryRun =
+    normalized.dryRun === true ||
+    process.env.DRY_RUN === 'true' ||
+    process.argv.includes('--dry-run');
+  const jobKey = normalized.jobKey || null;
+  const jobRunId = jobKey && !dryRun ? randomUUID() : null;
+
+  if (jobKey && !dryRun && !shouldRunJobKey(jobKey)) {
+    console.log(`[RESIDUAL_VAL] Skipping (already succeeded or running): ${jobKey}`);
+    return { success: true, skipped: true, jobKey };
+  }
+
+  if (dryRun) {
+    console.log(`[RESIDUAL_VAL] DRY_RUN=true — would run jobKey=${jobKey || 'none'}`);
+    return { success: true, dryRun: true, jobKey };
+  }
+
+  if (jobRunId) {
+    try {
+      insertJobRun('run_residual_validation', jobRunId, jobKey);
+    } catch (error) {
+      if (error?.code === 'JOB_RUN_ALREADY_CLAIMED') {
+        return { success: true, skipped: true, jobKey };
+      }
+      throw error;
+    }
+  }
+
+  try {
 
   // Check table exists
   const tableCheck = db
@@ -57,7 +106,8 @@ async function run(dbOverride) {
     .get();
   if (!tableCheck) {
     console.log('[RESIDUAL_VAL] clv_entries table not found — skipping');
-    return { skipped: true };
+    if (jobRunId) markJobRunSuccess(jobRunId);
+    return { success: true, jobKey, skipped: true };
   }
 
   // Check residual column exists (migration 072 applied)
@@ -67,11 +117,13 @@ async function run(dbOverride) {
     residualColumnExists = true;
   } catch (_e) {
     console.log('[RESIDUAL_VAL] residual column not yet present in clv_entries (migration 072 not applied) — skipping');
-    return { skipped: true };
+    if (jobRunId) markJobRunSuccess(jobRunId);
+    return { success: true, jobKey, skipped: true };
   }
 
   if (!residualColumnExists) {
-    return { skipped: true };
+    if (jobRunId) markJobRunSuccess(jobRunId);
+    return { success: true, jobKey, skipped: true };
   }
 
   const rows = db
@@ -87,7 +139,8 @@ async function run(dbOverride) {
 
   if (rows.length < 20) {
     console.log(`[RESIDUAL_VAL] insufficient data for validation (n=${rows.length}, min=20)`);
-    return { skipped: true };
+    if (jobRunId) markJobRunSuccess(jobRunId);
+    return { success: true, jobKey, skipped: true };
   }
 
   // Pearson r between residual and clv
@@ -120,17 +173,17 @@ async function run(dbOverride) {
     n: rows.length,
   });
 
-  return { pearsonR, hitRateQ1, hitRateQ4, n: rows.length };
+    if (jobRunId) markJobRunSuccess(jobRunId);
+    return { success: true, jobKey, pearsonR, hitRateQ1, hitRateQ4, n: rows.length };
+  } catch (error) {
+    if (jobRunId) markJobRunFailure(jobRunId, error.message);
+    throw error;
+  }
 }
 
 module.exports = { run };
 
 // Allow direct execution: node src/jobs/run_residual_validation.js
 if (require.main === module) {
-  run()
-    .then(() => process.exit(0))
-    .catch((err) => {
-      console.error('[RESIDUAL_VAL] fatal error:', err);
-      process.exit(1);
-    });
+  createJob('run_residual_validation', ({ dryRun }) => withDb(() => run({ dryRun })));
 }
