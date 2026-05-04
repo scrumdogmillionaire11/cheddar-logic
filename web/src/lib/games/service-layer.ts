@@ -41,7 +41,7 @@ function isProjectionOnlyCoveragePlay(play: Play): boolean {
 }
 
 function isMainSurfaceCoveragePlay(row: GameRow, play: Play): boolean {
-  if (!isPlayItem(play as Parameters<typeof isPlayItem>[0], row.sport)) return false;
+  if (!isPlayItem(play, row.sport)) return false;
   if (play.market_type === 'INFO') return false;
   if (isProjectionOnlyCoveragePlay(play)) return false;
 

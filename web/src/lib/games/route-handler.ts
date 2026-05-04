@@ -91,6 +91,7 @@ import {
   RESOURCE,
 } from '@/lib/api-security';
 import type { ExpressionStatus, CanonicalMarketType } from '@/lib/types';
+import type { ProjectionSource, StatusCap } from '@/lib/types/game-card';
 import type { PlayDisplayAction } from '@/lib/game-card/decision';
 import {
   toObject,
@@ -575,7 +576,7 @@ export interface Play {
   market_bookmaker?: string | null;
   basis?: 'PROJECTION_ONLY' | 'ODDS_BACKED';
   execution_status?: 'EXECUTABLE' | 'PROJECTION_ONLY' | 'BLOCKED';
-  projection_source?: string | null;
+  projection_source?: ProjectionSource | null;
   execution_gate?: {
     drop_reason?: {
       drop_reason_code: string;
@@ -607,8 +608,8 @@ export interface Play {
     probability_ladder: Record<string, unknown> | null;
     fair_prices: Record<string, unknown> | null;
     playability: Record<string, unknown> | null;
-    projection_source: string | null;
-    status_cap: string | null;
+    projection_source: ProjectionSource | null;
+    status_cap: StatusCap | null;
     pass_reason_code: string | null;
     missing_inputs: string[];
   };
@@ -3130,15 +3131,15 @@ export async function GET(request: NextRequest) {
                   ? (payloadPlayPropDecision.playability as Record<string, unknown>)
                   : null),
               projection_source:
-                firstString(
+                (firstString(
                   rawPropDecision.projection_source,
                   payloadPlayPropDecision?.projection_source,
-                ) ?? null,
+                ) ?? null) as ProjectionSource | null,
               status_cap:
-                firstString(
+                (firstString(
                   rawPropDecision.status_cap,
                   payloadPlayPropDecision?.status_cap,
-                ) ?? null,
+                ) ?? null) as StatusCap | null,
               pass_reason_code:
                 firstString(
                   rawPropDecision.pass_reason_code,
@@ -3861,11 +3862,11 @@ export async function GET(request: NextRequest) {
           execution_status: normalizedExecutionStatus,
           projection_settlement_policy: normalizedProjectionSettlementPolicy,
           projection_source:
-            firstString(
+            (firstString(
               payload.projection_source,
               payloadPlay?.projection_source,
               normalizedPropDecision?.projection_source,
-            ) ?? null,
+            ) ?? null) as ProjectionSource | null,
           execution_gate: normalizedExecutionGate,
           prop_display_state: normalizedPropDisplayState,
           prop_decision: normalizedPropDecision,
