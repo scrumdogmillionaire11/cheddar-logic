@@ -201,6 +201,25 @@ console.log('🧪 final_market_decision contract tests');
     action: 'PASS',
     classification: 'PASS',
     status: 'PASS',
+    decision_v2: {
+      official_status: 'PASS',
+      sharp_price_status: 'CHEDDAR',
+      primary_reason_code: 'EDGE_CLEAR',
+      play_tier: null,
+      edge_delta_pct: null,
+    },
+  });
+  const card = transformToGameCard(game);
+  const decision = card.play?.final_market_decision;
+  assert.equal(decision?.surfaced_status, 'PASS');
+  assert.equal(decision?.surfaced_reason, 'No edge at current price');
+}
+
+{
+  const game = buildGame({
+    action: 'PASS',
+    classification: 'PASS',
+    status: 'PASS',
     reason_codes: ['MISSING_DATA_PROJECTION_INPUTS', 'PASS_NO_EDGE'],
     decision_v2: {
       official_status: 'PASS',

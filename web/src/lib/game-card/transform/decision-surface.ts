@@ -142,8 +142,18 @@ function mapSurfacedReason(
   passReasonCode?: string | null,
   surfacedStatus?: FinalMarketDecision['surfaced_status'],
 ): string {
-  const code = toToken(primaryReasonCode || passReasonCode);
+  const code = toToken(
+    surfacedStatus === 'PASS'
+      ? (passReasonCode || primaryReasonCode)
+      : (primaryReasonCode || passReasonCode),
+  );
   if (!code) return 'No edge at current price';
+  if (
+    surfacedStatus === 'PASS' &&
+    (code === 'EDGE_CLEAR' || code === 'EDGE_FOUND' || code === 'EDGE_FOUND_SIDE')
+  ) {
+    return 'No edge at current price';
+  }
   if (ENABLE_STALE_UI_SUPPRESSION && STALE_SUPPRESSED_REASON_CODES.has(code)) {
     return surfacedStatus === 'PASS' ? 'No edge at current price' : 'Edge clear';
   }
