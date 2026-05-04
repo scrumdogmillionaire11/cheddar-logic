@@ -2418,6 +2418,25 @@ const MLB_K_MIN_PROJECTION_STARTS = 3;
 const MLB_K_NO_EDGE_BAND_KS = 0.5;
 const MLB_K_POISSON_THRESHOLDS = [5, 6, 7];
 const MLB_K_PROJECTION_ONLY_PASS_REASON = 'PASS_PROJECTION_ONLY_NO_MARKET';
+const MLB_K_POSTURE_LABELS = Object.freeze([
+  'UNDER_CANDIDATE',
+  'OVER_CANDIDATE',
+  'NO_EDGE_ZONE',
+  'TRAP_FLAGGED',
+  'DATA_UNTRUSTED',
+  'UNDER_LEAN_ONLY',
+]);
+const MLB_K_POSTURE_BASELINE_OVER_THRESHOLD = 0.27;
+const MLB_K_POSTURE_BASELINE_UNDER_THRESHOLD = 0.235;
+const MLB_K_POSTURE_OPP_FACTOR_OVER_THRESHOLD = 1.05;
+const MLB_K_POSTURE_OPP_FACTOR_UNDER_THRESHOLD = 0.97;
+const MLB_K_POSTURE_EXPECTED_IP_OVER_THRESHOLD = 5.75;
+const MLB_K_POSTURE_EXPECTED_IP_UNDER_THRESHOLD = 5.0;
+const MLB_K_POSTURE_UNTRUSTED_LEASH_FLAGS = new Set([
+  'IL_RETURN',
+  'EXTENDED_REST',
+  'OPENER_BULK_ROLE',
+]);
 // WI-1173: provisional BB% threshold for command risk — calibratable, do not hard-code call sites.
 const COMMAND_RISK_BB_PCT_THRESHOLD = 0.095;
 // WI-1173: SMALL_SAMPLE guard: fewer than 120 BF in the lookback window.
@@ -2483,6 +2502,101 @@ function getPitcherKLeashMultiplier(leashTier) {
   if (leashTier === 'Mod') return 0.95;
   if (leashTier === 'Short') return 0.9;
   return 0.95;
+}
+
+function classifyPitcherKProjectionSignal(
+  value,
+  { overThreshold, underThreshold } = {},
+) {
+  if (!Number.isFinite(value)) return 'UNKNOWN';
+  if (Number.isFinite(overThreshold) && value >= overThreshold) {
+    return 'OVER_SUPPORT';
+  }
+  if (Number.isFinite(underThreshold) && value <= underThreshold) {
+    return 'UNDER_SUPPORT';
+  }
+  return 'NEUTRAL';
+}
+
+function resolvePitcherKProjectionPosture({
+  projectionSource = 'SYNTHETIC_FALLBACK',
+  leashTier = null,
+  leashFlag = null,
+  starterKPct = null,
+  oppKPctVsHand = null,
+  expectedIp = null,
+  trapFlags = [],
+} = {}) {
+  const opponentKFactor =
+    Number.isFinite(oppKPctVsHand) && Number.isFinite(_leagueAvgKPct) && _leagueAvgKPct > 0
+      ? oppKPctVsHand / _leagueAvgKPct
+      : null;
+
+  const postureComponents = {
+    pitcher_k_baseline: classifyPitcherKProjectionSignal(starterKPct, {
+      overThreshold: MLB_K_POSTURE_BASELINE_OVER_THRESHOLD,
+      underThreshold: MLB_K_POSTURE_BASELINE_UNDER_THRESHOLD,
+    }),
+    opponent_k_factor: classifyPitcherKProjectionSignal(opponentKFactor, {
+      overThreshold: MLB_K_POSTURE_OPP_FACTOR_OVER_THRESHOLD,
+      underThreshold: MLB_K_POSTURE_OPP_FACTOR_UNDER_THRESHOLD,
+    }),
+    projected_innings_bucket: classifyPitcherKProjectionSignal(expectedIp, {
+      overThreshold: MLB_K_POSTURE_EXPECTED_IP_OVER_THRESHOLD,
+      underThreshold: MLB_K_POSTURE_EXPECTED_IP_UNDER_THRESHOLD,
+    }),
+  };
+
+  const overSupport = Object.values(postureComponents).filter(
+    (signal) => signal === 'OVER_SUPPORT',
+  ).length;
+  const underSupport = Object.values(postureComponents).filter(
+    (signal) => signal === 'UNDER_SUPPORT',
+  ).length;
+  const trapCount = Array.isArray(trapFlags) ? trapFlags.length : 0;
+  const trustedProjection =
+    projectionSource !== 'SYNTHETIC_FALLBACK' &&
+    !MLB_K_POSTURE_UNTRUSTED_LEASH_FLAGS.has(leashFlag) &&
+    Number.isFinite(starterKPct) &&
+    Number.isFinite(oppKPctVsHand) &&
+    Number.isFinite(expectedIp);
+
+  let posture = 'NO_EDGE_ZONE';
+  if (!trustedProjection) {
+    posture = 'DATA_UNTRUSTED';
+  } else if (trapCount >= 2) {
+    posture = 'TRAP_FLAGGED';
+  } else if (underSupport >= 2 && overSupport === 0) {
+    posture = 'UNDER_CANDIDATE';
+  } else if (underSupport >= 2 && overSupport === 1) {
+    posture = 'UNDER_LEAN_ONLY';
+  } else if (overSupport >= 2 && underSupport === 0) {
+    posture = 'OVER_CANDIDATE';
+  }
+
+  return {
+    posture: MLB_K_POSTURE_LABELS.includes(posture) ? posture : 'NO_EDGE_ZONE',
+    posture_components: postureComponents,
+    posture_inputs: {
+      projection_source: projectionSource,
+      leash_tier: leashTier ?? null,
+      leash_flag: leashFlag ?? null,
+      starter_k_pct: Number.isFinite(starterKPct)
+        ? Math.round(starterKPct * 1000) / 1000
+        : null,
+      opponent_k_factor: Number.isFinite(opponentKFactor)
+        ? Math.round(opponentKFactor * 1000) / 1000
+        : null,
+      projected_ip: Number.isFinite(expectedIp)
+        ? Math.round(expectedIp * 10) / 10
+        : null,
+    },
+    posture_support: {
+      over: overSupport,
+      under: underSupport,
+      trap_flags_active: trapCount,
+    },
+  };
 }
 
 function calculatePoissonTail(lambda, threshold) {
@@ -3326,7 +3440,9 @@ function scorePitcherKUnder(pitcherInput, matchupInput, marketInput, weatherInpu
  *
  * In PROJECTION_ONLY mode (options.mode === 'PROJECTION_ONLY'): no market line
  * required. Block 1 and Block 4 are skipped; reason_codes record the bypass.
- * Output always includes basis='PROJECTION_ONLY' and explicit reason_codes.
+ * Output always includes basis='PROJECTION_ONLY', a PASS verdict, explicit
+ * reason_codes, and a projection posture derived from baseline K skill,
+ * opponent K factor, and projected innings.
  *
  * @param {object} pitcherInput
  * @param {object} matchupInput
@@ -3348,6 +3464,11 @@ function scorePitcherK(pitcherInput, matchupInput, umpInput, marketInput, weathe
   // Step 1A — Leash (needed for expected_ip in projection formula)
   const leashResult = classifyLeash(pitcherInput);
   if (leashResult.uncalculable) {
+    const postureSummary = resolvePitcherKProjectionPosture({
+      projectionSource: 'SYNTHETIC_FALLBACK',
+      leashTier: leashResult.tier ?? null,
+      leashFlag: leashResult.flag ?? null,
+    });
     return {
       status: 'HALTED',
       halted_at: 'STEP_1',
@@ -3358,7 +3479,9 @@ function scorePitcherK(pitcherInput, matchupInput, umpInput, marketInput, weathe
       reason_codes: [
         MLB_K_PROJECTION_ONLY_PASS_REASON,
         leashResult.flag,
-        `MODE_FORCED:${_requestedMode}->PROJECTION_ONLY`,
+        ...(_requestedMode !== 'PROJECTION_ONLY'
+          ? [`MODE_FORCED:${_requestedMode}->PROJECTION_ONLY`]
+          : []),
       ].filter(Boolean),
       projection_source: 'SYNTHETIC_FALLBACK',
       status_cap: 'PASS',
@@ -3370,6 +3493,10 @@ function scorePitcherK(pitcherInput, matchupInput, umpInput, marketInput, weathe
       },
       fair_prices: null,
       probability_ladder: null,
+      posture: postureSummary.posture,
+      posture_components: postureSummary.posture_components,
+      posture_inputs: postureSummary.posture_inputs,
+      posture_support: postureSummary.posture_support,
     };
   }
 
@@ -3383,6 +3510,14 @@ function scorePitcherK(pitcherInput, matchupInput, umpInput, marketInput, weathe
     { allowThinSample: projectionOnly },
   );
   if (projResult.uncalculable) {
+    const postureSummary = resolvePitcherKProjectionPosture({
+      projectionSource: projResult.projection_source ?? 'SYNTHETIC_FALLBACK',
+      leashTier: leashResult.tier ?? null,
+      leashFlag: leashResult.flag ?? null,
+      starterKPct: projResult.starter_k_pct ?? null,
+      oppKPctVsHand: projResult.opp_k_pct_vs_hand ?? null,
+      expectedIp: projResult.projected_ip ?? projResult.expected_ip ?? null,
+    });
     return {
       status: 'HALTED',
       halted_at: 'STEP_1',
@@ -3394,7 +3529,9 @@ function scorePitcherK(pitcherInput, matchupInput, umpInput, marketInput, weathe
         MLB_K_PROJECTION_ONLY_PASS_REASON,
         projResult.reason_code,
         ...(projResult.flags || []),
-        `MODE_FORCED:${_requestedMode}->PROJECTION_ONLY`,
+        ...(_requestedMode !== 'PROJECTION_ONLY'
+          ? [`MODE_FORCED:${_requestedMode}->PROJECTION_ONLY`]
+          : []),
       ].filter(Boolean),
       projection_source: projResult.projection_source ?? 'SYNTHETIC_FALLBACK',
       status_cap: projResult.status_cap ?? 'PASS',
@@ -3406,6 +3543,10 @@ function scorePitcherK(pitcherInput, matchupInput, umpInput, marketInput, weathe
       },
       fair_prices: projResult.fair_prices ?? null,
       probability_ladder: projResult.probability_ladder ?? null,
+      posture: postureSummary.posture,
+      posture_components: postureSummary.posture_components,
+      posture_inputs: postureSummary.posture_inputs,
+      posture_support: postureSummary.posture_support,
     };
   }
   const projection = projResult.value;
@@ -3415,6 +3556,14 @@ function scorePitcherK(pitcherInput, matchupInput, umpInput, marketInput, weathe
   if (_requestedMode !== 'PROJECTION_ONLY') {
     reasonCodes.push(`MODE_FORCED:${_requestedMode}->PROJECTION_ONLY`);
   }
+  const projectionPosture = resolvePitcherKProjectionPosture({
+    projectionSource: projResult.projection_source,
+    leashTier: leashResult.tier ?? null,
+    leashFlag: leashResult.flag ?? null,
+    starterKPct: projResult.starter_k_pct ?? null,
+    oppKPctVsHand: projResult.opp_k_pct_vs_hand ?? null,
+    expectedIp: projResult.projected_ip ?? projResult.expected_ip ?? null,
+  });
 
   // Step 1C — Block 1: margin (full mode only)
   let block1Score = 0;
@@ -3461,6 +3610,10 @@ function scorePitcherK(pitcherInput, matchupInput, umpInput, marketInput, weathe
         ...reasonCodes,
         leashResult.flag || 'SHORT_LEASH',
       ])),
+      posture: projectionPosture.posture,
+      posture_components: projectionPosture.posture_components,
+      posture_inputs: projectionPosture.posture_inputs,
+      posture_support: projectionPosture.posture_support,
     };
   }
   const block2Score = scoreLeashBlock2(leashResult);
@@ -3484,6 +3637,15 @@ function scorePitcherK(pitcherInput, matchupInput, umpInput, marketInput, weathe
     side, projectionOnly, block1Score,
   });
   if (!trapResult.verdict_eligible) {
+    const trapFlaggedPosture = resolvePitcherKProjectionPosture({
+      projectionSource: projResult.projection_source,
+      leashTier: leashResult.tier ?? null,
+      leashFlag: leashResult.flag ?? null,
+      starterKPct: projResult.starter_k_pct ?? null,
+      oppKPctVsHand: projResult.opp_k_pct_vs_hand ?? null,
+      expectedIp: projResult.projected_ip ?? projResult.expected_ip ?? null,
+      trapFlags: trapResult.flags,
+    });
     return {
       status: 'SUSPENDED',
       halted_at: 'STEP_5',
@@ -3517,6 +3679,10 @@ function scorePitcherK(pitcherInput, matchupInput, umpInput, marketInput, weathe
         'ENVIRONMENT_COMPROMISED',
         ...(trapResult.flags || []),
       ])),
+      posture: trapFlaggedPosture.posture,
+      posture_components: trapFlaggedPosture.posture_components,
+      posture_inputs: trapFlaggedPosture.posture_inputs,
+      posture_support: trapFlaggedPosture.posture_support,
     };
   }
   const block5Score = trapResult.block5_score;
@@ -3586,6 +3752,10 @@ function scorePitcherK(pitcherInput, matchupInput, umpInput, marketInput, weathe
       ...(trapResult.flags || []),
       ...commandContextReasonCodes,
     ])),
+    posture: projectionPosture.posture,
+    posture_components: projectionPosture.posture_components,
+    posture_inputs: projectionPosture.posture_inputs,
+    posture_support: projectionPosture.posture_support,
     basis: mode,
     projection_only: projectionOnly,
   };
@@ -3664,9 +3834,10 @@ function selectPitcherKUnderMarket(strikeoutLines, pitcherName, bookmakerPriorit
  * Build pitcher-K driver cards from an odds snapshot.
  *
  * Reads raw_data.mlb.{home,away}_pitcher (populated by enrichMlbPitcherData).
- * Pitcher-K currently emits projection-only cards (no market line required).
- * If mode='ODDS_BACKED' is requested, the function still forces
- * PROJECTION_ONLY output and includes MODE_FORCED reason codes.
+ * Pitcher-K currently emits projection-only PASS cards (no market line
+ * required). If mode='ODDS_BACKED' is requested, the function still forces
+ * PROJECTION_ONLY output, adds MODE_FORCED reason codes, and surfaces only
+ * projection posture intelligence.
  *
  * @param {string} gameId
  * @param {object} oddsSnapshot
@@ -3796,6 +3967,7 @@ function computePitcherKDriverCards(gameId, oddsSnapshot, options) {
     const passReasonCode =
       reasonCodes.find((code) => code.startsWith('PASS_')) ??
       MLB_K_PROJECTION_ONLY_PASS_REASON;
+    const posture = result.posture ?? 'DATA_UNTRUSTED';
 
     cards.push({
       market: `pitcher_k_${role}`,
@@ -3811,6 +3983,7 @@ function computePitcherKDriverCards(gameId, oddsSnapshot, options) {
       emit_card: true,
       card_verdict: 'PASS',
       tier: null,
+      posture,
       reasoning: _buildPitcherKReasoning(result),
       projection_source: result.projection_source ?? 'SYNTHETIC_FALLBACK',
       status_cap: result.status_cap ?? 'PASS',
@@ -3832,6 +4005,9 @@ function computePitcherKDriverCards(gameId, oddsSnapshot, options) {
             opp_k_pct_vs_hand: result.opp_k_pct_vs_hand ?? null,
             probability_ladder: result.probability_ladder ?? null,
             fair_prices: result.fair_prices ?? null,
+            posture,
+            posture_components: result.posture_components ?? null,
+            posture_inputs: result.posture_inputs ?? null,
           }
         : null,
       drivers: [{
@@ -3843,6 +4019,7 @@ function computePitcherKDriverCards(gameId, oddsSnapshot, options) {
         leash_tier: result.leash_tier ?? null,
         net_score: result.net_score ?? null,
         tier: result.tier ?? null,
+        posture,
       }],
       prop_decision: {
         verdict: 'PASS',
@@ -3857,6 +4034,9 @@ function computePitcherKDriverCards(gameId, oddsSnapshot, options) {
         projection_source: result.projection_source ?? 'SYNTHETIC_FALLBACK',
         status_cap: result.status_cap ?? 'PASS',
         missing_inputs: projectionOnlyMissingInputs,
+        posture,
+        posture_components: result.posture_components ?? null,
+        posture_inputs: result.posture_inputs ?? null,
         line_delta: null,
         fair_prob: result.probability_ladder?.p_6_plus ?? null,
         implied_prob: null,
@@ -3892,11 +4072,12 @@ function _buildPitcherKReasoning(result) {
     return parts.join(' | ');
   }
   if (result.status === 'HALTED')
-    return `HALTED at ${result.halted_at}: ${result.reason_code}`;
+    return `HALTED at ${result.halted_at}: ${result.reason_code} | Posture: ${result.posture ?? 'DATA_UNTRUSTED'}`;
   if (result.status === 'SUSPENDED')
-    return `SUSPENDED — environment compromised: ${(result.trap_flags || []).join(', ')}`;
+    return `SUSPENDED — environment compromised: ${(result.trap_flags || []).join(', ')} | Posture: ${result.posture ?? 'TRAP_FLAGGED'}`;
   const parts = [];
   if (result.projection != null) parts.push(`K mean: ${result.projection} Ks`);
+  if (result.posture) parts.push(`Posture: ${result.posture}`);
   if (result.bf_exp != null && result.k_interaction != null && result.k_leash_mult != null) {
     parts.push(`BF=${result.bf_exp} × Kint=${result.k_interaction} × leash=${result.k_leash_mult}`);
   }

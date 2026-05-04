@@ -608,12 +608,14 @@ describe('runMLBModel dual-run orchestration', () => {
     ev_threshold_passed: false,
     emit_card: true,
     card_verdict: 'PASS',
+    posture: 'OVER_CANDIDATE',
     reasoning: 'Home SP projection-only',
-    drivers: [{ type: 'pitcher-k', projection: 7.1, k_mean: 7.1 }],
+    drivers: [{ type: 'pitcher-k', projection: 7.1, k_mean: 7.1, posture: 'OVER_CANDIDATE' }],
     projection: {
       k_mean: 7.1,
       probability_ladder: { p_5_plus: 0.81, p_6_plus: 0.69, p_7_plus: 0.54 },
       fair_prices: { k_6_plus: { over: -223, under: 223 } },
+      posture: 'OVER_CANDIDATE',
     },
     projection_source: 'FULL_MODEL',
     status_cap: 'PASS',
@@ -637,6 +639,7 @@ describe('runMLBModel dual-run orchestration', () => {
       projection_source: 'FULL_MODEL',
       status_cap: 'PASS',
       missing_inputs: [],
+      posture: 'OVER_CANDIDATE',
       flags: ['PASS_PROJECTION_ONLY_NO_MARKET'],
     },
     reason_codes: ['PASS_PROJECTION_ONLY_NO_MARKET'],
@@ -654,12 +657,14 @@ describe('runMLBModel dual-run orchestration', () => {
     ev_threshold_passed: false,
     emit_card: true,
     card_verdict: 'PASS',
+    posture: 'NO_EDGE_ZONE',
     reasoning: 'Away SP projection-only',
-    drivers: [{ type: 'pitcher-k', projection: 6.8, k_mean: 6.8 }],
+    drivers: [{ type: 'pitcher-k', projection: 6.8, k_mean: 6.8, posture: 'NO_EDGE_ZONE' }],
     projection: {
       k_mean: 6.8,
       probability_ladder: { p_5_plus: 0.79, p_6_plus: 0.65, p_7_plus: 0.5 },
       fair_prices: { k_6_plus: { over: -186, under: 186 } },
+      posture: 'NO_EDGE_ZONE',
     },
     projection_source: 'FULL_MODEL',
     status_cap: 'PASS',
@@ -683,6 +688,7 @@ describe('runMLBModel dual-run orchestration', () => {
       projection_source: 'FULL_MODEL',
       status_cap: 'PASS',
       missing_inputs: [],
+      posture: 'NO_EDGE_ZONE',
       flags: ['PASS_PROJECTION_ONLY_NO_MARKET'],
     },
     reason_codes: ['PASS_PROJECTION_ONLY_NO_MARKET'],
@@ -786,7 +792,7 @@ describe('runMLBModel dual-run orchestration', () => {
     });
   });
 
-  test('missing F5 line emits projection-floor mlb-f5 and still calls computePitcherKDriverCards in ODDS_BACKED mode (per-pitcher fallback is PROJECTION_ONLY when no strikeout line)', async () => {
+  test('missing F5 line emits projection-floor mlb-f5 and still keeps pitcher-K payloads projection-only even when the requested mode is ODDS_BACKED', async () => {
     const selection = {
       chosen_market: 'F5_TOTAL',
       why_this_market: 'Rule 1: only configured MLB game market',
@@ -823,8 +829,8 @@ describe('runMLBModel dual-run orchestration', () => {
     const result = await runMLBModel({ expectF5Ml: true });
 
     expect(result.success).toBe(true);
-    // K props use player_prop_lines — independent of F5 line. Call site must
-    // stay in ODDS_BACKED mode; per-pitcher fallback is handled inside the model.
+    // The runner may still request ODDS_BACKED mode, but emitted pitcher-K rows
+    // must remain projection-only unless a separate priced contract exists.
     expect(mocks.computePitcherKDriverCardsMock).toHaveBeenCalledWith(
       'mlb-game-001',
       expect.any(Object),
@@ -848,11 +854,15 @@ describe('runMLBModel dual-run orchestration', () => {
       tags: ['no_odds_mode'],
       projection: {
         k_mean: expect.any(Number),
+        posture: 'OVER_CANDIDATE',
         probability_ladder: {
           p_5_plus: expect.any(Number),
           p_6_plus: expect.any(Number),
           p_7_plus: expect.any(Number),
         },
+      },
+      prop_decision: {
+        posture: 'OVER_CANDIDATE',
       },
     });
     // With projection floor applied, F5_TOTAL_UNAVAILABLE is replaced by MARKET_PRICE_MISSING

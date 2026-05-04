@@ -1,20 +1,80 @@
-# 05 — Fair thresholds and no-line PASS policy
+# 05 — Projection-only posture contract
 
 ## Rule
 
-Current runtime does not ingest a live pitcher-K line, so there is no executable margin calculation. Instead, the engine converts `k_mean` into Poisson tail probabilities and fair American prices, then derives a pair of research thresholds that indicate where an over or under would become playable if a verified line source is added later.
+Current runtime does not publish a verified pitcher-K line/price contract, so pitcher-K output is strictly projection intelligence. The model converts `k_mean` into fair ladder probabilities and then assigns a non-executable posture from three deterministic inputs:
+
+- pitcher K baseline
+- opponent K factor versus handedness
+- projected innings / leash bucket
+
+No live odds dependency exists in this step.
 
 ---
 
 ## Hard rule
 
-Until a separate free-line sourcing WI restores verified standard + alt lines, every `mlb-pitcher-k` row must remain:
+Until a separate work item introduces a verified user-provided line/price path, every `mlb-pitcher-k` row must remain:
 
 - `basis: 'PROJECTION_ONLY'`
 - `prediction/status/action/classification: 'PASS'`
-- `status_cap: 'PASS'`
+- `status_cap: 'PASS'` or stricter
 - `pass_reason_code: 'PASS_PROJECTION_ONLY_NO_MARKET'`
 - `line`, `line_source`, `over_price`, `under_price`, `best_line_bookmaker`, `margin`: null/omitted
+
+The engine must never emit `PLAY` for pitcher-K from model-only output.
+
+---
+
+## Allowed posture labels
+
+Every row must carry exactly one posture label:
+
+- `OVER_CANDIDATE`
+- `UNDER_CANDIDATE`
+- `UNDER_LEAN_ONLY`
+- `NO_EDGE_ZONE`
+- `TRAP_FLAGGED`
+- `DATA_UNTRUSTED`
+
+Posture is descriptive only. It is not an execution instruction.
+
+---
+
+## Deterministic posture logic
+
+Each of the three projection inputs is bucketed as `OVER_SUPPORT`, `UNDER_SUPPORT`, or `NEUTRAL`.
+
+### Pitcher K baseline
+
+- `OVER_SUPPORT` when starter K% is at or above 27.0%
+- `UNDER_SUPPORT` when starter K% is at or below 23.5%
+- otherwise `NEUTRAL`
+
+### Opponent K factor
+
+`opponent_k_factor = opp_k_pct_vs_hand / league_avg_k_pct`
+
+- `OVER_SUPPORT` when factor is at or above `1.05`
+- `UNDER_SUPPORT` when factor is at or below `0.97`
+- otherwise `NEUTRAL`
+
+### Projected innings / leash bucket
+
+- `OVER_SUPPORT` when projected IP is at or above `5.75`
+- `UNDER_SUPPORT` when projected IP is at or below `5.0`
+- otherwise `NEUTRAL`
+
+### Final posture
+
+- `DATA_UNTRUSTED` if the row is synthetic fallback or the leash context is structurally untrusted (`IL_RETURN`, `EXTENDED_REST`, opener/bulk role)
+- `TRAP_FLAGGED` if two or more trap flags are active
+- `UNDER_CANDIDATE` if at least 2 inputs support under and 0 support over
+- `UNDER_LEAN_ONLY` if at least 2 inputs support under and exactly 1 supports over
+- `OVER_CANDIDATE` if at least 2 inputs support over and 0 support under
+- otherwise `NO_EDGE_ZONE`
+
+No posture may be assigned from a single input alone.
 
 ---
 
@@ -41,17 +101,4 @@ def implied_probability_to_american(p):
     return round(100 * (1 - p) / p)
 ```
 
----
-
-## Playability thresholds
-
-```
-over_playable_at_or_below  ≈ floor(k_mean - 0.5)
-under_playable_at_or_above ≈ ceil(k_mean + 0.5)
-```
-
-These thresholds are not current recommendations. They only define where the projection would start to deserve an odds-backed check once a real line appears.
-
-## Free line sourcing status
-
-There is no clean free structured MLB pitcher-K odds API. A separate WI must evaluate DraftKings/FanDuel direct scraping first, with OddsTrader/OddsJam as secondary fallback candidates, and must define rate limits, parser health checks, and TOS risk before any runtime odds-backed mode is re-enabled.
+These fair prices remain research output only until a verified line/price input exists.
