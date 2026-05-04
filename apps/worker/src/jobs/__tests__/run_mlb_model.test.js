@@ -115,6 +115,17 @@ const neutralMatchup = {
 };
 
 const PROJECTION_ONLY_OPTS = { mode: 'PROJECTION_ONLY', side: 'over' };
+const ALL_TRAP_INPUT_KEYS = [
+  'leash_bucket',
+  'market_move',
+  'name_risk_proxy',
+  'opp_k_bucket',
+  'opp_k_volatility',
+  'opp_profile_staleness',
+  'projection_band',
+  'public_betting',
+  'ump_context',
+];
 
 function buildExecutableMlbPayload() {
   return {
@@ -1334,6 +1345,80 @@ describe('scorePitcherK — leash classification edge cases', () => {
 });
 
 describe('scorePitcherK — trap scan', () => {
+  test('emits deterministic automated trap diagnostics when all automated inputs are available', () => {
+    const result = scorePitcherK(
+      {
+        ...fullPitcher,
+        full_name: 'Gerrit Cole',
+        is_star_name: false,
+      },
+      {
+        ...neutralMatchup,
+        opp_k_pct_vs_handedness_l30: 0.255,
+        opp_k_pct_vs_handedness_season: 0.226,
+      },
+      {
+        games_behind_plate_current_season: 36,
+        k_rate_diff_vs_league: 0.01,
+      },
+      {
+        over_bet_pct: 0.54,
+        line_soft_vs_comparable: false,
+        movement_against_play: false,
+        movement_magnitude: 0,
+        movement_source_sharp: false,
+      },
+      {},
+      PROJECTION_ONLY_OPTS,
+    );
+
+    expect(result.trap_diagnostics).toMatchObject({
+      leash_bucket: 'LONG',
+      market_move: 'AVAILABLE',
+      name_risk_proxy: 'CLEAR',
+      opp_k_bucket: 'HIGH_K',
+      opp_k_volatility: 'MID',
+      opp_profile_staleness: 'FRESH',
+      projection_band: expect.stringMatching(/^(LOW|MID|HIGH|OUTSIDE_STATIC_BAND)$/),
+      public_betting: 'AVAILABLE',
+      ump_context: 'AVAILABLE',
+    });
+    expect(result.trap_inputs_present).toEqual(ALL_TRAP_INPUT_KEYS);
+    expect(result.trap_inputs_missing).toEqual([]);
+    expect(result.trap_flags).toEqual([]);
+    expect(result.confidence_cap_reason).toBeNull();
+  });
+
+  test('marks unavailable optional feeds explicitly in trap diagnostics', () => {
+    const result = scorePitcherK(
+      {
+        ...fullPitcher,
+        full_name: 'Gerrit Cole',
+      },
+      neutralMatchup,
+      {},
+      null,
+      {},
+      PROJECTION_ONLY_OPTS,
+    );
+
+    expect(result.trap_diagnostics).toMatchObject({
+      market_move: 'UNAVAILABLE',
+      public_betting: 'UNAVAILABLE',
+      ump_context: 'UNAVAILABLE',
+    });
+    expect(result.trap_inputs_missing).toEqual([
+      'market_move',
+      'public_betting',
+      'ump_context',
+    ]);
+    expect(result.trap_flags).toEqual([
+      'UNAVAILABLE_MARKET_MOVE',
+      'UNAVAILABLE_PUBLIC',
+      'UNAVAILABLE_UMP',
+    ]);
+    expect(result.confidence_cap_reason).toBeNull();
+  });
 
   test('ENVIRONMENT_COMPROMISED: 2+ trap flags suspend verdict', () => {
     // Trigger: has_role_signal + hidden weather condition
@@ -1350,6 +1435,13 @@ describe('scorePitcherK — trap scan', () => {
     expect(result.status).toBe('SUSPENDED');
     expect(result.reason_code).toBe('ENVIRONMENT_COMPROMISED');
     expect(result.trap_flags.length).toBeGreaterThanOrEqual(2);
+    expect(result.trap_flags).toEqual(expect.arrayContaining([
+      'HIDDEN_ROLE_RISK',
+      'WIND_SUPPRESSION',
+      'UNAVAILABLE_MARKET_MOVE',
+      'UNAVAILABLE_PUBLIC',
+      'UNAVAILABLE_UMP',
+    ]));
     expect(result.verdict).toBe('PASS');
   });
 });
@@ -1620,6 +1712,36 @@ describe('buildMlbPitcherKPayloadFields', () => {
             placeholder_fields: [],
             status_cap: 'LEAN',
           },
+          trap_diagnostics: {
+            leash_bucket: 'STANDARD',
+            market_move: 'UNAVAILABLE',
+            name_risk_proxy: 'CLEAR',
+            opp_k_bucket: 'MID_K',
+            opp_k_volatility: 'LOW',
+            opp_profile_staleness: 'FRESH',
+            projection_band: 'MID',
+            public_betting: 'UNAVAILABLE',
+            ump_context: 'UNAVAILABLE',
+          },
+          trap_inputs_present: [
+            'leash_bucket',
+            'name_risk_proxy',
+            'opp_k_bucket',
+            'opp_k_volatility',
+            'opp_profile_staleness',
+            'projection_band',
+          ],
+          trap_inputs_missing: [
+            'market_move',
+            'public_betting',
+            'ump_context',
+          ],
+          trap_flags: [
+            'UNAVAILABLE_MARKET_MOVE',
+            'UNAVAILABLE_PUBLIC',
+            'UNAVAILABLE_UMP',
+          ],
+          confidence_cap_reason: null,
         },
       },
       pitcherPlayerId: '592450',
@@ -1651,6 +1773,31 @@ describe('buildMlbPitcherKPayloadFields', () => {
       projection_source: 'DEGRADED_MODEL',
       status_cap: 'LEAN',
     });
+    expect(payload.payloadFields.trap_diagnostics).toMatchObject({
+      leash_bucket: 'STANDARD',
+      opp_k_bucket: 'MID_K',
+      projection_band: 'MID',
+      market_move: 'UNAVAILABLE',
+    });
+    expect(payload.payloadFields.trap_inputs_present).toEqual([
+      'leash_bucket',
+      'name_risk_proxy',
+      'opp_k_bucket',
+      'opp_k_volatility',
+      'opp_profile_staleness',
+      'projection_band',
+    ]);
+    expect(payload.payloadFields.trap_inputs_missing).toEqual([
+      'market_move',
+      'public_betting',
+      'ump_context',
+    ]);
+    expect(payload.payloadFields.trap_flags).toEqual([
+      'UNAVAILABLE_MARKET_MOVE',
+      'UNAVAILABLE_PUBLIC',
+      'UNAVAILABLE_UMP',
+    ]);
+    expect(payload.payloadFields.confidence_cap_reason).toBeNull();
   });
 });
 

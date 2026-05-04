@@ -133,8 +133,12 @@ A moderately unfavorable ump (-1 to -3pp) is an overlay non-score — the ump di
 After all six categories are scanned, return:
 
 ```
-trap_flags = [list of active flag categories]
-trap_count = len(trap_flags)
+trap_flags = [list of emitted trap categories]
+trap_actionable_flags = [subset that counts toward suspension]
+trap_count = len(trap_actionable_flags)
+trap_inputs_present = [sorted input keys successfully assessed]
+trap_inputs_missing = [sorted input keys unavailable or unknown]
+confidence_cap_reason = null
 
 if trap_count == 0:
     block5_score = 1
@@ -151,6 +155,24 @@ elif trap_count >= 2:
     log_reason = "Environment compromised — {trap_count} active trap flags"
     # No verdict issued
 ```
+
+The projection-only baseline also emits a `trap_diagnostics` object with:
+
+- `opp_k_bucket` in `{LOW_K, MID_K, HIGH_K, UNKNOWN}`
+- `leash_bucket` in `{SHORT, STANDARD, LONG, UNKNOWN}`
+- `name_risk_proxy` in `{CLEAR, AMBIGUOUS, UNKNOWN}`
+- `projection_band` in `{LOW, MID, HIGH, OUTSIDE_STATIC_BAND, UNKNOWN}`
+- `opp_k_volatility` in `{LOW, MID, HIGH, UNKNOWN}`
+- `opp_profile_staleness` in `{FRESH, STALE, STATIC_FALLBACK, UNKNOWN}`
+- `ump_context`, `public_betting`, `market_move` in `{AVAILABLE, UNAVAILABLE}`
+
+Unavailable optional feeds emit explicit non-suspensive flags:
+
+- `UNAVAILABLE_UMP`
+- `UNAVAILABLE_PUBLIC`
+- `UNAVAILABLE_MARKET_MOVE`
+
+These availability flags are included in `trap_flags` for visibility but do not increase `trap_count` or suspend the verdict on their own.
 
 ---
 

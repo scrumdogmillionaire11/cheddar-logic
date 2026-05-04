@@ -659,6 +659,14 @@ function uniqueReasonCodes(codes = []) {
   );
 }
 
+function sortUniqueStrings(values = []) {
+  return uniqueReasonCodes(
+    (Array.isArray(values) ? values : [values]).map((value) =>
+      typeof value === 'string' ? value.trim() : '',
+    ),
+  ).sort((left, right) => left.localeCompare(right));
+}
+
 function applyDecisionNamespaceMetadata(payload) {
   if (!payload || typeof payload !== 'object') return;
 
@@ -3338,6 +3346,34 @@ function buildMlbPitcherKPayloadFields({
     direct_pitch_count_history: false,
     proxy_in_use: false,
   };
+  const trapDiagnostics =
+    driver.prop_decision?.trap_diagnostics ??
+    driver.pitcher_k_result?.trap_diagnostics ??
+    driver.trap_diagnostics ??
+    null;
+  const trapInputsPresent = sortUniqueStrings(
+    driver.prop_decision?.trap_inputs_present ??
+      driver.pitcher_k_result?.trap_inputs_present ??
+      driver.trap_inputs_present ??
+      [],
+  );
+  const trapInputsMissing = sortUniqueStrings(
+    driver.prop_decision?.trap_inputs_missing ??
+      driver.pitcher_k_result?.trap_inputs_missing ??
+      driver.trap_inputs_missing ??
+      [],
+  );
+  const trapFlags = sortUniqueStrings(
+    driver.prop_decision?.trap_flags ??
+      driver.pitcher_k_result?.trap_flags ??
+      driver.trap_flags ??
+      [],
+  );
+  const confidenceCapReason =
+    driver.prop_decision?.confidence_cap_reason ??
+    driver.pitcher_k_result?.confidence_cap_reason ??
+    driver.confidence_cap_reason ??
+    null;
 
   return {
     selectionSide,
@@ -3363,6 +3399,11 @@ function buildMlbPitcherKPayloadFields({
       input_completeness: inputCompleteness,
       leash_confidence: leashConfidence,
       projection_diagnostics: projectionDiagnostics,
+      trap_diagnostics: trapDiagnostics,
+      trap_inputs_present: trapInputsPresent,
+      trap_inputs_missing: trapInputsMissing,
+      trap_flags: trapFlags,
+      confidence_cap_reason: confidenceCapReason,
       pitcher_k_result: driver.pitcher_k_result ?? null,
       line_source: basis === 'ODDS_BACKED' ? driver.line_source ?? null : null,
       over_price: basis === 'ODDS_BACKED' ? driver.over_price ?? null : null,

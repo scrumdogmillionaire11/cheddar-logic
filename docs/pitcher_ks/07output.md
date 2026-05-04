@@ -10,6 +10,7 @@ The output is intentionally limited to:
 - fair ladder probabilities
 - projection quality / missing-input diagnostics
 - posture label derived from baseline K skill, opponent K factor, and projected innings
+- trap diagnostics / availability visibility
 
 No line, price, margin, or executable `PLAY` state appears unless a future user-provided price contract is introduced.
 
@@ -45,6 +46,18 @@ Under playable at >= [x.x]
 Projection source: [FULL_MODEL / DEGRADED_MODEL / SYNTHETIC_FALLBACK]
 Missing inputs: [list or none]
 Reason codes: [list]
+
+## Trap diagnostics
+- trap_inputs_present: [sorted keys]
+- trap_inputs_missing: [sorted keys]
+- trap_flags: [sorted emitted flags]
+- confidence_cap_reason: null
+- opp_k_bucket: [LOW_K / MID_K / HIGH_K / UNKNOWN]
+- leash_bucket: [SHORT / STANDARD / LONG / UNKNOWN]
+- name_risk_proxy: [CLEAR / AMBIGUOUS / UNKNOWN]
+- projection_band: [LOW / MID / HIGH / OUTSIDE_STATIC_BAND / UNKNOWN]
+- opp_k_volatility: [LOW / MID / HIGH / UNKNOWN]
+- opp_profile_staleness: [FRESH / STALE / STATIC_FALLBACK / UNKNOWN]
 
 ## Verdict
 PASS

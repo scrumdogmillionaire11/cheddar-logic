@@ -9,6 +9,7 @@ const {
   projectFullGameTotalCard,
   projectFullGameML,
   computeMLBDriverCards,
+  computePitcherKDriverCards,
   evaluateMlbGameMarkets,
   resolveOffenseComposite,
   resolveMLBModelSignal,
@@ -1212,5 +1213,135 @@ describe('PRI-RUNNER-01: computeMLBDriverCards propagates pass_reason_code from 
       expect(mlCard.evaluation_status).toBe(mlResult.evaluation_status);
       expect(mlCard.block_reasons).toEqual(mlResult.block_reasons);
     }
+  });
+});
+
+describe('computePitcherKDriverCards trap diagnostics', () => {
+  test('emits deterministic projection-only trap metadata on pitcher-K drivers', () => {
+    const snapshot = {
+      home_team: 'New York Yankees',
+      away_team: 'Boston Red Sox',
+      raw_data: {
+        mlb: {
+          home_pitcher: {
+            mlb_id: 592450,
+            full_name: 'Gerrit Cole',
+            k_per_9: 10.2,
+            recent_k_per_9: 11.4,
+            season_k_pct: 0.282,
+            handedness: 'R',
+            bb_pct: 0.072,
+            xwoba_allowed: 0.304,
+            recent_ip: 6.1,
+            starts: 8,
+            il_return: false,
+            days_since_last_start: 5,
+            role: 'starter',
+            last_three_pitch_counts: [95, 92, 88],
+            k_pct_last_4_starts: 0.32,
+            k_pct_prior_4_starts: 0.27,
+            current_season_swstr_pct: 0.13,
+            season_avg_velo: 94.6,
+            bvp_pa: 0,
+            bvp_k: 0,
+            is_star_name: false,
+            strikeout_history: [],
+          },
+          away_pitcher: {
+            mlb_id: 519242,
+            full_name: 'Chris Sale',
+            k_per_9: 9.7,
+            recent_k_per_9: 10.1,
+            season_k_pct: 0.271,
+            handedness: 'L',
+            bb_pct: 0.067,
+            xwoba_allowed: 0.311,
+            recent_ip: 5.9,
+            starts: 8,
+            il_return: false,
+            days_since_last_start: 5,
+            role: 'starter',
+            last_three_pitch_counts: [96, 93, 90],
+            k_pct_last_4_starts: 0.3,
+            k_pct_prior_4_starts: 0.28,
+            current_season_swstr_pct: 0.129,
+            season_avg_velo: 94.1,
+            bvp_pa: 0,
+            bvp_k: 0,
+            is_star_name: false,
+            strikeout_history: [],
+          },
+          away_offense_profile: {
+            wrc_plus_vs_rhp: 100,
+            k_pct_vs_rhp: 0.246,
+            xwoba_vs_rhp: 0.320,
+          },
+          home_offense_profile: {
+            wrc_plus_vs_lhp: 100,
+            k_pct_vs_lhp: 0.221,
+            xwoba_vs_lhp: 0.318,
+          },
+          opp_k_pct_vs_handedness_l30: {
+            home: 0.246,
+            away: 0.221,
+          },
+          opp_k_pct_pa: {
+            home: 180,
+            away: 180,
+          },
+          opp_k_pct_season: {
+            home: 0.229,
+            away: 0.216,
+          },
+          opp_k_pct_season_pa: {
+            home: 620,
+            away: 620,
+          },
+          confirmed_lineup: {
+            home: ['1', '2', '3'],
+            away: ['1', '2', '3'],
+          },
+          temp_f: 72,
+          wind_mph: 6,
+          wind_dir: 'OUT',
+          park_k_factor: 1.0,
+        },
+      },
+    };
+
+    const cards = computePitcherKDriverCards('mlb-game-1', snapshot, {
+      mode: 'PROJECTION_ONLY',
+    });
+    const homeCard = cards.find((card) => card.market === 'pitcher_k_home');
+
+    expect(homeCard).toBeDefined();
+    expect(homeCard.trap_diagnostics).toMatchObject({
+      leash_bucket: 'LONG',
+      name_risk_proxy: 'CLEAR',
+      opp_profile_staleness: 'FRESH',
+      market_move: 'UNAVAILABLE',
+      public_betting: 'UNAVAILABLE',
+      ump_context: 'UNAVAILABLE',
+    });
+    expect(homeCard.trap_inputs_present).toEqual([
+      'leash_bucket',
+      'name_risk_proxy',
+      'opp_k_bucket',
+      'opp_k_volatility',
+      'opp_profile_staleness',
+      'projection_band',
+    ]);
+    expect(homeCard.trap_inputs_missing).toEqual([
+      'market_move',
+      'public_betting',
+      'ump_context',
+    ]);
+    expect(homeCard.trap_flags).toEqual([
+      'UNAVAILABLE_MARKET_MOVE',
+      'UNAVAILABLE_PUBLIC',
+      'UNAVAILABLE_UMP',
+    ]);
+    expect(homeCard.confidence_cap_reason).toBeNull();
+    expect(homeCard.prop_decision.trap_flags).toEqual(homeCard.trap_flags);
   });
 });
