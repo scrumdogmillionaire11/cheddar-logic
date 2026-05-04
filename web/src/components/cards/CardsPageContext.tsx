@@ -67,6 +67,7 @@ import {
   deriveOnePModelCallFromReasons,
   hasProjectedTotal,
   filterPropCards,
+  matchesProjectionSportFilter,
   isFullGameTotalsCallPlay,
 } from './shared';
 import type { ApiResponse, GameData, LifecycleMode } from './types';
@@ -248,6 +249,8 @@ export function CardsPageProvider({
     //    and feeds CardsList -> ProjectionCard.
     // Intentionally include PASS/FIRE/WATCH so projection cards always surface.
     for (const game of games) {
+      if (!matchesProjectionSportFilter(game, effectiveFilters)) continue;
+
       const projectionPlays = game.plays.filter(
         (p) =>
           p.cardType === 'nhl-pace-1p' ||
