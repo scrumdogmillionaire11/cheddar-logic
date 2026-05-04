@@ -107,6 +107,40 @@ Penalties can produce a negative net score. Net score floor is 0.
 
 ---
 
+## Confidence cap rules (WI-1255)
+
+**Applied in Step 6.5 — after all scoring completes but before final verdict emission.**
+
+These rules prevent fake confidence by hard-capping posture and marking output for exclusion when critical trap prerequisites are missing or stale.
+
+### Enforcement rules
+
+| Priority | Condition | Posture cap | Reason code | Output suppressed |
+|----------|-----------|-------------|-------------|------------------|
+| 1 (highest) | `opp_profile_staleness = STALE` AND `leash_bucket = UNKNOWN` (both) | `NO_OUTPUT_INSUFFICIENT_DATA` | `INSUFFICIENT_DATA_BOTH_FRESHNESS_LEASH` | **YES** |
+| 2 | `opp_profile_staleness = STATIC_FALLBACK` | `DATA_UNTRUSTED` | `CAP_OPP_STATIC_FALLBACK` | NO |
+| 3 | `opp_profile_staleness = STALE` | `WATCH` | `CAP_OPP_STALE` | NO |
+| 4 | `leash_bucket = UNKNOWN` | `WATCH` | `CAP_LEASH_UNKNOWN` | NO |
+| 5 | `leash_bucket = SHORT` + selection is OVER + posture is `OVER_CANDIDATE` | `TRAP_FLAGGED` | `CAP_SHORT_LEASH_OVER` | NO |
+| 6 (lowest) | `opp_k_bucket = LOW_K` + projected K > 6.5 | `UNDER_LEAN_ONLY` | `CAP_LOW_OPP_HIGH_PROJ` | NO |
+
+**Applied in order (first match wins; all others ignored).**
+
+### Output suppression
+
+When **both** `opp_profile_staleness` is STALE or STATIC_FALLBACK **AND** `leash_bucket` is UNKNOWN:
+- Posture assigned: `NO_OUTPUT_INSUFFICIENT_DATA`
+- Card marked for exclusion from candidate output
+- `confidence_cap_reason` set to `INSUFFICIENT_DATA_BOTH_FRESHNESS_LEASH`
+
+### `confidence_cap_reason` field
+
+Field added to pitcher K card payloads in Step 6.5 to document which (if any) cap rule applied:
+- Remains `null` when no cap applies
+- Set to the cap rule reason code (e.g., `CAP_OPP_STALE`, `INSUFFICIENT_DATA_BOTH_FRESHNESS_LEASH`) when a cap is enforced
+
+---
+
 ## Kill-switch override table
 
 These halt or suspend evaluation before scoring completes.

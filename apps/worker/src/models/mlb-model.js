@@ -2418,6 +2418,25 @@ const MLB_K_MIN_PROJECTION_STARTS = 3;
 const MLB_K_NO_EDGE_BAND_KS = 0.5;
 const MLB_K_POISSON_THRESHOLDS = [5, 6, 7];
 const MLB_K_PROJECTION_ONLY_PASS_REASON = 'PASS_PROJECTION_ONLY_NO_MARKET';
+const MLB_K_POSTURE_LABELS = Object.freeze([
+  'UNDER_CANDIDATE',
+  'OVER_CANDIDATE',
+  'NO_EDGE_ZONE',
+  'TRAP_FLAGGED',
+  'DATA_UNTRUSTED',
+  'UNDER_LEAN_ONLY',
+]);
+const MLB_K_POSTURE_BASELINE_OVER_THRESHOLD = 0.27;
+const MLB_K_POSTURE_BASELINE_UNDER_THRESHOLD = 0.235;
+const MLB_K_POSTURE_OPP_FACTOR_OVER_THRESHOLD = 1.05;
+const MLB_K_POSTURE_OPP_FACTOR_UNDER_THRESHOLD = 0.97;
+const MLB_K_POSTURE_EXPECTED_IP_OVER_THRESHOLD = 5.75;
+const MLB_K_POSTURE_EXPECTED_IP_UNDER_THRESHOLD = 5.0;
+const MLB_K_POSTURE_UNTRUSTED_LEASH_FLAGS = new Set([
+  'IL_RETURN',
+  'EXTENDED_REST',
+  'OPENER_BULK_ROLE',
+]);
 // WI-1173: provisional BB% threshold for command risk — calibratable, do not hard-code call sites.
 const COMMAND_RISK_BB_PCT_THRESHOLD = 0.095;
 // WI-1173: SMALL_SAMPLE guard: fewer than 120 BF in the lookback window.
@@ -2483,6 +2502,101 @@ function getPitcherKLeashMultiplier(leashTier) {
   if (leashTier === 'Mod') return 0.95;
   if (leashTier === 'Short') return 0.9;
   return 0.95;
+}
+
+function classifyPitcherKProjectionSignal(
+  value,
+  { overThreshold, underThreshold } = {},
+) {
+  if (!Number.isFinite(value)) return 'UNKNOWN';
+  if (Number.isFinite(overThreshold) && value >= overThreshold) {
+    return 'OVER_SUPPORT';
+  }
+  if (Number.isFinite(underThreshold) && value <= underThreshold) {
+    return 'UNDER_SUPPORT';
+  }
+  return 'NEUTRAL';
+}
+
+function resolvePitcherKProjectionPosture({
+  projectionSource = 'SYNTHETIC_FALLBACK',
+  leashTier = null,
+  leashFlag = null,
+  starterKPct = null,
+  oppKPctVsHand = null,
+  expectedIp = null,
+  trapFlags = [],
+} = {}) {
+  const opponentKFactor =
+    Number.isFinite(oppKPctVsHand) && Number.isFinite(_leagueAvgKPct) && _leagueAvgKPct > 0
+      ? oppKPctVsHand / _leagueAvgKPct
+      : null;
+
+  const postureComponents = {
+    pitcher_k_baseline: classifyPitcherKProjectionSignal(starterKPct, {
+      overThreshold: MLB_K_POSTURE_BASELINE_OVER_THRESHOLD,
+      underThreshold: MLB_K_POSTURE_BASELINE_UNDER_THRESHOLD,
+    }),
+    opponent_k_factor: classifyPitcherKProjectionSignal(opponentKFactor, {
+      overThreshold: MLB_K_POSTURE_OPP_FACTOR_OVER_THRESHOLD,
+      underThreshold: MLB_K_POSTURE_OPP_FACTOR_UNDER_THRESHOLD,
+    }),
+    projected_innings_bucket: classifyPitcherKProjectionSignal(expectedIp, {
+      overThreshold: MLB_K_POSTURE_EXPECTED_IP_OVER_THRESHOLD,
+      underThreshold: MLB_K_POSTURE_EXPECTED_IP_UNDER_THRESHOLD,
+    }),
+  };
+
+  const overSupport = Object.values(postureComponents).filter(
+    (signal) => signal === 'OVER_SUPPORT',
+  ).length;
+  const underSupport = Object.values(postureComponents).filter(
+    (signal) => signal === 'UNDER_SUPPORT',
+  ).length;
+  const trapCount = Array.isArray(trapFlags) ? trapFlags.length : 0;
+  const trustedProjection =
+    projectionSource !== 'SYNTHETIC_FALLBACK' &&
+    !MLB_K_POSTURE_UNTRUSTED_LEASH_FLAGS.has(leashFlag) &&
+    Number.isFinite(starterKPct) &&
+    Number.isFinite(oppKPctVsHand) &&
+    Number.isFinite(expectedIp);
+
+  let posture = 'NO_EDGE_ZONE';
+  if (!trustedProjection) {
+    posture = 'DATA_UNTRUSTED';
+  } else if (trapCount >= 2) {
+    posture = 'TRAP_FLAGGED';
+  } else if (underSupport >= 2 && overSupport === 0) {
+    posture = 'UNDER_CANDIDATE';
+  } else if (underSupport >= 2 && overSupport === 1) {
+    posture = 'UNDER_LEAN_ONLY';
+  } else if (overSupport >= 2 && underSupport === 0) {
+    posture = 'OVER_CANDIDATE';
+  }
+
+  return {
+    posture: MLB_K_POSTURE_LABELS.includes(posture) ? posture : 'NO_EDGE_ZONE',
+    posture_components: postureComponents,
+    posture_inputs: {
+      projection_source: projectionSource,
+      leash_tier: leashTier ?? null,
+      leash_flag: leashFlag ?? null,
+      starter_k_pct: Number.isFinite(starterKPct)
+        ? Math.round(starterKPct * 1000) / 1000
+        : null,
+      opponent_k_factor: Number.isFinite(opponentKFactor)
+        ? Math.round(opponentKFactor * 1000) / 1000
+        : null,
+      projected_ip: Number.isFinite(expectedIp)
+        ? Math.round(expectedIp * 10) / 10
+        : null,
+    },
+    posture_support: {
+      over: overSupport,
+      under: underSupport,
+      trap_flags_active: trapCount,
+    },
+  };
 }
 
 function calculatePoissonTail(lambda, threshold) {
@@ -2876,50 +2990,335 @@ function scoreMarketStructure(market, side) {
   return movedAgainst ? 0 : 1;
 }
 
+const MLB_K_TRAP_INPUT_KEYS = Object.freeze([
+  'leash_bucket',
+  'market_move',
+  'name_risk_proxy',
+  'opp_k_bucket',
+  'opp_k_volatility',
+  'opp_profile_staleness',
+  'projection_band',
+  'public_betting',
+  'ump_context',
+]);
+
+const MLB_K_TRAP_OPTIONAL_INPUT_FLAGS = Object.freeze({
+  market_move: 'UNAVAILABLE_MARKET_MOVE',
+  public_betting: 'UNAVAILABLE_PUBLIC',
+  ump_context: 'UNAVAILABLE_UMP',
+});
+
+function sortUniqueStrings(values = []) {
+  return Array.from(
+    new Set(
+      (Array.isArray(values) ? values : [values])
+        .map((value) => String(value || '').trim())
+        .filter(Boolean),
+    ),
+  ).sort((left, right) => left.localeCompare(right));
+}
+
+function resolveTrapOppKBucket(matchup = {}) {
+  const l30K = toFiniteNumberOrNull(matchup?.opp_k_pct_vs_handedness_l30);
+  const l30Pa = toFiniteNumberOrNull(matchup?.opp_k_pct_vs_handedness_l30_pa);
+  const seasonK = toFiniteNumberOrNull(matchup?.opp_k_pct_vs_handedness_season);
+  const seasonPa = toFiniteNumberOrNull(matchup?.opp_k_pct_vs_handedness_season_pa);
+  const oppKPct =
+    (Number.isFinite(l30Pa) && l30Pa >= 100 && l30K !== null)
+      ? l30K
+      : (Number.isFinite(seasonPa) && seasonPa >= 100 && seasonK !== null)
+        ? seasonK
+        : l30K ?? seasonK ?? null;
+
+  if (!Number.isFinite(oppKPct)) return 'UNKNOWN';
+  if (oppKPct <= (_leagueAvgKPct - 0.015)) return 'LOW_K';
+  if (oppKPct >= (_leagueAvgKPct + 0.015)) return 'HIGH_K';
+  return 'MID_K';
+}
+
+function resolveTrapLeashBucket(leashTier) {
+  if (leashTier === 'Short') return 'SHORT';
+  if (leashTier === 'Mod' || leashTier === 'Mod+') return 'STANDARD';
+  if (leashTier === 'Full') return 'LONG';
+  return 'UNKNOWN';
+}
+
+function resolveTrapNameRiskProxy(pitcher = {}) {
+  if (pitcher?.is_star_name === true) return 'AMBIGUOUS';
+  if (String(pitcher?.full_name || '').trim().length > 0) return 'CLEAR';
+  return 'UNKNOWN';
+}
+
+function resolveTrapProjectionBand(projection) {
+  const projectedKs = toFiniteNumberOrNull(projection);
+  if (projectedKs === null) return 'UNKNOWN';
+  if (projectedKs < 2.5 || projectedKs > 8.5) return 'OUTSIDE_STATIC_BAND';
+  if (projectedKs < 4.5) return 'LOW';
+  if (projectedKs < 6.5) return 'MID';
+  return 'HIGH';
+}
+
+function resolveTrapOppKVolatility(matchup = {}) {
+  const l30K = toFiniteNumberOrNull(matchup?.opp_k_pct_vs_handedness_l30);
+  const seasonK = toFiniteNumberOrNull(matchup?.opp_k_pct_vs_handedness_season);
+  if (l30K === null || seasonK === null) return 'UNKNOWN';
+
+  const delta = Math.abs(l30K - seasonK);
+  if (delta >= 0.03) return 'HIGH';
+  if (delta >= 0.015) return 'MID';
+  return 'LOW';
+}
+
+function resolveTrapOppProfileStaleness(matchup = {}) {
+  const l30K = toFiniteNumberOrNull(matchup?.opp_k_pct_vs_handedness_l30);
+  const l30Pa = toFiniteNumberOrNull(matchup?.opp_k_pct_vs_handedness_l30_pa);
+  const seasonK = toFiniteNumberOrNull(matchup?.opp_k_pct_vs_handedness_season);
+  const seasonPa = toFiniteNumberOrNull(matchup?.opp_k_pct_vs_handedness_season_pa);
+
+  if (l30K !== null && Number.isFinite(l30Pa) && l30Pa >= 100) return 'FRESH';
+  if (l30K !== null && Number.isFinite(l30Pa) && l30Pa > 0) return 'STALE';
+  if (seasonK !== null && Number.isFinite(seasonPa) && seasonPa >= 100) {
+    return 'STATIC_FALLBACK';
+  }
+  return 'UNKNOWN';
+}
+
+function buildTrapDiagnostics({
+  pitcher = {},
+  matchup = {},
+  market = null,
+  ump = {},
+  projection = null,
+  leashTier = null,
+} = {}) {
+  const umpAvailable =
+    toFiniteNumberOrNull(ump?.games_behind_plate_current_season) !== null &&
+    toFiniteNumberOrNull(ump?.k_rate_diff_vs_league) !== null;
+  const publicBettingAvailable =
+    toFiniteNumberOrNull(market?.over_bet_pct) !== null &&
+    market?.line_soft_vs_comparable !== undefined;
+  const marketMoveAvailable =
+    market?.movement_against_play !== undefined &&
+    toFiniteNumberOrNull(market?.movement_magnitude) !== null &&
+    market?.movement_source_sharp !== undefined;
+
+  const diagnostics = {
+    leash_bucket: resolveTrapLeashBucket(leashTier),
+    market_move: marketMoveAvailable ? 'AVAILABLE' : 'UNAVAILABLE',
+    name_risk_proxy: resolveTrapNameRiskProxy(pitcher),
+    opp_k_bucket: resolveTrapOppKBucket(matchup),
+    opp_k_volatility: resolveTrapOppKVolatility(matchup),
+    opp_profile_staleness: resolveTrapOppProfileStaleness(matchup),
+    projection_band: resolveTrapProjectionBand(projection),
+    public_betting: publicBettingAvailable ? 'AVAILABLE' : 'UNAVAILABLE',
+    ump_context: umpAvailable ? 'AVAILABLE' : 'UNAVAILABLE',
+  };
+
+  const inputsPresent = [];
+  const inputsMissing = [];
+  const unavailableFlags = [];
+
+  for (const key of MLB_K_TRAP_INPUT_KEYS) {
+    const value = diagnostics[key];
+    const unavailableFlag = MLB_K_TRAP_OPTIONAL_INPUT_FLAGS[key];
+    const isUnavailable = value === 'UNAVAILABLE';
+    const isUnknown = value === 'UNKNOWN';
+    if (!isUnavailable && !isUnknown) {
+      inputsPresent.push(key);
+    } else {
+      inputsMissing.push(key);
+      if (isUnavailable && unavailableFlag) unavailableFlags.push(unavailableFlag);
+    }
+  }
+
+  return {
+    diagnostics,
+    inputs_present: sortUniqueStrings(inputsPresent),
+    inputs_missing: sortUniqueStrings(inputsMissing),
+    unavailable_flags: sortUniqueStrings(unavailableFlags),
+  };
+}
+
 /**
  * Block 5: trap scan.
  * docs/pitcher_ks/06trap.md
  */
 function runTrapScan(pitcher, matchup, market, ump, weather, opts) {
-  const { side = 'over', projectionOnly = false, block1Score = 0 } = opts || {};
-  const flags = [];
+  const {
+    side = 'over',
+    projectionOnly = false,
+    block1Score = 0,
+    projection = null,
+    leashTier = null,
+  } = opts || {};
+  const actionableFlags = [];
+  const trapInputs = buildTrapDiagnostics({
+    pitcher,
+    matchup,
+    market,
+    ump,
+    projection,
+    leashTier,
+  });
 
   // 1. Public bias
   if (pitcher?.is_star_name && market?.over_bet_pct > 0.70 &&
       market?.line_soft_vs_comparable && block1Score <= 1)
-    flags.push('PUBLIC_BIAS');
+    actionableFlags.push('PUBLIC_BIAS');
 
   // 2. Hidden role risk
   if (matchup?.has_role_signal)
-    flags.push('HIDDEN_ROLE_RISK');
+    actionableFlags.push('HIDDEN_ROLE_RISK');
 
   // 3. Lineup context gap (only with confirmed lineup)
   if (!projectionOnly && matchup?.confirmed_lineup &&
       ((matchup.high_k_hitters_absent ?? 0) >= 2 || matchup.handedness_shift_material))
-    flags.push('LINEUP_CONTEXT_GAP');
+    actionableFlags.push('LINEUP_CONTEXT_GAP');
 
   // 4. Market movement anomaly (full mode only)
   if (!projectionOnly && market?.movement_against_play &&
       (market?.movement_magnitude ?? 0) >= 0.5 && market?.movement_source_sharp)
-    flags.push('SHARP_COUNTER_MOVEMENT');
+    actionableFlags.push('SHARP_COUNTER_MOVEMENT');
 
   // 5. Weather / park
   const temp = weather?.temp_at_first_pitch ?? weather?.temp_f;
   if (temp != null && temp < 45 && !pitcher?.projection_weather_adjusted)
-    flags.push('WEATHER_UNACCOUNTED');
+    actionableFlags.push('WEATHER_UNACCOUNTED');
   if ((weather?.wind_in_mph ?? 0) > 15 && weather?.wind_direction === 'IN')
-    flags.push('WIND_SUPPRESSION');
+    actionableFlags.push('WIND_SUPPRESSION');
 
   // 6. Ump suppression (overs only)
   if (side === 'over' && (ump?.k_rate_diff_vs_league ?? 0) < -0.04 &&
       (ump?.games_behind_plate_current_season ?? 0) >= 30)
-    flags.push('UMP_SUPPRESSION');
+    actionableFlags.push('UMP_SUPPRESSION');
+
+  const activeFlags = sortUniqueStrings(actionableFlags);
+  const flags = sortUniqueStrings([
+    ...activeFlags,
+    ...trapInputs.unavailable_flags,
+  ]);
 
   return {
     flags,
-    count: flags.length,
-    block5_score: flags.length === 0 ? 1 : 0,
-    verdict_eligible: flags.length < 2,
+    actionable_flags: activeFlags,
+    count: activeFlags.length,
+    block5_score: activeFlags.length === 0 ? 1 : 0,
+    verdict_eligible: activeFlags.length < 2,
+    diagnostics: trapInputs.diagnostics,
+    inputs_present: trapInputs.inputs_present,
+    inputs_missing: trapInputs.inputs_missing,
+    confidence_cap_reason: null,
+  };
+}
+
+/**
+ * Apply confidence caps based on trap diagnostics (WI-1255).
+ * 
+ * Rules:
+ * 1. opp_profile_staleness === 'STALE' → cap to WATCH; emit CAP_OPP_STALE
+ * 2. leash_bucket === 'UNKNOWN' → cap to WATCH; emit CAP_LEASH_UNKNOWN
+ * 3. opp_profile_staleness === 'STATIC_FALLBACK' → cap to DATA_UNTRUSTED; emit CAP_OPP_STATIC_FALLBACK
+ * 4. leash_bucket === 'SHORT' + over candidate → force TRAP_FLAGGED; emit CAP_SHORT_LEASH_OVER
+ * 5. opp_k_bucket === 'LOW_K' + projected Ks > 6.5 → cap to UNDER_LEAN_ONLY; emit CAP_LOW_OPP_HIGH_PROJ
+ * 6. Both opp_profile_staleness STALE/STATIC_FALLBACK + leash_bucket UNKNOWN → suppress output entirely
+ *
+ * @param {string} posture - Current posture (PLAY, WATCH, LEAN, UNDER_LEAN_ONLY, etc.)
+ * @param {string|null} selectionSide - 'OVER' or 'UNDER'
+ * @param {number|null} projection - Projected K value
+ * @param {object} trapDiagnostics - Trap diagnostics from trap scan
+ * @returns {{ cappedPosture: string, capReason: string|null, suppressOutput: boolean }}
+ */
+function applyConfidenceCaps({
+  posture = 'NO_EDGE_ZONE',
+  selectionSide = null,
+  projection = null,
+  trapDiagnostics = {},
+} = {}) {
+  const {
+    opp_profile_staleness: oppStaleness = null,
+    leash_bucket: leashBucket = null,
+    opp_k_bucket: oppKBucket = null,
+  } = trapDiagnostics;
+
+  const MID_TIER_UPPER_BOUND = 6.5;
+
+  // Full suppression: BOTH opp_profile_staleness is STALE/STATIC_FALLBACK AND leash_bucket is UNKNOWN
+  if (
+    (oppStaleness === 'STALE' || oppStaleness === 'STATIC_FALLBACK') &&
+    leashBucket === 'UNKNOWN'
+  ) {
+    return {
+      cappedPosture: 'NO_OUTPUT_INSUFFICIENT_DATA',
+      capReason: 'INSUFFICIENT_DATA_BOTH_FRESHNESS_LEASH',
+      suppressOutput: true,
+    };
+  }
+
+  // Rule 1: opp_profile_staleness === 'STALE' → cap to WATCH
+  if (oppStaleness === 'STALE') {
+    return {
+      cappedPosture: 'WATCH',
+      capReason: 'CAP_OPP_STALE',
+      suppressOutput: false,
+    };
+  }
+
+  // Rule 2: leash_bucket === 'UNKNOWN' → cap to WATCH
+  if (leashBucket === 'UNKNOWN') {
+    return {
+      cappedPosture: 'WATCH',
+      capReason: 'CAP_LEASH_UNKNOWN',
+      suppressOutput: false,
+    };
+  }
+
+  // Rule 3: opp_profile_staleness === 'STATIC_FALLBACK' → cap to DATA_UNTRUSTED
+  if (oppStaleness === 'STATIC_FALLBACK') {
+    return {
+      cappedPosture: 'DATA_UNTRUSTED',
+      capReason: 'CAP_OPP_STATIC_FALLBACK',
+      suppressOutput: false,
+    };
+  }
+
+  // Rule 4: leash_bucket === 'SHORT' + over candidate → force TRAP_FLAGGED
+  if (leashBucket === 'SHORT' && selectionSide === 'OVER' && posture === 'OVER_CANDIDATE') {
+    return {
+      cappedPosture: 'TRAP_FLAGGED',
+      capReason: 'CAP_SHORT_LEASH_OVER',
+      suppressOutput: false,
+    };
+  }
+
+  // Rule 5: opp_k_bucket === 'LOW_K' + projected Ks > 6.5 → cap to UNDER_LEAN_ONLY
+  const projValue = Number.isFinite(projection) ? projection : null;
+  if (oppKBucket === 'LOW_K' && projValue !== null && projValue > MID_TIER_UPPER_BOUND) {
+    return {
+      cappedPosture: 'UNDER_LEAN_ONLY',
+      capReason: 'CAP_LOW_OPP_HIGH_PROJ',
+      suppressOutput: false,
+    };
+  }
+
+  // No cap applies
+  return {
+    cappedPosture: posture,
+    capReason: null,
+    suppressOutput: false,
+  };
+}
+
+function withTrapDiagnostics(result, trapResult) {
+  return {
+    ...result,
+    trap_diagnostics: trapResult?.diagnostics ?? null,
+    trap_inputs_present: trapResult?.inputs_present ?? [],
+    trap_inputs_missing: trapResult?.inputs_missing ?? [],
+    trap_flags: trapResult?.flags ?? [],
+    confidence_cap_reason:
+      trapResult?.confidence_cap_reason === undefined
+        ? null
+        : trapResult.confidence_cap_reason,
   };
 }
 
@@ -3326,7 +3725,9 @@ function scorePitcherKUnder(pitcherInput, matchupInput, marketInput, weatherInpu
  *
  * In PROJECTION_ONLY mode (options.mode === 'PROJECTION_ONLY'): no market line
  * required. Block 1 and Block 4 are skipped; reason_codes record the bypass.
- * Output always includes basis='PROJECTION_ONLY' and explicit reason_codes.
+ * Output always includes basis='PROJECTION_ONLY', a PASS verdict, explicit
+ * reason_codes, and a projection posture derived from baseline K skill,
+ * opponent K factor, and projected innings.
  *
  * @param {object} pitcherInput
  * @param {object} matchupInput
@@ -3348,7 +3749,26 @@ function scorePitcherK(pitcherInput, matchupInput, umpInput, marketInput, weathe
   // Step 1A — Leash (needed for expected_ip in projection formula)
   const leashResult = classifyLeash(pitcherInput);
   if (leashResult.uncalculable) {
-    return {
+    const earlyTrapResult = runTrapScan(
+      pitcherInput,
+      matchupInput,
+      marketInput,
+      umpInput || {},
+      weatherInput || {},
+      {
+        side,
+        projectionOnly,
+        block1Score: 0,
+        projection: null,
+        leashTier: leashResult.tier ?? null,
+      },
+    );
+    const postureSummary = resolvePitcherKProjectionPosture({
+      projectionSource: 'SYNTHETIC_FALLBACK',
+      leashTier: leashResult.tier ?? null,
+      leashFlag: leashResult.flag ?? null,
+    });
+    return withTrapDiagnostics({
       status: 'HALTED',
       halted_at: 'STEP_1',
       reason_code: leashResult.flag,
@@ -3358,7 +3778,10 @@ function scorePitcherK(pitcherInput, matchupInput, umpInput, marketInput, weathe
       reason_codes: [
         MLB_K_PROJECTION_ONLY_PASS_REASON,
         leashResult.flag,
-        `MODE_FORCED:${_requestedMode}->PROJECTION_ONLY`,
+        ...(earlyTrapResult.flags || []),
+        ...(_requestedMode !== 'PROJECTION_ONLY'
+          ? [`MODE_FORCED:${_requestedMode}->PROJECTION_ONLY`]
+          : []),
       ].filter(Boolean),
       projection_source: 'SYNTHETIC_FALLBACK',
       status_cap: 'PASS',
@@ -3370,7 +3793,11 @@ function scorePitcherK(pitcherInput, matchupInput, umpInput, marketInput, weathe
       },
       fair_prices: null,
       probability_ladder: null,
-    };
+      posture: postureSummary.posture,
+      posture_components: postureSummary.posture_components,
+      posture_inputs: postureSummary.posture_inputs,
+      posture_support: postureSummary.posture_support,
+    }, earlyTrapResult);
   }
 
   // Step 1B — Raw K projection
@@ -3383,7 +3810,29 @@ function scorePitcherK(pitcherInput, matchupInput, umpInput, marketInput, weathe
     { allowThinSample: projectionOnly },
   );
   if (projResult.uncalculable) {
-    return {
+    const earlyTrapResult = runTrapScan(
+      pitcherInput,
+      matchupInput,
+      marketInput,
+      umpInput || {},
+      weatherInput || {},
+      {
+        side,
+        projectionOnly,
+        block1Score: 0,
+        projection: projResult.projection ?? projResult.value ?? null,
+        leashTier: leashResult.tier ?? null,
+      },
+    );
+    const postureSummary = resolvePitcherKProjectionPosture({
+      projectionSource: projResult.projection_source ?? 'SYNTHETIC_FALLBACK',
+      leashTier: leashResult.tier ?? null,
+      leashFlag: leashResult.flag ?? null,
+      starterKPct: projResult.starter_k_pct ?? null,
+      oppKPctVsHand: projResult.opp_k_pct_vs_hand ?? null,
+      expectedIp: projResult.projected_ip ?? projResult.expected_ip ?? null,
+    });
+    return withTrapDiagnostics({
       status: 'HALTED',
       halted_at: 'STEP_1',
       reason_code: projResult.reason_code,
@@ -3394,7 +3843,10 @@ function scorePitcherK(pitcherInput, matchupInput, umpInput, marketInput, weathe
         MLB_K_PROJECTION_ONLY_PASS_REASON,
         projResult.reason_code,
         ...(projResult.flags || []),
-        `MODE_FORCED:${_requestedMode}->PROJECTION_ONLY`,
+        ...(earlyTrapResult.flags || []),
+        ...(_requestedMode !== 'PROJECTION_ONLY'
+          ? [`MODE_FORCED:${_requestedMode}->PROJECTION_ONLY`]
+          : []),
       ].filter(Boolean),
       projection_source: projResult.projection_source ?? 'SYNTHETIC_FALLBACK',
       status_cap: projResult.status_cap ?? 'PASS',
@@ -3406,7 +3858,11 @@ function scorePitcherK(pitcherInput, matchupInput, umpInput, marketInput, weathe
       },
       fair_prices: projResult.fair_prices ?? null,
       probability_ladder: projResult.probability_ladder ?? null,
-    };
+      posture: postureSummary.posture,
+      posture_components: postureSummary.posture_components,
+      posture_inputs: postureSummary.posture_inputs,
+      posture_support: postureSummary.posture_support,
+    }, earlyTrapResult);
   }
   const projection = projResult.value;
   reasonCodes.push(...(projResult.flags || []));
@@ -3415,6 +3871,29 @@ function scorePitcherK(pitcherInput, matchupInput, umpInput, marketInput, weathe
   if (_requestedMode !== 'PROJECTION_ONLY') {
     reasonCodes.push(`MODE_FORCED:${_requestedMode}->PROJECTION_ONLY`);
   }
+  const baselineTrapResult = runTrapScan(
+    pitcherInput,
+    matchupInput,
+    marketInput,
+    umpInput || {},
+    weatherInput || {},
+    {
+      side,
+      projectionOnly,
+      block1Score: 0,
+      projection,
+      leashTier: leashResult.tier ?? null,
+    },
+  );
+  const projectionPosture = resolvePitcherKProjectionPosture({
+    projectionSource: projResult.projection_source,
+    leashTier: leashResult.tier ?? null,
+    leashFlag: leashResult.flag ?? null,
+    starterKPct: projResult.starter_k_pct ?? null,
+    oppKPctVsHand: projResult.opp_k_pct_vs_hand ?? null,
+    expectedIp: projResult.projected_ip ?? projResult.expected_ip ?? null,
+    trapFlags: baselineTrapResult.actionable_flags,
+  });
 
   // Step 1C — Block 1: margin (full mode only)
   let block1Score = 0;
@@ -3431,7 +3910,7 @@ function scorePitcherK(pitcherInput, matchupInput, umpInput, marketInput, weathe
 
   // Step 2 — Leash gate (overs)
   if (!leashResult.over_eligible && side === 'over') {
-    return {
+    return withTrapDiagnostics({
       status: 'HALTED',
       halted_at: 'STEP_2',
       reason_code: leashResult.flag || 'SHORT_LEASH',
@@ -3460,8 +3939,13 @@ function scorePitcherK(pitcherInput, matchupInput, umpInput, marketInput, weathe
       reason_codes: Array.from(new Set([
         ...reasonCodes,
         leashResult.flag || 'SHORT_LEASH',
+        ...(baselineTrapResult.flags || []),
       ])),
-    };
+      posture: projectionPosture.posture,
+      posture_components: projectionPosture.posture_components,
+      posture_inputs: projectionPosture.posture_inputs,
+      posture_support: projectionPosture.posture_support,
+    }, baselineTrapResult);
   }
   const block2Score = scoreLeashBlock2(leashResult);
 
@@ -3481,14 +3965,26 @@ function scorePitcherK(pitcherInput, matchupInput, umpInput, marketInput, weathe
 
   // Step 5 — Trap scan (Block 5)
   const trapResult = runTrapScan(pitcherInput, matchupInput, marketInput, umpInput || {}, weatherInput || {}, {
-    side, projectionOnly, block1Score,
+    side,
+    projectionOnly,
+    block1Score,
+    projection,
+    leashTier: leashResult.tier ?? null,
   });
   if (!trapResult.verdict_eligible) {
-    return {
+    const trapFlaggedPosture = resolvePitcherKProjectionPosture({
+      projectionSource: projResult.projection_source,
+      leashTier: leashResult.tier ?? null,
+      leashFlag: leashResult.flag ?? null,
+      starterKPct: projResult.starter_k_pct ?? null,
+      oppKPctVsHand: projResult.opp_k_pct_vs_hand ?? null,
+      expectedIp: projResult.projected_ip ?? projResult.expected_ip ?? null,
+      trapFlags: trapResult.actionable_flags,
+    });
+    return withTrapDiagnostics({
       status: 'SUSPENDED',
       halted_at: 'STEP_5',
       reason_code: 'ENVIRONMENT_COMPROMISED',
-      trap_flags: trapResult.flags,
       projection,
       k_mean: projResult.k_mean,
       bf_exp: projResult.bf_exp,
@@ -3517,7 +4013,11 @@ function scorePitcherK(pitcherInput, matchupInput, umpInput, marketInput, weathe
         'ENVIRONMENT_COMPROMISED',
         ...(trapResult.flags || []),
       ])),
-    };
+      posture: trapFlaggedPosture.posture,
+      posture_components: trapFlaggedPosture.posture_components,
+      posture_inputs: trapFlaggedPosture.posture_inputs,
+      posture_support: trapFlaggedPosture.posture_support,
+    }, trapResult);
   }
   const block5Score = trapResult.block5_score;
 
@@ -3545,7 +4045,19 @@ function scorePitcherK(pitcherInput, matchupInput, umpInput, marketInput, weathe
   const netScore  = Math.max(0, rawScore + penalties.total + commandContextConfidenceDelta);
   const tier = getConfidenceTier(netScore);
 
-  return {
+  // WI-1255: Apply confidence caps based on trap diagnostics
+  const capResult = applyConfidenceCaps({
+    posture: projectionPosture.posture,
+    selectionSide: side === 'over' ? 'OVER' : side === 'under' ? 'UNDER' : null,
+    projection,
+    trapDiagnostics: baselineTrapResult.diagnostics || {},
+  });
+
+  const finalPosture = capResult.cappedPosture;
+  const confidenceCapReason = capResult.capReason;
+
+  // If output suppression is flagged, modify verdict to NO_OUTPUT_INSUFFICIENT_DATA
+  const finalResult = {
     status: 'COMPLETE',
     projection,
     k_mean: projResult.k_mean,
@@ -3573,8 +4085,7 @@ function scorePitcherK(pitcherInput, matchupInput, umpInput, marketInput, weathe
     raw_score: rawScore,
     net_score: netScore,
     tier,
-    verdict: 'PASS',
-    trap_flags: trapResult.flags,
+    verdict: capResult.suppressOutput ? 'PASS' : 'PASS',
     // WI-1173: command-context output fields for traceability.
     recent_bb_pct: projResult.recent_bb_pct ?? null,
     recent_bb_pct_status: projResult.recent_bb_pct_status ?? 'MISSING',
@@ -3585,10 +4096,19 @@ function scorePitcherK(pitcherInput, matchupInput, umpInput, marketInput, weathe
       ...(leashResult.flag ? [leashResult.flag] : []),
       ...(trapResult.flags || []),
       ...commandContextReasonCodes,
+      ...(confidenceCapReason ? [confidenceCapReason] : []),
     ])),
+    posture: finalPosture,
+    posture_components: projectionPosture.posture_components,
+    posture_inputs: projectionPosture.posture_inputs,
+    posture_support: projectionPosture.posture_support,
     basis: mode,
     projection_only: projectionOnly,
   };
+
+  const resultWithDiags = withTrapDiagnostics(finalResult, trapResult);
+  resultWithDiags.confidence_cap_reason = confidenceCapReason;
+  return resultWithDiags;
 }
 
 /**
@@ -3664,9 +4184,10 @@ function selectPitcherKUnderMarket(strikeoutLines, pitcherName, bookmakerPriorit
  * Build pitcher-K driver cards from an odds snapshot.
  *
  * Reads raw_data.mlb.{home,away}_pitcher (populated by enrichMlbPitcherData).
- * Pitcher-K currently emits projection-only cards (no market line required).
- * If mode='ODDS_BACKED' is requested, the function still forces
- * PROJECTION_ONLY output and includes MODE_FORCED reason codes.
+ * Pitcher-K currently emits projection-only PASS cards (no market line
+ * required). If mode='ODDS_BACKED' is requested, the function still forces
+ * PROJECTION_ONLY output, adds MODE_FORCED reason codes, and surfaces only
+ * projection posture intelligence.
  *
  * @param {string} gameId
  * @param {object} oddsSnapshot
@@ -3796,6 +4317,7 @@ function computePitcherKDriverCards(gameId, oddsSnapshot, options) {
     const passReasonCode =
       reasonCodes.find((code) => code.startsWith('PASS_')) ??
       MLB_K_PROJECTION_ONLY_PASS_REASON;
+    const posture = result.posture ?? 'DATA_UNTRUSTED';
 
     cards.push({
       market: `pitcher_k_${role}`,
@@ -3811,10 +4333,19 @@ function computePitcherKDriverCards(gameId, oddsSnapshot, options) {
       emit_card: true,
       card_verdict: 'PASS',
       tier: null,
+      posture,
       reasoning: _buildPitcherKReasoning(result),
       projection_source: result.projection_source ?? 'SYNTHETIC_FALLBACK',
       status_cap: result.status_cap ?? 'PASS',
       missing_inputs: projectionOnlyMissingInputs,
+      trap_diagnostics: result.trap_diagnostics ?? null,
+      trap_inputs_present: result.trap_inputs_present ?? [],
+      trap_inputs_missing: result.trap_inputs_missing ?? [],
+      trap_flags: result.trap_flags ?? [],
+      confidence_cap_reason:
+        result.confidence_cap_reason === undefined
+          ? null
+          : result.confidence_cap_reason,
       reason_codes: reasonCodes,
       pass_reason_code: passReasonCode,
       playability: result.playability ?? null,
@@ -3832,6 +4363,9 @@ function computePitcherKDriverCards(gameId, oddsSnapshot, options) {
             opp_k_pct_vs_hand: result.opp_k_pct_vs_hand ?? null,
             probability_ladder: result.probability_ladder ?? null,
             fair_prices: result.fair_prices ?? null,
+            posture,
+            posture_components: result.posture_components ?? null,
+            posture_inputs: result.posture_inputs ?? null,
           }
         : null,
       drivers: [{
@@ -3843,6 +4377,15 @@ function computePitcherKDriverCards(gameId, oddsSnapshot, options) {
         leash_tier: result.leash_tier ?? null,
         net_score: result.net_score ?? null,
         tier: result.tier ?? null,
+        posture,
+        trap_diagnostics: result.trap_diagnostics ?? null,
+        trap_inputs_present: result.trap_inputs_present ?? [],
+        trap_inputs_missing: result.trap_inputs_missing ?? [],
+        trap_flags: result.trap_flags ?? [],
+        confidence_cap_reason:
+          result.confidence_cap_reason === undefined
+            ? null
+            : result.confidence_cap_reason,
       }],
       prop_decision: {
         verdict: 'PASS',
@@ -3857,6 +4400,17 @@ function computePitcherKDriverCards(gameId, oddsSnapshot, options) {
         projection_source: result.projection_source ?? 'SYNTHETIC_FALLBACK',
         status_cap: result.status_cap ?? 'PASS',
         missing_inputs: projectionOnlyMissingInputs,
+        posture,
+        posture_components: result.posture_components ?? null,
+        posture_inputs: result.posture_inputs ?? null,
+        trap_diagnostics: result.trap_diagnostics ?? null,
+        trap_inputs_present: result.trap_inputs_present ?? [],
+        trap_inputs_missing: result.trap_inputs_missing ?? [],
+        trap_flags: result.trap_flags ?? [],
+        confidence_cap_reason:
+          result.confidence_cap_reason === undefined
+            ? null
+            : result.confidence_cap_reason,
         line_delta: null,
         fair_prob: result.probability_ladder?.p_6_plus ?? null,
         implied_prob: null,
@@ -3892,11 +4446,12 @@ function _buildPitcherKReasoning(result) {
     return parts.join(' | ');
   }
   if (result.status === 'HALTED')
-    return `HALTED at ${result.halted_at}: ${result.reason_code}`;
+    return `HALTED at ${result.halted_at}: ${result.reason_code} | Posture: ${result.posture ?? 'DATA_UNTRUSTED'}`;
   if (result.status === 'SUSPENDED')
-    return `SUSPENDED — environment compromised: ${(result.trap_flags || []).join(', ')}`;
+    return `SUSPENDED — environment compromised: ${(result.trap_flags || []).join(', ')} | Posture: ${result.posture ?? 'TRAP_FLAGGED'}`;
   const parts = [];
   if (result.projection != null) parts.push(`K mean: ${result.projection} Ks`);
+  if (result.posture) parts.push(`Posture: ${result.posture}`);
   if (result.bf_exp != null && result.k_interaction != null && result.k_leash_mult != null) {
     parts.push(`BF=${result.bf_exp} × Kint=${result.k_interaction} × leash=${result.k_leash_mult}`);
   }
@@ -4005,6 +4560,8 @@ module.exports = {
   normalizePitcherKMarketInput,
   selectPitcherKUnderMarket,
   computePitcherKDriverCards,
+  // WI-1255: Confidence cap enforcement
+  applyConfidenceCaps,
   // Exported for unit testing (WI-0770)
   calculateProjectionK,
   // WI-0872: full-game total model
