@@ -64,6 +64,8 @@ function loadSchedulerModule() {
   jest.doMock('../jobs/run_clv_snapshot', () => ({ runClvSnapshot: jest.fn() }));
   jest.doMock('../jobs/run_daily_performance_report', () => ({ runDailyPerformanceReport: jest.fn() }));
   jest.doMock('../jobs/run_calibration_report', () => ({ runCalibrationReport: jest.fn() }));
+  jest.doMock('../jobs/run_residual_validation', () => ({ run: jest.fn() }));
+  jest.doMock('../jobs/fit_calibration_models', () => ({ run: jest.fn() }));
   jest.doMock('@cheddar-logic/data/src/feature-flags', () => ({
     isFeatureEnabled: jest.fn((sport, feature) => {
       const s = String(sport || '').toLowerCase();
@@ -145,6 +147,36 @@ describe('scheduler: run_calibration_report nightly at 04:00 ET (WI-0860)', () =
 
     expect(calibJob).toBeDefined();
     expect(calibJob.jobKey).toBe('calibration_report|2026-04-11');
+  });
+
+  test('nightly reporting jobs receive deterministic jobKey args for idempotent execution', () => {
+    const scheduler = loadSchedulerModule();
+
+    const nowEt = DateTime.fromISO('2026-04-10T06:00:00', { zone: TZ });
+    const nowUtc = nowEt.toUTC();
+
+    const jobs = scheduler.computeDueJobs({ nowEt, nowUtc, games: [], dryRun: false });
+
+    expect(jobs.find((j) => j.jobName === 'run_clv_snapshot')?.args).toEqual({
+      jobKey: 'clv_snapshot|2026-04-10',
+      dryRun: false,
+    });
+    expect(jobs.find((j) => j.jobName === 'run_daily_performance_report')?.args).toEqual({
+      jobKey: 'perf_report|2026-04-10',
+      dryRun: false,
+    });
+    expect(jobs.find((j) => j.jobName === 'run_calibration_report')?.args).toEqual({
+      jobKey: 'calibration_report|2026-04-10',
+      dryRun: false,
+    });
+    expect(jobs.find((j) => j.jobName === 'run_residual_validation')?.args).toEqual({
+      jobKey: 'run_residual_validation|2026-04-10',
+      dryRun: false,
+    });
+    expect(jobs.find((j) => j.jobName === 'fit_calibration_models')?.args).toEqual({
+      jobKey: 'fit_calibration_models|2026-04-10',
+      dryRun: false,
+    });
   });
 
   test('does NOT queue run_calibration_report at 03:00 ET', () => {

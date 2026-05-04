@@ -106,7 +106,14 @@ fi
 
 if [ "$service_active" = false ] && [ "$WATCHDOG_AUTO_RESTART" = "true" ] && command -v systemctl >/dev/null 2>&1; then
   echo "[watchdog] attempting restart for $SERVICE_NAME (status=$status)"
-  if systemctl restart "$SERVICE_NAME" >/dev/null 2>&1 && systemctl is-active --quiet "$SERVICE_NAME"; then
+  if [ "$(id -u)" -eq 0 ]; then
+    RESTART_CMD=(systemctl restart "$SERVICE_NAME")
+    ACTIVE_CMD=(systemctl is-active --quiet "$SERVICE_NAME")
+  else
+    RESTART_CMD=(sudo -n systemctl restart "$SERVICE_NAME")
+    ACTIVE_CMD=(sudo -n systemctl is-active --quiet "$SERVICE_NAME")
+  fi
+  if "${RESTART_CMD[@]}" >/dev/null 2>&1 && "${ACTIVE_CMD[@]}"; then
     echo "[watchdog] restart successful for $SERVICE_NAME"
     exit 0
   fi

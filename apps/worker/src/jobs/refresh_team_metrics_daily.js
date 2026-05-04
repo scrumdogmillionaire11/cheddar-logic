@@ -114,21 +114,33 @@ const SPORTS = [
 
 const STALE_DAYS = 7; // Delete cache entries older than 7 days
 
+function normalizeRunOptions(options = false) {
+  if (typeof options === 'boolean') {
+    return { dryRun: options };
+  }
+  if (options && typeof options === 'object') {
+    return options;
+  }
+  return {};
+}
+
 /**
  * Main job execution
  */
-async function run(dryRun = false) {
+async function run(options = false) {
+  const normalized = normalizeRunOptions(options);
   const runId = uuidV4();
-  // dryRun is injected by createJob; fall back to argv for manual invocation
-  dryRun = dryRun || process.argv.includes('--dry-run');
-  const sportFilter = process.argv
+  const dryRun = Boolean(normalized.dryRun) || process.argv.includes('--dry-run');
+  const cliSportFilter = process.argv
     .find((arg) => arg.startsWith('--sport='))
-    ?.split('=')[1]
-    ?.toUpperCase();
+    ?.split('=')[1];
 
   const nowEt = DateTime.now().setZone('America/New_York');
   const cacheDate = nowEt.toISODate();
-  const jobKey = `refresh_team_metrics|${cacheDate}`;
+  const jobKey = normalized.jobKey || `refresh_team_metrics|${cacheDate}`;
+  const sportFilter = String(normalized.sportFilter || cliSportFilter || '')
+    .trim()
+    .toUpperCase() || null;
 
   console.log(
     `[RefreshTeamMetrics] Starting run_id=${runId} (date=${cacheDate}, dry_run=${dryRun})`,
@@ -141,10 +153,10 @@ async function run(dryRun = false) {
   // Check if job already ran today
   if (!dryRun) {
     const db = getDatabase();
-    const shouldRun = shouldRunJobKey(jobKey, 20); // 20-hour window to avoid double-run
+    const shouldRun = shouldRunJobKey(jobKey);
     if (!shouldRun) {
       console.log(`[RefreshTeamMetrics] Job already ran today (key=${jobKey})`);
-      return;
+      return { success: true, skipped: true, jobKey };
     }
   }
 
@@ -259,7 +271,7 @@ async function run(dryRun = false) {
 
 // Run if invoked directly
 if (require.main === module) {
-  createJob('refresh_team_metrics_daily', ({ dryRun }) => withDb(() => run(dryRun)));
+  createJob('refresh_team_metrics_daily', ({ dryRun }) => withDb(() => run({ dryRun })));
 }
 
 module.exports = { run };

@@ -413,8 +413,8 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
     jobs.push({
       jobName: 'run_clv_snapshot',
       jobKey: clvSnapshotKey,
-      execute: () => runClvSnapshot(),
-      args: {},
+      execute: runClvSnapshot,
+      args: { jobKey: clvSnapshotKey, dryRun },
       reason: `nightly CLV snapshot ${nowEt.toISODate()}`,
     });
   }
@@ -424,8 +424,8 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
     jobs.push({
       jobName: 'run_daily_performance_report',
       jobKey: perfReportKey,
-      execute: () => runDailyPerformanceReport(),
-      args: {},
+      execute: runDailyPerformanceReport,
+      args: { jobKey: perfReportKey, dryRun },
       reason: `nightly daily performance report ${nowEt.toISODate()}`,
     });
   }
@@ -435,8 +435,8 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
     jobs.push({
       jobName: 'run_residual_validation',
       jobKey: residualValKey,
-      execute: () => runResidualValidation(),
-      args: {},
+      execute: runResidualValidation,
+      args: { jobKey: residualValKey, dryRun },
       reason: `daily residual validation ${nowEt.toISODate()}`,
     });
   }
@@ -446,8 +446,8 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
     jobs.push({
       jobName: 'run_calibration_report',
       jobKey: calibrationReportKey,
-      execute: () => runCalibrationReport(),
-      args: {},
+      execute: runCalibrationReport,
+      args: { jobKey: calibrationReportKey, dryRun },
       reason: `nightly calibration report + kill switch refresh ${nowEt.toISODate()}`,
     });
   }
@@ -457,8 +457,8 @@ function computeDueJobs({ nowEt, nowUtc, games, dryRun }) {
     jobs.push({
       jobName: 'fit_calibration_models',
       jobKey: fitCalibrationKey,
-      execute: () => runFitCalibrationModels(),
-      args: {},
+      execute: runFitCalibrationModels,
+      args: { jobKey: fitCalibrationKey, dryRun },
       reason: `daily calibration model fit ${nowEt.toISODate()}`,
     });
   }
@@ -543,6 +543,7 @@ async function start() {
 
   const MAX_TICK_MS = Number(process.env.MAX_TICK_MS || 900_000); // 15 minutes default
   let tickRunning = false;
+  let interval = null;
   function runTick() {
     if (tickRunning) {
       console.log('[SCHEDULER] Skipping tick — previous tick still running');
@@ -558,11 +559,26 @@ async function start() {
       state: 'running',
       last_tick_started_at: tickStartedAt,
     });
-    const tickDeadline = new Promise((_, reject) =>
-      setTimeout(() => reject(new Error(`[SCHEDULER] Tick exceeded MAX_TICK_MS=${MAX_TICK_MS}ms — releasing lock`)), MAX_TICK_MS),
-    );
-    Promise.race([tick(), tickDeadline])
+    let timedOut = false;
+    const timeoutHandle = setTimeout(() => {
+      timedOut = true;
+      const message = `[SCHEDULER] Tick exceeded MAX_TICK_MS=${MAX_TICK_MS}ms — exiting for clean restart`;
+      console.error(message);
+      writeSchedulerHeartbeat({
+        state: 'crashed',
+        crash_type: 'tick_timeout',
+        crash_message: message,
+        last_tick_timed_out_at: new Date().toISOString(),
+        last_tick_ok: false,
+        last_tick_error: message,
+      });
+      if (interval) clearInterval(interval);
+      process.exit(1);
+    }, MAX_TICK_MS);
+    Promise.resolve()
+      .then(() => tick())
       .then(() => {
+        if (timedOut) return;
         writeSchedulerHeartbeat({
           state: 'idle',
           last_tick_completed_at: new Date().toISOString(),
@@ -571,6 +587,7 @@ async function start() {
         });
       })
       .catch((err) => {
+        if (timedOut) return;
         console.error('[SCHEDULER] tick error', err);
         writeSchedulerHeartbeat({
           state: 'tick_error',
@@ -579,10 +596,13 @@ async function start() {
           last_tick_error: err?.message || String(err),
         });
       })
-      .finally(() => { tickRunning = false; });
+      .finally(() => {
+        clearTimeout(timeoutHandle);
+        if (!timedOut) tickRunning = false;
+      });
   }
   runTick();
-  const interval = setInterval(runTick, tickMs);
+  interval = setInterval(runTick, tickMs);
   process.on('SIGTERM', () => {
     clearInterval(interval);
     writeSchedulerHeartbeat({ state: 'stopping', stop_signal: 'SIGTERM' });

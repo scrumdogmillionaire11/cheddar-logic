@@ -16,7 +16,16 @@
  *   NHL_* → 'NHL', NBA_* → 'NBA', MLB_* → 'MLB', SPREAD/ML → 'ALL'
  */
 
-const { getDatabase } = require('@cheddar-logic/data');
+const { randomUUID } = require('crypto');
+const {
+  createJob,
+  getDatabase,
+  insertJobRun,
+  markJobRunFailure,
+  markJobRunSuccess,
+  shouldRunJobKey,
+  withDb,
+} = require('@cheddar-logic/data');
 const { fitIsotonic, applyCalibration } = require('../utils/calibration');
 
 const MIN_SAMPLES = 30;
@@ -51,12 +60,57 @@ function brierScore(xs, ys, breakpoints) {
   return sum / xs.length;
 }
 
+function isDbHandle(value) {
+  return Boolean(value) && typeof value.prepare === 'function';
+}
+
+function normalizeRunOptions(options = {}) {
+  if (isDbHandle(options)) return { db: options };
+  if (options && typeof options === 'object') return options;
+  return {};
+}
+
 /**
  * Run the calibration fit job.
- * @param {import('better-sqlite3').Database} [dbOverride] - Optional DB handle; falls back to getDatabase()
+ * @param {object|import('better-sqlite3').Database} [options] - Optional scheduler options or DB handle
  */
-async function run(dbOverride) {
-  const db = dbOverride || getDatabase();
+async function run(options = {}) {
+  const normalized = normalizeRunOptions(options);
+  const db = normalized.db || getDatabase();
+  const dryRun =
+    normalized.dryRun === true ||
+    process.env.DRY_RUN === 'true' ||
+    process.argv.includes('--dry-run');
+  const jobKey = normalized.jobKey || null;
+  const jobRunId = jobKey && !dryRun ? randomUUID() : null;
+
+  if (jobKey && !dryRun && !shouldRunJobKey(jobKey)) {
+    console.log(`[CAL_FIT] Skipping (already succeeded or running): ${jobKey}`);
+    return { success: true, skipped: true, jobKey };
+  }
+
+  if (dryRun) {
+    console.log(`[CAL_FIT] DRY_RUN=true — would run jobKey=${jobKey || 'none'}`);
+    return { success: true, dryRun: true, jobKey };
+  }
+
+  if (jobRunId) {
+    try {
+      insertJobRun('fit_calibration_models', jobRunId, jobKey);
+    } catch (error) {
+      if (error?.code === 'JOB_RUN_ALREADY_CLAIMED') {
+        return { success: true, skipped: true, jobKey };
+      }
+      throw error;
+    }
+  }
+
+  const completeSuccess = (payload = {}) => {
+    if (jobRunId) markJobRunSuccess(jobRunId);
+    return { success: true, jobKey, ...payload };
+  };
+
+  try {
   // Check that calibration_predictions table exists
   const tableCheck = db
     .prepare(
@@ -65,7 +119,7 @@ async function run(dbOverride) {
     .get();
   if (!tableCheck) {
     console.log('[CAL_FIT] calibration_predictions table not found — skipping');
-    return;
+    return completeSuccess({ skipped: true, reason: 'missing_calibration_predictions' });
   }
 
   // Check that calibration_models table exists (migration 071 applied)
@@ -76,7 +130,7 @@ async function run(dbOverride) {
     .get();
   if (!modelsTableCheck) {
     console.log('[CAL_FIT] calibration_models table not found — migration 071 not yet applied, skipping');
-    return;
+    return completeSuccess({ skipped: true, reason: 'missing_calibration_models' });
   }
 
   // Get distinct markets with resolved outcomes
@@ -93,7 +147,7 @@ async function run(dbOverride) {
 
   if (markets.length === 0) {
     console.log('[CAL_FIT] no markets with resolved outcomes found — skipping');
-    return;
+    return completeSuccess({ skipped: true, reason: 'no_resolved_markets' });
   }
 
   const shadowTableCheck = db
@@ -220,6 +274,16 @@ async function run(dbOverride) {
   } else {
     console.log('[CAL_FIT] no markets had sufficient samples for fitting');
   }
+
+    return completeSuccess({ fittedMarkets: results.length });
+  } catch (error) {
+    if (jobRunId) markJobRunFailure(jobRunId, error.message);
+    throw error;
+  }
 }
 
 module.exports = { run };
+
+if (require.main === module) {
+  createJob('fit_calibration_models', ({ dryRun }) => withDb(() => run({ dryRun })));
+}

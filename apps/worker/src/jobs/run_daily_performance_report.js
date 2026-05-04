@@ -28,9 +28,16 @@
 require('dotenv').config();
 
 const {
+  createJob,
   closeDatabase,
   getDatabase,
+  insertJobRun,
+  markJobRunFailure,
+  markJobRunSuccess,
+  shouldRunJobKey,
+  withDb,
 } = require('@cheddar-logic/data');
+const { randomUUID } = require('crypto');
 
 const REPORT_PERIOD_DAYS = 1; // compute previous calendar day
 
@@ -309,6 +316,33 @@ function resolveActiveMarkets(db, reportDate) {
 function runDailyPerformanceReport(options = {}) {
   const db = options.db || getDatabase();
   const computedAt = options.computedAt || new Date().toISOString();
+  const dryRun =
+    options.dryRun === true ||
+    process.env.DRY_RUN === 'true' ||
+    process.argv.includes('--dry-run');
+  const jobKey = options.jobKey || null;
+  const jobRunId = jobKey && !dryRun ? randomUUID() : null;
+
+  if (jobKey && !dryRun && !shouldRunJobKey(jobKey)) {
+    console.log(`[PERF_REPORT] Skipping (already succeeded or running): ${jobKey}`);
+    return { success: true, skipped: true, jobKey };
+  }
+
+  if (dryRun) {
+    console.log(`[PERF_REPORT] DRY_RUN=true — would run jobKey=${jobKey || 'none'}`);
+    return { success: true, dryRun: true, jobKey };
+  }
+
+  if (jobRunId) {
+    try {
+      insertJobRun('run_daily_performance_report', jobRunId, jobKey);
+    } catch (error) {
+      if (error?.code === 'JOB_RUN_ALREADY_CLAIMED') {
+        return { success: true, skipped: true, jobKey };
+      }
+      throw error;
+    }
+  }
 
   // Default to yesterday (this job runs in the early hours after the day ends)
   const reportDate =
@@ -318,14 +352,16 @@ function runDailyPerformanceReport(options = {}) {
       return d.toISOString().slice(0, 10);
     })();
 
-  const markets = resolveActiveMarkets(db, reportDate);
+  try {
+    const markets = resolveActiveMarkets(db, reportDate);
 
-  if (markets.length === 0) {
-    console.log(`[PERF_REPORT] No active markets for ${reportDate}`);
-    return { reportDate, reports: [] };
-  }
+    if (markets.length === 0) {
+      console.log(`[PERF_REPORT] No active markets for ${reportDate}`);
+      if (jobRunId) markJobRunSuccess(jobRunId);
+      return { success: true, jobKey, reportDate, reports: [] };
+    }
 
-  const upsert = db.prepare(`
+    const upsert = db.prepare(`
     INSERT INTO daily_performance_reports (
       report_date, market, sport,
       eligible_games, model_ok_count, degraded_count, no_bet_count,
@@ -352,11 +388,11 @@ function runDailyPerformanceReport(options = {}) {
       computed_at           = excluded.computed_at
   `);
 
-  const reports = [];
+    const reports = [];
 
-  const writeAll = db.transaction((rows) => {
-    for (const row of rows) {
-      upsert.run(
+    const writeAll = db.transaction((rows) => {
+      for (const row of rows) {
+        upsert.run(
         row.reportDate,
         row.market,
         row.sport,
@@ -375,47 +411,52 @@ function runDailyPerformanceReport(options = {}) {
         row.max_drawdown,
         computedAt,
       );
-    }
-  });
+      }
+    });
 
-  for (const market of markets) {
-    const sport = sportFromMarket(market);
-    const firing = queryFiringMetrics(db, market, reportDate);
-    const winning = queryWinningMetrics(db, market, reportDate);
-    const avgClv = queryAvgClv(db, market, reportDate);
-    const cal = queryCalibrationMetrics(db, market);
+    for (const market of markets) {
+      const sport = sportFromMarket(market);
+      const firing = queryFiringMetrics(db, market, reportDate);
+      const winning = queryWinningMetrics(db, market, reportDate);
+      const avgClv = queryAvgClv(db, market, reportDate);
+      const cal = queryCalibrationMetrics(db, market);
 
     // bets_blocked_gate = games where model said OK but no bet was placed
-    const betsBlockedGate = Math.max(
-      0,
-      firing.model_ok_count - winning.bets_placed,
+      const betsBlockedGate = Math.max(
+        0,
+        firing.model_ok_count - winning.bets_placed,
+      );
+
+      const report = {
+        reportDate,
+        market,
+        sport,
+        ...firing,
+        bets_placed: winning.bets_placed,
+        bets_blocked_gate: betsBlockedGate,
+        hit_rate: winning.hit_rate,
+        roi: winning.roi,
+        avg_clv: avgClv,
+        brier: cal.brier,
+        ece: cal.ece,
+        max_drawdown: winning.max_drawdown,
+      };
+
+      reports.push(report);
+    }
+
+    writeAll(reports);
+
+    console.log(
+      `[PERF_REPORT] ${reportDate} — wrote ${reports.length} market report(s): ${markets.join(', ')}`,
     );
 
-    const report = {
-      reportDate,
-      market,
-      sport,
-      ...firing,
-      bets_placed: winning.bets_placed,
-      bets_blocked_gate: betsBlockedGate,
-      hit_rate: winning.hit_rate,
-      roi: winning.roi,
-      avg_clv: avgClv,
-      brier: cal.brier,
-      ece: cal.ece,
-      max_drawdown: winning.max_drawdown,
-    };
-
-    reports.push(report);
+    if (jobRunId) markJobRunSuccess(jobRunId);
+    return { success: true, jobKey, reportDate, reports };
+  } catch (error) {
+    if (jobRunId) markJobRunFailure(jobRunId, error.message);
+    throw error;
   }
-
-  writeAll(reports);
-
-  console.log(
-    `[PERF_REPORT] ${reportDate} — wrote ${reports.length} market report(s): ${markets.join(', ')}`,
-  );
-
-  return { reportDate, reports };
 }
 
 module.exports = {
@@ -426,13 +467,9 @@ module.exports = {
 };
 
 if (require.main === module) {
-  try {
-    const result = runDailyPerformanceReport();
+  createJob('run_daily_performance_report', ({ dryRun }) => withDb(() => {
+    const result = runDailyPerformanceReport({ dryRun });
     console.log(JSON.stringify(result, null, 2));
-  } catch (error) {
-    console.error('[PERF_REPORT] run_daily_performance_report failed:', error);
-    process.exitCode = 1;
-  } finally {
-    closeDatabase();
-  }
+    return result;
+  }));
 }

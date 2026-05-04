@@ -20,9 +20,16 @@
 require('dotenv').config();
 
 const {
+  createJob,
   closeDatabase,
   getDatabase,
+  insertJobRun,
+  markJobRunFailure,
+  markJobRunSuccess,
+  shouldRunJobKey,
+  withDb,
 } = require('@cheddar-logic/data');
+const { randomUUID } = require('crypto');
 
 /**
  * Convert American odds integer to no-vig implied probability.
@@ -202,13 +209,42 @@ function lookupOutcome(db, { gameId, sport, marketType }) {
 function runClvSnapshot(options = {}) {
   const db = options.db || getDatabase();
   const createdAt = options.computedAt || new Date().toISOString();
+  const dryRun =
+    options.dryRun === true ||
+    process.env.DRY_RUN === 'true' ||
+    process.argv.includes('--dry-run');
+  const jobKey = options.jobKey || null;
+  const jobRunId = jobKey && !dryRun ? randomUUID() : null;
 
-  const rows = findUnsnapshotted(db);
-  if (rows.length === 0) {
-    return { written: 0, skipped: 0 };
+  if (jobKey && !dryRun && !shouldRunJobKey(jobKey)) {
+    console.log(`[CLV_SNAPSHOT] Skipping (already succeeded or running): ${jobKey}`);
+    return { success: true, skipped: true, jobKey };
   }
 
-  const insert = db.prepare(`
+  if (dryRun) {
+    console.log(`[CLV_SNAPSHOT] DRY_RUN=true — would run jobKey=${jobKey || 'none'}`);
+    return { success: true, dryRun: true, jobKey };
+  }
+
+  if (jobRunId) {
+    try {
+      insertJobRun('run_clv_snapshot', jobRunId, jobKey);
+    } catch (error) {
+      if (error?.code === 'JOB_RUN_ALREADY_CLAIMED') {
+        return { success: true, skipped: true, jobKey };
+      }
+      throw error;
+    }
+  }
+
+  try {
+    const rows = findUnsnapshotted(db);
+    if (rows.length === 0) {
+      if (jobRunId) markJobRunSuccess(jobRunId);
+      return { success: true, jobKey, written: 0, skipped: 0 };
+    }
+
+    const insert = db.prepare(`
     INSERT OR IGNORE INTO clv_entries (
       game_id,
       market,
@@ -225,11 +261,11 @@ function runClvSnapshot(options = {}) {
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
-  let written = 0;
-  let skipped = 0;
+    let written = 0;
+    let skipped = 0;
 
-  const writeAll = db.transaction((items) => {
-    for (const row of items) {
+    const writeAll = db.transaction((items) => {
+      for (const row of items) {
       const market = buildMarketKey(row.sport, row.market_type);
       const side = String(row.side || '').trim().toUpperCase();
 
@@ -262,7 +298,7 @@ function runClvSnapshot(options = {}) {
         marketType: String(row.market_type || '').toLowerCase(),
       });
 
-      insert.run(
+        insert.run(
         row.game_id,
         market,
         side,
@@ -276,13 +312,18 @@ function runClvSnapshot(options = {}) {
         outcome,
         createdAt,
       );
-      written += 1;
-    }
-  });
+        written += 1;
+      }
+    });
 
-  writeAll(rows);
+    writeAll(rows);
 
-  return { written, skipped };
+    if (jobRunId) markJobRunSuccess(jobRunId);
+    return { success: true, jobKey, written, skipped };
+  } catch (error) {
+    if (jobRunId) markJobRunFailure(jobRunId, error.message);
+    throw error;
+  }
 }
 
 module.exports = {
@@ -292,13 +333,9 @@ module.exports = {
 };
 
 if (require.main === module) {
-  try {
-    const result = runClvSnapshot();
+  createJob('run_clv_snapshot', ({ dryRun }) => withDb(() => {
+    const result = runClvSnapshot({ dryRun });
     console.log(JSON.stringify(result, null, 2));
-  } catch (error) {
-    console.error('[CLV_SNAPSHOT] run_clv_snapshot failed:', error);
-    process.exitCode = 1;
-  } finally {
-    closeDatabase();
-  }
+    return result;
+  }));
 }
