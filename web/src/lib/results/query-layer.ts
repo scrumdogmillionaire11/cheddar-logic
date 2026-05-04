@@ -33,6 +33,25 @@ export type ResultsSchemaInfo = {
   clvJoin: string;
 };
 
+export type DisplayLogNotEnrolledBucket = 'DISPLAY_LOG_NOT_ENROLLED';
+
+export type UndisplayedSettledSample = {
+  resultId: string;
+  cardId: string;
+  gameId: string;
+  sport: string;
+  cardType: string | null;
+  result: string | null;
+  settledAt: string | null;
+};
+
+export type UndisplayedSettledDiagnostics = {
+  bucket: DisplayLogNotEnrolledBucket;
+  reason: string;
+  count: number;
+  samples: UndisplayedSettledSample[];
+};
+
 export type ActionableSourceRow = {
   id: string;
   sport: string;
@@ -116,6 +135,7 @@ export type ResultsQueryData = {
     totalSettled: number;
     withPayloadSettled: number;
     orphanedSettled: number;
+    undisplayedSettled: UndisplayedSettledDiagnostics | null;
     displayedFinal: number;
     settledFinalDisplayed: number;
     missingFinalDisplayed: number;
@@ -128,6 +148,10 @@ const ALLOWED_SPORTS = ['NHL', 'NBA', 'NCAAM', 'MLB', 'NFL'] as const;
 const ALLOWED_CATEGORIES = ['driver', 'call'] as const;
 const ALLOWED_MARKETS = ['moneyline', 'spread', 'total'] as const;
 export const DEFAULT_EXCLUDED_SPORT = 'NCAAM';
+export const RESULTS_UNDISPLAYED_SETTLED_BUCKET = 'DISPLAY_LOG_NOT_ENROLLED' as const;
+export const RESULTS_UNDISPLAYED_SETTLED_REASON =
+  'Settled rows remain excluded from official /results because card_display_log enrollment is missing.';
+const RESULTS_UNDISPLAYED_SETTLED_SAMPLE_LIMIT = 5;
 
 const LATEST_PROJECTION_ACCURACY_CTE = `
   WITH accuracy_latest AS (
@@ -478,6 +502,7 @@ function countSettledRows(
   totalSettled: number;
   withPayloadSettled: number;
   orphanedSettled: number;
+  undisplayedSettled: UndisplayedSettledDiagnostics | null;
 } {
   const totalSettledSportFilter = buildSportFilter(filters.sport, 'cr.sport');
   const totalSettledRow = db
@@ -509,11 +534,62 @@ function countSettledRows(
 
   const totalSettled = Number(totalSettledRow?.count || 0);
   const withPayloadSettled = Number(displayedSettledRow?.count || 0);
+  const orphanedSettled = Math.max(0, totalSettled - withPayloadSettled);
+  const undisplayedSettledSportFilter = buildSportFilter(filters.sport, 'cr.sport');
+  const undisplayedSettledRows = filters.diagnosticsEnabled
+    ? (db
+        .prepare(
+          `
+      SELECT
+        cr.id AS result_id,
+        cr.card_id,
+        cr.game_id,
+        cr.sport,
+        cr.card_type,
+        cr.result,
+        cr.settled_at
+      FROM card_results cr
+      LEFT JOIN card_display_log cdl ON cr.card_id = cdl.pick_id
+      WHERE cr.status = 'settled'
+        AND cdl.pick_id IS NULL
+        ${undisplayedSettledSportFilter.sql}
+      ORDER BY
+        datetime(COALESCE(cr.settled_at, cr.created_at, '1970-01-01T00:00:00Z')) DESC,
+        cr.id DESC
+      LIMIT ${RESULTS_UNDISPLAYED_SETTLED_SAMPLE_LIMIT}
+    `,
+        )
+        .all(...undisplayedSettledSportFilter.params) as Array<{
+        result_id: string;
+        card_id: string;
+        game_id: string;
+        sport: string;
+        card_type: string | null;
+        result: string | null;
+        settled_at: string | null;
+      }>)
+    : [];
 
   return {
     totalSettled,
     withPayloadSettled,
-    orphanedSettled: totalSettled - withPayloadSettled,
+    orphanedSettled,
+    undisplayedSettled: filters.diagnosticsEnabled
+      ? {
+          bucket: RESULTS_UNDISPLAYED_SETTLED_BUCKET,
+          reason: RESULTS_UNDISPLAYED_SETTLED_REASON,
+          count: orphanedSettled,
+          samples: undisplayedSettledRows.map((row) => ({
+            resultId: row.result_id,
+            cardId: row.card_id,
+            gameId: row.game_id,
+            sport: row.sport,
+            cardType: row.card_type,
+            result: row.result,
+            settledAt: row.settled_at,
+          })),
+        }
+      : null,
   };
 }
 

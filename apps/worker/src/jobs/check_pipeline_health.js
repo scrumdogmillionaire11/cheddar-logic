@@ -2307,10 +2307,15 @@ function checkVisibilityIntegrity({
     dateRange,
     sampleLimit,
   });
-  const missingEnrollmentCount = Number(
-    diagnostics?.counts?.DISPLAY_LOG_NOT_ENROLLED || 0,
-  );
-  const sampleIds = (diagnostics?.samples?.DISPLAY_LOG_NOT_ENROLLED || []).map(
+  const missingEnrollment = diagnostics?.displayLogNotEnrolled || {
+    bucket: 'DISPLAY_LOG_NOT_ENROLLED',
+    reason:
+      'Missing card_display_log enrollment keeps the row out of surfaced results; diagnostics do not attempt repair writes.',
+    count: Number(diagnostics?.counts?.DISPLAY_LOG_NOT_ENROLLED || 0),
+    samples: diagnostics?.samples?.DISPLAY_LOG_NOT_ENROLLED || [],
+  };
+  const missingEnrollmentCount = Number(missingEnrollment.count || 0);
+  const sampleIds = (missingEnrollment.samples || []).map(
     (sample) => sample.cardId,
   );
 
@@ -2329,6 +2334,7 @@ function checkVisibilityIntegrity({
     return {
       ok: false,
       reason,
+      missingEnrollment,
       missingEnrollmentCount,
       sampleIds,
       diagnostics,
@@ -2343,6 +2349,7 @@ function checkVisibilityIntegrity({
   return {
     ok: true,
     reason,
+    missingEnrollment,
     missingEnrollmentCount: 0,
     sampleIds: [],
     diagnostics,
