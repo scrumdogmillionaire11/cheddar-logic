@@ -215,12 +215,73 @@ function buildPayloadDecisionOutcome(
   return buildDecisionOutcomeFromDecisionV2(decisionV2);
 }
 
+type DecisionSurfaceBucket = 'OFFICIAL' | 'MONITORED' | 'DIAGNOSTIC';
+
+function normalizeRawDecisionStatus(value: unknown):
+  | 'PLAY'
+  | 'LEAN'
+  | 'SLIGHT_EDGE'
+  | 'PASS'
+  | 'UNKNOWN' {
+  const normalized = String(value ?? '')
+    .trim()
+    .toUpperCase();
+  if (normalized === 'PLAY') return 'PLAY';
+  if (normalized === 'LEAN') return 'LEAN';
+  if (normalized === 'SLIGHT_EDGE' || normalized === 'SLIGHT EDGE') {
+    return 'SLIGHT_EDGE';
+  }
+  if (normalized === 'PASS') return 'PASS';
+  return 'UNKNOWN';
+}
+
+function buildDecisionSurfaceMetadata(
+  payload: Record<string, unknown> | null,
+  decisionOutcome: { status: 'PLAY' | 'SLIGHT_EDGE' | 'PASS' } | null,
+): {
+  canonical_status: 'PLAY' | 'LEAN' | 'PASS';
+  raw_status: 'PLAY' | 'LEAN' | 'SLIGHT_EDGE' | 'PASS' | 'UNKNOWN';
+  surface_bucket: DecisionSurfaceBucket;
+} {
+  const decisionV2 = readPayloadDecisionV2(payload);
+  const rawStatus =
+    normalizeRawDecisionStatus(decisionOutcome?.status) !== 'UNKNOWN'
+      ? normalizeRawDecisionStatus(decisionOutcome?.status)
+      : normalizeRawDecisionStatus(
+          decisionV2?.official_status ??
+            (decisionV2?.canonical_envelope_v2 as
+              | { official_status?: unknown }
+              | undefined)?.official_status,
+        );
+
+  const canonicalStatus: 'PLAY' | 'LEAN' | 'PASS' =
+    rawStatus === 'PLAY' ? 'PLAY' : rawStatus === 'PASS' ? 'PASS' : 'LEAN';
+  const surfaceBucket: DecisionSurfaceBucket =
+    canonicalStatus === 'PLAY'
+      ? 'OFFICIAL'
+      : canonicalStatus === 'LEAN'
+        ? 'MONITORED'
+        : 'DIAGNOSTIC';
+
+  return {
+    canonical_status: canonicalStatus,
+    raw_status: rawStatus,
+    surface_bucket: surfaceBucket,
+  };
+}
+
 function attachDecisionOutcome(
   payload: Record<string, unknown> | null,
 ): Record<string, unknown> | null {
   if (!payload) return payload;
   const decisionOutcome = buildPayloadDecisionOutcome(payload);
-  if (!decisionOutcome) return payload;
+  const decisionSurface = buildDecisionSurfaceMetadata(payload, decisionOutcome);
+  if (!decisionOutcome) {
+    return {
+      ...payload,
+      decision_surface: decisionSurface,
+    };
+  }
 
   const play =
     payload.play && typeof payload.play === 'object'
@@ -230,11 +291,13 @@ function attachDecisionOutcome(
   return {
     ...payload,
     decision_outcome: decisionOutcome,
+    decision_surface: decisionSurface,
     ...(play
       ? {
           play: {
             ...play,
             decision_outcome: decisionOutcome,
+            decision_surface: decisionSurface,
           },
         }
       : null),

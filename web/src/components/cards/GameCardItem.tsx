@@ -3,6 +3,7 @@
 import { useMemo, useSyncExternalStore } from 'react';
 import {
   getCardDecisionModel,
+  resolveOpportunityState,
 } from '@/lib/game-card/decision';
 import { getDisplayVerdict } from '@/lib/game-card/display-verdict';
 import { deriveMarketSignals } from '@/lib/game-card/market-signals';
@@ -667,6 +668,22 @@ export default function GameCardItem({
   const shouldDemoteForMissingOdds =
     isActionableDecision && !hasVisibleBetOdds && !isProjectionOnlyCard && !shouldPreserveNoBetLean;
   const visibleDecision = shouldDemoteForMissingOdds ? 'PASS' : displayDecisionResolved;
+  const displayDecisionOutcome = (
+    displayPlay as { decision_outcome?: { status?: string | null } | null }
+  ).decision_outcome;
+  const opportunityState = resolveOpportunityState({
+    decision_outcome: displayDecisionOutcome,
+    decision_v2: resolvedDecisionV2,
+    final_market_decision: finalMarketDecision,
+    action: displayPlay.action,
+    decision: displayPlay.decision,
+  });
+  const surfaceLabel =
+    opportunityState.surface === 'OFFICIAL'
+      ? 'Official'
+      : opportunityState.surface === 'MONITORED'
+        ? 'Monitored'
+        : 'Diagnostic';
   const visibleVerdict = getDisplayVerdict(visibleDecision);
   const visibleStatusLabel = visibleVerdict ? visibleVerdict.label : visibleDecision;
   const visibleBetText = shouldDemoteForMissingOdds ? 'NO PLAY' : displayBetText;
@@ -822,6 +839,20 @@ export default function GameCardItem({
                   }`}
                 >
                   {visibleStatusLabel}
+                </span>
+              )}
+              {!isNhlPace1p && !isMlbF5Projection && (
+                <span
+                  className={`px-2 py-1 text-xs font-semibold rounded border ${
+                    opportunityState.surface === 'OFFICIAL'
+                      ? 'bg-emerald-700/30 text-emerald-200 border-emerald-600/50'
+                      : opportunityState.surface === 'MONITORED'
+                        ? 'bg-amber-700/30 text-amber-200 border-amber-600/50'
+                        : 'bg-slate-700/30 text-slate-200 border-slate-600/50'
+                  }`}
+                  title={`Raw decision status: ${opportunityState.rawStatus}`}
+                >
+                  {surfaceLabel}
                 </span>
               )}
               {isDegraded && (

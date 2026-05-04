@@ -3,6 +3,7 @@
 import { useMemo, useState } from 'react';
 import ProjectionCard from '@/components/projection-card';
 import PropGameCard from '@/components/prop-game-card';
+import { resolveOpportunityState } from '@/lib/game-card/decision';
 import {
   countBlockedDiagnostics,
   DIAGNOSTIC_BUCKET_LABELS,
@@ -92,6 +93,23 @@ export default function CardsList() {
     });
   }, [displayedCardIds, effectiveFilters, enrichedCards, viewMode]);
 
+  const opportunityCounts = useMemo(() => {
+    if (viewMode !== 'game') {
+      return { official: 0, monitored: 0, diagnostic: 0 };
+    }
+
+    return filteredCards.reduce(
+      (acc, card) => {
+        const state = resolveOpportunityState(card.play ?? null);
+        if (state.surface === 'OFFICIAL') acc.official += 1;
+        else if (state.surface === 'MONITORED') acc.monitored += 1;
+        else acc.diagnostic += 1;
+        return acc;
+      },
+      { official: 0, monitored: 0, diagnostic: 0 },
+    );
+  }, [filteredCards, viewMode]);
+
   if (loading) {
     return <div className="text-center py-8 text-cloud/60">Loading games...</div>;
   }
@@ -118,6 +136,9 @@ export default function CardsList() {
             <span className="text-xs text-cloud/60">
               API games loaded: {games.length} | transformed cards: {enrichedCards.length} |
               displayed after filters: {filteredCards.length}
+            </span>
+            <span className="text-xs text-cloud/50">
+              Official: {opportunityCounts.official} | Monitored: {opportunityCounts.monitored} | Diagnostic: {opportunityCounts.diagnostic}
             </span>
           </div>
 
