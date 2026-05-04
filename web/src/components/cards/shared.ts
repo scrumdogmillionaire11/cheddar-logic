@@ -571,9 +571,66 @@ export function filterPropCards(
   if (!('propStatGroups' in filters)) return cards;
 
   const now = Date.now();
+  const normalizedFilterSports = new Set(
+    filters.sports.map((sport) =>
+      String(sport || '')
+        .trim()
+        .toUpperCase()
+        .replace(/[\s-]+/g, '_'),
+    ),
+  );
+
+  const normalizeSportToken = (value: unknown): string =>
+    String(value || '')
+      .trim()
+      .toUpperCase()
+      .replace(/[\s-]+/g, '_');
+
+  const resolvePropCardSport = (
+    card: import('./types').PropGameCardType,
+  ): string => {
+    const cardSport = normalizeSportToken(card.sport);
+    if (
+      cardSport === 'NHL' ||
+      cardSport === 'NBA' ||
+      cardSport === 'MLB' ||
+      cardSport === 'NFL' ||
+      cardSport === 'NCAAM' ||
+      cardSport === 'SOCCER'
+    ) {
+      return cardSport;
+    }
+    if (cardSport === 'NHL_PROPS') return 'NHL';
+
+    const sourceTypes = card.propPlays.map((row) =>
+      normalizeSportToken(row.sourceCardType),
+    );
+    if (sourceTypes.some((token) => token.startsWith('NHL_') || token.includes('NHL'))) {
+      return 'NHL';
+    }
+    if (sourceTypes.some((token) => token.startsWith('NBA_') || token.includes('NBA'))) {
+      return 'NBA';
+    }
+    if (sourceTypes.some((token) => token.startsWith('MLB_') || token.includes('MLB'))) {
+      return 'MLB';
+    }
+    if (sourceTypes.some((token) => token.startsWith('NFL_') || token.includes('NFL'))) {
+      return 'NFL';
+    }
+    if (sourceTypes.some((token) => token.startsWith('NCAAM_') || token.includes('NCAAM'))) {
+      return 'NCAAM';
+    }
+    if (sourceTypes.some((token) => token.startsWith('SOCCER_') || token.includes('SOCCER'))) {
+      return 'SOCCER';
+    }
+
+    return cardSport;
+  };
 
   const filteredByGame = cards
-    .filter((card) => filters.sports.includes(card.sport))
+    .filter((card) => {
+      return normalizedFilterSports.has(resolvePropCardSport(card));
+    })
     .filter((card) => {
       if (!filters.timeWindow) return true;
 

@@ -247,6 +247,43 @@ describe('projectF5ML alignment (WI-0871)', () => {
       ]),
     );
   });
+
+  test('selects side by projected F5 run winner even when market edge points opposite', () => {
+    const result = projectF5ML(
+      homePitcher,
+      awayPitcher,
+      -230,
+      +190,
+      averageOffense,
+      averageOffense,
+      cleanContext,
+    );
+
+    expect(result.projected_home_f5_runs).toBeGreaterThan(result.projected_away_f5_runs);
+    expect(result.side).toBe('HOME');
+    expect(result.prediction).toBe('HOME');
+  });
+
+  test('returns PASS when projected F5 runs are effectively tied', () => {
+    const symmetricPitcher = {
+      era: 3.9,
+      whip: 1.22,
+      k_per_9: 8.8,
+    };
+    const result = projectF5ML(
+      symmetricPitcher,
+      symmetricPitcher,
+      -110,
+      -110,
+      null,
+      null,
+      cleanContext,
+    );
+
+    expect(result.projected_home_f5_runs).toBeCloseTo(result.projected_away_f5_runs, 10);
+    expect(result.side).toBe('PASS');
+    expect(result.prediction).toBe('PASS');
+  });
 });
 
 // ── WI-0872: projectFullGameTotal ────────────────────────────────────────────
