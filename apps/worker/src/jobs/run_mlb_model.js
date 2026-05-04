@@ -4823,6 +4823,7 @@ async function runMLBModel({
       const rolloutState = resolveMlbPitcherPropRolloutState();
       const pitcherKPortfolioGuardConfig = resolveMlbPitcherKPortfolioGuardConfig();
       const pitcherKPortfolioGuardState = createMlbPitcherKPortfolioGuardState();
+      const deferredProjectionOnlyPitcherKCards = [];
       let attemptedStatcastRefresh = false;
 
       // Process each game — emit one card per qualifying driver market
@@ -5817,7 +5818,11 @@ async function runMLBModel({
               }
             }
             card.payloadData.pipeline_state = pipelineState;
-            insertCardPayload(card);
+            if (isPitcherK && payloadData?.basis === 'PROJECTION_ONLY') {
+              deferredProjectionOnlyPitcherKCards.push(card);
+            } else {
+              insertCardPayload(card);
+            }
 
             if (isFullGameTotal && payloadData?.projection?.component_breakdown) {
               const modelTotal = Number(payloadData?.projection?.projected_total);
@@ -5865,6 +5870,10 @@ async function runMLBModel({
           errors.push(`${gameId}: ${gameError.message}`);
           console.error(`  ❌ ${gameId}: ${gameError.message}`);
         }
+      }
+
+      for (const deferredCard of deferredProjectionOnlyPitcherKCards) {
+        insertCardPayload(deferredCard);
       }
 
       // Mark success
