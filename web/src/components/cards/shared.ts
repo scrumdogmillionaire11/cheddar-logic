@@ -627,6 +627,20 @@ export function filterPropCards(
     return cardSport;
   };
 
+  const resolvePropRowSport = (
+    row: import('./types').PropPlayRow,
+    fallbackSport: string,
+  ): string => {
+    const sourceType = normalizeSportToken(row.sourceCardType);
+    if (sourceType.startsWith('NHL_') || sourceType.includes('NHL')) return 'NHL';
+    if (sourceType.startsWith('NBA_') || sourceType.includes('NBA')) return 'NBA';
+    if (sourceType.startsWith('MLB_') || sourceType.includes('MLB')) return 'MLB';
+    if (sourceType.startsWith('NFL_') || sourceType.includes('NFL')) return 'NFL';
+    if (sourceType.startsWith('NCAAM_') || sourceType.includes('NCAAM')) return 'NCAAM';
+    if (sourceType.startsWith('SOCCER_') || sourceType.includes('SOCCER')) return 'SOCCER';
+    return fallbackSport;
+  };
+
   const filteredByGame = cards
     .filter((card) => {
       return normalizedFilterSports.has(resolvePropCardSport(card));
@@ -657,8 +671,13 @@ export function filterPropCards(
   const filteredRows = filteredByGame
     .map((card) => {
       const query = filters.searchQuery.trim().toLowerCase();
+      const cardSport = resolvePropCardSport(card);
 
       const propPlays = card.propPlays.filter((row) => {
+        if (!normalizedFilterSports.has(resolvePropRowSport(row, cardSport))) {
+          return false;
+        }
+
         if (
           filters.statuses.length > 0 &&
           !filters.statuses.includes(mapPropStatusToExpression(row.status))
@@ -710,6 +729,23 @@ export function filterPropCards(
 
     return b.maxConfidence - a.maxConfidence;
   });
+}
+
+export function matchesProjectionSportFilter(
+  game: import('./types').GameData,
+  filters: import('./types').GameFilters,
+): boolean {
+  const normalizedSports = new Set(
+    filters.sports.map((sport) =>
+      String(sport || '')
+        .trim()
+        .toUpperCase(),
+    ),
+  );
+  const gameSport = String(game.sport || '')
+    .trim()
+    .toUpperCase();
+  return normalizedSports.has(gameSport);
 }
 
 export function createGuardrailBreakdownEntry(): GuardrailBreakdownEntry {

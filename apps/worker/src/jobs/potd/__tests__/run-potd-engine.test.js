@@ -2,6 +2,7 @@
 
 const fs = require('fs');
 const Database = require('better-sqlite3');
+const { DateTime } = require('luxon');
 const { makeEtDateTime } = require('../../../../tests/helpers/discord-timing');
 
 const TEST_DB_PATH = '/tmp/cheddar-test-run-potd-engine.db';
@@ -1144,7 +1145,7 @@ describe('runPotdEngine', () => {
     expect(playRows).toEqual([{ game_id: playCandidate.gameId }]);
   });
 
-  test('PASS outcomes are always rejected; SLIGHT_EDGE below noise floor does not fire', async () => {
+  test('PASS outcomes are rejected; SLIGHT_EDGE below noise floor is monitored but does not fire', async () => {
     const { runPotdEngine } = require('../run_potd_engine');
 
     const slightEdgeCandidate = buildSelectedCandidate({
@@ -1224,11 +1225,22 @@ describe('runPotdEngine', () => {
 
     expect(result.success).toBe(true);
     expect(result.noPlay).toBe(true);
-    expect(scoreCandidateFn).not.toHaveBeenCalled();
+    expect(scoreCandidateFn).toHaveBeenCalledTimes(1);
+    expect(scoreCandidateFn).toHaveBeenCalledWith(expect.objectContaining({ gameId: slightEdgeCandidate.gameId }));
     expect(readRows('SELECT * FROM potd_plays')).toEqual([]);
+
+    const shadowRows = readRows(
+      'SELECT game_id, shadow_reason FROM potd_shadow_candidates',
+    );
+    expect(shadowRows).toEqual([
+      {
+        game_id: slightEdgeCandidate.gameId,
+        shadow_reason: 'NON_PLAY_DECISION_OUTCOME',
+      },
+    ]);
   });
 
-  test('SLIGHT_EDGE with strong edge does not fire when no PLAY candidates exist', async () => {
+  test('SLIGHT_EDGE with strong edge is monitored in near-miss outputs but never becomes official', async () => {
     const { runPotdEngine } = require('../run_potd_engine');
 
     const ghostCandidate = buildSelectedCandidate({
@@ -1258,6 +1270,8 @@ describe('runPotdEngine', () => {
       },
     });
 
+    const scoreCandidateFn = jest.fn((value) => value);
+
     const result = await runPotdEngine({
       jobKey: 'potd|anti-ghost-no-play',
       force: true,
@@ -1271,7 +1285,7 @@ describe('runPotdEngine', () => {
             }
           : { games: [], errors: [] },
       buildCandidatesFn: () => [ghostCandidate],
-      scoreCandidateFn: (value) => value,
+      scoreCandidateFn,
       selectTopPlaysFn: (values) => values,
       kellySizeFn: () => 2.0,
       sendDiscordMessagesFn: async () => 1,
@@ -1280,7 +1294,18 @@ describe('runPotdEngine', () => {
     expect(result.success).toBe(true);
     expect(result.noPlay).toBe(true);
     expect(result.usedFallbackTier).toBeUndefined();
+    expect(scoreCandidateFn).toHaveBeenCalledTimes(1);
     expect(readRows('SELECT game_id FROM potd_plays')).toEqual([]);
+
+    const shadowRows = readRows(
+      'SELECT game_id, shadow_reason FROM potd_shadow_candidates',
+    );
+    expect(shadowRows).toEqual([
+      {
+        game_id: ghostCandidate.gameId,
+        shadow_reason: 'NON_PLAY_DECISION_OUTCOME',
+      },
+    ]);
   });
 
   test('tiebreak: multiple PLAY outcomes selects highest confidence or deterministic first', async () => {
@@ -1989,10 +2014,11 @@ describe('WI-1039-B: POTD timing state machine and heartbeat', () => {
     expect(POTD_WINDOW_ET.CLOSES_HOUR).toBe(17);
   });
 
-  test('POTD_NOPICK_REASONS exports all 5 reason keys', () => {
+  test('POTD_NOPICK_REASONS exports all 6 reason keys', () => {
     expect(Object.isFrozen(POTD_NOPICK_REASONS)).toBe(true);
     expect(POTD_NOPICK_REASONS).toHaveProperty('below_noise_floor');
     expect(POTD_NOPICK_REASONS).toHaveProperty('no_viable_candidates');
+    expect(POTD_NOPICK_REASONS).toHaveProperty('model_health_stale');
     expect(POTD_NOPICK_REASONS).toHaveProperty('confidence_below_high_gate');
     expect(POTD_NOPICK_REASONS).toHaveProperty('zero_wager');
     expect(POTD_NOPICK_REASONS).toHaveProperty('min_stake_rejected');
@@ -2477,9 +2503,10 @@ describe('buildCandidateAuditEntry', () => {
 });
 
 describe('loadModelHealthGates', () => {
+  let loadModelHealthState;
   let loadModelHealthGates;
   beforeAll(() => {
-    ({ __private: { loadModelHealthGates } } = require('../run_potd_engine'));
+    ({ __private: { loadModelHealthState, loadModelHealthGates } } = require('../run_potd_engine'));
   });
 
   function makeDb(rows) {
@@ -2488,37 +2515,66 @@ describe('loadModelHealthGates', () => {
     };
   }
 
-  test('returns empty Set when db is null', () => {
+  test('returns empty gates and stale state when db is null', () => {
     expect(loadModelHealthGates(null).size).toBe(0);
+    const state = loadModelHealthState(null);
+    expect(state.isStale).toBe(true);
+    expect(state.staleReasonCode).toBe('MODEL_HEALTH_STALE');
   });
 
-  test('blocks only critical sports — not stale', () => {
+  test('blocks only critical sports when snapshots are fresh', () => {
     const gates = loadModelHealthGates(makeDb([
-      { sport: 'nba', status: 'critical' },
-      { sport: 'mlb', status: 'stale' },
-      { sport: 'nhl', status: 'healthy' },
-    ]));
+      { sport: 'nba', status: 'critical', run_at: '2026-04-10T17:30:00.000Z' },
+      { sport: 'mlb', status: 'stale', run_at: '2026-04-10T17:30:00.000Z' },
+      { sport: 'nhl', status: 'healthy', run_at: '2026-04-10T17:30:00.000Z' },
+    ]), {
+      nowUtc: DateTime.fromISO('2026-04-10T18:00:00.000Z', { zone: 'utc' }),
+      maxAgeMinutes: 180,
+    });
     expect(gates.has('NBA')).toBe(true);
     expect(gates.has('MLB')).toBe(false); // stale = unknown quality, not confirmed bad
     expect(gates.has('NHL')).toBe(false);
   });
 
+  test('treats stale snapshots as MODEL_HEALTH_STALE and fail-opens gates', () => {
+    const state = loadModelHealthState(makeDb([
+      { sport: 'nba', status: 'critical', run_at: '2026-04-10T10:00:00.000Z' },
+      { sport: 'mlb', status: 'healthy', run_at: '2026-04-10T10:00:00.000Z' },
+    ]), {
+      nowUtc: DateTime.fromISO('2026-04-10T18:00:00.000Z', { zone: 'utc' }),
+      maxAgeMinutes: 180,
+    });
+
+    expect(state.isStale).toBe(true);
+    expect(state.staleReasonCode).toBe('MODEL_HEALTH_STALE');
+    expect(state.snapshotAgeMinutes).toBe(480);
+    expect(state.blockedSports.size).toBe(0);
+    expect(state.staleSports.has('NBA')).toBe(true);
+  });
+
   test('does not block degraded sports', () => {
     const gates = loadModelHealthGates(makeDb([
-      { sport: 'nba', status: 'degraded' },
-    ]));
+      { sport: 'nba', status: 'degraded', run_at: '2026-04-10T17:45:00.000Z' },
+    ]), {
+      nowUtc: DateTime.fromISO('2026-04-10T18:00:00.000Z', { zone: 'utc' }),
+      maxAgeMinutes: 180,
+    });
     expect(gates.has('NBA')).toBe(false);
   });
 
-  test('returns empty Set when query throws', () => {
+  test('returns stale state and empty Set when query throws', () => {
     const badDb = { prepare: () => { throw new Error('no table'); } };
     expect(() => loadModelHealthGates(badDb)).not.toThrow();
     expect(loadModelHealthGates(badDb).size).toBe(0);
+    const state = loadModelHealthState(badDb);
+    expect(state.isStale).toBe(true);
   });
 
-  test('returns empty Set when snapshots table is empty', () => {
+  test('returns stale state and empty Set when snapshots table is empty', () => {
     const gates = loadModelHealthGates(makeDb([]));
     expect(gates.size).toBe(0);
+    const state = loadModelHealthState(makeDb([]));
+    expect(state.isStale).toBe(true);
   });
 });
 

@@ -667,16 +667,46 @@ async function runDrClaireHealthReport(opts = {}, deps = {}) {
     days: opts.days ?? LOOKBACK_DAYS,
     runAt: opts.runAt ?? null,
   };
-  const report = buildDrClaireReport(resolvedOpts, deps);
-  const persistResult = persistModelHealthSnapshots(report, resolvedOpts, deps);
+  const startedAt = new Date().toISOString();
+  console.log(JSON.stringify({
+    type: 'DR_CLAIRE_HEALTH_REPORT_START',
+    startedAt,
+    persist: resolvedOpts.persist,
+    sport: resolvedOpts.sport,
+    days: resolvedOpts.days,
+    runAt: resolvedOpts.runAt,
+  }));
 
-  if (resolvedOpts.json) {
-    console.log(JSON.stringify(report, null, 2));
-  } else {
-    printTextReport(report, resolvedOpts);
+  try {
+    const report = buildDrClaireReport(resolvedOpts, deps);
+    const persistResult = persistModelHealthSnapshots(report, resolvedOpts, deps);
+
+    if (resolvedOpts.json) {
+      console.log(JSON.stringify(report, null, 2));
+    } else {
+      printTextReport(report, resolvedOpts);
+    }
+
+    console.log(JSON.stringify({
+      type: 'DR_CLAIRE_HEALTH_REPORT_COMPLETE',
+      startedAt,
+      completedAt: new Date().toISOString(),
+      persisted: persistResult.persisted,
+      persistedRows: persistResult.rowCount,
+      persistedRunAt: persistResult.runAt,
+      overallStatus: report.overallStatus,
+    }));
+
+    return { report, persistResult };
+  } catch (err) {
+    console.error(JSON.stringify({
+      type: 'DR_CLAIRE_HEALTH_REPORT_FAILURE',
+      startedAt,
+      failedAt: new Date().toISOString(),
+      error: err?.message || String(err),
+    }));
+    throw err;
   }
-
-  return { report, persistResult };
 }
 
 async function main() {

@@ -84,4 +84,27 @@ console.log('props sport filter contract tests');
   assert.equal(filtered[0].gameId, 'nhl-props-lane');
 }
 
+{
+  const cards = [
+    makePropGameCard({
+      gameId: 'mixed-card',
+      sport: 'MLB',
+      propPlays: [
+        makePropRow({ sourceCardType: 'mlb-player-k', propType: 'Strikeouts', playerName: 'MLB Pitcher' }),
+        makePropRow({ sourceCardType: 'nhl-player-sog', propType: 'Shots on Goal', playerName: 'NHL Skater' }),
+      ],
+    }),
+  ];
+
+  const filters = {
+    ...DEFAULT_PROPS_FILTERS,
+    sports: ['MLB'],
+  };
+
+  const filtered = filterPropCards(cards, filters);
+  assert.equal(filtered.length, 1);
+  assert.equal(filtered[0].propPlays.length, 1);
+  assert.equal(filtered[0].propPlays[0].playerName, 'MLB Pitcher');
+}
+
 console.log('props sport filter contract tests passed');

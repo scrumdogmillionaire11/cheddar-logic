@@ -11,6 +11,7 @@ const {
 describe('ensureCanonicalDecisionV2 — status normalization', () => {
   test.each([
     ['PLAY', 'PLAY'], ['FIRE', 'PLAY'], ['BASE', 'PLAY'], ['play', 'PLAY'],
+    ['SLIGHT_EDGE', 'SLIGHT_EDGE'], ['SLIGHT EDGE', 'SLIGHT_EDGE'],
     ['LEAN', 'LEAN'], ['WATCH', 'LEAN'], ['HOLD', 'LEAN'],
     ['PASS', 'PASS'], ['pass', 'PASS'], ['anything_else', 'PASS'],
   ])("'%s' → '%s'", (input, expected) => {
@@ -122,5 +123,76 @@ describe('ensureCanonicalDecisionV2 — reason_codes deduplication', () => {
     const { reason_codes } = payload.decision_v2.canonical_envelope_v2;
     expect(reason_codes).toEqual(expect.arrayContaining(['CODE_A', 'CODE_B', 'CODE_C', 'CODE_D']));
     expect(reason_codes.length).toBe(new Set(reason_codes).size);
+  });
+});
+
+describe('ensureCanonicalDecisionV2 — high-end LEAN/SLIGHT_EDGE promotion', () => {
+  test('promotes NHL moneyline LEAN to PLAY when all guards pass', () => {
+    const payload = {
+      sport: 'NHL',
+      market_type: 'MONEYLINE',
+      decision_v2: {
+        official_status: 'LEAN',
+        edge_pct: 0.12,
+        support_score: 0.41,
+        model_health_ok: true,
+        price_verification_passed: true,
+        hard_blockers: [],
+      },
+      reason_codes: ['EDGE_CLEAR'],
+    };
+
+    ensureCanonicalDecisionV2(payload);
+
+    expect(payload.decision_v2.official_status).toBe('PLAY');
+    expect(payload.decision_v2.promoted_from).toBe('LEAN');
+    expect(payload.decision_v2.promotion_reason_code).toBe('HIGH_END_EDGE_PROMOTION');
+    expect(payload.decision_v2.primary_reason_code).toBe('HIGH_END_EDGE_PROMOTION');
+    expect(payload.canonical_decision.official_status).toBe('PLAY');
+  });
+
+  test('promotes NHL moneyline SLIGHT_EDGE to PLAY when all guards pass', () => {
+    const payload = {
+      sport: 'NHL',
+      market_type: 'MONEYLINE',
+      decision_v2: {
+        official_status: 'SLIGHT_EDGE',
+        edge_pct: 0.1,
+        support_score: 0.3,
+        model_health_ok: true,
+        price_verification_passed: true,
+        hard_blockers: [],
+      },
+      reason_codes: ['EDGE_CLEAR'],
+    };
+
+    ensureCanonicalDecisionV2(payload);
+
+    expect(payload.decision_v2.official_status).toBe('PLAY');
+    expect(payload.decision_v2.promoted_from).toBe('SLIGHT_EDGE');
+    expect(payload.decision_v2.promotion_reason_code).toBe('HIGH_END_EDGE_PROMOTION');
+    expect(payload.canonical_decision.official_status).toBe('PLAY');
+  });
+
+  test('does not promote when support score is below floor even if edge is high', () => {
+    const payload = {
+      sport: 'NHL',
+      market_type: 'MONEYLINE',
+      decision_v2: {
+        official_status: 'SLIGHT_EDGE',
+        edge_pct: 0.14,
+        support_score: 0.29,
+        model_health_ok: true,
+        price_verification_passed: true,
+        hard_blockers: [],
+      },
+    };
+
+    ensureCanonicalDecisionV2(payload);
+
+    expect(payload.decision_v2.official_status).toBe('SLIGHT_EDGE');
+    expect(payload.decision_v2.promoted_from).toBeUndefined();
+    expect(payload.decision_v2.promotion_reason_code).toBeUndefined();
+    expect(payload.canonical_decision.official_status).toBe('SLIGHT_EDGE');
   });
 });

@@ -674,6 +674,7 @@ const POTD_WINDOW_ET = Object.freeze({ OPENS_HOUR: 12, CLOSES_HOUR: 17 });
 const POTD_NOPICK_REASONS = Object.freeze({
   below_noise_floor: 'No candidate cleared the per-sport noise floor',
   no_viable_candidates: 'No candidates scored above viability thresholds',
+  model_health_stale: 'Model health snapshots are stale; gate decisions are reported as MODEL_HEALTH_STALE',
   confidence_below_high_gate: 'Best candidate confidence is below HIGH gate',
   zero_wager: 'Kelly sizing returned zero or non-finite wager',
   min_stake_rejected: 'Kelly stake fell below minimum stake percentage',
@@ -699,8 +700,11 @@ const POTD_MIN_TOTAL_SCORE = Number(process.env.POTD_MIN_TOTAL_SCORE || 0.30);  
 // With 4 active sports the effective ceiling is 4.
 const POTD_MAX_NOMINEES = Number(process.env.POTD_MAX_NOMINEES || 5);
 const POTD_MAX_NEAR_MISS_SHADOW_CANDIDATES = 3;
+const POTD_MODEL_HEALTH_MAX_AGE_MINUTES = Number(process.env.POTD_MODEL_HEALTH_MAX_AGE_MINUTES || 180);
+const POTD_MONITORED_DECISION_STATUSES = new Set(['PLAY', 'LEAN', 'SLIGHT_EDGE']);
 const SHADOW_REASONS = Object.freeze({
   NOT_SELECTED: 'NOT_SELECTED',
+  NON_PLAY_DECISION_OUTCOME: 'NON_PLAY_DECISION_OUTCOME',
   BELOW_OFFICIAL_EDGE_FLOOR: 'BELOW_OFFICIAL_EDGE_FLOOR',
   BELOW_SCORE_GATE: 'BELOW_SCORE_GATE',
   NON_MODEL_SOURCE: 'NON_MODEL_SOURCE',
@@ -723,26 +727,89 @@ const POTD_AUDIT_LOG_ENABLED = process.env.POTD_AUDIT_LOG_ENABLED !== 'false';
  * 'degraded' candidates still compete — lower hit rates but not disqualified.
  * Safe-fails to empty Set if the table is missing or has no rows.
  */
-function loadModelHealthGates(db) {
-  const blocked = new Set();
-  if (!db) return blocked;
+function loadModelHealthState(db, opts = {}) {
+  const blockedSports = new Set();
+  const staleSports = new Set();
+  const maxAgeMinutes = Number.isFinite(Number(opts.maxAgeMinutes))
+    ? Number(opts.maxAgeMinutes)
+    : POTD_MODEL_HEALTH_MAX_AGE_MINUTES;
+  const nowUtc = opts.nowUtc && DateTime.isDateTime(opts.nowUtc)
+    ? opts.nowUtc
+    : DateTime.utc();
+  const state = {
+    blockedSports,
+    staleSports,
+    isStale: false,
+    staleReasonCode: null,
+    latestRunAt: null,
+    snapshotAgeMinutes: null,
+    maxAgeMinutes,
+  };
+
+  if (!db) {
+    state.isStale = true;
+    state.staleReasonCode = 'MODEL_HEALTH_STALE';
+    return state;
+  }
+
   try {
     const rows = db.prepare(`
-      SELECT sport, status
+      SELECT sport, status, run_at
       FROM model_health_snapshots
       WHERE (sport, run_at) IN (
         SELECT sport, MAX(run_at) FROM model_health_snapshots GROUP BY sport
       )
     `).all();
+
+    if (!Array.isArray(rows) || rows.length === 0) {
+      state.isStale = true;
+      state.staleReasonCode = 'MODEL_HEALTH_STALE';
+      return state;
+    }
+
+    let latestRunAtMs = null;
     for (const row of rows) {
+      const sportKey = String(row.sport || '').toUpperCase();
+      if (sportKey) staleSports.add(sportKey);
+
+      const runAt = DateTime.fromISO(String(row.run_at || ''), { zone: 'utc' });
+      if (runAt.isValid) {
+        const ts = runAt.toMillis();
+        latestRunAtMs = latestRunAtMs == null ? ts : Math.max(latestRunAtMs, ts);
+      }
+
       if (row.status === 'critical') {
-        blocked.add(String(row.sport).toUpperCase());
+        blockedSports.add(sportKey);
       }
     }
+
+    if (latestRunAtMs == null) {
+      state.isStale = true;
+      state.staleReasonCode = 'MODEL_HEALTH_STALE';
+      blockedSports.clear();
+      return state;
+    }
+
+    state.latestRunAt = DateTime.fromMillis(latestRunAtMs, { zone: 'utc' }).toISO();
+    state.snapshotAgeMinutes = Math.max(0, Math.floor((nowUtc.toMillis() - latestRunAtMs) / 60_000));
+    if (state.snapshotAgeMinutes > maxAgeMinutes) {
+      state.isStale = true;
+      state.staleReasonCode = 'MODEL_HEALTH_STALE';
+      // Fail-open: stale health should not silently keep critical blocks forever.
+      blockedSports.clear();
+    }
   } catch (_) {
-    // Table missing or query error — fail open (no gates applied)
+    // Table missing or query error — report stale and fail open.
+    state.isStale = true;
+    state.staleReasonCode = 'MODEL_HEALTH_STALE';
+    blockedSports.clear();
   }
-  return blocked;
+
+  return state;
+}
+
+function loadModelHealthGates(db, opts = {}) {
+  return loadModelHealthState(db, opts).blockedSports;
 }
 
 
@@ -1224,7 +1291,16 @@ function shouldRejectNonPlayDecisionOutcomeCandidate(candidate, decisionOutcome)
   if (!candidate || typeof candidate !== 'object') return false;
   if (resolveEdgeSourceContract(candidate.sport, candidate.marketType) !== 'MODEL') return false;
   if (!resolveModelContractPayloadCardType(candidate.sport, candidate.marketType)) return true;
-  return decisionOutcome?.status !== 'PLAY';
+  const status = String(decisionOutcome?.status || '').toUpperCase();
+  return !POTD_MONITORED_DECISION_STATUSES.has(status);
+}
+
+function isOfficialPlayDecisionOutcomeCandidate(candidate) {
+  if (!candidate || typeof candidate !== 'object') return false;
+  if (resolveEdgeSourceContract(candidate.sport, candidate.marketType) !== 'MODEL') return true;
+  const contractCardType = resolveModelContractPayloadCardType(candidate.sport, candidate.marketType);
+  if (!contractCardType) return false;
+  return String(candidate.decisionOutcomeStatus || '').toUpperCase() === 'PLAY';
 }
 
 async function gatherBestCandidate({
@@ -1317,7 +1393,12 @@ async function gatherBestCandidate({
         }
 
         const scored = scoreCandidateFn(candidate);
-        if (scored) scoredCandidates.push(scored);
+        if (scored) {
+          scoredCandidates.push({
+            ...scored,
+            decisionOutcomeStatus: String(gameDecisionOutcome?.status || '').toUpperCase() || null,
+          });
+        }
       }
     }
   }
@@ -1350,7 +1431,19 @@ async function gatherBestCandidate({
 
   // Apply per-sport noise floors before ranking; pass minEdgePct: 0 so
   // selectTopPlaysFn does not re-apply a single global floor on top.
-  const modelHealthGates = loadModelHealthGates(db);
+  const modelHealthState = loadModelHealthState(db);
+  const modelHealthGates = modelHealthState.blockedSports;
+  if (POTD_AUDIT_LOG_ENABLED && modelHealthState.isStale) {
+    console.log(JSON.stringify({
+      type: 'POTD_MODEL_HEALTH_STALE',
+      reason_code: modelHealthState.staleReasonCode,
+      maxAgeMinutes: modelHealthState.maxAgeMinutes,
+      snapshotAgeMinutes: modelHealthState.snapshotAgeMinutes,
+      latestRunAt: modelHealthState.latestRunAt,
+      staleSports: Array.from(modelHealthState.staleSports),
+      note: 'Model health snapshots are stale; critical gates are fail-open for this run',
+    }));
+  }
   if (POTD_AUDIT_LOG_ENABLED && modelHealthGates.size > 0) {
     console.log(JSON.stringify({
       type: 'POTD_MODEL_HEALTH_GATES_ACTIVE',
@@ -1370,6 +1463,19 @@ async function gatherBestCandidate({
   }
   const fireableSelectorPool = playDateScopedCandidates.filter(c => {
     if (!isModelBackedCandidate(c)) return false;
+    if (!isOfficialPlayDecisionOutcomeCandidate(c)) {
+      if (POTD_AUDIT_LOG_ENABLED) {
+        console.log(JSON.stringify({
+          type: 'POTD_OFFICIAL_PLAY_DECISION_OUTCOME_GATE',
+          sport: c.sport,
+          marketType: c.marketType,
+          selectionLabel: c.selectionLabel,
+          decisionOutcomeStatus: c.decisionOutcomeStatus || null,
+          note: 'Candidate excluded from official POTD selection because DecisionOutcome status is not PLAY',
+        }));
+      }
+      return false;
+    }
     if (isSportModelGated(c)) {
       if (POTD_AUDIT_LOG_ENABLED) {
         console.log(JSON.stringify({
@@ -1380,7 +1486,7 @@ async function gatherBestCandidate({
           edgePct: c.edgePct,
           totalScore: c.totalScore,
           edgeSourceTag: c.edgeSourceTag,
-          note: 'MODEL candidate blocked — sport health status is critical or stale',
+          note: 'MODEL candidate blocked — sport health status is critical',
         }));
       }
       return false;
@@ -1453,6 +1559,8 @@ async function gatherBestCandidate({
     let shadowReason;
     if (identity && fireableIdentities.has(identity)) {
       shadowReason = SHADOW_REASONS.NOT_SELECTED;
+    } else if (c.decisionOutcomeStatus && c.decisionOutcomeStatus !== 'PLAY') {
+      shadowReason = SHADOW_REASONS.NON_PLAY_DECISION_OUTCOME;
     } else if (c.edgeSourceTag !== 'MODEL') {
       shadowReason = SHADOW_REASONS.NON_MODEL_SOURCE;
     } else if (hasEdgeFormulaMismatch(c)) {
@@ -1491,6 +1599,7 @@ async function gatherBestCandidate({
     allScoredCandidates: playDateScopedCandidates,
     fetchErrors,
     activeSports: sports,
+    modelHealthState,
     candidatesCount: playDateScopedCandidates.length,
     viableCount: fireableSelectorPool.length,
   };
@@ -1569,6 +1678,7 @@ async function runPotdEngine({
         allScoredCandidates,
         fetchErrors,
         activeSports,
+        modelHealthState,
         candidatesCount,
         viableCount,
       } = await gatherBestCandidate({
@@ -1588,6 +1698,7 @@ async function runPotdEngine({
       const bankrollAtPost = bankrollState.bankroll;
 
       if (!bestCandidate) {
+        const noPickReason = modelHealthState?.isStale ? 'model_health_stale' : 'no_viable_candidates';
         const topByEdge = allScoredCandidates
           .filter(c => isModelBackedCandidate(c))
           .filter(c => typeof c.edgePct === 'number' && isFinite(c.edgePct) && typeof c.totalScore === 'number' && isFinite(c.totalScore))
@@ -1622,6 +1733,10 @@ async function runPotdEngine({
         });
         markJobRunSuccess(jobRunId, {
           no_play: true,
+          reason: noPickReason,
+          model_health_stale: Boolean(modelHealthState?.isStale),
+          model_health_latest_run_at: modelHealthState?.latestRunAt ?? null,
+          model_health_snapshot_age_minutes: modelHealthState?.snapshotAgeMinutes ?? null,
           play_date: playDate,
           active_sports: activeSports.join(','),
           fetch_errors: fetchErrors.length,
@@ -1632,7 +1747,7 @@ async function runPotdEngine({
           const alertMsg = buildNopickAlertMessage({
             alertCandidate: topByEdge,
             topByEdge,
-            reason: 'no_viable_candidates',
+            reason: noPickReason,
             candidatesCount,
             viableCount,
             nowEt,
@@ -1651,6 +1766,7 @@ async function runPotdEngine({
           success: true,
           jobRunId,
           noPlay: true,
+          reason: noPickReason,
           playDate,
           fetchErrors,
         };
@@ -2023,6 +2139,7 @@ module.exports = {
     getActivePotdSports,
     selectNearMissShadowCandidates,
     buildCandidateAuditEntry,
+    loadModelHealthState,
     loadModelHealthGates,
     hasEmptySelectionRejectionCode,
   },
