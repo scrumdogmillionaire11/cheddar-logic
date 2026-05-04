@@ -1374,18 +1374,22 @@ async function gatherBestCandidate({
           model: resolveModelContractPayloadCardType(candidate?.sport, candidate?.marketType),
         });
 
-        if (shouldRejectNonPlayDecisionOutcomeCandidate(candidate, gameDecisionOutcome)) {
-          if (POTD_AUDIT_LOG_ENABLED) {
+        // For MODEL-sourced candidates: only allow those with valid decision_v2 status
+        // (PLAY, LEAN, SLIGHT_EDGE). Missing/invalid/non-monitored status means no signal exists.
+        const isModelContract = resolveEdgeSourceContract(candidate.sport, candidate.marketType) === 'MODEL';
+        const outcomeStatus = String(gameDecisionOutcome?.status || '').toUpperCase();
+        if (isModelContract && !POTD_MONITORED_DECISION_STATUSES.has(outcomeStatus)) {
+          // MODEL contract but status not in monitored set (missing, INVALID, PASS, etc.)
+          if (POTD_AUDIT_LOG_ENABLED && gameDecisionOutcome) {
             console.log(
               JSON.stringify({
-                type: 'POTD_NON_PLAY_DECISION_OUTCOME_REJECTION',
-                rejectionCode: 'NON_PLAY_DECISION_OUTCOME',
+                type: 'POTD_MODEL_DECISION_V2_NOT_MONITORED',
                 sport: candidate?.sport ?? null,
                 marketType: candidate?.marketType ?? null,
                 gameId: candidate?.gameId ?? null,
                 selectionLabel: candidate?.selectionLabel ?? null,
-                status: gameDecisionOutcome?.status ?? 'MISSING',
-                note: 'Candidate rejected during assembly before scoring because model-contract DecisionOutcome status is not PLAY',
+                status: outcomeStatus || 'MISSING',
+                note: 'MODEL contract candidate rejected because decision_v2 status is not in monitored set (PLAY/LEAN/SLIGHT_EDGE)',
               }),
             );
           }
@@ -1396,7 +1400,7 @@ async function gatherBestCandidate({
         if (scored) {
           scoredCandidates.push({
             ...scored,
-            decisionOutcomeStatus: String(gameDecisionOutcome?.status || '').toUpperCase() || null,
+            decisionOutcomeStatus: outcomeStatus || null,
           });
         }
       }
