@@ -819,12 +819,31 @@ jobs:
               # purge_everything clears HTML routes AND /_next/static/ chunk cache.
               # Targeted URL-list purge previously left stale CF-cached 404s for new
               # chunk hashes when a prior failed deploy dirtied the static asset cache.
-              curl -sS -X POST "https://api.cloudflare.com/client/v4/zones/${CF_ZONE_ID}/purge_cache" \
-                -H "Authorization: Bearer ${CF_API_TOKEN}" \
-                -H "Content-Type: application/json" \
-                --data '{"purge_everything":true}' \
-                | tee /tmp/cloudflare_purge.json
-              if grep -Eq '"success"[[:space:]]*:[[:space:]]*true' /tmp/cloudflare_purge.json; then
+              CF_PURGE_OK=0
+              CF_PURGE_CURL_EXIT=0
+              CF_PURGE_ATTEMPTS=3
+              for attempt in $(seq 1 "$CF_PURGE_ATTEMPTS"); do
+                : > /tmp/cloudflare_purge.err
+                if curl -sS -X POST "https://api.cloudflare.com/client/v4/zones/${CF_ZONE_ID}/purge_cache" \
+                  -H "Authorization: Bearer ${CF_API_TOKEN}" \
+                  -H "Content-Type: application/json" \
+                  --data '{"purge_everything":true}' \
+                  > /tmp/cloudflare_purge.json 2> /tmp/cloudflare_purge.err; then
+                  CF_PURGE_CURL_EXIT=0
+                else
+                  CF_PURGE_CURL_EXIT=$?
+                fi
+
+                if [ "$CF_PURGE_CURL_EXIT" -eq 0 ] && grep -Eq '"success"[[:space:]]*:[[:space:]]*true' /tmp/cloudflare_purge.json; then
+                  CF_PURGE_OK=1
+                  break
+                fi
+
+                echo "Cloudflare purge attempt ${attempt}/${CF_PURGE_ATTEMPTS} failed (curl_exit=${CF_PURGE_CURL_EXIT}); retrying..."
+                sleep 5
+              done
+
+              if [ "$CF_PURGE_OK" -eq 1 ]; then
                 echo "Cloudflare cache purged (purge_everything) — waiting 90s for propagation..."
                 sleep 90
               else
@@ -832,10 +851,14 @@ jobs:
                 # Treat as a warning: build is live, origin checks passed; failing the deploy
                 # over a stale CF secret would be a false-negative. Operator must rotate
                 # CF_API_TOKEN in GitHub Actions secrets to restore automatic cache purging.
-                CF_ERR=$(cat /tmp/cloudflare_purge.json)
+                CF_ERR=$(cat /tmp/cloudflare_purge.json /tmp/cloudflare_purge.err 2>/dev/null)
                 if printf '%s' "$CF_ERR" | grep -q '"code":10000'; then
                   echo "::warning::CF_API_TOKEN authentication error (code 10000) — Cloudflare purge SKIPPED. Build is live but users may see stale CF-cached assets until TTL expires. Rotate the CF_API_TOKEN GitHub Actions secret to restore automatic purge."
                   echo "⚠️ **CF purge skipped (auth error)** — \`CF_API_TOKEN\` is expired or revoked. Rotate it in GitHub Actions secrets." >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
+                  CF_PURGE_SKIPPED=true
+                elif [ "${CF_PURGE_CURL_EXIT:-0}" -ne 0 ]; then
+                  echo "::warning::Cloudflare purge transport error (curl exit ${CF_PURGE_CURL_EXIT}) — skipping CF verification gates. Build is live and origin checks passed; users may briefly see stale CF-cached assets."
+                  echo "⚠️ **CF purge skipped (transport error)** — curl exit ${CF_PURGE_CURL_EXIT}. Origin deploy succeeded; Cloudflare propagation may lag." >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
                   CF_PURGE_SKIPPED=true
                 else
                   fail_deploy_no_rollback "Cloudflare purge failed: $CF_ERR"
