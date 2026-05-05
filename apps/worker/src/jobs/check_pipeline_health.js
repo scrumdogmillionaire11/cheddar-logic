@@ -39,12 +39,14 @@ const { getCurrentQuotaTier } = require('../schedulers/quota');
 const { keyTminus, TMINUS_BANDS } = require('../schedulers/windows');
 const { SPORTS_CONFIG: ODDS_SPORTS_CONFIG } = require('@cheddar-logic/odds/src/config');
 const { isFeatureEnabled } = require('@cheddar-logic/data/src/feature-flags');
+const settlementHealth = require('./report_settlement_health');
 const {
   collectVisibilityIntegrityDiagnostics,
-  maybeLoadLocalDotenv,
-} = require('./report_settlement_health');
+} = settlementHealth;
 
-maybeLoadLocalDotenv();
+if (typeof settlementHealth.maybeLoadLocalDotenv === 'function') {
+  settlementHealth.maybeLoadLocalDotenv();
+}
 
 function getSendDiscordMessages() {
   return require('./post_discord_cards').sendDiscordMessages;
