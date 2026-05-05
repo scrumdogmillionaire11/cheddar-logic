@@ -8,6 +8,8 @@
  */
 
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
 
 console.log('model-outputs-writers contract test');
 
@@ -31,6 +33,29 @@ assert.deepStrictEqual(
 assert.ok(
   KNOWN_MODEL_OUTPUT_WRITERS.includes('run_fpl_model.js'),
   'run_fpl_model.js must be a known model_outputs writer',
+);
+
+assert.ok(
+  !KNOWN_MODEL_OUTPUT_WRITERS.includes('run_nhl_model.js'),
+  'NHL must remain excluded from model_outputs writers; update ADR + route contract before any writer-set change',
+);
+
+// --- Route comment contract ---
+
+const routePath = path.resolve(
+  process.cwd(),
+  'src/app/api/model-outputs/route.ts',
+);
+const routeSource = fs.readFileSync(routePath, 'utf8');
+
+assert.ok(
+  routeSource.includes('NHL does not write to model_outputs by design'),
+  'route.ts must explicitly document NHL exclusion from model_outputs',
+);
+
+assert.ok(
+  routeSource.includes('ADR-0018'),
+  'route.ts must reference ADR-0018; update ADR + route contract before any writer-set change',
 );
 
 // --- FPL row distinguishability contract ---

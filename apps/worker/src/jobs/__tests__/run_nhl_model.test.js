@@ -4,8 +4,8 @@
  * Verifies:
  * 1. Job runs without error (exit code 0)
  * 2. job_runs table records job execution (status='success')
- * 3. model_outputs table has valid schema + non-null fields
- * 4. card_payloads table stores generated cards
+ * 3. NHL path never writes model_outputs
+ * 4. NHL path writes via card_payloads persistence surface
  * 5. Cards expire before game time (if game_time_utc is set)
  */
 
@@ -452,36 +452,31 @@ describe('run_nhl_model job', () => {
     }
   });
 
-  test('model_outputs table has valid schema if any records exist', async () => {
-    const results = await queryDb((db) => {
+  test('NHL run does not persist rows into model_outputs', async () => {
+    const result = await queryDb((db) => {
       const stmt = db.prepare(`
-        SELECT 
-          id, game_id, sport, model_name, confidence, output_data
+        SELECT COUNT(*) AS total
         FROM model_outputs
         WHERE sport = 'NHL'
-        LIMIT 100
       `);
-      return stmt.all();
+      return stmt.get();
     });
 
-    // It's OK if no results (no odds data), but if they exist, verify schema
-    if (results && results.length > 0) {
-      results.forEach((row) => {
-        expect(row.id).toBeTruthy();
-        expect(row.game_id).toBeTruthy();
-        expect(row.sport).toBe('NHL');
-        expect(row.model_name).toBeTruthy();
-        expect(row.confidence).toBeGreaterThanOrEqual(0);
-        expect(row.confidence).toBeLessThanOrEqual(1);
-        expect(row.output_data).toBeTruthy();
+    expect(result).toBeDefined();
+    expect(result.total).toBe(0);
+  });
 
-        // output_data should be valid JSON
-        const parsed = JSON.parse(row.output_data);
-        expect(parsed).toHaveProperty('prediction');
-        expect(parsed).toHaveProperty('confidence');
-        expect(parsed).toHaveProperty('reasoning');
-      });
-    }
+  test('run_nhl_model write path contract: card_payloads write path exists and model_outputs writer is absent', () => {
+    const jobSource = fs.readFileSync(
+      path.resolve(__dirname, '../run_nhl_model.js'),
+      'utf-8',
+    );
+    const sourceWithoutComments = jobSource
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/(^|\s)\/\/.*$/gm, '');
+
+    expect(sourceWithoutComments.includes('insertCardPayload')).toBe(true);
+    expect(/\binsertModelOutput\s*\(/.test(sourceWithoutComments)).toBe(false);
   });
 
   test('card_payloads table stores generated cards if any passed confidence threshold', async () => {
