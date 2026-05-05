@@ -474,6 +474,61 @@ function buildDisplayLogNotEnrolledDiagnostic({
   };
 }
 
+/**
+ * Classify a row as LEGACY_QUARANTINED, CURRENT_PATH_DEFECT, or UNKNOWN_UNCLASSIFIED.
+ *
+ * LEGACY_QUARANTINED: Rows created before 2026-05-01 with known pre-fix display-enrollment issues.
+ * CURRENT_PATH_DEFECT: Rows created after 2026-05-01 with defects that should count against regression health.
+ * UNKNOWN_UNCLASSIFIED: Rows that don't fit the known contracts and need manual review.
+ *
+ * @param {Object} row - Card payload row with visibility classification.
+ * @param {string} visibilityBucket - Output from classifyVisibilityIntegrityRow().bucket.
+ * @param {Date} createdAt - Card creation timestamp.
+ * @returns {Object} { quarantineBucket, reason }
+ */
+function classifyRowQuarantine(row, visibilityBucket, createdAt) {
+  // Cutoff date: rows before this are considered legacy (pre-fix)
+  const LEGACY_CUTOFF = new Date('2026-05-01T00:00:00Z');
+  const rowDate = createdAt instanceof Date ? createdAt : new Date(createdAt || 0);
+
+  // Legacy display-enrollment debt: rows that existed before the fix
+  if (visibilityBucket === DISPLAY_LOG_NOT_ENROLLED_BUCKET && rowDate < LEGACY_CUTOFF) {
+    return {
+      quarantineBucket: 'LEGACY_QUARANTINED',
+      reason: 'Pre-fix display-enrollment residue created before cutoff date',
+    };
+  }
+
+  // Current-path defects: rows with known issues after the fix
+  if (
+    (visibilityBucket === DISPLAY_LOG_NOT_ENROLLED_BUCKET ||
+      visibilityBucket === 'NOT_DISPLAY_ELIGIBLE') &&
+    rowDate >= LEGACY_CUTOFF
+  ) {
+    return {
+      quarantineBucket: 'CURRENT_PATH_DEFECT',
+      reason: 'New defect detected after fix deployment',
+    };
+  }
+
+  // Known-good classifications: projection-only, enrolled, valid pass
+  if (
+    visibilityBucket === 'PROJECTION_ONLY' ||
+    visibilityBucket === 'ENROLLED'
+  ) {
+    return {
+      quarantineBucket: null, // Not quarantined; expected classification
+      reason: null,
+    };
+  }
+
+  // Anything else: unknown or ambiguous
+  return {
+    quarantineBucket: 'UNKNOWN_UNCLASSIFIED',
+    reason: `Unclassified row with visibility bucket: ${visibilityBucket}`,
+  };
+}
+
 function collectVisibilityIntegrityDiagnostics(db, {
   sport = null,
   dateRange = null,
@@ -511,20 +566,56 @@ function collectVisibilityIntegrityDiagnostics(db, {
     NOT_DISPLAY_ELIGIBLE: 0,
     [DISPLAY_LOG_NOT_ENROLLED_BUCKET]: 0,
   };
+  const quarantineCounts = {
+    LEGACY_QUARANTINED: 0,
+    CURRENT_PATH_DEFECT: 0,
+    UNKNOWN_UNCLASSIFIED: 0,
+  };
   const samples = {
     ENROLLED: [],
     PROJECTION_ONLY: [],
     NOT_DISPLAY_ELIGIBLE: [],
     [DISPLAY_LOG_NOT_ENROLLED_BUCKET]: [],
   };
+  const quarantineSamples = {
+    LEGACY_QUARANTINED: [],
+    CURRENT_PATH_DEFECT: [],
+    UNKNOWN_UNCLASSIFIED: [],
+  };
 
   let actionableRecentRows = 0;
+  let currentPathDefectCount = 0; // Defects excluding legacy quarantined rows
 
   for (const row of rows) {
     const classified = classifyVisibilityIntegrityRow(row);
     counts[classified.bucket] += 1;
     if (classified.displayEligible) {
       actionableRecentRows += 1;
+    }
+
+    // Apply quarantine classification
+    const quarantine = classifyRowQuarantine(row, classified.bucket, row.created_at);
+    if (quarantine.quarantineBucket) {
+      quarantineCounts[quarantine.quarantineBucket] += 1;
+      if (quarantine.quarantineBucket === 'CURRENT_PATH_DEFECT') {
+        currentPathDefectCount += 1;
+      }
+
+      if (quarantineSamples[quarantine.quarantineBucket].length < limit) {
+        const officialStatus = resolveVisibilityOfficialStatus(classified.payloadData);
+        quarantineSamples[quarantine.quarantineBucket].push({
+          cardId: row.card_id,
+          gameId: row.game_id,
+          sport: row.sport,
+          cardType: row.card_type,
+          cardTitle: row.card_title || null,
+          createdAt: row.created_at || null,
+          displayedAt: row.displayed_at || null,
+          officialStatus: officialStatus || null,
+          visibilityBucket: classified.bucket,
+          quarantineReason: quarantine.reason,
+        });
+      }
     }
 
     if (samples[classified.bucket].length < limit) {
@@ -548,6 +639,11 @@ function collectVisibilityIntegrityDiagnostics(db, {
     actionableRecentRows,
     counts,
     samples,
+    quarantine: {
+      counts: quarantineCounts,
+      samples: quarantineSamples,
+      currentPathDefectCount,
+    },
     displayLogNotEnrolled: buildDisplayLogNotEnrolledDiagnostic({
       count: counts[DISPLAY_LOG_NOT_ENROLLED_BUCKET],
       samples: samples[DISPLAY_LOG_NOT_ENROLLED_BUCKET],
