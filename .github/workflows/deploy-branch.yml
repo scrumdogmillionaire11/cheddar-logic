@@ -17,7 +17,7 @@ on:
       worker_only:
         description: 'Deploy worker only (skip web build)'
         required: false
-        default: 'true'
+        default: true
         type: boolean
 
 env:
@@ -153,6 +153,9 @@ jobs:
             # Stop worker before any installs or migrations
             sudo systemctl stop cheddar-worker || true
             rm -f "${CHEDDAR_DB_PATH}.lock"
+
+            # Shared disk hygiene before installs to prevent partial deploys.
+            MIN_FREE_KB=524288 bash /opt/cheddar-logic/scripts/deploy-disk-hygiene.sh /opt
 
             # Install package + worker deps (omit dev)
             npm --prefix packages/data ci --omit=dev
