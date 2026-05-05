@@ -201,6 +201,26 @@ function parseOddsApiScoreValue(value) {
   return parsed;
 }
 
+function isFinalNhlSnapshot(snapshot) {
+  if (!snapshot || snapshot.available !== true) return false;
+  if (snapshot.isFinal !== true) return false;
+
+  if (
+    snapshot.homeScore === null ||
+    snapshot.homeScore === undefined ||
+    snapshot.homeScore === '' ||
+    snapshot.awayScore === null ||
+    snapshot.awayScore === undefined ||
+    snapshot.awayScore === ''
+  ) {
+    return false;
+  }
+
+  const homeScore = Number(snapshot.homeScore);
+  const awayScore = Number(snapshot.awayScore);
+  return Number.isFinite(homeScore) && Number.isFinite(awayScore);
+}
+
 function oddsApiScoreEventToComparable(rawEvent) {
   if (!rawEvent || rawEvent.completed !== true) return null;
   const homeName = String(rawEvent.home_team || '').trim();
@@ -1495,13 +1515,13 @@ async function settleGameResults({
                 nhlGameId: nhlGamecenterId,
                 timeoutMs: NHL_API_TIMEOUT_MS,
               });
-              if (passOne.available) {
+              if (isFinalNhlSnapshot(passOne)) {
                 const passTwo = await fetchNhlSettlementSnapshot({
                   nhlGameId: nhlGamecenterId,
                   timeoutMs: NHL_API_TIMEOUT_MS,
                 });
 
-                if (passTwo.available && areNhlSnapshotsEquivalent(passOne, passTwo)) {
+                if (isFinalNhlSnapshot(passTwo) && areNhlSnapshotsEquivalent(passOne, passTwo)) {
                   selectedMatch = {
                     event: {
                       id: `nhl:${nhlGamecenterId}`,
@@ -1527,12 +1547,26 @@ async function settleGameResults({
                   ]
                     .filter(Boolean)
                     .join(';');
+                } else if (passTwo.available && passTwo.isFinal !== true) {
+                  missReason = [
+                    missReason,
+                    'nhl_pass2_not_final',
+                  ]
+                    .filter(Boolean)
+                    .join(';');
                 } else {
                   nhlApiDivergenceSkips++;
                   missReason = [missReason, 'nhl_confirmation_divergence']
                     .filter(Boolean)
                     .join(';');
                 }
+              } else if (passOne.available && passOne.isFinal !== true) {
+                missReason = [
+                  missReason,
+                  'nhl_not_final',
+                ]
+                  .filter(Boolean)
+                  .join(';');
               } else {
                 missReason = [
                   missReason,
@@ -1950,6 +1984,7 @@ module.exports = {
     findStrictNameTimeMatch,
     findNcaamFuzzyNameTimeMatch,
     findMatchForGame,
+    isFinalNhlSnapshot,
     getGameSignature,
     applyEventUseDedupRule,
     scoreMatchConfidence,

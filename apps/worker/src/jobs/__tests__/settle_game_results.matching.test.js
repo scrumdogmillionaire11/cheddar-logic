@@ -33,6 +33,35 @@ function buildCompletedEvent({
 }
 
 describe('settle_game_results matching hardening', () => {
+  test('NHL snapshot eligibility requires final state', () => {
+    expect(
+      __private.isFinalNhlSnapshot({
+        available: true,
+        isFinal: true,
+        homeScore: 3,
+        awayScore: 2,
+      }),
+    ).toBe(true);
+
+    expect(
+      __private.isFinalNhlSnapshot({
+        available: true,
+        isFinal: false,
+        homeScore: 3,
+        awayScore: 2,
+      }),
+    ).toBe(false);
+
+    expect(
+      __private.isFinalNhlSnapshot({
+        available: true,
+        isFinal: true,
+        homeScore: null,
+        awayScore: 2,
+      }),
+    ).toBe(false);
+  });
+
   test('uses mapped ESPN event id when it is completed and exact team match', () => {
     const dbGame = {
       game_id: 'canonical-abc',
