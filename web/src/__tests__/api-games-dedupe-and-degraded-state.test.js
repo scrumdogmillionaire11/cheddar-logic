@@ -205,7 +205,48 @@ console.log('🧪 Test 2: Duplicate game_id rows collapse to most-recent odds sn
 // ---------------------------------------------------------------------------
 // Test 3: buildGamesResponseData defaults game_state to 'healthy'
 // ---------------------------------------------------------------------------
-console.log('🧪 Test 3: buildGamesResponseData defaults game_state to "healthy"');
+console.log('🧪 Test 3: Canonical resolver collapses external+canonical duplicate rows');
+{
+  const canonical = makeRow({
+    game_id: 'gid-canonical',
+    sport: 'NHL',
+    home_team: 'COL',
+    away_team: 'MIN',
+    odds_captured_at: '2026-05-10T08:00:00Z',
+  });
+  const external = makeRow({
+    game_id: '401871417',
+    sport: 'NHL',
+    home_team: 'COL',
+    away_team: 'MIN',
+    odds_captured_at: '2026-05-10T09:30:00Z',
+  });
+
+  const { deduplicatedRows } = prepareGamesServiceRows({
+    rows: [canonical, external],
+    lifecycleMode: 'pregame',
+    playsMap: new Map(),
+    resolveCanonicalGameId: (gameId) =>
+      gameId === '401871417' ? 'gid-canonical' : gameId,
+  });
+
+  assert.strictEqual(
+    deduplicatedRows.length,
+    1,
+    `Expected 1 row after canonical dedupe, got ${deduplicatedRows.length}`,
+  );
+  assert.strictEqual(
+    deduplicatedRows[0].game_id,
+    '401871417',
+    'Canonical dedupe should keep the most recent row by odds_captured_at',
+  );
+  console.log('✅ PASS: Canonical resolver deduped external+canonical duplicate rows\n');
+}
+
+// ---------------------------------------------------------------------------
+// Test 4: buildGamesResponseData defaults game_state to 'healthy'
+// ---------------------------------------------------------------------------
+console.log('🧪 Test 4: buildGamesResponseData defaults game_state to "healthy"');
 {
   const row = makeRow({ game_id: 'gid-healthy', h2h_home: -120, h2h_away: 100 });
   const data = buildGamesResponseData([row], 'pregame');
@@ -220,9 +261,9 @@ console.log('🧪 Test 3: buildGamesResponseData defaults game_state to "healthy
 }
 
 // ---------------------------------------------------------------------------
-// Test 4: buildGamesResponseData propagates gameState: 'degraded'
+// Test 5: buildGamesResponseData propagates gameState: 'degraded'
 // ---------------------------------------------------------------------------
-console.log('🧪 Test 4: buildGamesResponseData propagates gameState option');
+console.log('🧪 Test 5: buildGamesResponseData propagates gameState option');
 {
   const row = makeRow({ game_id: 'gid-degraded' });
   const data = buildGamesResponseData([row], 'pregame', { gameState: 'degraded' });
@@ -237,9 +278,9 @@ console.log('🧪 Test 4: buildGamesResponseData propagates gameState option');
 }
 
 // ---------------------------------------------------------------------------
-// Test 5: buildGamesTimeoutFallbackPayload degraded_base_games path
+// Test 6: buildGamesTimeoutFallbackPayload degraded_base_games path
 // ---------------------------------------------------------------------------
-console.log('🧪 Test 5: Timeout fallback with rows → response_mode=degraded_base_games, game_state=degraded');
+console.log('🧪 Test 6: Timeout fallback with rows → response_mode=degraded_base_games, game_state=degraded');
 {
   const row = makeRow({ game_id: 'gid-timeout', h2h_home: -110, h2h_away: -110 });
 
@@ -275,9 +316,9 @@ console.log('🧪 Test 5: Timeout fallback with rows → response_mode=degraded_
 }
 
 // ---------------------------------------------------------------------------
-// Test 6: buildGamesTimeoutFallbackPayload stale_cache path
+// Test 7: buildGamesTimeoutFallbackPayload stale_cache path
 // ---------------------------------------------------------------------------
-console.log('🧪 Test 6: Timeout fallback with cache entry → response_mode=stale_cache, game_state=stale');
+console.log('🧪 Test 7: Timeout fallback with cache entry → response_mode=stale_cache, game_state=stale');
 {
   const cachedRow = makeRow({ game_id: 'gid-cached', h2h_home: -120, h2h_away: 100 });
   const cachedData = buildGamesResponseData([cachedRow], 'pregame', { gameState: 'healthy' });

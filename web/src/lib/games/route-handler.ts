@@ -2536,7 +2536,8 @@ export async function GET(request: NextRequest) {
 
     // STEP 1 FIX: Resolve external game IDs (ESPN, etc.) that map to our canonical game_ids
     // This allows props stored with external IDs to be joined to games with canonical IDs
-    const externalToCanonicalMap = new Map<string, string>(); // external_game_id -> canonical game_id
+    const externalToCanonicalMap = new Map<string, string>(); // alias game_id -> canonical game_id
+    const baseGameIdSet = new Set(gameIds);
     const allQueryableIds: string[] = [...gameIds]; // Start with canonical IDs
 
     if (gameIds.length > 0) {
@@ -2546,20 +2547,37 @@ export async function GET(request: NextRequest) {
         SELECT game_id, external_game_id
         FROM game_id_map
         WHERE game_id IN (${idMapPlaceholders})
+           OR external_game_id IN (${idMapPlaceholders})
       `;
       const idMapStmt = db.prepare(idMapSql);
-      const idMapRows = idMapStmt.all(...gameIds) as Array<{
+      const idMapRows = idMapStmt.all(...gameIds, ...gameIds) as Array<{
         game_id: string;
         external_game_id: string;
       }>;
 
       for (const row of idMapRows) {
-        externalToCanonicalMap.set(row.external_game_id, row.game_id);
-        const canonicalSport = sportByGameId.get(row.game_id);
-        if (canonicalSport) {
-          sportByGameId.set(row.external_game_id, canonicalSport);
+        const rowGameId = String(row.game_id || '').trim();
+        const rowExternalGameId = String(row.external_game_id || '').trim();
+        if (!rowGameId || !rowExternalGameId || rowGameId === rowExternalGameId) {
+          continue;
         }
-        allQueryableIds.push(row.external_game_id);
+
+        const canonicalGameId = baseGameIdSet.has(rowGameId)
+          ? rowGameId
+          : baseGameIdSet.has(rowExternalGameId)
+            ? rowExternalGameId
+            : rowGameId;
+        const aliasGameId =
+          canonicalGameId === rowGameId ? rowExternalGameId : rowGameId;
+
+        externalToCanonicalMap.set(aliasGameId, canonicalGameId);
+        const canonicalSport = sportByGameId.get(canonicalGameId);
+        if (canonicalSport) {
+          sportByGameId.set(aliasGameId, canonicalSport);
+        }
+        if (!baseGameIdSet.has(aliasGameId)) {
+          allQueryableIds.push(aliasGameId);
+        }
       }
 
       // SQLite doesn't support array binding; build placeholders for ALL IDs (canonical + external)
@@ -4263,6 +4281,8 @@ export async function GET(request: NextRequest) {
       rows,
       lifecycleMode,
       playsMap,
+      resolveCanonicalGameId: (gameId) =>
+        externalToCanonicalMap.get(gameId) ?? gameId,
     });
 
     stageTracker.enter('transform');

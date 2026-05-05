@@ -67,8 +67,9 @@ export function prepareGamesServiceRows(params: {
   rows: GameRow[];
   lifecycleMode: LifecycleMode;
   playsMap: Map<string, Play[]>;
+  resolveCanonicalGameId?: (gameId: string) => string;
 }): GamesServiceRowsResult {
-  const { rows, lifecycleMode, playsMap } = params;
+  const { rows, lifecycleMode, playsMap, resolveCanonicalGameId } = params;
   const pregameRowsDroppedNoOddsNoPlays =
     lifecycleMode === 'pregame'
       ? rows.reduce((count, row) => {
@@ -96,6 +97,7 @@ export function prepareGamesServiceRows(params: {
   const deduplicatedRows = dedupeGamesByGameId({
     responseRows,
     playsMap,
+    resolveCanonicalGameId,
   });
 
   return {
@@ -108,17 +110,21 @@ export function prepareGamesServiceRows(params: {
 function dedupeGamesByGameId(params: {
   responseRows: GameRow[];
   playsMap: Map<string, Play[]>;
+  resolveCanonicalGameId?: (gameId: string) => string;
 }): GameRow[] {
   const seen = new Map<string, GameRow>();
   for (const row of params.responseRows) {
-    const existing = seen.get(row.game_id);
+    const dedupeKey = params.resolveCanonicalGameId
+      ? params.resolveCanonicalGameId(row.game_id)
+      : row.game_id;
+    const existing = seen.get(dedupeKey);
     if (!existing) {
-      seen.set(row.game_id, row);
+      seen.set(dedupeKey, row);
     } else {
       const existingKey = existing.odds_captured_at ?? existing.created_at;
       const rowKey = row.odds_captured_at ?? row.created_at;
       if (rowKey > existingKey) {
-        seen.set(row.game_id, row);
+        seen.set(dedupeKey, row);
       }
     }
   }
