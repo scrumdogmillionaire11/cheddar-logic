@@ -15,7 +15,6 @@ import {
   PROJECTION_RESULTS_FAMILY_OPTIONS as FAMILY_OPTIONS,
   PROJECTION_RESULTS_FAMILY_TOKEN_ALIASES as FAMILY_TOKEN_ALIASES,
   PROJECTION_RESULTS_SUPPORTED_FAMILY_SET as SUPPORTED_FAMILY_SET,
-  type FamilyOption,
 } from '@/lib/results/projection-results-contract';
 
 type ProjectionConfidenceFilter = 'ALL' | ConfidenceTier;
