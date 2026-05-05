@@ -99,8 +99,9 @@ function safeJsonParse(payload: string | null) {
 
 export function resolveDecisionTierResolution(
   payload: Record<string, unknown> | null,
-  context: DecisionTierContext,
+  _context: DecisionTierContext,
 ): DecisionTierResolution {
+  void _context;
   const play =
     payload?.play && typeof payload.play === 'object'
       ? (payload.play as Record<string, unknown>)

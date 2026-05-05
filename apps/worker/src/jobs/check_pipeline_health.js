@@ -22,7 +22,6 @@
  * - CARDS_FRESHNESS_MAX_AGE_MINUTES (default: 30; informational stale-card age only)
  */
 
-require('dotenv').config();
 const { v4: uuidV4 } = require('uuid');
 const { DateTime } = require('luxon');
 const {
@@ -36,14 +35,30 @@ const {
   buildPipelineHealthCheckId,
 } = require('@cheddar-logic/data');
 const { getContractForSport } = require('./execution-gate-freshness-contract');
-const { buildMlbMarketAvailability } = require('./run_mlb_model');
 const { getCurrentQuotaTier } = require('../schedulers/quota');
 const { keyTminus, TMINUS_BANDS } = require('../schedulers/windows');
-const { sendDiscordMessages } = require('./post_discord_cards');
 const { SPORTS_CONFIG: ODDS_SPORTS_CONFIG } = require('@cheddar-logic/odds/src/config');
 const { isFeatureEnabled } = require('@cheddar-logic/data/src/feature-flags');
-const { refreshStaleOdds } = require('./refresh_stale_odds');
-const { collectVisibilityIntegrityDiagnostics } = require('./report_settlement_health');
+const settlementHealth = require('./report_settlement_health');
+const {
+  collectVisibilityIntegrityDiagnostics,
+} = settlementHealth;
+
+if (typeof settlementHealth.maybeLoadLocalDotenv === 'function') {
+  settlementHealth.maybeLoadLocalDotenv();
+}
+
+function getSendDiscordMessages() {
+  return require('./post_discord_cards').sendDiscordMessages;
+}
+
+function getRefreshStaleOdds() {
+  return require('./refresh_stale_odds').refreshStaleOdds;
+}
+
+function getBuildMlbMarketAvailability() {
+  return require('./run_mlb_model').buildMlbMarketAvailability;
+}
 
 const WATCHDOG_CRITICAL_BREACH = 'WATCHDOG_CRITICAL_BREACH';
 const WATCHDOG_INFO = 'WATCHDOG_INFO';
@@ -343,6 +358,7 @@ async function deliverPipelineHealthAlert(alertChecks, sourceCheckName) {
 
   try {
     const message = buildHealthAlertMessage(alertChecks);
+    const sendDiscordMessages = getSendDiscordMessages();
     await sendDiscordMessages({ webhookUrl, messages: [message] });
     writePipelineHealth(
       'watchdog',
@@ -574,6 +590,7 @@ async function checkOddsFreshness() {
   // Attempt bounded remediation before writing final fail status.
   let remediationDiag = { detected: staleGames.length, refreshed: 0, blocked: staleNearTerm.length };
   try {
+    const refreshStaleOdds = getRefreshStaleOdds();
     const remResult = await refreshStaleOdds({ jobKey: null });
     if (remResult?.staleDiagnostics) {
       remediationDiag = remResult.staleDiagnostics;
@@ -1825,6 +1842,7 @@ function checkMlbF5MarketAvailability({ expectF5Ml = false } = {}) {
 
   for (const game of upcomingGames) {
     const latestOdds = getLatestOddsSnapshot(db, game.game_id);
+    const buildMlbMarketAvailability = getBuildMlbMarketAvailability();
     const availability = buildMlbMarketAvailability(
       latestOdds
         ? {

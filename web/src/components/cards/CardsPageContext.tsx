@@ -63,7 +63,6 @@ import {
   resolveLifecycleModeFromUrlAndStorage,
   resolvePrimaryTotalProjectionPlay,
   summarizeNonJsonBody,
-  createProjectionFilterCard,
   deriveOnePModelCallFromReasons,
   hasProjectedTotal,
   filterPropCards,
@@ -910,7 +909,7 @@ export function CardsPageProvider({
       clearInterval(interval);
       document.removeEventListener('visibilitychange', onVisibilityChange);
     };
-  }, [gamesFetchKey]);
+  }, [gamesFetchKey, uiState.viewMode]);
 
   useEffect(() => {
     if (uiState.viewMode !== 'projections') {

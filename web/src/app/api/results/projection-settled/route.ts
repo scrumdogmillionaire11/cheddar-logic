@@ -148,7 +148,6 @@ const ACCURACY_LATEST_CTE_SQL = `WITH accuracy_latest AS (
 )`;
 
 const SUPPORTED_CARD_FAMILIES: string[] = Array.from(PROJECTION_RESULTS_PAGE_FAMILIES);
-const SUPPORTED_CARD_FAMILY_SQL = SUPPORTED_CARD_FAMILIES.map(() => '?').join(', ');
 
 function resolveRequestedFamily(param: string | null): string | null {
   if (!param) return null;

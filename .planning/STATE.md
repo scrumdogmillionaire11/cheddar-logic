@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Model Integrity & Betting Execution Hardening
 status: active
-last_updated: "2026-04-30T23:24:00Z"
-last_activity: "2026-04-30 - Reclaimed WI-1181 to close missing NHL model_signal selection-side enforcement"
+last_updated: "2026-05-04T22:45:00Z"
+last_activity: "2026-05-04 - WI-1222 executed: ADR-0018 + NHL model_outputs asymmetry regression contracts"
 ---
 
 # Project State
@@ -14,6 +14,8 @@ Historical quick-task completions: [COMPLETED_SPRINT_LOG.md](./COMPLETED_SPRINT_
 
 ## Latest Activity
 
+- **2026-05-04 — WI-1222 executed:** Added ADR-0018 documenting NHL card_payloads-only persistence, updated `/api/model-outputs` route source with explicit ADR-linked NHL omission note, tightened writer contract test to enforce NHL exclusion + ADR route reference, and replaced NHL worker `model_outputs` tolerance check with a strict zero-row regression guard.
+- **2026-05-04 — WI-1269 completed:** Non-destructive quarantine classification of historical display-enrollment debt with date-based cutoff (2026-05-01T00:00:00Z); implements three-bucket model (LEGACY_QUARANTINED, CURRENT_PATH_DEFECT, UNKNOWN_UNCLASSIFIED); preserves immutable forensic audit trail; test suite passes 5/5; addendum documentation committed with non-destructive guarantees (no payload mutation, no deletion, no backdating); ready for stakeholder acceptance and deployment.
 - **2026-04-30 — WI-1181 reclaimed:** Found a remaining consumer-side contract gap where opposite-side NHL moneyline candidates could still score via complement math even when `model_signal.selection_side` chose the other side; patch in progress to fail closed with `MODEL_SIGNAL_INCOMPLETE` + `SELECTION_SIDE_MISMATCH`.
 - **2026-04-30 — WI-1218 claimed:** Scoped migration hardening is in progress to remove inline `ALTER TABLE` guards from `packages/data/src/db/cards.js`, add `090_add_card_payloads_actual_result.sql`, and add a CI grep gate for inline DDL under `packages/data/src/db/**`.
 - **2026-04-25 — WI-1181 completed:** NHL producer now emits normalized MONEYLINE `model_signal` payloads with explicit blocker semantics (`NO_MARKET_LINE`, `GOALIE_CONTEXT_MISSING`, etc.) for non-actionable rows; model_signal wiring now covers both `nhl-model-output` and `nhl-moneyline-call`; verification passed with `npm --prefix apps/worker run test -- 'src/jobs/__tests__/run_nhl_model*.test.js' --runInBand`, `npm --prefix apps/worker run test -- src/jobs/potd/__tests__/signal-engine.test.js --runInBand`, and `npm --prefix apps/worker run test -- src/jobs/potd/ --runInBand` (159 tests).

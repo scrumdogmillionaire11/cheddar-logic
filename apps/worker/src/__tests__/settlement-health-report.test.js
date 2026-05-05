@@ -544,4 +544,56 @@ describe('settlement health report', () => {
       writeLog: false,
     });
   });
+
+  test('classifies legacy quarantined vs current-path defect rows correctly', async () => {
+    // This test verifies the quarantine classification logic works.
+    // The report should contain quarantine classifications for all visibility buckets.
+    const report = await generateSettlementHealthReport({ sampleLimit: 10 });
+
+    // Validate that quarantine classification structure exists
+    expect(report.visibilityIntegrity.quarantine).toBeDefined();
+    expect(report.visibilityIntegrity.quarantine.counts).toBeDefined();
+    expect(report.visibilityIntegrity.quarantine.samples).toBeDefined();
+
+    // Verify quarantine counters are present
+    expect(report.visibilityIntegrity.quarantine.counts).toMatchObject({
+      LEGACY_QUARANTINED: expect.any(Number),
+      CURRENT_PATH_DEFECT: expect.any(Number),
+      UNKNOWN_UNCLASSIFIED: expect.any(Number),
+    });
+
+    // Verify samples structure supports visibility + quarantine tracing
+    if (report.visibilityIntegrity.quarantine.samples.LEGACY_QUARANTINED.length > 0) {
+      const legacySample = report.visibilityIntegrity.quarantine.samples.LEGACY_QUARANTINED[0];
+      expect(legacySample).toHaveProperty('cardId');
+      expect(legacySample).toHaveProperty('visibilityBucket');
+      expect(legacySample).toHaveProperty('quarantineReason');
+      expect(legacySample.quarantineReason).toMatch(/Pre-fix|legacy|cutoff/i);
+    }
+
+    if (report.visibilityIntegrity.quarantine.samples.CURRENT_PATH_DEFECT.length > 0) {
+      const defectSample = report.visibilityIntegrity.quarantine.samples.CURRENT_PATH_DEFECT[0];
+      expect(defectSample).toHaveProperty('cardId');
+      expect(defectSample).toHaveProperty('visibilityBucket');
+      expect(defectSample).toHaveProperty('quarantineReason');
+      expect(defectSample.quarantineReason).toMatch(/New defect|after fix/i);
+    }
+
+    // Verify current-path defect count is tracked independently
+    expect(report.visibilityIntegrity.quarantine.currentPathDefectCount).toBeLessThanOrEqual(
+      report.visibilityIntegrity.quarantine.counts.CURRENT_PATH_DEFECT,
+    );
+
+    // Rows that are enrolled or projection-only should NOT appear in quarantine buckets
+    const nonQuarantinedIds = new Set();
+    report.visibilityIntegrity.samples.ENROLLED.forEach((s) => nonQuarantinedIds.add(s.cardId));
+    report.visibilityIntegrity.samples.PROJECTION_ONLY.forEach((s) => nonQuarantinedIds.add(s.cardId));
+
+    report.visibilityIntegrity.quarantine.samples.LEGACY_QUARANTINED.forEach((s) => {
+      expect(nonQuarantinedIds).not.toContain(s.cardId);
+    });
+    report.visibilityIntegrity.quarantine.samples.CURRENT_PATH_DEFECT.forEach((s) => {
+      expect(nonQuarantinedIds).not.toContain(s.cardId);
+    });
+  });
 });

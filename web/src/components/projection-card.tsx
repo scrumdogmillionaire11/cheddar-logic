@@ -73,30 +73,6 @@ function goalieStatusLabel(status?: string | null): string {
   return 'unknown';
 }
 
-function toUpperToken(value: unknown): string | null {
-  if (value === null || value === undefined) return null;
-  const normalized = String(value).trim().toUpperCase();
-  return normalized.length > 0 ? normalized : null;
-}
-
-function hasActionableProjectionCall(play: RawProjectionPlay): boolean {
-  const canonicalEnvelopeStatus = toUpperToken(
-    play.decision_v2?.canonical_envelope_v2?.official_status,
-  );
-  if (canonicalEnvelopeStatus === 'PASS') return false;
-  if (canonicalEnvelopeStatus === 'PLAY' || canonicalEnvelopeStatus === 'LEAN') {
-    return true;
-  }
-
-  const officialStatus = toUpperToken(play.decision_v2?.official_status);
-  if (officialStatus === 'PASS') return false;
-  if (officialStatus === 'PLAY' || officialStatus === 'LEAN') return true;
-
-  if (toUpperToken(play.action) === 'PASS') return false;
-  if (toUpperToken(play.classification) === 'PASS') return false;
-  return false;
-}
-
 function resolveMlbF5OfficialCall(play: RawProjectionPlay): {
   badgeLabel: 'UNDER 3.5' | 'OVER 4.5';
   badgeTone: 'UNDER' | 'OVER';

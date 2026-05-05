@@ -2,8 +2,11 @@
  * GET /api/model-outputs
  *
  * Read surface for the model_outputs table. Written by run_mlb_model.js,
- * run_nfl_model.js, and run_fpl_model.js via insertModelOutput(). Not written by NHL or NBA model
- * runners (they write card_payloads directly).
+ * run_nfl_model.js, and run_fpl_model.js via insertModelOutput().
+ *
+ * NOTE: NHL does not write to model_outputs by design. NHL and NBA runners
+ * write card_payloads directly. Absence of NHL rows in this endpoint is
+ * expected behavior under ADR-0018.
  *
  * Query params:
  *   ?sport=mlb|nfl  (optional) — filters to rows for that sport in the last 24h

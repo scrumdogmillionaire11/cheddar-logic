@@ -115,24 +115,6 @@ function actionFromOfficialStatus(
   return null;
 }
 
-function classificationFromAction(
-  action: 'FIRE' | 'HOLD' | 'PASS' | null,
-): 'BASE' | 'LEAN' | 'PASS' | null {
-  if (action === 'FIRE') return 'BASE';
-  if (action === 'HOLD') return 'LEAN';
-  if (action === 'PASS') return 'PASS';
-  return null;
-}
-
-function statusFromAction(
-  action: 'FIRE' | 'HOLD' | 'PASS' | null,
-): 'FIRE' | 'WATCH' | 'PASS' | null {
-  if (action === 'HOLD') return 'WATCH';
-  if (action === 'FIRE') return 'FIRE';
-  if (action === 'PASS') return 'PASS';
-  return null;
-}
-
 // ---------------------------------------------------------------------------
 // Feature flag helpers
 // ---------------------------------------------------------------------------
