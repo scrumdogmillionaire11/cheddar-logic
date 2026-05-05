@@ -15,7 +15,26 @@
 
 'use strict';
 
-require('dotenv').config();
+const PRODUCTION_LIKE_ENVS = new Set(['production', 'staging', 'preprod']);
+
+function maybeLoadLocalDotenv(options = {}) {
+  const env = String(process.env.NODE_ENV || 'development').toLowerCase();
+  const isProductionLike = PRODUCTION_LIKE_ENVS.has(env);
+  const explicitlyAllowed = process.env.ALLOW_DOTENV_LOCAL === 'true';
+
+  if (isProductionLike && !explicitlyAllowed) {
+    return { loaded: false, reason: 'DOTENV_DISABLED_PRODUCTION_LIKE' };
+  }
+
+  const dotenv = require('dotenv');
+  const result = dotenv.config({ ...options, override: false });
+  return {
+    loaded: !result?.error,
+    reason: result?.error ? 'DOTENV_LOAD_FAILED' : 'DOTENV_LOADED',
+  };
+}
+
+maybeLoadLocalDotenv();
 
 const fs = require('fs');
 const path = require('path');
@@ -1213,6 +1232,7 @@ if (require.main === module) {
 }
 
 module.exports = {
+  maybeLoadLocalDotenv,
   DISPLAY_LOG_NOT_ENROLLED_BUCKET,
   DISPLAY_LOG_NOT_ENROLLED_REASON,
   buildDisplayLogNotEnrolledDiagnostic,
