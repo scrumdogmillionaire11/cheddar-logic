@@ -1,255 +1,232 @@
 'use client';
 
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type {
-  LineGap,
+  MarketPulseOpportunity,
   MarketPulseResponse,
-  OddsGap,
   SportFilter,
 } from '@/lib/types/market-pulse';
 
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
-
-const POLL_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
-const STALENESS_RECOMPUTE_MS = 30 * 1000; // 30 seconds
-const LINE_GAP_DEFAULT_THRESHOLD = 1.5;
+const POLL_INTERVAL_MS = 60 * 60 * 1000;
+const STALENESS_RECOMPUTE_MS = 30 * 1000;
 const SPORT_TABS: SportFilter[] = ['ALL', 'NBA', 'MLB', 'NHL'];
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
 function minutesAgoFrom(isoTimestamp: string): number {
-  return Math.floor((Date.now() - new Date(isoTimestamp).getTime()) / 60_000);
+  return Math.max(
+    0,
+    Math.floor((Date.now() - new Date(isoTimestamp).getTime()) / 60_000),
+  );
 }
 
 function buildUrl(sport: SportFilter, includeWatch: boolean): string {
   const params = new URLSearchParams();
   if (sport !== 'ALL') params.set('sport', sport);
   if (includeWatch) params.set('includeWatch', 'true');
-  const qs = params.toString();
-  return `/api/market-pulse${qs ? `?${qs}` : ''}`;
+  const queryString = params.toString();
+  return `/api/market-pulse${queryString ? `?${queryString}` : ''}`;
 }
 
-function formatAmerican(price: number): string {
+function formatAmerican(price: number | null | undefined): string {
   if (!Number.isFinite(price)) return 'N/A';
-  return price > 0 ? `+${price}` : `${price}`;
+  return (price as number) > 0 ? `+${price}` : `${price}`;
 }
 
 function formatLine(line: number | null): string {
-  if (!Number.isFinite(line)) return 'N/A';
+  if (!Number.isFinite(line)) return 'moneyline';
   return Number(line).toFixed(1);
 }
 
-function matchupLabel(homeTeam: string | null, awayTeam: string | null): string {
-  const away = awayTeam?.trim() || 'Away';
-  const home = homeTeam?.trim() || 'Home';
-  return `${away} @ ${home}`;
+function formatProjectionValue(opportunity: MarketPulseOpportunity): string | null {
+  if (!Number.isFinite(opportunity.projectionValue)) return null;
+
+  if (opportunity.marketType === 'TOTAL') {
+    return `${(opportunity.projectionValue as number).toFixed(1)} projected total`;
+  }
+
+  return `${Math.round((opportunity.projectionValue as number) * 100)}% model win`;
 }
 
-// ---------------------------------------------------------------------------
-// Sub-components
-// ---------------------------------------------------------------------------
+function matchupLabel(homeTeam: string | null, awayTeam: string | null): string {
+  return `${awayTeam?.trim() || 'Away'} @ ${homeTeam?.trim() || 'Home'}`;
+}
+
+function marketLabel(opportunity: MarketPulseOpportunity): string {
+  if (opportunity.marketType === 'MONEYLINE') {
+    return `${opportunity.displayMarket} · ${opportunity.side}`;
+  }
+  return `${opportunity.displayMarket} ${formatLine(opportunity.line)} · ${opportunity.side}`;
+}
+
+function tierBadgeClass(tier: MarketPulseOpportunity['displayTier']): string {
+  if (tier === 'SCOUT') {
+    return 'border border-emerald-300/30 bg-emerald-400/15 text-emerald-200';
+  }
+  if (tier === 'WATCH') {
+    return 'border border-amber-300/30 bg-amber-400/15 text-amber-200';
+  }
+  if (tier === 'EXPIRED') {
+    return 'border border-white/10 bg-white/5 text-cloud/45';
+  }
+  return 'border border-sky-300/30 bg-sky-400/15 text-sky-200';
+}
+
+function projectionStatusLabel(
+  opportunity: MarketPulseOpportunity,
+): string {
+  if (opportunity.projectionStatus === 'CONFIRMED') {
+    return 'Projection aligned watch';
+  }
+  if (opportunity.projectionStatus === 'MISMATCHED') {
+    return 'Model disagreement';
+  }
+  if (opportunity.projectionStatus === 'UNSUPPORTED_SPORT') {
+    return 'Projection unsupported';
+  }
+  return 'Projection unavailable';
+}
 
 function SportTabs({
   active,
   onChange,
 }: {
   active: SportFilter;
-  onChange: (s: SportFilter) => void;
+  onChange: (sport: SportFilter) => void;
 }) {
   return (
     <div className="flex gap-1" role="tablist" aria-label="Sport filter">
-      {SPORT_TABS.map((s) => (
+      {SPORT_TABS.map((sport) => (
         <button
-          key={s}
+          key={sport}
           role="tab"
-          aria-selected={active === s}
-          onClick={() => onChange(s)}
+          aria-selected={active === sport}
+          onClick={() => onChange(sport)}
           className={[
             'rounded px-3 py-1 text-sm font-medium transition-colors',
-            active === s
+            active === sport
               ? 'bg-zinc-800 text-white'
-              : 'bg-zinc-100 text-zinc-600 hover:bg-zinc-200',
+              : 'border border-white/10 bg-white/5 text-cloud/60 hover:border-white/20 hover:bg-white/10',
           ].join(' ')}
         >
-          {s === 'ALL' ? 'All' : s}
+          {sport === 'ALL' ? 'All' : sport}
         </button>
       ))}
     </div>
   );
 }
 
-function WatchToggle({
-  enabled,
+function FilterToggle({
+  active,
+  label,
   onToggle,
 }: {
-  enabled: boolean;
+  active: boolean;
+  label: string;
   onToggle: () => void;
 }) {
   return (
     <button
       onClick={onToggle}
-      className="rounded border border-zinc-300 px-3 py-1 text-sm text-zinc-600 hover:bg-zinc-100"
+      className={[
+        'rounded border px-3 py-1 text-sm transition-colors',
+        active
+          ? 'border-cyan-300/50 bg-cyan-300/15 text-cloud'
+          : 'border-white/10 bg-white/5 text-cloud/60 hover:border-white/20 hover:bg-white/10',
+      ].join(' ')}
     >
-      {enabled ? 'Hide minor ▴' : 'Show minor ▾'}
+      {label}
     </button>
+  );
+}
+
+function OpportunityCard({
+  opportunity,
+}: {
+  opportunity: MarketPulseOpportunity;
+}) {
+  const projectionValue = formatProjectionValue(opportunity);
+
+  return (
+    <li className="rounded-2xl border border-white/10 bg-white/5 px-4 py-4 shadow-[0_12px_32px_rgba(0,0,0,0.2)] backdrop-blur-sm">
+      <div className="flex flex-wrap items-start gap-2">
+        <div className="flex-1">
+          <p className="font-medium text-cloud">
+            {matchupLabel(opportunity.homeTeam, opportunity.awayTeam)}
+          </p>
+          <p className="mt-1 text-sm text-cloud/55">{marketLabel(opportunity)}</p>
+        </div>
+        <span
+          className={[
+            'rounded px-2 py-0.5 text-xs font-semibold',
+            tierBadgeClass(opportunity.displayTier),
+          ].join(' ')}
+        >
+          {opportunity.displayTier}
+        </span>
+      </div>
+
+      <div className="mt-3 grid gap-2 text-sm text-cloud/70 sm:grid-cols-2">
+        <p>
+          Best observed price: <span className="font-medium">{opportunity.bestBook}</span>{' '}
+          {formatAmerican(opportunity.bestPrice)}
+        </p>
+        <p>
+          Comparison reference: <span className="font-medium">{opportunity.referenceBook}</span>{' '}
+          {formatAmerican(opportunity.referencePrice)}
+        </p>
+        <p>Market discrepancy: {opportunity.marketGapPct !== null ? `${(opportunity.marketGapPct * 100).toFixed(1)}%` : 'N/A'}</p>
+        <p>Line delta: {opportunity.lineDelta !== null ? `${opportunity.lineDelta.toFixed(1)} pts` : 'N/A'}</p>
+        <p>{projectionStatusLabel(opportunity)}</p>
+        <p>Freshness: {opportunity.freshnessStatus}</p>
+      </div>
+
+      {(projectionValue || Number.isFinite(opportunity.fairPrice)) && (
+        <p className="mt-3 text-sm text-cloud/65">
+          {projectionValue ?? 'Model reference available'}
+          {Number.isFinite(opportunity.fairPrice) ? ` · fair price ${formatAmerican(opportunity.fairPrice)}` : ''}
+        </p>
+      )}
+
+      {opportunity.verifyBeforeBetLabel && (
+        <p className="mt-3 text-sm font-medium text-amber-700">
+          {opportunity.verifyBeforeBetLabel}
+        </p>
+      )}
+
+      {opportunity.freshnessStatus === 'EXPIRED' && (
+        <p className="mt-2 text-sm text-cloud/50">Possible stale price</p>
+      )}
+
+      <p className="mt-3 text-xs text-cloud/40">
+        Last updated {opportunity.minutesAgo} min ago
+        {opportunity.suppressionReason ? ' · composite signal merged' : ''}
+      </p>
+    </li>
   );
 }
 
 function StalenessFooter({
   minutesAgo,
-  minutesUntilRefresh,
+  scheduleLabel,
 }: {
   minutesAgo: number;
-  minutesUntilRefresh: number;
+  scheduleLabel: string;
 }) {
   return (
-    <p className="mt-6 text-xs text-zinc-400">
-      Last scanned {minutesAgo} min ago · Next refresh in {minutesUntilRefresh}{' '}
-      min
+    <p className="mt-6 text-xs text-cloud/40">
+      Last scanned {minutesAgo} min ago · {scheduleLabel}
     </p>
   );
 }
 
-function LineDiscrepanciesSection({
-  gaps,
-  includeWatch,
+export default function MarketPulseClient({
+  scheduleLabel,
 }: {
-  gaps: LineGap[];
-  includeWatch: boolean;
+  scheduleLabel: string;
 }) {
-  const visible = gaps.filter(
-    (g) =>
-      g.delta >= LINE_GAP_DEFAULT_THRESHOLD || (includeWatch && g.tier === 'WATCH'),
-  );
-
-  if (visible.length === 0) return null;
-
-  return (
-    <section className="mt-6">
-      <h2 className="mb-2 text-xs font-semibold uppercase tracking-widest text-zinc-500">
-        Line Discrepancies
-      </h2>
-      <p className="mb-3 text-xs text-zinc-400">
-        Books diverging on the number itself
-      </p>
-      <ul className="space-y-3">
-        {visible.map((g) => {
-          const isWatch = g.tier === 'WATCH';
-          return (
-            <li
-              key={`${g.gameId}-${g.market}-${g.outlierBook}-${g.outlierLine}`}
-              className={[
-                'rounded border border-zinc-200 bg-white px-4 py-3',
-                isWatch ? 'opacity-50' : '',
-              ].join(' ')}
-            >
-              <div
-                className={[
-                  'flex items-start gap-4',
-                  isWatch ? 'text-sm' : '',
-                ].join(' ')}
-              >
-                <div className="flex-1">
-                  <span className="font-medium">
-                    {matchupLabel(g.homeTeam, g.awayTeam)}
-                  </span>
-                  <span className="ml-2 text-zinc-500">{g.market}</span>
-                </div>
-                <span className="shrink-0 rounded bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-800">
-                  OUTLIER
-                </span>
-              </div>
-              <p className="mt-1 text-sm text-zinc-600">
-                {g.outlierBook} · outlier {formatLine(g.outlierLine)} vs consensus{' '}
-                {formatLine(g.consensusLine)} · {g.delta.toFixed(1)} pt gap ·{' '}
-                <span className="text-zinc-400">
-                  {minutesAgoFrom(g.capturedAt)} min ago
-                </span>
-              </p>
-            </li>
-          );
-        })}
-      </ul>
-    </section>
-  );
-}
-
-function OddsDiscrepanciesSection({
-  gaps,
-  includeWatch,
-}: {
-  gaps: OddsGap[];
-  includeWatch: boolean;
-}) {
-  const visible = includeWatch ? gaps : gaps.filter((g) => g.tier === 'TRIGGER');
-
-  if (visible.length === 0) return null;
-
-  return (
-    <section className="mt-6">
-      <h2 className="mb-2 text-xs font-semibold uppercase tracking-widest text-zinc-500">
-        Odds Discrepancies
-      </h2>
-      <p className="mb-3 text-xs text-zinc-400">
-        Same number, price varies across books
-      </p>
-      <ul className="space-y-3">
-        {visible.map((g) => {
-          const isWatch = g.tier === 'WATCH';
-          const lineText = g.line == null ? 'moneyline' : `line ${formatLine(g.line)}`;
-          return (
-            <li
-              key={`${g.gameId}-${g.market}-${g.side}-${g.bestBook}-${g.worstBook}-${lineText}`}
-              className={[
-                'rounded border border-zinc-200 bg-white px-4 py-3',
-                isWatch ? 'opacity-50' : '',
-              ].join(' ')}
-            >
-              <div
-                className={[
-                  'flex items-start gap-4',
-                  isWatch ? 'text-sm' : '',
-                ].join(' ')}
-              >
-                <div className="flex-1">
-                  <span className="font-medium">
-                    {matchupLabel(g.homeTeam, g.awayTeam)}
-                  </span>
-                  <span className="ml-2 text-zinc-500">
-                    {g.market} · {lineText} · {g.side}
-                  </span>
-                </div>
-                <span className="shrink-0 rounded bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-800">
-                  PRICE
-                </span>
-              </div>
-              <p className="mt-1 text-sm text-zinc-600">
-                {g.bestBook} {formatAmerican(g.bestPrice)} vs {g.worstBook}{' '}
-                {formatAmerican(g.worstPrice)} · {(g.impliedEdgePct * 100).toFixed(1)}%
-                implied spread ·{' '}
-                <span className="text-zinc-400">
-                  {minutesAgoFrom(g.capturedAt)} min ago
-                </span>
-              </p>
-            </li>
-          );
-        })}
-      </ul>
-    </section>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Main client component
-// ---------------------------------------------------------------------------
-
-export default function MarketPulseClient() {
   const [sport, setSport] = useState<SportFilter>('ALL');
   const [includeWatch, setIncludeWatch] = useState(false);
+  const [showExpired, setShowExpired] = useState(false);
+  const [projectionOnly, setProjectionOnly] = useState(false);
   const [data, setData] = useState<MarketPulseResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -257,21 +234,21 @@ export default function MarketPulseClient() {
 
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const stalenessRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const lastFetchRef = useRef<number>(Date.now());
 
   const fetchData = useCallback(
-    async (currentSport: SportFilter, currentIncludeWatch: boolean) => {
+    async (nextSport: SportFilter, nextIncludeWatch: boolean) => {
       setLoading(true);
       setError(null);
       try {
-        const res = await fetch(buildUrl(currentSport, currentIncludeWatch));
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const json: MarketPulseResponse = await res.json();
-        setData(json);
-        setMinutesAgo(minutesAgoFrom(json.scannedAt));
-        lastFetchRef.current = Date.now();
-      } catch (e) {
-        setError(e instanceof Error ? e.message : 'Failed to load');
+        const response = await fetch(buildUrl(nextSport, nextIncludeWatch));
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const payload: MarketPulseResponse = await response.json();
+        setData(payload);
+        setMinutesAgo(minutesAgoFrom(payload.scannedAt));
+      } catch (fetchError) {
+        setError(
+          fetchError instanceof Error ? fetchError.message : 'Failed to load',
+        );
       } finally {
         setLoading(false);
       }
@@ -279,7 +256,6 @@ export default function MarketPulseClient() {
     [],
   );
 
-  // Mount: initial fetch + start polling
   useEffect(() => {
     fetchData(sport, includeWatch);
 
@@ -288,9 +264,9 @@ export default function MarketPulseClient() {
     }, POLL_INTERVAL_MS);
 
     stalenessRef.current = setInterval(() => {
-      setData((prev) => {
-        if (prev) setMinutesAgo(minutesAgoFrom(prev.scannedAt));
-        return prev;
+      setData((current) => {
+        if (current) setMinutesAgo(minutesAgoFrom(current.scannedAt));
+        return current;
       });
     }, STALENESS_RECOMPUTE_MS);
 
@@ -301,92 +277,102 @@ export default function MarketPulseClient() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Re-fetch and reset poll when sport or includeWatch changes
-  const handleSportChange = useCallback(
-    (newSport: SportFilter) => {
-      setSport(newSport);
+  const resetPoll = useCallback(
+    (nextSport: SportFilter, nextIncludeWatch: boolean) => {
       if (pollRef.current) clearInterval(pollRef.current);
-      fetchData(newSport, includeWatch);
+      fetchData(nextSport, nextIncludeWatch);
       pollRef.current = setInterval(() => {
-        fetchData(newSport, includeWatch);
+        fetchData(nextSport, nextIncludeWatch);
       }, POLL_INTERVAL_MS);
     },
-    [fetchData, includeWatch],
+    [fetchData],
+  );
+
+  const handleSportChange = useCallback(
+    (nextSport: SportFilter) => {
+      setSport(nextSport);
+      resetPoll(nextSport, includeWatch);
+    },
+    [includeWatch, resetPoll],
   );
 
   const handleWatchToggle = useCallback(() => {
-    const next = !includeWatch;
-    setIncludeWatch(next);
-    if (pollRef.current) clearInterval(pollRef.current);
-    fetchData(sport, next);
-    pollRef.current = setInterval(() => {
-      fetchData(sport, next);
-    }, POLL_INTERVAL_MS);
-  }, [fetchData, includeWatch, sport]);
+    const nextIncludeWatch = !includeWatch;
+    setIncludeWatch(nextIncludeWatch);
+    resetPoll(sport, nextIncludeWatch);
+  }, [includeWatch, resetPoll, sport]);
 
-  // Minutes until next auto-refresh (approximate)
-  const minutesUntilRefresh = Math.max(
-    0,
-    Math.ceil((POLL_INTERVAL_MS - (Date.now() - lastFetchRef.current)) / 60_000),
-  );
-
-  // ---------------------------------------------------------------------------
-  // Render
-  // ---------------------------------------------------------------------------
+  const visibleOpportunities = (data?.opportunities ?? []).filter((opportunity) => {
+    if (!showExpired && opportunity.freshnessStatus === 'EXPIRED') {
+      return false;
+    }
+    if (projectionOnly && opportunity.projectionStatus !== 'CONFIRMED') {
+      return false;
+    }
+    return true;
+  });
 
   return (
     <div>
       <div className="flex flex-wrap items-center gap-3">
         <SportTabs active={sport} onChange={handleSportChange} />
         <div className="flex-1" />
-        <WatchToggle enabled={includeWatch} onToggle={handleWatchToggle} />
+        <div className="flex flex-wrap gap-2">
+          <FilterToggle
+            active={includeWatch}
+            label={includeWatch ? 'Hide watch' : 'Show watch'}
+            onToggle={handleWatchToggle}
+          />
+          <FilterToggle
+            active={showExpired}
+            label={showExpired ? 'Hide expired' : 'Show expired'}
+            onToggle={() => setShowExpired((current) => !current)}
+          />
+          <FilterToggle
+            active={projectionOnly}
+            label={projectionOnly ? 'Show all cards' : 'Projection only'}
+            onToggle={() => setProjectionOnly((current) => !current)}
+          />
+        </div>
       </div>
 
       {loading && (
         <div className="mt-8 animate-pulse space-y-3">
-          {[1, 2, 3].map((n) => (
-            <div key={n} className="h-16 rounded bg-zinc-100" />
+          {[1, 2, 3].map((item) => (
+            <div key={item} className="h-24 rounded-2xl border border-white/10 bg-white/5" />
           ))}
         </div>
       )}
 
-      {!loading && error && (
-        <p className="mt-8 text-sm text-red-500">Error: {error}</p>
-      )}
+      {!loading && error && <p className="mt-8 text-sm text-rose-300">Error: {error}</p>}
 
       {!loading && !error && data && (
         <>
           {data.meta.gamesScanned === 0 ? (
-            // State 3 -- outside scan window
-            <div className="mt-12 text-center text-zinc-500">
+            <div className="mt-12 rounded-2xl border border-white/10 bg-white/5 px-6 py-8 text-center text-cloud/60">
               <p className="text-base">No games in current scan window.</p>
-              <p className="mt-1 text-sm">
-                Next check in {minutesUntilRefresh} min.
-              </p>
+              <p className="mt-1 text-sm">{scheduleLabel}</p>
             </div>
-          ) : data.lineGaps.length === 0 && data.oddsGaps.length === 0 ? (
-            // State 2 -- market is tight
-            <div className="mt-12 text-center text-zinc-500">
-              <p className="text-base">Market is tight right now.</p>
+          ) : visibleOpportunities.length === 0 ? (
+            <div className="mt-12 rounded-2xl border border-white/10 bg-white/5 px-6 py-8 text-center text-cloud/60">
+              <p className="text-base">No Market Pulse cards match the current filters.</p>
               <p className="mt-1 text-sm">
-                Last scanned {minutesAgo} min ago · Next scan in{' '}
-                {minutesUntilRefresh} min
+                Last scanned {minutesAgo} min ago · {scheduleLabel}
               </p>
             </div>
           ) : (
-            // State 1 -- discrepancies present
             <>
-              <LineDiscrepanciesSection
-                gaps={data.lineGaps}
-                includeWatch={includeWatch}
-              />
-              <OddsDiscrepanciesSection
-                gaps={data.oddsGaps}
-                includeWatch={includeWatch}
-              />
+              <ul className="mt-6 space-y-3">
+                {visibleOpportunities.map((opportunity) => (
+                  <OpportunityCard
+                    key={opportunity.opportunityId}
+                    opportunity={opportunity}
+                  />
+                ))}
+              </ul>
               <StalenessFooter
                 minutesAgo={minutesAgo}
-                minutesUntilRefresh={minutesUntilRefresh}
+                scheduleLabel={scheduleLabel}
               />
             </>
           )}

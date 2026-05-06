@@ -1,7 +1,4 @@
 // Shared TypeScript type definitions for the Market Pulse feature.
-// The API route (web/src/app/api/market-pulse/route.ts) declares its own
-// local interfaces -- do not modify that file. Import from here in all
-// client/server components.
 
 export interface LineGap {
   gameId: string;
@@ -35,17 +32,83 @@ export interface OddsGap {
   capturedAt: string;
 }
 
+export interface OddsSnapshot {
+  game_id: string;
+  sport: string;
+  captured_at: string;
+  raw_data: string;
+}
+
+export type MarketType = 'SPREAD' | 'TOTAL' | 'MONEYLINE';
+export type OpportunitySide = 'HOME' | 'AWAY' | 'OVER' | 'UNDER';
+export type SignalKind = 'LINE' | 'PRICE';
+export type FreshnessStatus =
+  | 'FRESH'
+  | 'STALE_VERIFY_REQUIRED'
+  | 'EXPIRED';
+export type ProjectionStatus =
+  | 'CONFIRMED'
+  | 'MISMATCHED'
+  | 'UNAVAILABLE'
+  | 'UNSUPPORTED_SPORT';
+export type OpportunityKind =
+  | 'PROJECTION_CONFIRMED'
+  | 'MARKET_ONLY'
+  | 'CONFLICTING'
+  | 'UNSUPPORTED';
+export type DisplayTier = 'SCOUT' | 'WATCH' | 'MARKET_ONLY' | 'EXPIRED';
+export type SuppressionReason = 'MERGED_COMPOSITE_SIGNAL' | null;
+
+export interface MarketPulseOpportunity {
+  opportunityId: string;
+  gameId: string;
+  sport: string;
+  homeTeam: string | null;
+  awayTeam: string | null;
+  marketType: MarketType;
+  displayMarket: string;
+  line: number | null;
+  side: OpportunitySide;
+  signalKinds: SignalKind[];
+  bestBook: string;
+  bestPrice: number | null;
+  referenceBook: string;
+  referencePrice: number | null;
+  marketGapPct: number | null;
+  lineDelta: number | null;
+  capturedAt: string;
+  minutesAgo: number;
+  freshnessStatus: FreshnessStatus;
+  projectionStatus: ProjectionStatus;
+  projectionValue?: number;
+  fairPrice?: number;
+  opportunityKind: OpportunityKind;
+  displayTier: DisplayTier;
+  verifyBeforeBetLabel: string | null;
+  suppressionReason: SuppressionReason;
+}
+
 export interface MarketPulseMeta {
   gamesScanned: number;
   booksScanned: number;
-  lineGapCount: number;
-  oddsGapCount: number;
+  rawLineGaps: number;
+  rawOddsGaps: number;
+  surfaced: number;
+  droppedDuplicate: number;
+  droppedStale: number;
+  droppedUnsupported: number;
+  droppedConflict: number;
+  freshCount: number;
+  staleVerifyRequiredCount: number;
+  expiredCount: number;
+  projectionAlignedWatchCount: number;
+  marketOnlyCount: number;
+  durationMs: number;
 }
 
 export interface MarketPulseResponse {
   scannedAt: string;
-  lineGaps: LineGap[];
-  oddsGaps: OddsGap[];
+  opportunities: MarketPulseOpportunity[];
   meta: MarketPulseMeta;
 }
 

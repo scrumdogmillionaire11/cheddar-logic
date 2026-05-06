@@ -1,95 +1,35 @@
 /**
  * GET /api/market-pulse
  *
- * Returns market line and odds discrepancies for the Market Pulse dashboard.
+ * Returns Market Pulse opportunities for the dashboard.
  * Scans the latest snapshot per game on each request to keep displayed prices current.
  *
  * Query params:
  *   sport        - optional; one of NBA, MLB, NHL (default: ALL)
  *   includeWatch - optional; set to "true" to include WATCH-tier items
- *                  (default: TRIGGER-tier only)
- *
- * Response shape:
- * {
- *   scannedAt:  string,       // ISO timestamp of the scan
- *   lineGaps:   LineGap[],    // sorted by delta desc
- *   oddsGaps:   OddsGap[],    // sorted by impliedEdgePct desc
- *   meta: {
- *     gamesScanned:  number,  // unique game_ids in the snapshot window
- *     booksScanned:  number,  // unique books seen across all snapshots
- *     lineGapCount:  number,  // total TRIGGER+WATCH before client filter
- *     oddsGapCount:  number,  // total TRIGGER+WATCH before client filter
- *   }
- * }
+ *                  (default: SCOUT + MARKET_ONLY + EXPIRED)
  */
 
-// ---------------------------------------------------------------------------
-// Domain types (declared first so require() casts below can reference them)
-// ---------------------------------------------------------------------------
+import type {
+  LineGap,
+  MarketPulseResponse,
+  OddsGap,
+  OddsSnapshot,
+} from '@/lib/types/market-pulse';
+import {
+  buildMarketPulsePayload,
+  filterOpportunitiesByWatch,
+  logMarketPulseSummary,
+} from '@/lib/market-pulse/observability';
+import type { ProjectionReaders } from '@/lib/market-pulse/opportunity-engine';
+import { createRequire } from 'node:module';
 
-interface OddsSnapshot {
-  game_id: string;
-  sport: string;
-  captured_at: string;
-  raw_data: string;
-}
-
-interface LineGap {
-  gameId: string;
-  sport: string;
-  homeTeam: string | null;
-  awayTeam: string | null;
-  market: string;
-  outlierBook: string;
-  outlierLine: number | null;
-  consensusLine: number | null;
-  delta: number;
-  direction: 'home' | 'away' | 'over' | 'under';
-  tier: 'TRIGGER' | 'WATCH';
-  capturedAt: string;
-}
-
-interface OddsGap {
-  gameId: string;
-  sport: string;
-  homeTeam: string | null;
-  awayTeam: string | null;
-  market: string;
-  line: number | null;
-  side: 'home' | 'away' | 'over' | 'under';
-  bestBook: string;
-  bestPrice: number;
-  worstBook: string;
-  worstPrice: number;
-  impliedEdgePct: number;
-  tier: 'TRIGGER' | 'WATCH';
-  capturedAt: string;
-}
-
-interface MarketPulseResponse {
-  scannedAt: string;
-  lineGaps: LineGap[];
-  oddsGaps: OddsGap[];
-  meta: {
-    gamesScanned: number;
-    booksScanned: number;
-    lineGapCount: number;
-    oddsGapCount: number;
-  };
-}
-
-interface CacheEntry {
-  payload: MarketPulseResponse;
-  expiresAt: number;
-}
-
-// ---------------------------------------------------------------------------
-// CJS runtime imports (no TS declarations -- require with explicit type casts)
-// ---------------------------------------------------------------------------
-
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-const { getOddsSnapshots } = require('@cheddar-logic/data') as {
+const require = createRequire(import.meta.url);
+const cheddarData = require('@cheddar-logic/data') as {
   getOddsSnapshots: (sport: string, sinceUtc: string) => OddsSnapshot[];
+  getLatestMlbModelOutput: ProjectionReaders['getLatestMlbModelOutput'];
+  getLatestNbaModelOutput: ProjectionReaders['getLatestNbaModelOutput'];
+  getLatestNhlModelOutput: ProjectionReaders['getLatestNhlModelOutput'];
 };
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -106,114 +46,45 @@ const { scanLineDiscrepancies, scanOddsDiscrepancies } = require(
   ) => OddsGap[];
 };
 
-// ---------------------------------------------------------------------------
-// Module-level server-side cache (survives across requests in the same process)
-// ---------------------------------------------------------------------------
+interface CacheEntry {
+  payload: MarketPulseResponse;
+  expiresAt: number;
+}
 
-const CACHE_TTL_MS = 0; // Disabled to ensure each request reflects latest odds snapshots
-const LOOKBACK_MS  = 30 * 60 * 1000;  // 30-minute snapshot window
+const CACHE_TTL_MS = 0;
+const LOOKBACK_MS = 30 * 60 * 1000;
 
 const VALID_SPORTS = ['ALL', 'NBA', 'MLB', 'NHL'] as const;
 type ValidSport = (typeof VALID_SPORTS)[number];
 
-// Keyed by sport string ('ALL' | 'NBA' | 'MLB' | 'NHL').
-// includeWatch is NOT part of the cache key -- the full TRIGGER+WATCH set is
-// cached; filtering to TRIGGER-only happens at serve time.
 const cache = new Map<string, CacheEntry>();
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-/**
- * Parse raw_data from every snapshot and collect all book names found.
- * Handles both flat { spreads, totals, h2h } and wrapped { markets: { ... } }
- * snapshot shapes written by the odds-ingest pipeline.
- */
-function extractUniqueBooks(snapshots: OddsSnapshot[]): Set<string> {
-  const books = new Set<string>();
-  for (const snapshot of snapshots) {
-    try {
-      const raw = JSON.parse(snapshot.raw_data ?? '{}') as Record<
-        string,
-        unknown
-      >;
-      // Unwrap the markets wrapper when present
-      const markets =
-        raw.markets && typeof raw.markets === 'object'
-          ? (raw.markets as Record<string, unknown>)
-          : raw;
-      const entries = [
-        ...((markets.spreads ?? []) as Array<{ book?: string }>),
-        ...((markets.totals  ?? []) as Array<{ book?: string }>),
-        ...((markets.h2h     ?? []) as Array<{ book?: string }>),
-      ];
-      for (const entry of entries) {
-        if (entry.book && typeof entry.book === 'string') {
-          books.add(entry.book);
-        }
-      }
-    } catch {
-      // Malformed raw_data -- silently skip this snapshot
-    }
-  }
-  return books;
-}
-
-/**
- * Return a JSON response, filtering gaps to TRIGGER-tier only when
- * includeWatch is false.
- */
-function serveResponse(
-  payload: MarketPulseResponse,
-  includeWatch: boolean,
-): Response {
-  if (includeWatch) {
-    return Response.json(payload);
-  }
-  return Response.json({
-    ...payload,
-    lineGaps: payload.lineGaps.filter((g) => g.tier === 'TRIGGER'),
-    oddsGaps: payload.oddsGaps.filter((g) => g.tier === 'TRIGGER'),
-  });
-}
-
-/**
- * Fetch odds snapshots from the DB for the given sport and time window.
- * For 'ALL', concatenates NBA + MLB + NHL results.
- */
 function loadSnapshots(sport: ValidSport, sinceUtc: string): OddsSnapshot[] {
   if (sport === 'ALL') {
     return [
-      ...getOddsSnapshots('NBA', sinceUtc),
-      ...getOddsSnapshots('MLB', sinceUtc),
-      ...getOddsSnapshots('NHL', sinceUtc),
+      ...cheddarData.getOddsSnapshots('NBA', sinceUtc),
+      ...cheddarData.getOddsSnapshots('MLB', sinceUtc),
+      ...cheddarData.getOddsSnapshots('NHL', sinceUtc),
     ];
   }
-  return getOddsSnapshots(sport, sinceUtc);
+  return cheddarData.getOddsSnapshots(sport, sinceUtc);
 }
 
-/**
- * Keep only the newest snapshot per sport/game pair so scan output reflects
- * current market state rather than stale rows in the lookback window.
- */
 function keepLatestSnapshotPerGame(snapshots: OddsSnapshot[]): OddsSnapshot[] {
   const latestByGame = new Map<string, OddsSnapshot>();
 
   for (const snapshot of snapshots) {
     const key = `${snapshot.sport}:${snapshot.game_id}`;
-    const existing = latestByGame.get(key);
-    if (existing == null) {
+    const current = latestByGame.get(key);
+    if (!current) {
       latestByGame.set(key, snapshot);
       continue;
     }
 
-    const existingCapturedMs = new Date(existing.captured_at).getTime();
-    const incomingCapturedMs = new Date(snapshot.captured_at).getTime();
-    if (!Number.isFinite(incomingCapturedMs)) {
-      continue;
-    }
-    if (!Number.isFinite(existingCapturedMs) || incomingCapturedMs > existingCapturedMs) {
+    const currentMs = new Date(current.captured_at).getTime();
+    const incomingMs = new Date(snapshot.captured_at).getTime();
+    if (!Number.isFinite(incomingMs)) continue;
+    if (!Number.isFinite(currentMs) || incomingMs > currentMs) {
       latestByGame.set(key, snapshot);
     }
   }
@@ -221,69 +92,57 @@ function keepLatestSnapshotPerGame(snapshots: OddsSnapshot[]): OddsSnapshot[] {
   return Array.from(latestByGame.values());
 }
 
-// ---------------------------------------------------------------------------
-// Route handler
-// ---------------------------------------------------------------------------
-
 export async function GET(request: Request): Promise<Response> {
+  const requestStartedAt = Date.now();
+
   try {
     const { searchParams } = new URL(request.url);
-    const rawSport     = searchParams.get('sport')?.toUpperCase() ?? 'ALL';
+    const rawSport = searchParams.get('sport')?.toUpperCase() ?? 'ALL';
     const includeWatch = searchParams.get('includeWatch') === 'true';
 
-    // Validate sport param
     if (!VALID_SPORTS.includes(rawSport as ValidSport)) {
       return Response.json({ error: 'Invalid sport' }, { status: 400 });
     }
-    const sport = rawSport as ValidSport;
 
-    // Serve from cache when the entry is still fresh
+    const sport = rawSport as ValidSport;
     const cached = cache.get(sport);
     if (CACHE_TTL_MS > 0 && cached && cached.expiresAt > Date.now()) {
-      return serveResponse(cached.payload, includeWatch);
+      return Response.json(filterOpportunitiesByWatch(cached.payload, includeWatch));
     }
 
-    // Load snapshots for the 30-minute lookback window (SELECT only, no writes)
-    const sinceUtc  = new Date(Date.now() - LOOKBACK_MS).toISOString();
+    const sinceUtc = new Date(Date.now() - LOOKBACK_MS).toISOString();
     const snapshots = keepLatestSnapshotPerGame(loadSnapshots(sport, sinceUtc));
-
-    // First pass -- scan for line discrepancies across all snapshots
-    const allLineGaps: LineGap[] = scanLineDiscrepancies(snapshots);
-    allLineGaps.sort((a, b) => (b.delta ?? 0) - (a.delta ?? 0));
-
-    // Collect game IDs that have at least one line gap
-    const lineGapGameIds = new Set(allLineGaps.map((g) => g.gameId));
-
-    // Second pass -- scan for odds discrepancies only on clean games
-    // (games with no line gap are considered a clean market reference)
-    const cleanSnapshots = snapshots.filter(
-      (s) => !lineGapGameIds.has(s.game_id),
-    );
-    const allOddsGaps: OddsGap[] = scanOddsDiscrepancies(cleanSnapshots);
-    allOddsGaps.sort(
-      (a, b) => (b.impliedEdgePct ?? 0) - (a.impliedEdgePct ?? 0),
+    const lineGaps = scanLineDiscrepancies(snapshots);
+    lineGaps.sort((left, right) => (right.delta ?? 0) - (left.delta ?? 0));
+    const oddsGaps = scanOddsDiscrepancies(snapshots);
+    oddsGaps.sort(
+      (left, right) => (right.impliedEdgePct ?? 0) - (left.impliedEdgePct ?? 0),
     );
 
-    // Collect metadata
-    const uniqueGameIds = new Set(snapshots.map((s) => s.game_id));
-    const uniqueBooks   = extractUniqueBooks(snapshots);
-
-    const payload: MarketPulseResponse = {
-      scannedAt: new Date().toISOString(),
-      lineGaps:  allLineGaps,
-      oddsGaps:  allOddsGaps,
-      meta: {
-        gamesScanned: uniqueGameIds.size,
-        booksScanned: uniqueBooks.size,
-        lineGapCount: allLineGaps.length,
-        oddsGapCount: allOddsGaps.length,
+    const payload = buildMarketPulsePayload({
+      snapshots,
+      lineGaps,
+      oddsGaps,
+      includeWatch,
+      nowMs: Date.now(),
+      readers: {
+        getLatestMlbModelOutput: cheddarData.getLatestMlbModelOutput,
+        getLatestNbaModelOutput: cheddarData.getLatestNbaModelOutput,
+        getLatestNhlModelOutput: cheddarData.getLatestNhlModelOutput,
       },
-    };
+    });
+
+    payload.meta.durationMs = Date.now() - requestStartedAt;
+    logMarketPulseSummary(payload);
 
     if (CACHE_TTL_MS > 0) {
-      cache.set(sport, { payload, expiresAt: Date.now() + CACHE_TTL_MS });
+      cache.set(sport, {
+        payload,
+        expiresAt: Date.now() + CACHE_TTL_MS,
+      });
     }
-    return serveResponse(payload, includeWatch);
+
+    return Response.json(payload);
   } catch (error) {
     console.error('[API] market-pulse error:', error);
     const message = error instanceof Error ? error.message : 'Unknown error';
