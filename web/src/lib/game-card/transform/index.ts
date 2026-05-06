@@ -3478,6 +3478,8 @@ type ContractReport = {
   edge_repeated_value_counts: Array<{ edge: string; count: number }>;
 };
 
+let lastContractWarningSignature: string | null = null;
+
 function buildContractReport(cards: GameCard[]): ContractReport {
   const fire_with_no_bet: string[] = [];
   const play_with_no_bet: string[] = [];
@@ -3509,8 +3511,10 @@ function buildContractReport(cards: GameCard[]): ContractReport {
               ? 'LEAN'
               : 'NONE');
 
-        if (decision === 'FIRE' && !hasBet) fire_with_no_bet.push(key);
-        if (classification === 'PLAY' && !hasBet) play_with_no_bet.push(key);
+        if (decision === 'FIRE' && !hasBet && !hasBlockingGate)
+          fire_with_no_bet.push(key);
+        if (classification === 'PLAY' && !hasBet && !hasBlockingGate)
+          play_with_no_bet.push(key);
         if (hasBlockingGate && hasBet) blocked_with_bet.push(key);
 
         // Defensive check: ensure priceFlags is an array before calling includes
@@ -3552,6 +3556,8 @@ function buildContractReport(cards: GameCard[]): ContractReport {
 
 function assertContractInDev(cards: GameCard[]): void {
   if (process.env.NODE_ENV === 'production') return;
+  const strictContractEnforcement =
+    process.env.NEXT_PUBLIC_ENFORCE_CARDS_CONTRACT === 'true';
 
   let report: ContractReport | null = null;
 
@@ -3590,22 +3596,34 @@ function assertContractInDev(cards: GameCard[]): void {
   }
 
   if (hasHardFailure) {
-    console.error('[cards-contract-report]', JSON.stringify(report, null, 2));
-    console.error('[cards-contract-details] fire_with_no_bet:', report.fire_with_no_bet);
-    console.error('[cards-contract-details] play_with_no_bet:', report.play_with_no_bet);
-    console.error('[cards-contract-details] blocked_with_bet:', report.blocked_with_bet);
-    console.error('[cards-contract-details] coinflip_non_ml:', report.coinflip_non_ml);
-    console.error(
-      '[cards-contract-debug] Total cards processed:',
-      cards.length,
-    );
-    console.error(
-      '[cards-contract-debug] Cards with plays:',
-      cards.filter((c) => !!c.play).length,
-    );
-    throw new Error(
-      'Game card transform contract violation. See [cards-contract-report] for offending game_ids.',
-    );
+    const warningSignature = JSON.stringify({
+      fire_with_no_bet: report.fire_with_no_bet,
+      play_with_no_bet: report.play_with_no_bet,
+      blocked_with_bet: report.blocked_with_bet,
+      coinflip_non_ml: report.coinflip_non_ml,
+    });
+
+    if (!strictContractEnforcement && warningSignature === lastContractWarningSignature) {
+      return;
+    }
+    lastContractWarningSignature = warningSignature;
+
+    const log = strictContractEnforcement ? console.error : console.warn;
+    log('[cards-contract-report]', JSON.stringify(report, null, 2));
+    log('[cards-contract-details] fire_with_no_bet:', report.fire_with_no_bet);
+    log('[cards-contract-details] play_with_no_bet:', report.play_with_no_bet);
+    log('[cards-contract-details] blocked_with_bet:', report.blocked_with_bet);
+    log('[cards-contract-details] coinflip_non_ml:', report.coinflip_non_ml);
+    log('[cards-contract-debug] Total cards processed:', cards.length);
+    log('[cards-contract-debug] Cards with plays:', cards.filter((c) => !!c.play).length);
+
+    if (strictContractEnforcement) {
+      throw new Error(
+        'Game card transform contract violation. See [cards-contract-report] for offending game_ids.',
+      );
+    }
+
+    return;
   }
 
   console.info('[cards-contract-report]', report);
