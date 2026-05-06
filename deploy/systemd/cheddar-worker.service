@@ -10,8 +10,7 @@ User=babycheeses11
 WorkingDirectory=/opt/cheddar-logic
 Environment="NODE_ENV=production"
 EnvironmentFile=/opt/cheddar-logic/.env.production
-
-ExecStart=/usr/bin/node /opt/cheddar-logic/apps/worker/src/schedulers/main.js
+ExecStart=/usr/bin/node --max-old-space-size=2048 /opt/cheddar-logic/apps/worker/src/schedulers/main.js
 
 # Restart policy
 Restart=on-failure
@@ -27,7 +26,7 @@ KillMode=process
 KillSignal=SIGTERM
 
 # Resource limits
-MemoryLimit=512M
+MemoryLimit=3G
 CPUQuota=50%
 
 # Logging
