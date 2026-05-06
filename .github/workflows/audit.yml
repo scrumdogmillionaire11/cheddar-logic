@@ -44,6 +44,7 @@ jobs:
           test -f "$CHEDDAR_DB_PATH"
 
       - name: Validate no closing-line substitution
+        id: validate_no_closing_line_sub
         run: |
           OUTPUT_DIR="$GITHUB_WORKSPACE/apps/worker/audit-output/${RUN_SCOPE}"
           mkdir -p "$OUTPUT_DIR"
@@ -64,6 +65,7 @@ jobs:
           done < /tmp/audit/changed-fixtures-rel.txt
 
       - name: Run audit gate
+        id: run_audit_gate
         run: |
           OUTPUT_DIR="$GITHUB_WORKSPACE/apps/worker/audit-output/${RUN_SCOPE}"
           mkdir -p "$OUTPUT_DIR"
@@ -82,6 +84,7 @@ jobs:
           exit $STATUS
 
       - name: Generate scorecard
+        id: generate_scorecard
         if: always()
         run: |
           OUTPUT_DIR="$GITHUB_WORKSPACE/apps/worker/audit-output/${RUN_SCOPE}"
@@ -89,12 +92,19 @@ jobs:
 
       - name: Ensure audit artifacts exist
         if: always()
+        env:
+          VALIDATE_OUTCOME: ${{ steps.validate_no_closing_line_sub.outcome }}
+          AUDIT_GATE_OUTCOME: ${{ steps.run_audit_gate.outcome }}
+          SCORECARD_OUTCOME: ${{ steps.generate_scorecard.outcome }}
         run: |
           OUTPUT_DIR="$GITHUB_WORKSPACE/apps/worker/audit-output/${RUN_SCOPE}"
           mkdir -p "$OUTPUT_DIR"
           echo "=== Audit artifact diagnostic ==="
           echo "Run scope: ${RUN_SCOPE}"
           echo "Output dir: ${OUTPUT_DIR}"
+          echo "Validate step outcome: ${VALIDATE_OUTCOME}"
+          echo "Audit gate step outcome: ${AUDIT_GATE_OUTCOME}"
+          echo "Scorecard step outcome: ${SCORECARD_OUTCOME}"
           echo ""
 
           declare -A ARTIFACT_OWNER=(
@@ -131,12 +141,21 @@ jobs:
             {
               printf 'Run scope: %s\n' "$RUN_SCOPE"
               printf 'Output dir: %s\n' "$OUTPUT_DIR"
+              printf 'Validate step outcome: %s\n' "$VALIDATE_OUTCOME"
+              printf 'Audit gate step outcome: %s\n' "$AUDIT_GATE_OUTCOME"
+              printf 'Scorecard step outcome: %s\n' "$SCORECARD_OUTCOME"
               printf 'Missing artifacts:\n'
               for entry in "${missing_list[@]}"; do
                 printf -- '- %s\n' "$entry"
               done
             } > "$OUTPUT_DIR/artifact-missing-summary.txt"
-            exit 1
+
+            if [ "$VALIDATE_OUTCOME" = "success" ] && [ "$AUDIT_GATE_OUTCOME" = "success" ] && [ "$SCORECARD_OUTCOME" = "success" ]; then
+              echo "Artifacts are missing even though producer steps reported success."
+              exit 1
+            fi
+
+            echo "Skipping hard-fail because at least one producer step did not succeed."
           fi
 
       - name: Upload audit artifacts
