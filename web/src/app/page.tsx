@@ -1,8 +1,10 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
+import { closeDatabaseReadOnly } from '@cheddar-logic/data';
+import { getPotdResponseData } from '@/lib/potd-server';
 
-// Revalidate homepage every 5 minutes to prevent stale HTML with old chunk references
-export const revalidate = 300;
+export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
 
 export const metadata: Metadata = {
   title: 'Cheddar Logic | Signal-Qualified Analytics',
@@ -16,10 +18,28 @@ export const metadata: Metadata = {
   },
 };
 
-export default function Home() {
+export default async function Home() {
+  let hasPresentedPotd = false;
+  try {
+    const potdData = await getPotdResponseData();
+    hasPresentedPotd = Boolean(potdData.featuredPick ?? potdData.today);
+  } catch (error) {
+    console.warn('[home] failed to resolve POTD nav state', error);
+  } finally {
+    try {
+      closeDatabaseReadOnly();
+    } catch (error) {
+      console.warn('[home] closeDatabaseReadOnly failed during page teardown', error);
+    }
+  }
+
   const discordInvite =
     process.env.NEXT_PUBLIC_DISCORD_INVITE ??
     'https://discord.com/invite/cheddarlogic';
+  const navCardClass =
+    'rounded-xl border border-white/20 bg-surface/80 px-8 py-6 text-lg font-semibold transition hover:border-white/40 hover:bg-surface';
+  const livePotdCardClass =
+    'rounded-xl border border-emerald-400/60 bg-emerald-500/15 px-8 py-6 text-lg font-semibold text-emerald-50 shadow-[0_0_32px_rgba(34,197,94,0.18)] transition hover:border-emerald-300/80 hover:bg-emerald-500/20';
 
   return (
     <div className="flex min-h-screen flex-col items-center justify-center bg-night px-6 text-cloud">
@@ -36,35 +56,42 @@ export default function Home() {
         <nav className="mx-auto grid max-w-md gap-4">
           <Link
             href="/fpl"
-            className="rounded-xl border border-white/20 bg-surface/80 px-8 py-6 text-lg font-semibold transition hover:border-white/40 hover:bg-surface"
+            className={navCardClass}
           >
             🧙‍♂️ FPL SAGE 🧙‍♂️
           </Link>
 
           <Link
             href="/wedge"
-            className="rounded-xl border border-white/20 bg-surface/80 px-8 py-6 text-lg font-semibold transition hover:border-white/40 hover:bg-surface"
+            className={navCardClass}
           >
             🧀 The Wedge 🧀
           </Link>
 
           <Link
             href="/play-of-the-day"
-            className="rounded-xl border border-teal/30 bg-teal/10 px-8 py-6 text-lg font-semibold text-teal-100 transition hover:border-teal/50 hover:bg-teal/15"
+            className={hasPresentedPotd ? livePotdCardClass : navCardClass}
           >
             🎯 Play of the Day 🎯
           </Link>
 
           <Link
             href="/results"
-            className="rounded-xl border border-white/20 bg-surface/80 px-8 py-6 text-lg font-semibold transition hover:border-white/40 hover:bg-surface"
+            className={navCardClass}
           >
             📊 Results 📊
           </Link>
 
           <Link
+            href="/market-pulse"
+            className={navCardClass}
+          >
+            📡 Market Pulse 📡
+          </Link>
+
+          <Link
             href="/education"
-            className="rounded-xl border border-white/20 bg-surface/80 px-8 py-6 text-lg font-semibold transition hover:border-white/40 hover:bg-surface"
+            className={navCardClass}
           >
             📓 Educational Materials 📓
           </Link>
@@ -73,7 +100,7 @@ export default function Home() {
             href={discordInvite}
             target="_blank"
             rel="noreferrer noopener"
-            className="rounded-xl border border-white/20 bg-surface/80 px-8 py-6 text-lg font-semibold transition hover:border-white/40 hover:bg-surface"
+            className={navCardClass}
           >
             👾 Join Discord 👾
           </a>
@@ -81,7 +108,7 @@ export default function Home() {
           {process.env.NODE_ENV === 'development' && (
             <Link
               href="/admin"
-              className="rounded-xl border border-white/20 bg-surface/80 px-8 py-6 text-lg font-semibold transition hover:border-white/40 hover:bg-surface"
+              className={navCardClass}
             >
               🏥 Model Health 🏥
             </Link>

@@ -589,6 +589,15 @@ export default function PlayOfTheDayClient({
       <StickyBackButton fallbackHref="/" fallbackLabel="Home" />
 
       <main className="mx-auto flex max-w-6xl flex-col gap-8">
+        <div>
+          <Link
+            href="/"
+            className="hidden text-sm text-cloud/60 hover:text-cloud/80 md:inline-flex"
+          >
+            ← Back to Home
+          </Link>
+        </div>
+
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div>
             <p className="text-[11px] uppercase tracking-[0.22em] text-cloud/50">

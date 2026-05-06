@@ -74,8 +74,10 @@ async function validatePotdSourceContract(assert) {
     'play-of-the-day client must provide existing app navigation',
   );
   assert.ok(
-    homeSource.includes('href="/play-of-the-day"'),
-    'homepage must expose a visible link to /play-of-the-day',
+    homeSource.includes('href="/play-of-the-day"') &&
+      homeSource.includes('getPotdResponseData') &&
+      homeSource.includes('border-emerald-400/60'),
+    'homepage must expose a visible POTD link and accent it when a pick is live',
   );
 }
 
