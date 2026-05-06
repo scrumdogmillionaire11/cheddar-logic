@@ -91,6 +91,7 @@ jobs:
         if: always()
         run: |
           OUTPUT_DIR="$GITHUB_WORKSPACE/apps/worker/audit-output/${RUN_SCOPE}"
+          mkdir -p "$OUTPUT_DIR"
           echo "=== Audit artifact diagnostic ==="
           echo "Run scope: ${RUN_SCOPE}"
           echo "Output dir: ${OUTPUT_DIR}"
@@ -127,6 +128,14 @@ jobs:
             for entry in "${missing_list[@]}"; do
               echo "  - $entry"
             done
+            {
+              printf 'Run scope: %s\n' "$RUN_SCOPE"
+              printf 'Output dir: %s\n' "$OUTPUT_DIR"
+              printf 'Missing artifacts:\n'
+              for entry in "${missing_list[@]}"; do
+                printf -- '- %s\n' "$entry"
+              done
+            } > "$OUTPUT_DIR/artifact-missing-summary.txt"
             exit 1
           fi
 
