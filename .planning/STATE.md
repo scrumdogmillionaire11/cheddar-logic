@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Model Integrity & Betting Execution Hardening
 status: active
-last_updated: "2026-05-04T22:45:00Z"
-last_activity: "2026-05-04 - WI-1222 executed: ADR-0018 + NHL model_outputs asymmetry regression contracts"
+last_updated: "2026-05-06T02:11:24Z"
+last_activity: "2026-05-05 - WI-1225 executed: resolvePrimaryReason explicit null-edge vs residual PASS fallback routing with EDGE_INSUFFICIENT family regression coverage"
 ---
 
 # Project State
@@ -14,6 +14,7 @@ Historical quick-task completions: [COMPLETED_SPRINT_LOG.md](./COMPLETED_SPRINT_
 
 ## Latest Activity
 
+- **2026-05-05 — WI-1225 executed:** Removed reliance on the historical silent `SUPPORT_BELOW_PLAY_THRESHOLD` fallback by preserving explicit helper routing (`PASS_MISSING_EDGE` for null-edge, `PASS_NO_EDGE` for defensive computed-edge residual PASS states), documented the test-only helper export marker, added regression coverage to ensure both fallback codes remain in `EDGE_INSUFFICIENT`, asserted `PASS_NO_EDGE` stays out of normal `buildDecisionV2()` outcomes, and added a source-level guard against reintroducing the unconditional fallback pattern.
 - **2026-05-04 — WI-1222 executed:** Added ADR-0018 documenting NHL card_payloads-only persistence, updated `/api/model-outputs` route source with explicit ADR-linked NHL omission note, tightened writer contract test to enforce NHL exclusion + ADR route reference, and replaced NHL worker `model_outputs` tolerance check with a strict zero-row regression guard.
 - **2026-05-04 — WI-1269 completed:** Non-destructive quarantine classification of historical display-enrollment debt with date-based cutoff (2026-05-01T00:00:00Z); implements three-bucket model (LEGACY_QUARANTINED, CURRENT_PATH_DEFECT, UNKNOWN_UNCLASSIFIED); preserves immutable forensic audit trail; test suite passes 5/5; addendum documentation committed with non-destructive guarantees (no payload mutation, no deletion, no backdating); ready for stakeholder acceptance and deployment.
 - **2026-04-30 — WI-1181 reclaimed:** Found a remaining consumer-side contract gap where opposite-side NHL moneyline candidates could still score via complement math even when `model_signal.selection_side` chose the other side; patch in progress to fail closed with `MODEL_SIGNAL_INCOMPLETE` + `SELECTION_SIDE_MISMATCH`.

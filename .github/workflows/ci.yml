@@ -21,8 +21,7 @@ jobs:
           node-version: 24
           cache: npm
           cache-dependency-path: |
-            packages/data/package-lock.json
-            packages/models/package-lock.json
+            package-lock.json
             web/package-lock.json
 
       - name: Make scripts executable
@@ -58,10 +57,9 @@ jobs:
             exit 1
           fi
 
-      - name: Install scoped web test dependencies
+      - name: Install workspace and web test dependencies
         run: |
-          npm --prefix packages/data ci
-          npm --prefix packages/models ci
+          npm ci
           npm --prefix web ci
 
       - name: Run deterministic web smoke gate
@@ -88,14 +86,12 @@ jobs:
           node-version: 24
           cache: npm
           cache-dependency-path: |
-            packages/data/package-lock.json
-            packages/models/package-lock.json
+            package-lock.json
             web/package-lock.json
 
-      - name: Install scoped web test dependencies
+      - name: Install workspace and web test dependencies
         run: |
-          npm --prefix packages/data ci
-          npm --prefix packages/models ci
+          npm ci
           npm --prefix web ci
 
       - name: Run non-blocking results performance budget gate
@@ -114,22 +110,10 @@ jobs:
         with:
           node-version: 24
           cache: npm
-          cache-dependency-path: |
-            apps/worker/package-lock.json
-            packages/data/package-lock.json
-            packages/adapters/package-lock.json
-            packages/models/package-lock.json
-            packages/odds/package-lock.json
+          cache-dependency-path: package-lock.json
 
-      - name: Install local package dependencies
-        run: |
-          npm --prefix packages/data ci
-          npm --prefix packages/adapters ci
-          npm --prefix packages/models ci
-          npm --prefix packages/odds ci
-
-      - name: Install worker dependencies
-        run: npm --prefix apps/worker ci
+      - name: Install workspace dependencies
+        run: npm ci
 
       - name: Run worker tests
         run: npm --prefix apps/worker test

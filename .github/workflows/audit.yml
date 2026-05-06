@@ -24,30 +24,24 @@ jobs:
         with:
           node-version: 24
           cache: npm
-          cache-dependency-path: |
-            apps/worker/package-lock.json
-            packages/adapters/package-lock.json
-            packages/data/package-lock.json
-            packages/models/package-lock.json
-            packages/odds/package-lock.json
+          cache-dependency-path: package-lock.json
 
       - name: Install audit dependencies
         run: |
-          npm --prefix packages/data ci
-          npm --prefix packages/models ci
-          npm --prefix apps/worker ci
+          npm ci
 
       - name: Initialize audit DB
         run: |
           mkdir -p "$(dirname "$CHEDDAR_DB_PATH")"
-          npm --prefix packages/data run migrate
+          npm --workspace packages/data run migrate
           test -f "$CHEDDAR_DB_PATH"
 
       - name: Validate no closing-line substitution
+        id: validate_no_closing_line_sub
         run: |
           OUTPUT_DIR="$GITHUB_WORKSPACE/apps/worker/audit-output/${RUN_SCOPE}"
           mkdir -p "$OUTPUT_DIR"
-          npm --prefix apps/worker run audit:validate-no-closing-line-sub -- --out "$OUTPUT_DIR/closing-line-substitution-report.json"
+          npm --workspace apps/worker run audit:validate-no-closing-line-sub -- --out "$OUTPUT_DIR/closing-line-substitution-report.json"
 
       - name: Collect changed audit fixtures
         run: |
@@ -64,6 +58,7 @@ jobs:
           done < /tmp/audit/changed-fixtures-rel.txt
 
       - name: Run audit gate
+        id: run_audit_gate
         run: |
           OUTPUT_DIR="$GITHUB_WORKSPACE/apps/worker/audit-output/${RUN_SCOPE}"
           mkdir -p "$OUTPUT_DIR"
@@ -72,7 +67,7 @@ jobs:
             EXTRA_ARGS="--changed-fixtures-file /tmp/audit/changed-fixtures.txt"
           fi
           set +e
-          npm --prefix apps/worker run audit:all -- --output-dir "$OUTPUT_DIR" --run-scope "$RUN_SCOPE" --out "$OUTPUT_DIR/audit-report.json" $EXTRA_ARGS
+          npm --workspace apps/worker run audit:all -- --output-dir "$OUTPUT_DIR" --run-scope "$RUN_SCOPE" --out "$OUTPUT_DIR/audit-report.json" $EXTRA_ARGS
           STATUS=$?
           if [ -f "$OUTPUT_DIR/audit-summary.json" ]; then
             cat "$OUTPUT_DIR/audit-summary.json"
@@ -82,18 +77,32 @@ jobs:
           exit $STATUS
 
       - name: Generate scorecard
+        id: generate_scorecard
         if: always()
         run: |
           OUTPUT_DIR="$GITHUB_WORKSPACE/apps/worker/audit-output/${RUN_SCOPE}"
-          npm --prefix apps/worker run audit:scorecard -- --output-dir "$OUTPUT_DIR" --run-scope "$RUN_SCOPE" --audit-report "$OUTPUT_DIR/audit-report.json"
+          if [ ! -f "$OUTPUT_DIR/audit-report.json" ]; then
+            echo "Skipping scorecard: audit-report.json not found at $OUTPUT_DIR"
+            printf 'Skipped scorecard generation: missing audit-report.json\n' > "$OUTPUT_DIR/scorecard-skipped.txt"
+            exit 0
+          fi
+          npm --workspace apps/worker run audit:scorecard -- --output-dir "$OUTPUT_DIR" --run-scope "$RUN_SCOPE" --audit-report "$OUTPUT_DIR/audit-report.json"
 
       - name: Ensure audit artifacts exist
         if: always()
+        env:
+          VALIDATE_OUTCOME: ${{ steps.validate_no_closing_line_sub.outcome }}
+          AUDIT_GATE_OUTCOME: ${{ steps.run_audit_gate.outcome }}
+          SCORECARD_OUTCOME: ${{ steps.generate_scorecard.outcome }}
         run: |
           OUTPUT_DIR="$GITHUB_WORKSPACE/apps/worker/audit-output/${RUN_SCOPE}"
+          mkdir -p "$OUTPUT_DIR"
           echo "=== Audit artifact diagnostic ==="
           echo "Run scope: ${RUN_SCOPE}"
           echo "Output dir: ${OUTPUT_DIR}"
+          echo "Validate step outcome: ${VALIDATE_OUTCOME}"
+          echo "Audit gate step outcome: ${AUDIT_GATE_OUTCOME}"
+          echo "Scorecard step outcome: ${SCORECARD_OUTCOME}"
           echo ""
 
           declare -A ARTIFACT_OWNER=(
@@ -127,7 +136,24 @@ jobs:
             for entry in "${missing_list[@]}"; do
               echo "  - $entry"
             done
-            exit 1
+            {
+              printf 'Run scope: %s\n' "$RUN_SCOPE"
+              printf 'Output dir: %s\n' "$OUTPUT_DIR"
+              printf 'Validate step outcome: %s\n' "$VALIDATE_OUTCOME"
+              printf 'Audit gate step outcome: %s\n' "$AUDIT_GATE_OUTCOME"
+              printf 'Scorecard step outcome: %s\n' "$SCORECARD_OUTCOME"
+              printf 'Missing artifacts:\n'
+              for entry in "${missing_list[@]}"; do
+                printf -- '- %s\n' "$entry"
+              done
+            } > "$OUTPUT_DIR/artifact-missing-summary.txt"
+
+            if [ "$VALIDATE_OUTCOME" = "success" ] && [ "$AUDIT_GATE_OUTCOME" = "success" ] && [ "$SCORECARD_OUTCOME" = "success" ]; then
+              echo "Artifacts are missing even though producer steps reported success."
+              exit 1
+            fi
+
+            echo "Skipping hard-fail because at least one producer step did not succeed."
           fi
 
       - name: Upload audit artifacts

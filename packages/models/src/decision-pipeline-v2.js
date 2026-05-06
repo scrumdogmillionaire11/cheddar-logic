@@ -2096,6 +2096,7 @@ module.exports = {
   isWave1EligiblePayload,
   maybePromoteHighEndLean,
   buildDecisionV2,
+  // INTERNAL_TEST_EXPORT: helper exports below are for scoped unit tests only.
   resolvePrimaryReason,
   resolveTerminalReasonFamily,
 };
