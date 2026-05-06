@@ -23,21 +23,14 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
           cache-dependency-path: |
-            packages/data/package-lock.json
-            packages/models/package-lock.json
-            packages/adapters/package-lock.json
-            packages/odds/package-lock.json
+            package-lock.json
             web/package-lock.json
 
       - name: Install package dependencies
-        run: |
-          npm --prefix packages/data ci
-          npm --prefix packages/models ci
-          npm --prefix packages/adapters ci
-          npm --prefix packages/odds ci
+        run: npm ci
 
       - name: Install web dependencies
-        run: npm --prefix web ci --include=dev
+        run: npm --prefix web install --include=dev
 
       - name: Check middleware file integrity
         # middleware.ts is the sole Next.js middleware entry point.
@@ -245,11 +238,7 @@ jobs:
             npm config set fetch-retry-maxtimeout 120000
             npm config set fetch-timeout 300000
             # Install dependencies
-            retry_npm_install "packages/data ci" npm --prefix packages/data ci --omit=dev
-            retry_npm_install "packages/models ci" npm --prefix packages/models ci --omit=dev
-            retry_npm_install "packages/adapters ci" npm --prefix packages/adapters ci --omit=dev
-            retry_npm_install "packages/odds ci" npm --prefix packages/odds ci --omit=dev
-            retry_npm_install "apps/worker ci" npm --prefix apps/worker ci --omit=dev
+            retry_npm_install "workspace backend ci" npm ci --omit=dev --workspace packages/data --workspace packages/models --workspace packages/adapters --workspace packages/odds --workspace apps/worker
             # Web: only wipe node_modules when the lockfile changed — prevents
             # better-sqlite3 from re-downloading its ARM prebuild on every deploy.
             WEB_LOCK_HASH=$(md5sum web/package-lock.json | awk '{print $1}')

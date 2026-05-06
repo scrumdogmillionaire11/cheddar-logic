@@ -65,26 +65,18 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
           cache-dependency-path: |
-            packages/data/package-lock.json
-            packages/models/package-lock.json
-            packages/adapters/package-lock.json
-            packages/odds/package-lock.json
-            apps/worker/package-lock.json
+            package-lock.json
 
       - name: Install package dependencies
-        run: |
-          npm --prefix packages/data ci
-          npm --prefix packages/models ci
-          npm --prefix packages/adapters ci
-          npm --prefix packages/odds ci
+        run: npm ci
 
       - name: Install worker dependencies
-        run: npm --prefix apps/worker ci
+        run: npm --workspace apps/worker install
 
       - name: Run worker tests
         env:
           CHEDDAR_DB_PATH: /tmp/cheddar-logic/ci-safe.db
-        run: npm --prefix apps/worker test
+        run: npm --workspace apps/worker test
 
   deploy-worker-pi:
     name: Deploy Worker to Pi
@@ -158,11 +150,7 @@ jobs:
             MIN_FREE_KB=524288 bash /opt/cheddar-logic/scripts/deploy-disk-hygiene.sh /opt
 
             # Install package + worker deps (omit dev)
-            npm --prefix packages/data ci --omit=dev
-            npm --prefix packages/models ci --omit=dev
-            npm --prefix packages/adapters ci --omit=dev
-            npm --prefix packages/odds ci --omit=dev
-            npm --prefix apps/worker ci --omit=dev
+            npm ci --omit=dev --workspace packages/data --workspace packages/models --workspace packages/adapters --workspace packages/odds --workspace apps/worker
 
             # ── WI-0979: Migration preflight ──────────────────────────────────
             echo "Running migration preflight against: $CHEDDAR_DB_PATH"
